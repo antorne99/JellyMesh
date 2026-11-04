@@ -37,9 +37,17 @@ public sealed class LocalCopyLookup
     /// <returns>The local item, null if there is none.</returns>
     public Video? Find(StubEntry stub, User user)
     {
+        var contents = _resolver.Resolve().Contents;
         var matcher = new StubMatcher([stub]);
-        var content = _resolver.Resolve().Contents.FirstOrDefault(content => content.IsLocal && matcher.Claim(content) is not null);
-        return content?.LocalItemIds
+
+        // A stub that still has content to serve is not replaced, even if part of it has arrived: one file can hold two episodes.
+        if (contents.Any(content => !content.IsLocal && matcher.Claim(content) is not null))
+        {
+            return null;
+        }
+
+        var local = contents.FirstOrDefault(content => content.IsLocal && matcher.Claim(content) is not null);
+        return local?.LocalItemIds
             .Select(id => _libraryManager.GetItemById<BaseItem>(id, user))
             .OfType<Video>()
             .FirstOrDefault();

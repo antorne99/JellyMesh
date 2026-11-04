@@ -347,6 +347,25 @@ public class PlaybackFiltersTests
     }
 
     [Fact]
+    public async Task A_stub_with_content_still_to_serve_is_not_replaced_by_the_part_that_arrived()
+    {
+        Offline();
+        var remote = new ResolvedItem(_stub.Sources[0].ServerId, _stub.Sources[0].ItemId);
+        var arrived = new ResolvedContent(new ContentIdentity("e1", "show", ContentKind.Episode, MatchKind.ProviderId, 1, 1), true, null, [])
+        {
+            LocalItemIds = [_localId],
+            RemoteItems = [remote]
+        };
+        var missing = new ResolvedContent(new ContentIdentity("e2", "show", ContentKind.Episode, MatchKind.ProviderId, 1, 2), false, null, []) { RemoteItems = [remote] };
+        _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 1, [arrived, missing], []));
+        _library.Setup(library => library.GetItemById<BaseItem>(_localId, _user)).Returns(new Movie { Id = _localId });
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
     public async Task A_stock_failure_on_the_local_copy_is_a_503_and_shows_no_stock_body()
     {
         Offline();
