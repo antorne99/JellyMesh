@@ -410,9 +410,7 @@ public class StubPlannerTests
         var before = Plan([Film("k", Source(_serverA, "m"))], [Catalog(_serverA, ServerSyncState.Complete, Film("m"))]);
         var after = Plan([Film("k", Source(_serverA, "m"))], [Catalog(_serverA, ServerSyncState.Complete, Film("m") with { Overview = "New" })]);
 
-        var left = Assert.Single(before.Stubs);
-        var right = Assert.Single(after.Stubs);
-        Assert.NotEqual(left.ContentHash, Assert.Single(after.Stubs).ContentHash.Length == 0 ? null : right.ContentHash);
+        Assert.NotEqual(Assert.Single(before.Stubs).ContentHash, Assert.Single(after.Stubs).ContentHash);
     }
 
     [Fact]
