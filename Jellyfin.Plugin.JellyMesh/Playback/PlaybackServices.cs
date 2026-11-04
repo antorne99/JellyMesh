@@ -1,6 +1,5 @@
 using System;
 using System.Net.Http;
-using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
@@ -48,15 +47,5 @@ public static class PlaybackServices
                 UseProxy = false
             })
             .RemoveAllLoggers();
-
-        // Materialization registers the real registry. This holds until both are merged, and never replaces it.
-        services.TryAddSingleton<IStubRegistry, NoStubs>();
-    }
-
-    private sealed class NoStubs : IStubRegistry
-    {
-        public StubEntry? Find(string stubId) => null;
-
-        public StubEntry? FindByPath(string? path) => null;
     }
 }
