@@ -6,8 +6,10 @@ State file, read per request:
   down          close the connection at once, as an offline server
   hang          accept and never answer, as a server that vanished without closing
   slow:<ms>     wait that long before answering each request
+  throttle:<kB> pass the body at that many kB/s, so that the server really is held back while it writes
   notranscode   500 on HLS playlists, as a remote that cannot transcode
 One line per request is logged, without any token: state, method, path without the query, status.
+A stream logs a second line with END and the bytes passed when it is over.
 """
 import http.client, http.server, socketserver, sys, threading, time
 
@@ -71,15 +73,22 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.close_connection = True
         self.end_headers()
+        sent = 0
+        throttled = m.startswith("throttle:")
         try:
             if self.command != "HEAD":
                 while True:
-                    d = r.read(65536)
+                    d = r.read(16384 if throttled else 65536)
                     if not d:
                         break
                     self.wfile.write(d)
+                    sent += len(d)
+                    if throttled:
+                        time.sleep(16 / int(m[9:]))
         except OSError:
             self.close_connection = True
+        if path.endswith("/stream"):
+            record(m, "END", path, sent)
         c.close()
 
     do_GET = do_POST = do_PUT = do_DELETE = do_HEAD = go

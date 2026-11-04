@@ -11,6 +11,12 @@ IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshProv", Device="prov", DeviceId="jm-prov-admin", Version="0.1"'
 HOST_GATE=host.docker.internal
+INCREMENTAL_TASK="JellyMesh incremental sync"
+RECONCILE_TASK="JellyMesh reconciliation"
+LIMIT_TEXT="Limite di stream raggiunto sul server di origine. Riprova più tardi."
+OFFLINE_TEXT="Server non raggiungibile"
+PROFILE_DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
+PROFILE_HLS='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 mkdir -p "$WORK"
 
 port_of() { case $1 in a) echo 18410 ;; b) echo 18411 ;; esac; }
@@ -157,6 +163,45 @@ run_task() {
 }
 
 gate_mode() { echo "$2" >"$WORK/gate-$1"; }
+
+# Clients of b: each device logs in by itself, because a session belongs to a device.
+client_login() {
+  curl -sS -X POST -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"$1\", DeviceId=\"$1\", Version=\"0.1\"" \
+    -H 'Content-Type: application/json' -d '{"Username":"admin","Pw":"jellymesh-test"}' \
+    http://127.0.0.1:18411/Users/AuthenticateByName | jq -r .AccessToken >"$WORK/client-$1"
+}
+# open_stream <device> <item> <profile>: PlaybackInfo on b. Prints the status; the answer is in $WORK/open-<device>.
+open_stream() {
+  local device=$1 item=$2 profile=$3
+  [ -f "$WORK/client-$device" ] || client_login "$device"
+  curl -sS -o "$WORK/open-$device" -w '%{http_code}' -X POST -H "$ACCEPT" \
+    -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"$device\", DeviceId=\"$device\", Version=\"0.1\", Token=\"$(cat "$WORK/client-$device")\"" \
+    -H 'Content-Type: application/json' -d "$profile" "http://127.0.0.1:18411/Items/$item/PlaybackInfo"
+}
+# close_stream <device>: what a client does at the end of a playback.
+close_stream() {
+  local device=$1 session
+  session=$(jq -r '.PlaySessionId // empty' "$WORK/open-$device" 2>/dev/null)
+  [ -n "$session" ] || return 0
+  curl -sS -o /dev/null -X DELETE -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"$device\", DeviceId=\"$device\", Version=\"0.1\", Token=\"$(cat "$WORK/client-$device")\"" \
+    "http://127.0.0.1:18411/Videos/ActiveEncodings?deviceId=$device&playSessionId=$session"
+}
+stream_url() { echo "http://127.0.0.1:18411$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/open-$1")"; }
+active_streams() { get a /JellyMesh/Admin/Peers | jq -r '.[0].ActiveStreams'; }
+# movie_on_b <title>: the stub of a title on b.
+movie_on_b() { get b '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$1" '[.Items[] | select((.Path // "") | contains($t))][0].Id'; }
+# message_during <device> <seconds> <command...>: runs the command with the device connected, prints what it was told.
+message_during() {
+  local device=$1 seconds=$2
+  shift 2
+  [ -f "$WORK/client-$device" ] || client_login "$device"
+  python3 "$S/ws.py" 18411 "$(cat "$WORK/client-$device")" "$device" "$seconds" >"$WORK/ws-$device" &
+  local listener=$!
+  sleep 2
+  "$@" >"$WORK/during-$device"
+  wait "$listener"
+  sed -n 's/^DisplayMessage: //p' "$WORK/ws-$device" | head -1
+}
 
 check() { # check <what> <expected> <actual>
   if [ "$2" = "$3" ]; then echo "PASS $1: $3"; else echo "FAIL $1: expected $2, got $3"; FAILED=1; fi
