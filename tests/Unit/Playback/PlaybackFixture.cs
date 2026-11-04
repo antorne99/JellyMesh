@@ -93,6 +93,8 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public HashSet<Guid> Offline { get; } = [];
 
+    public RemoteFailure OfflineFailure { get; set; } = RemoteFailure.Unreachable;
+
     public IReadOnlyList<RemoteServerInfo> GetServers() => [];
 
     public Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -108,7 +110,7 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
     public Task<RemoteResult<T>> RunWithSessionAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
     {
         return Offline.Contains(serverId)
-            ? Task.FromResult(RemoteResult.Fail<T>(RemoteFailure.Unreachable))
+            ? Task.FromResult(RemoteResult.Fail<T>(OfflineFailure))
             : call(_endpoint, _session, cancellationToken);
     }
 }

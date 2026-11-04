@@ -121,6 +121,20 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task A_missing_key_suspends_remote_playback_without_a_local_transcode()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.Offline.Add(source.ServerId);
+        fixture.Registry.OfflineFailure = RemoteFailure.Suspended;
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(source));
+
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+        Assert.Empty(fixture.Client.Requests);
+    }
+
+    [Fact]
     public async Task Reachable_remote_without_the_file_means_unavailable()
     {
         var fixture = new CoordinatorFixture();
