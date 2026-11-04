@@ -380,6 +380,23 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task ADoubleEpisodeGetsOneStubWithItsRange()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { IndexNumberEnd = 3 });
+        await _fixture.Sync.AddServerAsync("A", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var stub = Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.Equal((2, 3), (stub.EpisodeNumber, stub.EpisodeNumberEnd));
+        Assert.Equal(["e"], stub.Sources.Select(source => source.ItemId));
+        var nfo = StubFixture.Text(_fixture.Path_("Serie", "Show (2020)", "Season 01", "Show S01E02-E03.nfo"));
+        Assert.Contains("<episode>2</episode>", nfo, StringComparison.Ordinal);
+        Assert.Contains("<episodenumberend>3</episodenumberend>", nfo, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AStubSeriesTakesTheKeyOfTheLocalSeries()
     {
         _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));

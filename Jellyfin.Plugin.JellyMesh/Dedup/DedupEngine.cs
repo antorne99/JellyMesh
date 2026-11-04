@@ -10,9 +10,16 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// </summary>
 public static class DedupEngine
 {
+    // The numbers come from a remote: a file claiming more than this is taken for a single episode.
+    private const int MaxEpisodesInOneFile = 50;
+
     /// <summary>
     /// Works out what to materialize. The result depends only on the items passed in, not on their order.
     /// </summary>
+    /// <remarks>
+    /// A file with several episodes counts once for each of them (decision 13a), so a local one suppresses the remote
+    /// copies of all its episodes, and a remote one competes for each episode on its own.
+    /// </remarks>
     /// <param name="localItems">
     /// The real local copies: films and episodes with a file, with no virtual or missing items. Federated stubs are
     /// ignored when flagged with <see cref="CatalogItem.IsFederated"/>.
@@ -29,13 +36,13 @@ public static class DedupEngine
         var works = WorkResolver.Create([.. local, .. remote]);
 
         var localByKey = local
-            .Select(item => (Identify(item, works)?.Key, item.ItemId))
-            .Where(entry => entry.Key is not null)
-            .ToLookup(entry => entry.Key!, entry => entry.ItemId, StringComparer.Ordinal);
+            .SelectMany(item => Identify(item, works).Select(identity => (identity.Key, item.ItemId)))
+            .ToLookup(entry => entry.Key, entry => entry.ItemId, StringComparer.Ordinal);
 
         var decisions = remote
-            .GroupBy(item => Identify(item, works) ?? IdentifyAlone(item, works))
-            .Select(group => Decide(group.Key, group, localByKey[group.Key.Key].Order(StringComparer.Ordinal).ToList()))
+            .SelectMany(item => IdentifyRemote(item, works).Select(identity => (Identity: identity, Item: item)))
+            .GroupBy(entry => entry.Identity, entry => entry.Item)
+            .Select(group => Decide(group.Key, group, localByKey[group.Key.Key].Distinct().Order(StringComparer.Ordinal).ToList()))
             .OrderBy(decision => decision.Identity.Key, StringComparer.Ordinal)
             .ToList();
 
@@ -65,36 +72,71 @@ public static class DedupEngine
         return new FederationDecision(identity, ranked[0], ranked.Skip(1).ToList()) { RemoteItems = remoteItems };
     }
 
-    private static ContentIdentity? Identify(CatalogItem item, WorkResolver works)
+    private static List<ContentIdentity> IdentifyRemote(CatalogItem item, WorkResolver works)
+    {
+        var identities = Identify(item, works);
+        return identities.Count > 0 ? identities : IdentifyAlone(item, works);
+    }
+
+    private static List<ContentIdentity> Identify(CatalogItem item, WorkResolver works)
     {
         if (works.Find(item) is not { } work)
         {
-            return null;
+            return [];
         }
 
         if (item.Kind == ContentKind.Movie)
         {
-            return new ContentIdentity(work.Key, work.Key, ContentKind.Movie, work.Match);
+            return [new ContentIdentity(work.Key, work.Key, ContentKind.Movie, work.Match)];
         }
 
-        if (item.SeasonNumber is not { } season || item.EpisodeNumber is not { } episode)
+        if (item.SeasonNumber is not { } season)
         {
-            return null;
+            return [];
         }
 
-        var key = string.Create(CultureInfo.InvariantCulture, $"{work.Key}|S{season}E{episode}");
-        return new ContentIdentity(key, work.Key, ContentKind.Episode, work.Match, season, episode);
+        return EpisodesOf(item)
+            .Select(episode => new ContentIdentity(
+                string.Create(CultureInfo.InvariantCulture, $"{work.Key}|S{season}E{episode}"),
+                work.Key,
+                ContentKind.Episode,
+                work.Match,
+                season,
+                episode))
+            .ToList();
     }
 
-    private static ContentIdentity IdentifyAlone(CatalogItem item, WorkResolver works)
+    private static List<ContentIdentity> IdentifyAlone(CatalogItem item, WorkResolver works)
     {
         var key = string.Create(CultureInfo.InvariantCulture, $"{item.Kind}|item:{item.ServerId}:{item.ItemId}");
-        return new ContentIdentity(
-            key,
-            works.Find(item)?.Key ?? key,
-            item.Kind,
-            MatchKind.ItemOnly,
-            item.SeasonNumber,
-            item.EpisodeNumber);
+        var workKey = works.Find(item)?.Key ?? key;
+        var episodes = EpisodesOf(item);
+        if (episodes.Count <= 1)
+        {
+            return [new ContentIdentity(key, workKey, item.Kind, MatchKind.ItemOnly, item.SeasonNumber, item.EpisodeNumber)];
+        }
+
+        return episodes
+            .Select(episode => new ContentIdentity(
+                string.Create(CultureInfo.InvariantCulture, $"{key}|E{episode}"),
+                workKey,
+                item.Kind,
+                MatchKind.ItemOnly,
+                item.SeasonNumber,
+                episode))
+            .ToList();
+    }
+
+    private static List<int> EpisodesOf(CatalogItem item)
+    {
+        if (item.EpisodeNumber is not { } first)
+        {
+            return [];
+        }
+
+        // Without a season the numbers have no place in a series anyway.
+        return item.SeasonNumber is not null && item.EpisodeNumberEnd is { } last && last > first && last - first < MaxEpisodesInOneFile
+            ? Enumerable.Range(first, last - first + 1).ToList()
+            : [first];
     }
 }

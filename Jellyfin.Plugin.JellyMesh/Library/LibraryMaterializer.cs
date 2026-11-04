@@ -223,7 +223,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 held.Stubs);
         }
 
-        if (run.NeedsScan)
+        if (run.NeedsScan || plan.MergedStubs > 0)
         {
             _library.QueueLibraryScan();
         }

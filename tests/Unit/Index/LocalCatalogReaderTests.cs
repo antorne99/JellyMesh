@@ -45,6 +45,37 @@ public class LocalCatalogReaderTests
     }
 
     [Fact]
+    public void AFilmCarriesTheMetadataThatConfirmsAMatch()
+    {
+        var film = Film("/media/film/a.mkv");
+        film.OriginalTitle = "Original";
+        film.RunTimeTicks = 600;
+        film.Overview = "Plot";
+        film.Genres = ["Drama"];
+        film.Studios = ["Studio"];
+
+        var metadata = Assert.Single(ReaderOver(film).Read()).Metadata;
+
+        Assert.Equal("Original", metadata.OriginalTitle);
+        Assert.Equal(600, metadata.RunTimeTicks);
+        Assert.Equal("Plot", metadata.Overview);
+        Assert.Equal(["Drama"], metadata.Genres);
+        Assert.Equal(["Studio"], metadata.Studios);
+    }
+
+    [Fact]
+    public void PeopleAreReadOnlyWhenAComparisonAsks()
+    {
+        var film = Film("/media/film/a.mkv");
+        _library.Setup(library => library.GetPeople(film)).Returns([new PersonInfo { Name = "Anna" }]);
+
+        var metadata = Assert.Single(ReaderOver(film).Read()).Metadata;
+
+        _library.Verify(library => library.GetPeople(It.IsAny<BaseItem>()), Times.Never);
+        Assert.Equal(["Anna"], metadata.People.Value);
+    }
+
+    [Fact]
     public void AnEpisodeTakesTitleYearAndIdsFromItsSeries()
     {
         var series = new Series
@@ -64,6 +95,16 @@ public class LocalCatalogReaderTests
         Assert.Equal(2019, item.Year);
         Assert.Equal("7", item.Ids.Tvdb);
         Assert.Equal((2, 3), (item.SeasonNumber, item.EpisodeNumber));
+    }
+
+    [Fact]
+    public void ALocalDoubleKeepsItsLastNumber()
+    {
+        var series = new Series { Id = Guid.NewGuid(), Name = "Show" };
+        _library.Setup(library => library.GetItemById(series.Id)).Returns(series);
+        var episode = new Episode { Id = Guid.NewGuid(), SeriesId = series.Id, ParentIndexNumber = 1, IndexNumber = 1, IndexNumberEnd = 2, Path = "/media/serie/e.mkv" };
+
+        Assert.Equal(2, Assert.Single(ReaderOver(episode).Read()).EpisodeNumberEnd);
     }
 
     [Fact]

@@ -208,6 +208,20 @@ public sealed class StubProviderTests : IDisposable
     }
 
     [Fact]
+    public void TheLastNumberIsWrittenAndClearedWithTheOthers()
+    {
+        var stub = new StubEntry { Id = "s", Kind = StubKind.Episode, RelativePath = "r", IdentityKey = "k", Sources = [], SeasonNumber = 1, EpisodeNumber = 2, EpisodeNumberEnd = 3 };
+        var episode = new Episode { ParentIndexNumber = 1, IndexNumber = 2 };
+
+        Assert.True(StubTechnicalData.WriteNumbers(episode, stub));
+        Assert.Equal(3, episode.IndexNumberEnd);
+        Assert.False(StubTechnicalData.WriteNumbers(episode, stub));
+
+        Assert.True(StubTechnicalData.WriteNumbers(episode, stub with { EpisodeNumberEnd = null }));
+        Assert.Null(episode.IndexNumberEnd);
+    }
+
+    [Fact]
     public void TheLateNumbersProviderIsForcedAndNotPreRefresh()
     {
         Assert.True(typeof(IForcedProvider).IsAssignableFrom(typeof(StubEpisodeNumbersProvider)));

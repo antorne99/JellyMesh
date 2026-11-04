@@ -46,6 +46,13 @@ public static class TitleNormalizer
         return string.Join(' ', kept.Count > 0 ? kept : words);
     }
 
+    /// <summary>
+    /// Splits a text into lowercase words without accents or punctuation. Unlike <see cref="Normalize"/> it keeps articles.
+    /// </summary>
+    /// <param name="text">The text.</param>
+    /// <returns>The words, empty when the text has no letters or digits.</returns>
+    public static IReadOnlyList<string> Words(string? text) => string.IsNullOrWhiteSpace(text) ? [] : SplitWords(text);
+
     private static string RemoveTrailingYear(string title, int? year)
     {
         if (year is null)

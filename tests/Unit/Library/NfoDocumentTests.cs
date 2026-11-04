@@ -51,6 +51,32 @@ public class NfoDocumentTests
     }
 
     [Fact]
+    public void AStubOfSeveralEpisodesSaysWhereItEnds()
+    {
+        var root = XDocument.Parse(NfoDocument.Episode(Protected() with { SeasonNumber = 1, EpisodeNumber = 2, EpisodeNumberEnd = 3 })).Root!;
+
+        Assert.Equal("2", root.Element("episode")?.Value);
+        Assert.Equal("3", root.Element("episodenumberend")?.Value);
+    }
+
+    [Fact]
+    public void AStubOfOneEpisodeHasNoEnd()
+    {
+        var root = XDocument.Parse(NfoDocument.Episode(Protected() with { SeasonNumber = 1, EpisodeNumber = 2 })).Root!;
+
+        Assert.Null(root.Element("episodenumberend"));
+    }
+
+    [Fact]
+    public void WithoutProtectionARangeComesFromTheFileName()
+    {
+        var root = XDocument.Parse(NfoDocument.Episode(Thin() with { SeasonNumber = 1, EpisodeNumber = 2, EpisodeNumberEnd = 3 })).Root!;
+
+        Assert.Null(root.Element("episode"));
+        Assert.Null(root.Element("episodenumberend"));
+    }
+
+    [Fact]
     public void AnEpisodeHasLockdataAndItsNumbers()
     {
         var metadata = Protected() with { SeasonNumber = 1, EpisodeNumber = 2 };

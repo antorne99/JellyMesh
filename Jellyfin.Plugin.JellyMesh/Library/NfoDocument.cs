@@ -45,7 +45,8 @@ public static class NfoDocument
 
     /// <summary>
     /// Writes the document of an episode. Without protection it has no numbers: they come from the file name, and the
-    /// provider restores them after "replace all metadata".
+    /// provider restores them after "replace all metadata". A stub of several episodes says where it ends: on 12.4
+    /// <c>episodenumberend</c> sets <c>IndexNumberEnd</c> even when the file name has a single number, as an old stub's does.
     /// </summary>
     /// <param name="metadata">The metadata.</param>
     /// <returns>The XML.</returns>
@@ -58,6 +59,7 @@ public static class NfoDocument
 
         WriteOptional(writer, "season", value.SeasonNumber?.ToString(CultureInfo.InvariantCulture));
         WriteOptional(writer, "episode", value.EpisodeNumber?.ToString(CultureInfo.InvariantCulture));
+        WriteOptional(writer, "episodenumberend", value.EpisodeNumberEnd?.ToString(CultureInfo.InvariantCulture));
         WriteOptional(writer, "aired", FormatDate(value.PremiereDate));
         writer.WriteElementString("lockdata", "true");
     });

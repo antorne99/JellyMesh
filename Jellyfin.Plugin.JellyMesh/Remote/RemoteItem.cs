@@ -76,6 +76,9 @@ public sealed record RemoteItem
     /// <summary>Gets the season or episode number.</summary>
     public int? IndexNumber { get; init; }
 
+    /// <summary>Gets the last episode of a file that holds several.</summary>
+    public int? IndexNumberEnd { get; init; }
+
     /// <summary>Gets the season number of an episode.</summary>
     public int? ParentIndexNumber { get; init; }
 

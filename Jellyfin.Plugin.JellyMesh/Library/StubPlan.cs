@@ -17,4 +17,10 @@ public sealed record StubPlan(
     IReadOnlyList<SeriesWork> Series,
     IReadOnlyList<StubEntry> Removals,
     IReadOnlyList<HeldLibrary> Held,
-    int Unplaceable);
+    int Unplaceable)
+{
+    /// <summary>
+    /// Gets how many stubs were merged into another. They stay until the post-scan task has handed their watch state over.
+    /// </summary>
+    public int MergedStubs { get; init; }
+}

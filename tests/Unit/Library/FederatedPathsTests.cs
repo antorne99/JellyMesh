@@ -40,6 +40,14 @@ public class FederatedPathsTests
     }
 
     [Fact]
+    public void AStubOfSeveralEpisodesNamesItsRange()
+    {
+        var path = FederatedPaths.EpisodeStub(FederatedPaths.SeriesFolderOf("Show (2020)"), "Show", 1, 2, 3);
+
+        Assert.Equal(Path.Combine("Serie", "Show (2020)", "Season 01", "Show S01E02-E03.strm"), path);
+    }
+
+    [Fact]
     public void AnEpisodeStubHoldsItsNumbers()
     {
         var path = FederatedPaths.EpisodeStub(FederatedPaths.SeriesFolderOf("Show (2020)"), "Show", 1, 2);

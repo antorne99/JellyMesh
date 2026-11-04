@@ -83,8 +83,12 @@ public sealed class FederationResolver : IFederationResolver
 
     private static string? TitleOf(IndexedItem item)
     {
-        return item.Kind == IndexedItemKind.Episode
-            ? string.Create(CultureInfo.InvariantCulture, $"{item.SeriesName} S{item.ParentIndexNumber}E{item.IndexNumber}")
-            : item.Name;
+        if (item.Kind != IndexedItemKind.Episode)
+        {
+            return item.Name;
+        }
+
+        var end = item.IndexNumberEnd is { } last ? string.Create(CultureInfo.InvariantCulture, $"-E{last}") : string.Empty;
+        return string.Create(CultureInfo.InvariantCulture, $"{item.SeriesName} S{item.ParentIndexNumber}E{item.IndexNumber}{end}");
     }
 }

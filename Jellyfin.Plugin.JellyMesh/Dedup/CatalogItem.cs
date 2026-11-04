@@ -45,6 +45,11 @@ public sealed record CatalogItem
     public ContentIds Ids { get; init; } = ContentIds.None;
 
     /// <summary>
+    /// Gets what confirms a film copy that has no IDs (decision 13). Filled on films only.
+    /// </summary>
+    public ComparableMetadata Metadata { get; init; } = ComparableMetadata.None;
+
+    /// <summary>
     /// Gets the season of an episode, <c>ParentIndexNumber</c>.
     /// </summary>
     public int? SeasonNumber { get; init; }
@@ -53,6 +58,12 @@ public sealed record CatalogItem
     /// Gets the number of an episode, <c>IndexNumber</c>.
     /// </summary>
     public int? EpisodeNumber { get; init; }
+
+    /// <summary>
+    /// Gets the last episode of a file that holds several, <c>IndexNumberEnd</c>. The file covers every episode from
+    /// <see cref="EpisodeNumber"/> to this one (decision 13a).
+    /// </summary>
+    public int? EpisodeNumberEnd { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether the item is itself federated on its server (plan §4.4). Such an item is ignored

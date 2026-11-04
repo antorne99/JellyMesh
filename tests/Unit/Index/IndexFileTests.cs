@@ -38,6 +38,20 @@ public sealed class IndexFileTests : IDisposable
         Assert.Null(snapshot.Find(_serverId)!.Mark);
     }
 
+    [Fact]
+    public void AnEntryWrittenBeforeTheLastEpisodeNumberExistedStillLoads()
+    {
+        var item = "{\"ItemId\":\"e\",\"Kind\":\"Episode\",\"LibraryId\":\"l\",\"LastSeenUtc\":\"2026-11-04T03:00:00+00:00\",\"IndexNumber\":1}";
+        File.WriteAllText(MainPath, "{\"Version\":1,\"Health\":\"Ok\",\"Servers\":[{\"ServerId\":\"" + _serverId + "\",\"State\":\"Complete\",\"Items\":[" + item + "]}]}");
+
+        var snapshot = NewFile().Load();
+
+        Assert.Equal(IndexHealth.Ok, snapshot.Health);
+        var loaded = Assert.Single(snapshot.Find(_serverId)!.Items);
+        Assert.Equal(1, loaded.IndexNumber);
+        Assert.Null(loaded.IndexNumberEnd);
+    }
+
     private static IndexedItem FullItem() => new()
     {
         ItemId = "item",
@@ -45,6 +59,7 @@ public sealed class IndexFileTests : IDisposable
         LibraryId = "library",
         LastSeenUtc = _now,
         Name = "Episode",
+        IndexNumberEnd = 4,
         OriginalTitle = "Original",
         Overview = "Plot",
         Taglines = ["Tagline"],
