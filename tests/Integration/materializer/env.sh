@@ -8,7 +8,7 @@ MEDIA=/Users/antoniotornesello/Documents/Progetti/Personal/JellyMesh/tests/Integ
 BASE=http://127.0.0.1:$PORT
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshMat", Device="mat", DeviceId="jm-mat-e2e", Version="0.1"'
-TOKEN_FILE=/private/tmp/claude-501/-Users-antoniotornesello-Documents-Progetti-Personal-JellyMesh/03611a95-0dbb-4ea2-acce-7040c4e03f3a/scratchpad/mat/token
+TOKEN_FILE=${TMPDIR:-/tmp}/jm-mat-token
 TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null || true)
 auth_header() {
   if [ -n "$TOKEN" ]; then printf 'Authorization: %s, Token="%s"' "$AUTH" "$TOKEN"
@@ -63,7 +63,7 @@ sync_full() {
 }
 applog() { docker exec "$NAME" sh -c 'cat /config/log/log_*.log'; }
 sql_raw() {
-  local d=/private/tmp/claude-501/-Users-antoniotornesello-Documents-Progetti-Personal-JellyMesh/03611a95-0dbb-4ea2-acce-7040c4e03f3a/scratchpad/mat/db f
+  local d=${TMPDIR:-/tmp}/jm-mat-db f
   mkdir -p "$d"
   for f in jellyfin.db jellyfin.db-wal jellyfin.db-shm; do
     docker cp "$NAME:/config/data/$f" "$d/$f" 2>/dev/null || rm -f "$d/$f"
