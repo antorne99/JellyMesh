@@ -51,5 +51,5 @@ jobs:
         run: |
           zip=$(ls artifacts/jellymesh_*.zip)
           md5=$(cut -d' ' -f1 "$zip.md5")
-          printf 'MD5 for `manifest.json`: `%s`\n\nThe manifest is not updated by this job.\n' "$md5" >artifacts/notes.md
+          printf 'MD5 for manifest.json: %s\n\nThe manifest is not updated by this job.\n' "$md5" >artifacts/notes.md
           gh release create "$TAG" "$zip" "$zip.md5" "$zip.sha256" --title "JellyMesh $TAG" --notes-file artifacts/notes.md
