@@ -27,7 +27,6 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     public const int MaxItemsPerQuery = 1_000_000;
 
     private const int MaxReadAttempts = 3;
-    private const int MaxIdsPerLookup = 50;
     private const string MoviesCollection = "movies";
 
     private readonly IRemoteServerRegistry _registry;
@@ -168,9 +167,11 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
             .Where(id => !entries.ContainsKey(id) && !knownItemIds.Contains(id))
             .ToList();
 
-        foreach (var ids in missing.Chunk(MaxIdsPerLookup))
+        // One at a time, because even a lookup by ID answers with the row that represents the series (observed on 12.4).
+        // It has the same IDs and name, so it is kept under the ID the episodes point to.
+        foreach (var id in missing)
         {
-            var query = new RemoteItemQuery(null, RemoteItemType.Series, 0, ids.Length, ids);
+            var query = new RemoteItemQuery(null, RemoteItemType.Series, 0, 1, [id]);
             var page = await _registry.RunWithSessionAsync(
                 server.Id,
                 (endpoint, session, token) => _client.GetItemsAsync(endpoint, session, query, token),
@@ -180,7 +181,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return page.Failure;
             }
 
-            Add(entries, page.Value!.Items, RemoteItemType.Series, library.Id, seenUtc);
+            Add(entries, page.Value!.Items.Take(1).Select(item => item with { Id = id }), RemoteItemType.Series, library.Id, seenUtc);
         }
 
         var unresolved = missing.Count(id => !entries.ContainsKey(id));

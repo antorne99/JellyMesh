@@ -180,6 +180,22 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task ALookupAnsweredByTheRepresentativeRowIsKeptUnderTheRowAskedFor()
+    {
+        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("listed"));
+        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "hidden", 1, 1));
+        _fixture.Client.ItemsById.Add(TestItems.Series("listed"));
+        _fixture.Client.RepresentedBy["hidden"] = "listed";
+        var server = await _fixture.AddServerAsync("Friend", "shows");
+
+        var result = await ReadAsync(server);
+
+        var series = result.Value!.Single(item => item.ItemId == "hidden");
+        Assert.Equal("71", series.ProviderIds["Tvdb"]);
+        Assert.DoesNotContain(_fixture.ReaderLogger.Lines, line => line.Contains("does not list", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AnEpisodeWhoseSeriesCannotBeFoundIsKeptAndLogged()
     {
         _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "gone", 1, 1));

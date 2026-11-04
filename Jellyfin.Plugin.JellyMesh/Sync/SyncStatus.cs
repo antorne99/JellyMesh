@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Library;
 
 namespace Jellyfin.Plugin.JellyMesh.Sync;
 
@@ -19,4 +20,11 @@ public sealed record SyncStatus(
     bool IndexSaveFailed,
     DateTimeOffset? LastStartedUtc,
     DateTimeOffset? LastFinishedUtc,
-    IReadOnlyList<ServerSyncReport> Servers);
+    IReadOnlyList<ServerSyncReport> Servers)
+{
+    /// <summary>
+    /// Gets the libraries whose stubs were kept because a complete read came back empty. The stubs stay until the library
+    /// has items again, or it is deselected, or its server is removed.
+    /// </summary>
+    public IReadOnlyList<HeldLibrary> HeldLibraries { get; init; } = [];
+}

@@ -23,6 +23,9 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
     /// <summary>Items only found by ID, such as the rows of a series that <c>/Items</c> collapses.</summary>
     public List<RemoteItem> ItemsById { get; } = [];
 
+    /// <summary>A hidden row and the row a lookup of its ID answers with, as Jellyfin does for a split series.</summary>
+    public Dictionary<string, string> RepresentedBy { get; } = [];
+
     public List<RemoteItemQuery> Queries { get; } = [];
 
     public int Logins { get; private set; }
@@ -73,6 +76,20 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         return Task.FromResult(ClockFailure == RemoteFailure.None ? RemoteResult.Success(ServerTime) : RemoteResult.Fail<DateTimeOffset?>(ClockFailure));
     }
 
+    /// <summary>The images requested, as item/type/index.</summary>
+    public List<string> ImageReads { get; } = [];
+
+    /// <summary>Fails the image reads.</summary>
+    public RemoteFailure ImageFailure { get; set; }
+
+    public Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken)
+    {
+        ImageReads.Add(itemId + "/" + imageType + "/" + imageIndex);
+        return Task.FromResult(ImageFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteImage(new byte[] { 0xFF, 0xD8, 0xFF }, "image/jpeg"))
+            : RemoteResult.Fail<RemoteImage>(ImageFailure));
+    }
+
     public Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken)
     {
         Queries.Add(query);
@@ -84,7 +101,8 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
 
         if (query.Ids is { } ids)
         {
-            var found = ItemsById.Where(item => ids.Contains(item.Id)).ToList();
+            var wanted = ids.Select(id => RepresentedBy.GetValueOrDefault(id, id)).ToList();
+            var found = ItemsById.Where(item => wanted.Contains(item.Id)).ToList();
             return Task.FromResult(RemoteResult.Success(new RemoteItemPage(found, found.Count)));
         }
 

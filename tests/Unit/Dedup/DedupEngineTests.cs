@@ -299,4 +299,47 @@ public class DedupEngineTests
     private static FederationDecision Find(DedupResult result, int season, int episode) =>
         result.Decisions.Single(decision =>
             decision.Identity.SeasonNumber == season && decision.Identity.EpisodeNumber == episode);
+
+    [Fact]
+    public void ALocalDecisionNamesItsLocalCopiesAndItsRemoteItems()
+    {
+        var local = new CatalogItem { ServerId = "local", ItemId = "l1", Kind = ContentKind.Movie, Ids = new ContentIds("1") };
+        var remote = new CatalogItem
+        {
+            ServerId = "a",
+            ItemId = "r1",
+            Kind = ContentKind.Movie,
+            Ids = new ContentIds("1"),
+            Versions = [new MediaVersion("v", new SourceQuality(1080, false, 1000, "h264"))]
+        };
+
+        var decision = Assert.Single(DedupEngine.Resolve([local], [remote]).Decisions);
+
+        Assert.True(decision.IsLocal);
+        Assert.Equal(["l1"], decision.LocalItemIds);
+        Assert.Equal(new RemoteItemKey("a", "r1"), Assert.Single(decision.RemoteItems));
+    }
+
+    [Fact]
+    public void AWorkWithLocalEpisodesNamesOneEvenIfNoDecisionIsLocal()
+    {
+        var ids = new ContentIds(null, null, "7");
+        var local = new CatalogItem { ServerId = "local", ItemId = "l1", Kind = ContentKind.Episode, Ids = ids, SeasonNumber = 1, EpisodeNumber = 1 };
+        var remote = new CatalogItem
+        {
+            ServerId = "a",
+            ItemId = "r2",
+            Kind = ContentKind.Episode,
+            Ids = ids,
+            SeasonNumber = 1,
+            EpisodeNumber = 2,
+            Versions = [new MediaVersion("v", new SourceQuality(1080, false, 1000, "h264"))]
+        };
+
+        var result = DedupEngine.Resolve([local], [remote]);
+
+        var decision = Assert.Single(result.Decisions);
+        Assert.False(decision.IsLocal);
+        Assert.Equal("l1", result.LocalItemByWork[decision.Identity.WorkKey]);
+    }
 }
