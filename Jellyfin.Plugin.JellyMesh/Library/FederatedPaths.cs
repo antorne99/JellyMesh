@@ -36,11 +36,10 @@ public static partial class FederatedPaths
             builder.Append(IsUnsafe(character) ? ' ' : character);
         }
 
-        var name = WhiteSpace().Replace(builder.ToString(), " ").Trim().TrimEnd('.').TrimEnd();
-        name = name.TrimStart('.').TrimStart();
+        var name = WhiteSpace().Replace(builder.ToString(), " ").Trim('.', ' ');
         if (name.Length > MaxNameLength)
         {
-            name = name[..MaxNameLength].TrimEnd().TrimEnd('.').TrimEnd();
+            name = name[..MaxNameLength].TrimEnd('.', ' ');
         }
 
         return name.Length == 0 ? FallbackName : name;

@@ -107,7 +107,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var snapshot = _index.Snapshot;
         var run = _run;
         var servers = _registry.GetServers().Select(server => ToReport(server, snapshot.Find(server.Id))).ToList();
-        return new SyncStatus(run.IsRunning, snapshot.Health, run.IndexSaveFailed, run.StartedUtc, run.FinishedUtc, servers);
+        return new SyncStatus(run.IsRunning, snapshot.Health, run.IndexSaveFailed, run.StartedUtc, run.FinishedUtc, servers)
+        {
+            HeldLibraries = _materializer?.LastReport?.Held ?? []
+        };
     }
 
     /// <inheritdoc />

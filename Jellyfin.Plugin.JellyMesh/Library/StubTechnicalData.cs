@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -18,6 +19,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed class StubTechnicalData
 {
+    private const string ExternalPathScheme = "jellymesh-external-subtitle";
+
     private readonly IFederationIndex _index;
     private readonly IMediaStreamRepository _streams;
     private readonly IChapterManager _chapters;
@@ -40,8 +43,9 @@ public sealed class StubTechnicalData
     /// Maps an indexed stream.
     /// </summary>
     /// <param name="stream">The stream.</param>
+    /// <param name="stubId">The stub the stream belongs to.</param>
     /// <returns>The stream to store, null if its type is unknown.</returns>
-    public static MediaStream? ToMediaStream(IndexedTrack stream)
+    public static MediaStream? ToMediaStream(IndexedTrack stream, string stubId)
     {
         ArgumentNullException.ThrowIfNull(stream);
 
@@ -85,6 +89,11 @@ public sealed class StubTechnicalData
             IsHearingImpaired = stream.IsHearingImpaired,
             IsOriginal = stream.IsOriginal,
             IsExternal = stream.IsExternal,
+
+            // Jellyfin counts ffmpeg stream numbers among the streams with the same Path as the one it wants, so an
+            // external stream with no Path shifts all the others. The value is a marker, never opened: a remote path
+            // is not stored, and the playback endpoints serve these subtitles themselves.
+            Path = stream.IsExternal ? string.Create(CultureInfo.InvariantCulture, $"{ExternalPathScheme}:{stubId}:{index}") : null,
             ColorRange = stream.ColorRange,
             ColorTransfer = stream.ColorTransfer,
             ColorPrimaries = stream.ColorPrimaries,
@@ -99,6 +108,25 @@ public sealed class StubTechnicalData
             BlPresentFlag = stream.BlPresentFlag,
             DvBlSignalCompatibilityId = stream.DvBlSignalCompatibilityId
         };
+    }
+
+    /// <summary>
+    /// Writes the numbers of an episode. Nothing is saved on the item itself.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="stub">The stub.</param>
+    /// <returns>Whether a number changed.</returns>
+    public static bool WriteNumbers(BaseItem item, StubEntry stub)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        if (item is not Episode episode)
+        {
+            return false;
+        }
+
+        var changed = Set(episode.ParentIndexNumber, stub.SeasonNumber, value => episode.ParentIndexNumber = value);
+        return Set(episode.IndexNumber, stub.EpisodeNumber, value => episode.IndexNumber = value) | changed;
     }
 
     /// <summary>
@@ -122,7 +150,6 @@ public sealed class StubTechnicalData
         var version = source.Version;
         changed |= Set(item.RunTimeTicks, version.RunTimeTicks ?? source.Item.RunTimeTicks, value => item.RunTimeTicks = value);
         changed |= Set(item.TotalBitrate, version.ContainerBitRate, value => item.TotalBitrate = value);
-        changed |= Set(item.Size, version.Size, value => item.Size = value);
         changed |= Set(item.Container, version.Container, value => item.Container = value);
 
         if (item is Video video)
@@ -131,7 +158,7 @@ public sealed class StubTechnicalData
             changed |= Set(video.Video3DFormat, ParseEnum<Video3DFormat>(version.Video3DFormat), value => video.Video3DFormat = value);
         }
 
-        SaveStreams(item, version, cancellationToken);
+        SaveStreams(item, stub, version, cancellationToken);
         return changed;
     }
 
@@ -152,23 +179,11 @@ public sealed class StubTechnicalData
             return;
         }
 
-        SaveStreams(item, source.Version, cancellationToken);
+        SaveStreams(item, stub, source.Version, cancellationToken);
         var chapters = source.Item.Chapters
             .Select(chapter => new ChapterInfo { Name = chapter.Name, StartPositionTicks = chapter.StartPositionTicks })
             .ToList();
         _chapters.SaveChapters(item, chapters);
-    }
-
-    private static bool WriteNumbers(BaseItem item, StubEntry stub)
-    {
-        // A locked series would leave a new episode without numbers, and "replace all" clears those of an unlocked one.
-        if (item is not Episode episode)
-        {
-            return false;
-        }
-
-        var changed = Set(episode.ParentIndexNumber, stub.SeasonNumber, value => episode.ParentIndexNumber = value);
-        return Set(episode.IndexNumber, stub.EpisodeNumber, value => episode.IndexNumber = value) | changed;
     }
 
     private static bool Set<T>(T current, T? wanted, Action<T> write)
@@ -188,9 +203,9 @@ public sealed class StubTechnicalData
         return Enum.TryParse<T>(value, true, out var parsed) ? parsed : null;
     }
 
-    private void SaveStreams(BaseItem item, IndexedVersion version, CancellationToken cancellationToken)
+    private void SaveStreams(BaseItem item, StubEntry stub, IndexedVersion version, CancellationToken cancellationToken)
     {
-        var streams = version.Streams.Select(ToMediaStream).OfType<MediaStream>().ToList();
+        var streams = version.Streams.Select(stream => ToMediaStream(stream, stub.Id)).OfType<MediaStream>().ToList();
         if (streams.Count > 0)
         {
             _streams.SaveMediaStreams(item.Id, streams, cancellationToken);

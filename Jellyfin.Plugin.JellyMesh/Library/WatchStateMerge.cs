@@ -43,12 +43,6 @@ public static class WatchStateMerge
             changed = true;
         }
 
-        if (stub.Likes is not null && local.Likes is null)
-        {
-            local.Likes = stub.Likes;
-            changed = true;
-        }
-
         return changed;
     }
 

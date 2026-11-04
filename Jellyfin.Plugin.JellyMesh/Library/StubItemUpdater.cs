@@ -66,7 +66,9 @@ public sealed class StubItemUpdater
             item.EndDate = metadata.EndDate?.UtcDateTime;
         }
 
-        await SaveAsync(item, ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        // Not MetadataEdit: on that reason Jellyfin rewrites any .nfo it finds, in its own format, inside the federated
+        // folder, even with its metadata savers off (observed on 12.4).
+        await SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
 
         if (metadata.IsProtected)
         {

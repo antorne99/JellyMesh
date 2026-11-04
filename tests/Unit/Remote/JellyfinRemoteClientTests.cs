@@ -40,6 +40,37 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task AnImageIsReadWithTheSessionInTheHeaderOnly()
+    {
+        var bytes = new byte[] { 1, 2, 3 };
+        var handler = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            return response;
+        });
+
+        var result = await ClientFor(handler).GetImageAsync(_endpoint, _session, "item", "Primary", 0, CancellationToken.None);
+
+        Assert.Equal(bytes, result.Value!.Content.ToArray());
+        Assert.Equal("image/png", result.Value.ContentType);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items/item/Images/Primary/0", request.Uri.AbsolutePath);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAnswerThatIsNotAnImageIsRefused()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{}"));
+
+        var result = await ClientFor(handler).GetImageAsync(_endpoint, _session, "item", "Primary", 0, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Fact]
     public async Task LoginAcceptsCamelCaseAnswers()
     {
         var handler = new StubHandler(_ => StubHandler.Json(
