@@ -316,11 +316,16 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         return IsSameOrigin(current, target) ? target : null;
     }
 
-    private static RemoteFailure FailureOf(HttpStatusCode status)
+    private static RemoteFailure FailureOf(HttpStatusCode status, RemoteSession? session)
     {
-        return status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-            ? RemoteFailure.AuthenticationFailed
-            : RemoteFailure.ServerError;
+        // Observed on 12.4: a refused or disabled token is 401 and a login of a disabled user is 403. So without a session
+        // 403 is a refused login, and with one it says something about this call and not about the token.
+        return status switch
+        {
+            HttpStatusCode.Unauthorized => RemoteFailure.AuthenticationFailed,
+            HttpStatusCode.Forbidden => session is null ? RemoteFailure.AuthenticationFailed : RemoteFailure.Forbidden,
+            _ => RemoteFailure.ServerError
+        };
     }
 
     private static HttpRequestMessage BuildRequest(RemoteEndpoint endpoint, HttpMethod method, Uri uri, RemoteSession? session, byte[]? body)
@@ -362,7 +367,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    return RawResponse.Failed(FailureOf(response.StatusCode), response.StatusCode);
+                    return RawResponse.Failed(FailureOf(response.StatusCode, session), response.StatusCode);
                 }
 
                 var content = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);

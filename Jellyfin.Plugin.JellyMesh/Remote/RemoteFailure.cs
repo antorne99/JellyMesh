@@ -36,9 +36,15 @@ public enum RemoteFailure
     Timeout,
 
     /// <summary>
-    /// The server refused the credentials or the token.
+    /// The server refused the credentials or the token. The only failure that calls for a new login.
     /// </summary>
     AuthenticationFailed,
+
+    /// <summary>
+    /// The server knows the user and does not allow this call, as with a route closed to peers. A new login would change
+    /// nothing, and it would cost the session in use: a login on the same device invalidates the previous token.
+    /// </summary>
+    Forbidden,
 
     /// <summary>
     /// The account is an administrator. Only a dedicated non-admin user is allowed.

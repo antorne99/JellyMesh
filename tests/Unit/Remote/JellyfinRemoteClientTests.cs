@@ -249,6 +249,7 @@ public class JellyfinRemoteClientTests
     [Theory]
     [InlineData(HttpStatusCode.InternalServerError, RemoteFailure.ServerError)]
     [InlineData(HttpStatusCode.Unauthorized, RemoteFailure.AuthenticationFailed)]
+    [InlineData(HttpStatusCode.Forbidden, RemoteFailure.Forbidden)]
     public async Task OnlyA404MeansStandard(HttpStatusCode status, RemoteFailure expected)
     {
         var handler = new StubHandler(_ => StubHandler.Status(status));
@@ -389,6 +390,17 @@ public class JellyfinRemoteClientTests
         var result = await ItemsAsync(new StubHandler(_ => StubHandler.Status(HttpStatusCode.Unauthorized)));
 
         Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
+    }
+
+    [Fact]
+    public async Task ACallRefusedWithAValidTokenIsNotAProblemOfTheLogin()
+    {
+        var handler = new StubHandler(_ => StubHandler.Status(HttpStatusCode.Forbidden));
+        var client = ClientFor(handler);
+
+        Assert.Equal(RemoteFailure.Forbidden, (await client.GetSharedLibrariesAsync(_endpoint, _session, CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.Forbidden, (await client.GetChangesAsync(_endpoint, _session, null, CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.Forbidden, (await client.GetImageAsync(_endpoint, _session, "item", "Primary", 0, CancellationToken.None)).Failure);
     }
 
     [Fact]

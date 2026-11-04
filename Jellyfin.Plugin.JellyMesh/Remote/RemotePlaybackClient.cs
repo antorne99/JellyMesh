@@ -264,9 +264,14 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             return RemoteFailure.StreamLimitReached;
         }
 
-        return status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-            ? RemoteFailure.AuthenticationFailed
-            : RemoteFailure.ServerError;
+        // Only 401 speaks of the token. A login on the same device invalidates the token in use, so a closed route must
+        // not cost one.
+        return status switch
+        {
+            HttpStatusCode.Unauthorized => RemoteFailure.AuthenticationFailed,
+            HttpStatusCode.Forbidden => RemoteFailure.Forbidden,
+            _ => RemoteFailure.ServerError
+        };
     }
 
     private static T? Parse<T>(byte[] body)

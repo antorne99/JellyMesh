@@ -84,6 +84,7 @@ public class RemotePlaybackClientTests
     [InlineData(HttpStatusCode.Found, RemoteFailure.RedirectRefused)]
     [InlineData(HttpStatusCode.TemporaryRedirect, RemoteFailure.RedirectRefused)]
     [InlineData(HttpStatusCode.Unauthorized, RemoteFailure.AuthenticationFailed)]
+    [InlineData(HttpStatusCode.Forbidden, RemoteFailure.Forbidden)]
     [InlineData(HttpStatusCode.InternalServerError, RemoteFailure.ServerError)]
     [InlineData(HttpStatusCode.NotFound, RemoteFailure.ServerError)]
     public async Task A_stream_failure_is_only_a_kind_of_failure(HttpStatusCode status, RemoteFailure expected)
@@ -101,6 +102,15 @@ public class RemotePlaybackClientTests
         Assert.Equal(expected, result.Failure);
         Assert.Null(result.Value);
         Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task A_document_refused_with_a_valid_token_is_not_a_problem_of_the_login()
+    {
+        var (client, _) = Build(_ => StubHandler.Status(HttpStatusCode.Forbidden));
+
+        Assert.Equal(RemoteFailure.Forbidden, (await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.Forbidden, (await client.StopEncodingAsync(_endpoint, _session, "ps", CancellationToken.None)).Failure);
     }
 
     [Fact]
