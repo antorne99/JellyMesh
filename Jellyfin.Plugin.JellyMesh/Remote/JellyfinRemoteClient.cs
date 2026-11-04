@@ -218,7 +218,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
     }
 
-    private static string AuthorizationHeader(RemoteEndpoint endpoint, RemoteSession? session)
+    internal static string AuthorizationHeader(RemoteEndpoint endpoint, RemoteSession? session)
     {
         var header = string.Create(CultureInfo.InvariantCulture, $"MediaBrowser Client=\"JellyMesh\", Device=\"JellyMesh\", DeviceId=\"{endpoint.DeviceId}\", Version=\"{_version}\"");
         return session is null ? header : string.Create(CultureInfo.InvariantCulture, $"{header}, Token=\"{session.AccessToken}\"");
