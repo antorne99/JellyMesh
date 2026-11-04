@@ -4,6 +4,8 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+rm -f "$WORK"/client-* "$WORK"/open-* "$WORK"/ws-* "$WORK"/seen-* "$WORK"/gate-*
+
 start a remoto-standard
 start b remoto-jellymesh
 install_plugin a
