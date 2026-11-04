@@ -46,6 +46,9 @@ public sealed record RemoteMediaSource
     /// <summary>Gets the 3D format.</summary>
     public string? Video3DFormat { get; init; }
 
+    /// <summary>Gets the quality worked out by a JellyMesh provider, null from a stock remote.</summary>
+    public RemoteQuality? Quality { get; init; }
+
     /// <summary>Gets the streams.</summary>
     public IReadOnlyList<RemoteStreamInfo>? MediaStreams { get; init; }
 }

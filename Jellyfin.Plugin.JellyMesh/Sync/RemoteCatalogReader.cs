@@ -64,6 +64,63 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<string>> GetFeedPositionAsync(RemoteServerInfo server, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+
+        var page = await ReadFeedPageAsync(server, null, cancellationToken).ConfigureAwait(false);
+        return page.IsSuccess ? RemoteResult.Success(page.Value!.Cursor) : RemoteResult.Fail<string>(page.Failure);
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<FeedRead>> ReadFeedAsync(
+        RemoteServerInfo server,
+        string cursor,
+        IReadOnlySet<string> knownItemIds,
+        DateTimeOffset seenUtc,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+
+        var changes = new Dictionary<string, RemoteChange>(StringComparer.Ordinal);
+        var position = cursor;
+        RemoteChangePage page;
+        do
+        {
+            var read = await ReadFeedPageAsync(server, position, cancellationToken).ConfigureAwait(false);
+            if (!read.IsSuccess)
+            {
+                return RemoteResult.Fail<FeedRead>(read.Failure);
+            }
+
+            page = read.Value!;
+            if (page.Reset)
+            {
+                return RemoteResult.Success(new FeedRead(true, page.Cursor, []));
+            }
+
+            // A cursor that stands still would never end, and neither would a feed that never stops growing.
+            if ((page.HasMore && page.Cursor == position) || changes.Count + page.Changes.Count > MaxItemsPerQuery)
+            {
+                return RemoteResult.Fail<FeedRead>(RemoteFailure.InvalidResponse);
+            }
+
+            position = page.Cursor;
+            foreach (var change in page.Changes)
+            {
+                changes[change.Id] = change;
+            }
+        }
+        while (page.HasMore);
+
+        var entries = new Dictionary<string, IndexedItem>(StringComparer.Ordinal);
+        var failure = await ReadChangedItemsAsync(server, changes.Values, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false);
+        return failure == RemoteFailure.None
+            ? RemoteResult.Success(new FeedRead(false, position, entries.Values.ToList()))
+            : RemoteResult.Fail<FeedRead>(failure);
+    }
+
+    /// <inheritdoc />
     public Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteServerInfo server, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(server);
@@ -79,6 +136,60 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         {
             entries[item.Id] = RemoteItemMapper.ToIndexedItem(item, type, libraryId, seenUtc);
         }
+    }
+
+    private static bool ViaProvider(RemoteServerInfo server) => server.Mode == RemoteMode.JellyMesh;
+
+    private Task<RemoteResult<RemoteChangePage>> ReadFeedPageAsync(RemoteServerInfo server, string? cursor, CancellationToken cancellationToken)
+    {
+        return _registry.RunWithSessionAsync(
+            server.Id,
+            (endpoint, session, token) => _client.GetChangesAsync(endpoint, session, cursor, token),
+            cancellationToken);
+    }
+
+    // The feed names the items, and they are read by the same route as a full read, so the provider checks them again.
+    private async Task<RemoteFailure> ReadChangedItemsAsync(
+        RemoteServerInfo server,
+        IEnumerable<RemoteChange> changes,
+        IReadOnlySet<string> knownItemIds,
+        Dictionary<string, IndexedItem> entries,
+        DateTimeOffset seenUtc,
+        CancellationToken cancellationToken)
+    {
+        var wanted = changes
+            .Select(change => (change.Id, Library: change.LibraryIds.FirstOrDefault(server.ImportedLibraryIds.Contains), Known: Enum.TryParse<RemoteItemType>(change.Type, out var type), Type: type))
+            .Where(change => change.Library is not null && change.Known)
+            .ToList();
+
+        foreach (var group in wanted.GroupBy(change => (change.Library, change.Type)))
+        {
+            foreach (var chunk in group.Select(change => change.Id).Chunk(PageSize))
+            {
+                var query = new RemoteItemQuery(null, group.Key.Type, 0, chunk.Length, chunk, null, true);
+                var page = await _registry.RunWithSessionAsync(
+                    server.Id,
+                    (endpoint, session, token) => _client.GetItemsAsync(endpoint, session, query, token),
+                    cancellationToken).ConfigureAwait(false);
+                if (!page.IsSuccess)
+                {
+                    return page.Failure;
+                }
+
+                Add(entries, page.Value!.Items, group.Key.Type, group.Key.Library!, seenUtc);
+            }
+        }
+
+        foreach (var library in wanted.Select(change => change.Library!).Distinct(StringComparer.Ordinal))
+        {
+            var failure = await AddMissingSeriesAsync(server, library, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false);
+            if (failure != RemoteFailure.None)
+            {
+                return failure;
+            }
+        }
+
+        return RemoteFailure.None;
     }
 
     private async Task<RemoteResult<IReadOnlyList<IndexedItem>>> ReadEntriesAsync(
@@ -135,7 +246,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
         foreach (var type in types)
         {
-            var read = await ReadAllAsync(server.Id, library.Id, type, sinceUtc, cancellationToken).ConfigureAwait(false);
+            var read = await ReadAllAsync(server, library.Id, type, sinceUtc, cancellationToken).ConfigureAwait(false);
             if (!read.IsSuccess)
             {
                 return read.Failure;
@@ -145,7 +256,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         }
 
         return types.Contains(RemoteItemType.Episode)
-            ? await AddMissingSeriesAsync(server, library, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false)
+            ? await AddMissingSeriesAsync(server, library.Id, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false)
             : RemoteFailure.None;
     }
 
@@ -153,7 +264,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     // keeps the ID of its own row. Without the row the episode would lose the IDs of its series.
     private async Task<RemoteFailure> AddMissingSeriesAsync(
         RemoteServerInfo server,
-        RemoteLibrary library,
+        string libraryId,
         IReadOnlySet<string> knownItemIds,
         Dictionary<string, IndexedItem> entries,
         DateTimeOffset seenUtc,
@@ -171,7 +282,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         // It has the same IDs and name, so it is kept under the ID the episodes point to.
         foreach (var id in missing)
         {
-            var query = new RemoteItemQuery(null, RemoteItemType.Series, 0, 1, [id]);
+            var query = new RemoteItemQuery(null, RemoteItemType.Series, 0, 1, [id], null, ViaProvider(server));
             var page = await _registry.RunWithSessionAsync(
                 server.Id,
                 (endpoint, session, token) => _client.GetItemsAsync(endpoint, session, query, token),
@@ -181,7 +292,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return page.Failure;
             }
 
-            Add(entries, page.Value!.Items.Take(1).Select(item => item with { Id = id }), RemoteItemType.Series, library.Id, seenUtc);
+            Add(entries, page.Value!.Items.Take(1).Select(item => item with { Id = id }), RemoteItemType.Series, libraryId, seenUtc);
         }
 
         var unresolved = missing.Count(id => !entries.ContainsKey(id));
@@ -193,12 +304,12 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return RemoteFailure.None;
     }
 
-    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadAllAsync(Guid serverId, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, CancellationToken cancellationToken)
+    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadAllAsync(RemoteServerInfo server, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, CancellationToken cancellationToken)
     {
         var read = RemoteResult.Fail<IReadOnlyCollection<RemoteItem>>(RemoteFailure.CatalogChanged);
         for (var attempt = 0; attempt < MaxReadAttempts && read.Failure == RemoteFailure.CatalogChanged; attempt++)
         {
-            read = await ReadPagesAsync(serverId, libraryId, type, sinceUtc, cancellationToken).ConfigureAwait(false);
+            read = await ReadPagesAsync(server, libraryId, type, sinceUtc, cancellationToken).ConfigureAwait(false);
         }
 
         return read;
@@ -206,7 +317,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
     // Pages are offsets: an item removed during the read shifts the next ones past the point reached, and one of them
     // would be skipped without a trace. So the read only counts if the total held still and every item was seen.
-    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadPagesAsync(Guid serverId, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, CancellationToken cancellationToken)
+    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadPagesAsync(RemoteServerInfo server, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, CancellationToken cancellationToken)
     {
         var items = new Dictionary<string, RemoteItem>(StringComparer.Ordinal);
         int? total = null;
@@ -214,9 +325,9 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         var start = 0;
         do
         {
-            var query = new RemoteItemQuery(libraryId, type, start, limit, null, sinceUtc);
+            var query = new RemoteItemQuery(libraryId, type, start, limit, null, sinceUtc, ViaProvider(server));
             var page = await _registry.RunWithSessionAsync(
-                serverId,
+                server.Id,
                 (endpoint, session, token) => _client.GetItemsAsync(endpoint, session, query, token),
                 cancellationToken).ConfigureAwait(false);
 

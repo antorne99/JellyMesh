@@ -50,7 +50,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public Collection<RemoteServerConfig> Servers { get; } = [];
 
     /// <summary>
-    /// Replaces <see cref="Servers"/> with those of <paramref name="current"/>. The stock save
+    /// Gets the JellyMesh servers connected to this one. Never sent to the browser through this object.
+    /// </summary>
+    [JsonIgnore]
+    public Collection<ProviderPeerConfig> Peers { get; } = [];
+
+    /// <summary>
+    /// Replaces <see cref="Servers"/> and <see cref="Peers"/> with those of <paramref name="current"/>. The stock save
     /// endpoint deserializes JSON that never holds them, so they would otherwise be erased.
     /// </summary>
     /// <param name="current">The configuration in force.</param>
@@ -66,6 +72,12 @@ public class PluginConfiguration : BasePluginConfiguration
         foreach (var server in current.Servers)
         {
             Servers.Add(server);
+        }
+
+        Peers.Clear();
+        foreach (var peer in current.Peers)
+        {
+            Peers.Add(peer);
         }
     }
 

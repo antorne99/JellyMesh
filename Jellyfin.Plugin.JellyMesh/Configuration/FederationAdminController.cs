@@ -184,6 +184,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.ResponseTooLarge => "The server sent an answer too large to accept.",
             RemoteFailure.LibraryUnavailable => "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.",
             RemoteFailure.CatalogChanged => "The catalog kept changing while it was read. Try again.",
+            RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
             _ => "The operation failed."
         };
     }
@@ -193,7 +194,7 @@ public class FederationAdminController : ControllerBase
         return failure switch
         {
             null => "NotChecked",
-            RemoteFailure.None => "Online",
+            RemoteFailure.None or RemoteFailure.StreamLimitReached => "Online",
             RemoteFailure.Unreachable or RemoteFailure.Timeout => "Offline",
             _ => failure.Value.ToString()
         };

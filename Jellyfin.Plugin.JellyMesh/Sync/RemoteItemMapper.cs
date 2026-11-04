@@ -99,6 +99,10 @@ public static class RemoteItemMapper
             .ToList() ?? [];
         var video = videos.Find(stream => stream.IsDefault) ?? videos.FirstOrDefault();
 
+        // A JellyMesh provider sends what it worked out itself. The same values, without guessing which stream it meant.
+        var quality = source.Quality
+            ?? (video is null ? null : new RemoteQuality(video.Height, video.Width, video.BitRate, video.Codec, video.VideoRange, video.VideoRangeType));
+
         return new IndexedVersion
         {
             MediaSourceId = source.Id,
@@ -110,12 +114,12 @@ public static class RemoteItemMapper
             ETag = source.ETag,
             Protocol = source.Protocol,
             IsRemote = source.IsRemote,
-            Height = video?.Height,
-            Width = video?.Width,
-            Codec = video?.Codec,
-            BitRate = video?.BitRate,
-            VideoRange = video?.VideoRange,
-            VideoRangeType = video?.VideoRangeType,
+            Height = quality?.Height,
+            Width = quality?.Width,
+            Codec = quality?.Codec,
+            BitRate = quality?.BitRate,
+            VideoRange = quality?.VideoRange,
+            VideoRangeType = quality?.VideoRangeType,
             Timestamp = source.Timestamp,
             Video3DFormat = source.Video3DFormat,
             Streams = source.MediaStreams?.Select(ToStream).ToList() ?? []

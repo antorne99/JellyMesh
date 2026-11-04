@@ -39,7 +39,26 @@ public interface IJellyfinRemoteClient
     Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Reads one page of <c>/Items</c>.
+    /// Lists the libraries a JellyMesh remote shares with this server.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The libraries.</returns>
+    Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetSharedLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads one page of the change feed of a JellyMesh remote.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="cursor">Where to read from, null to learn the current position.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page.</returns>
+    Task<RemoteResult<RemoteChangePage>> GetChangesAsync(RemoteEndpoint endpoint, RemoteSession session, string? cursor, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads one page of <c>/Items</c>, or of its counterpart in the ProviderApi.
     /// </summary>
     /// <param name="endpoint">The remote.</param>
     /// <param name="session">The session.</param>

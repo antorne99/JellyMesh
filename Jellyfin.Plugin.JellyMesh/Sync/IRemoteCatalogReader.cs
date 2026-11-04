@@ -39,6 +39,31 @@ public interface IRemoteCatalogReader
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Learns where the change feed of a JellyMesh remote stands. Asked before a full read, so that what changes during
+    /// the read comes up in the next one.
+    /// </summary>
+    /// <param name="server">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The cursor.</returns>
+    Task<RemoteResult<string>> GetFeedPositionAsync(RemoteServerInfo server, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads what changed on a JellyMesh remote in the chosen libraries. All or nothing, like <see cref="ReadAsync"/>.
+    /// </summary>
+    /// <param name="server">The server.</param>
+    /// <param name="cursor">Where to read from.</param>
+    /// <param name="knownItemIds">The entries already in the index. A series among them is not looked up again.</param>
+    /// <param name="seenUtc">The time to record as last seen.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The changes, or why they could not all be read.</returns>
+    Task<RemoteResult<FeedRead>> ReadFeedAsync(
+        RemoteServerInfo server,
+        string cursor,
+        IReadOnlySet<string> knownItemIds,
+        DateTimeOffset seenUtc,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Reads the clock of a server. A read must be stamped with it, because a change is filtered by the time on the remote.
     /// </summary>
     /// <param name="server">The server.</param>

@@ -21,6 +21,12 @@ public sealed class PlaybackRefusal
     /// </summary>
     public const string Text = "Server non raggiungibile";
 
+    /// <summary>
+    /// The text shown to the user when every source refused for its stream limit: the server is fine, so <see cref="Text"/>
+    /// would be wrong, and trying later can work.
+    /// </summary>
+    public const string LimitText = "Limite di stream raggiunto sul server di origine. Riprova più tardi.";
+
     private const string Header = "JellyMesh";
     private const string ToastMilliseconds = "8000";
 
@@ -43,19 +49,20 @@ public sealed class PlaybackRefusal
     /// </summary>
     /// <param name="context">The request.</param>
     /// <param name="deviceId">The device of the caller.</param>
+    /// <param name="text">The text to show, one of the fixed ones of this class.</param>
     /// <returns>The result.</returns>
-    public IActionResult Refuse(HttpContext context, string deviceId)
+    public IActionResult Refuse(HttpContext context, string deviceId, string text = Text)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        context.Response.OnCompleted(() => NotifyAsync(deviceId));
+        context.Response.OnCompleted(() => NotifyAsync(deviceId, text));
         return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
     }
 
-    private async Task NotifyAsync(string deviceId)
+    private async Task NotifyAsync(string deviceId, string text)
     {
         // With a timeout the web client shows a toast, above its own dialog, instead of a second dialog.
-        var arguments = new Dictionary<string, string> { ["Header"] = Header, ["Text"] = Text, ["TimeoutMs"] = ToastMilliseconds };
+        var arguments = new Dictionary<string, string> { ["Header"] = Header, ["Text"] = text, ["TimeoutMs"] = ToastMilliseconds };
         var command = new GeneralCommand(arguments) { Name = GeneralCommandType.DisplayMessage };
         try
         {

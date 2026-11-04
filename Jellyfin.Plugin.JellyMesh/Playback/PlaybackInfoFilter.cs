@@ -109,7 +109,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
                 await RunLocalTranscodeAsync(context, next, request, outcome).ConfigureAwait(false);
                 break;
             default:
-                context.Result = _refusal.Refuse(http, deviceId);
+                context.Result = _refusal.Refuse(http, deviceId, outcome.AtStreamLimit ? PlaybackRefusal.LimitText : PlaybackRefusal.Text);
                 break;
         }
     }

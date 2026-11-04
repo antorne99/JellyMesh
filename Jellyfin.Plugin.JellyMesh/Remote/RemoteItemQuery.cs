@@ -12,10 +12,12 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// <param name="Limit">The most items to return.</param>
 /// <param name="Ids">The items to look up, if any.</param>
 /// <param name="ChangedSinceUtc">Only items saved on the remote at or after this time of its clock, if set.</param>
+/// <param name="ViaProvider">Whether to read the ProviderApi of a JellyMesh remote instead of the stock route.</param>
 public sealed record RemoteItemQuery(
     string? LibraryId,
     RemoteItemType Type,
     int StartIndex,
     int Limit,
     IReadOnlyList<string>? Ids = null,
-    DateTimeOffset? ChangedSinceUtc = null);
+    DateTimeOffset? ChangedSinceUtc = null,
+    bool ViaProvider = false);

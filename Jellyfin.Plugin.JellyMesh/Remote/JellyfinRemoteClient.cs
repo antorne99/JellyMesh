@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Security;
 
 namespace Jellyfin.Plugin.JellyMesh.Remote;
@@ -49,6 +50,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     // Without the profile Jellyfin may answer in camelCase; the parsing tolerates both anyway.
     private const string AcceptJson = "application/json; profile=\"PascalCase\"";
     private const int MaxRedirects = 3;
+    private const string ProviderPath = "/" + ProviderProtocol.Route;
 
     // Everything a catalog entry keeps. ImageTags, BackdropImageTags, ratings, dates and numbers come by default, and
     // MediaSources holds the streams of each version. The list is what can reach the index: see RemoteItem.
@@ -120,7 +122,38 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         ArgumentNullException.ThrowIfNull(session);
 
         // /Library/VirtualFolders answers 403 to a non-admin user.
-        var response = await SendAsync(endpoint, HttpMethod.Get, "/UserViews", session, null, cancellationToken).ConfigureAwait(false);
+        return await ReadLibrariesAsync(endpoint, session, "/UserViews", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetSharedLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        return await ReadLibrariesAsync(endpoint, session, ProviderPath + "/Libraries", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<RemoteChangePage>> GetChangesAsync(RemoteEndpoint endpoint, RemoteSession session, string? cursor, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var path = ProviderPath + "/Changes" + (cursor is null ? string.Empty : "?cursor=" + Uri.EscapeDataString(cursor));
+        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteChangePage>(response.Failure);
+        }
+
+        var page = Parse<ChangesResponse>(response.Body);
+        return page is { Cursor: { Length: > 0 } next, Changes: not null }
+            ? RemoteResult.Success(new RemoteChangePage(page.Reset, next, page.HasMore, page.Changes))
+            : RemoteResult.Fail<RemoteChangePage>(RemoteFailure.InvalidResponse);
+    }
+
+    private async Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken)
+    {
+        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
             return RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(response.Failure);
@@ -153,7 +186,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
         var page = Parse<ItemsResponse>(response.Body);
         return page is { Items: not null, TotalRecordCount: not null }
-            ? RemoteResult.Success<RemoteItemPage>(new RemoteItemPage(page.Items, page.TotalRecordCount.Value))
+            ? RemoteResult.Success<RemoteItemPage>(new RemoteItemPage(WithQuality(page.Items, page.Quality), page.TotalRecordCount.Value))
             : RemoteResult.Fail<RemoteItemPage>(RemoteFailure.InvalidResponse);
     }
 
@@ -183,6 +216,21 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         return response.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true && response.Body.Length > 0
             ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType))
             : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
+    }
+
+    private static IReadOnlyList<RemoteItem> WithQuality(IReadOnlyList<RemoteItem> items, IReadOnlyDictionary<string, RemoteQuality>? quality)
+    {
+        if (quality is null)
+        {
+            return items;
+        }
+
+        return items
+            .Select(item => item with
+            {
+                MediaSources = item.MediaSources?.Select(source => source with { Quality = quality.GetValueOrDefault(source.Id) }).ToList()
+            })
+            .ToList();
     }
 
     private static string ItemsPath(RemoteSession session, RemoteItemQuery query)
@@ -219,7 +267,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             parameters.Add("minDateLastSaved=" + since.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
         }
 
-        return "/Items?" + string.Join('&', parameters);
+        return (query.ViaProvider ? ProviderPath + "/Items?" : "/Items?") + string.Join('&', parameters);
     }
 
     private static T? Parse<T>(byte[] body)
@@ -358,5 +406,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     private sealed record UserView(string? Id, string? Name, string? CollectionType);
 
-    private sealed record ItemsResponse(IReadOnlyList<RemoteItem>? Items, int? TotalRecordCount);
+    private sealed record ItemsResponse(IReadOnlyList<RemoteItem>? Items, int? TotalRecordCount, IReadOnlyDictionary<string, RemoteQuality>? Quality);
+
+    private sealed record ChangesResponse(bool Reset, string? Cursor, bool HasMore, IReadOnlyList<RemoteChange>? Changes);
 }
