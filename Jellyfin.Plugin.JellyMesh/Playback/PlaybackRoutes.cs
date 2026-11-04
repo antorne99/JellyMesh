@@ -5,7 +5,7 @@ using System.Linq;
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
-/// The address written in a <c>.strm</c> file. It holds no token and no remote address.
+/// The address written in a <c>.strm</c> file. It holds no token and no remote address, only the signature of this server.
 /// </summary>
 public static class PlaybackRoutes
 {
@@ -13,6 +13,12 @@ public static class PlaybackRoutes
     /// The path segment of the endpoint a <c>.strm</c> file points to.
     /// </summary>
     public const string PlayPathSegment = "/JellyMesh/Play/";
+
+    /// <summary>
+    /// The query parameter of the signature. It stays out of the path, which is all that recognises the endpoint: the
+    /// rules on federated items (decision 11, §4.4) do not depend on who signed what.
+    /// </summary>
+    public const string SignatureParameter = "sig";
 
     private const int MaxStubIdLength = 64;
 
@@ -22,8 +28,9 @@ public static class PlaybackRoutes
     /// <param name="httpPort">The HTTP port of the server.</param>
     /// <param name="baseUrl">The base URL of the server, if any.</param>
     /// <param name="stubId">The stub.</param>
+    /// <param name="signature">The signature of the stub.</param>
     /// <returns>The URL.</returns>
-    public static string StrmUrl(int httpPort, string? baseUrl, string stubId)
+    public static string StrmUrl(int httpPort, string? baseUrl, string stubId, string signature)
     {
         if (!IsValidStubId(stubId))
         {
@@ -31,7 +38,7 @@ public static class PlaybackRoutes
         }
 
         var prefix = string.IsNullOrWhiteSpace(baseUrl) ? string.Empty : "/" + baseUrl.Trim('/');
-        return string.Create(CultureInfo.InvariantCulture, $"http://127.0.0.1:{httpPort}{prefix}{PlayPathSegment}{stubId}");
+        return string.Create(CultureInfo.InvariantCulture, $"http://127.0.0.1:{httpPort}{prefix}{PlayPathSegment}{stubId}?{SignatureParameter}={signature}");
     }
 
     /// <summary>

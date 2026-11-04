@@ -39,7 +39,7 @@ public class PlaybackFiltersTests
     public PlaybackFiltersTests()
     {
         _stub = PlaybackValues.Stub(PlaybackValues.Source());
-        var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub") };
+        var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") };
         _library.Setup(library => library.GetItemById(_itemId)).Returns(video);
         _stubs.Setup(stubs => stubs.Find("stub")).Returns(_stub);
         SignedIn();

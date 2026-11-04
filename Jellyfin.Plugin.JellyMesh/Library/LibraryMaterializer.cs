@@ -201,6 +201,13 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             await WriteStubAsync(run, stub, cancellationToken).ConfigureAwait(false);
         }
 
+        // A stub with no work, such as one waiting for the post-scan task after its local copy arrived, can still be opened.
+        var handled = plan.Stubs.Select(work => work.Entry).Concat(plan.Removals).Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var stub in plan.State.Stubs.Where(stub => !handled.Contains(stub.Id)))
+        {
+            await SignStubAsync(run, stub, cancellationToken).ConfigureAwait(false);
+        }
+
         foreach (var stub in plan.Removals)
         {
             RemoveGone(run, stub);
@@ -315,6 +322,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 changed = true;
             }
 
+            changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing, cancellationToken).ConfigureAwait(false);
+
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
                 && await WriteImagesAsync(run, work.Images, existing, cancellationToken).ConfigureAwait(false))
             {
@@ -343,6 +352,41 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             run.Failed++;
             _logger.LogError("Cannot write a stub: {Error}", exception.GetType().Name);
         }
+    }
+
+    private async Task SignStubAsync(Run run, StubEntry stub, CancellationToken cancellationToken)
+    {
+        var strm = FederatedPaths.Resolve(run.Root, stub.RelativePath);
+        try
+        {
+            if (File.Exists(strm))
+            {
+                await ApplyStrmUrlAsync(strm, _urls.Build(stub.Id), _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            run.Failed++;
+            _logger.LogError("Cannot sign a stub: {Error}", exception.GetType().Name);
+        }
+    }
+
+    // Keeps the file and the item on the current URL. Only those two change: the path, hence the item and its watch state,
+    // stay. The item matters most: it is what ffmpeg opens, and an old URL would be refused until the next refresh.
+    private async Task<bool> ApplyStrmUrlAsync(string strm, string url, BaseItem? item, CancellationToken cancellationToken)
+    {
+        var stale = !string.Equals(await File.ReadAllTextAsync(strm, cancellationToken).ConfigureAwait(false), url, StringComparison.Ordinal);
+        if (stale)
+        {
+            await WriteTextAsync(strm, url, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (item is not null)
+        {
+            await _updater.ApplyStrmUrlAsync(item, url, cancellationToken).ConfigureAwait(false);
+        }
+
+        return stale;
     }
 
     private async Task<bool> WriteImagesAsync(Run run, IReadOnlyList<StubImage> images, BaseItem? item, CancellationToken cancellationToken)

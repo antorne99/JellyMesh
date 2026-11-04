@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
@@ -34,6 +35,7 @@ internal sealed class StubFixture : IDisposable
         Network.Setup(configuration => configuration.GetConfiguration("network")).Returns(new NetworkConfiguration());
         Host.Setup(host => host.HttpPort).Returns(8096);
 
+        Signer = new StrmSigner(Path.Combine(_data, "plugin"), new CapturingLogger<StrmSigner>());
         Updater = new StubItemUpdater(Library.Object);
         Technical = new StubTechnicalData(Sync.Index, Streams.Object, Chapters.Object);
         Remover = new StubRemover(Library.Object);
@@ -48,7 +50,7 @@ internal sealed class StubFixture : IDisposable
             Updater,
             Technical,
             Remover,
-            new StubUrlBuilder(Host.Object, Network.Object),
+            new StubUrlBuilder(Host.Object, Network.Object, Signer),
             Sync.Clock,
             Logger);
     }
@@ -70,6 +72,8 @@ internal sealed class StubFixture : IDisposable
     public Mock<IConfigurationManager> Network { get; } = new();
 
     public StubRegistry Registry { get; }
+
+    public StrmSigner Signer { get; }
 
     public FederationResolver Resolver { get; }
 
