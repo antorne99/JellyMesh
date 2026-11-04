@@ -132,6 +132,8 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
 
     public RemoteTranscodePolicy Policy { get; set; } = new("none", true, true, true);
 
+    public Action? OnStop { get; set; }
+
     public static RemoteResult<PlaybackInfoResponse> Hls(RemotePlaybackRequest request)
     {
         return RemoteResult.Success(new PlaybackInfoResponse { PlaySessionId = PlaybackValues.RemotePlaySession + request.ItemId, MediaSources = [PlaybackValues.HlsAnswer(request.MediaSourceId)] });
@@ -181,6 +183,7 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     public Task<RemoteResult<bool>> StopEncodingAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         Stopped.Add(playSessionId);
+        OnStop?.Invoke();
         return Task.FromResult(RemoteResult.Success(true));
     }
 }

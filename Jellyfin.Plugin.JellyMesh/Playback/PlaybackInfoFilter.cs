@@ -106,7 +106,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
                 context.Result = new OkObjectResult(outcome.Response);
                 break;
             case PlaybackOutcomeKind.LocalTranscode when request.DeviceProfile is not null:
-                await RunLocalTranscodeAsync(context, next, deviceId).ConfigureAwait(false);
+                await RunLocalTranscodeAsync(context, next, request, outcome).ConfigureAwait(false);
                 break;
             default:
                 context.Result = _refusal.Refuse(http, deviceId);
@@ -114,7 +114,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
     }
 
-    private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, string deviceId)
+    private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome)
     {
         // The stock action builds the local TranscodingUrl. ffmpeg then reads the URL of the .strm, from loopback.
         var noCopy = new Dictionary<string, object?>
@@ -131,16 +131,17 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         var executed = await next().ConfigureAwait(false);
-        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalResponse(response))
+        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalResponse(response, request, outcome))
         {
             executed.Exception = null;
             executed.ExceptionHandled = true;
-            executed.Result = _refusal.Refuse(context.HttpContext, deviceId);
+            executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId);
         }
     }
 
-    private static bool CleanLocalResponse(PlaybackInfoResponse response)
+    private bool CleanLocalResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, PlaybackOutcome outcome)
     {
+        PlaybackSession? subtitles = null;
         foreach (var source in response.MediaSources)
         {
             if (string.IsNullOrEmpty(source.TranscodingUrl))
@@ -157,6 +158,10 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             foreach (var stream in source.MediaStreams ?? [])
             {
                 stream.Path = null;
+                if (stream.DeliveryUrl is not null && outcome.FileSource is { } file)
+                {
+                    subtitles = _coordinator.MapLocalSubtitle(request.Identity, file, stream, subtitles, request.LocalToken);
+                }
             }
         }
 

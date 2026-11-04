@@ -18,5 +18,10 @@ public enum PlaybackStreamKind
     /// <summary>
     /// A progressive transcode on the remote.
     /// </summary>
-    Progressive
+    Progressive,
+
+    /// <summary>
+    /// Only the subtitles of a local transcode: the video stays on the local server.
+    /// </summary>
+    Subtitles
 }

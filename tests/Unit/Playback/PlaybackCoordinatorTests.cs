@@ -23,7 +23,7 @@ public class PlaybackCoordinatorTests
         Assert.Equal(PlaybackOutcomeKind.Remote, outcome.Kind);
         var session = Assert.Single(fixture.Sessions.All);
         Assert.Equal(session.Id, outcome.Response!.PlaySessionId);
-        Assert.Contains(fixture.Client.Opened, path => path.Contains("hls1/main/-1.mp4", StringComparison.Ordinal));
+        Assert.Contains(fixture.Client.Opened, path => path.Contains("hls1/main/0.mp4", StringComparison.Ordinal));
         Assert.Empty(fixture.Client.Stopped);
     }
 
@@ -159,11 +159,10 @@ public class PlaybackCoordinatorTests
             throw new InvalidOperationException();
         };
 
-        var outcome = await Task.WhenAny(
-            fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source())),
-            Task.Delay(PlaybackTimeouts.RemotePlaybackInfo + TimeSpan.FromSeconds(10)));
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()))
+            .WaitAsync(PlaybackTimeouts.RemotePlaybackInfo + TimeSpan.FromSeconds(10));
 
-        Assert.Equal(PlaybackOutcomeKind.Unavailable, ((Task<PlaybackOutcome>)outcome).Result.Kind);
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
     }
 
     [Fact]
@@ -232,12 +231,12 @@ public class PlaybackCoordinatorTests
         await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
         var session = Assert.Single(fixture.Sessions.All);
         var foundDuringStop = true;
-        var stopping = new FakeStopObserver(fixture, session.Id, found => foundDuringStop = found);
+        fixture.Client.OnStop = () => foundDuringStop = fixture.Sessions.Find(session.Id) is not null;
 
-        await stopping.CloseAsync();
+        await fixture.Coordinator.CloseAsync(session.Id);
+        await fixture.Coordinator.CloseAsync(session.Id);
 
         Assert.False(foundDuringStop);
-        await fixture.Coordinator.CloseAsync(session.Id);
         Assert.Single(fixture.Client.Stopped);
     }
 
@@ -314,25 +313,5 @@ public class PlaybackCoordinatorTests
         var content = await fixture.Coordinator.OpenFileAsync(PlaybackValues.Stub(source), System.Net.Http.HttpMethod.Get, null, CancellationToken.None);
 
         Assert.Null(content);
-    }
-
-    private sealed class FakeStopObserver
-    {
-        private readonly CoordinatorFixture _fixture;
-        private readonly string _sessionId;
-        private readonly Action<bool> _report;
-
-        public FakeStopObserver(CoordinatorFixture fixture, string sessionId, Action<bool> report)
-        {
-            _fixture = fixture;
-            _sessionId = sessionId;
-            _report = report;
-        }
-
-        public async Task CloseAsync()
-        {
-            await _fixture.Coordinator.CloseAsync(_sessionId);
-            _report(_fixture.Sessions.Find(_sessionId) is not null);
-        }
     }
 }

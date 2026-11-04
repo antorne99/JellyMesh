@@ -91,7 +91,7 @@ public class PlaybackProxyController : ControllerBase
     public async Task<ActionResult> GetStream([FromRoute] string sessionId, CancellationToken cancellationToken)
     {
         var access = await AuthorizeAsync(sessionId).ConfigureAwait(false);
-        if (access.Session is not { } session || session.Kind == PlaybackStreamKind.Hls)
+        if (access.Session is not { Kind: PlaybackStreamKind.Direct or PlaybackStreamKind.Progressive } session)
         {
             return NotFound();
         }

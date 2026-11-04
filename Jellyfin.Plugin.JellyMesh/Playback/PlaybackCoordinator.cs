@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
@@ -10,6 +11,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.Extensions.Logging;
 
@@ -77,6 +79,7 @@ public sealed class PlaybackCoordinator
                 return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response);
             }
 
+            _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
             if (attempt.Reachable)
             {
                 reachable.Add(source);
@@ -89,12 +92,41 @@ public sealed class PlaybackCoordinator
             {
                 _workingSources[request.Stub.Id] = source;
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
-                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode);
+                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source);
             }
         }
 
         await ClosePreviousAsync(previous).ConfigureAwait(false);
         return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable);
+    }
+
+    /// <summary>
+    /// Sends the subtitles of a local transcode to the remote, through a session of their own: the stub has no subtitle
+    /// file, and the local ffmpeg should not read the whole stream to extract one.
+    /// </summary>
+    /// <param name="identity">Who plays what.</param>
+    /// <param name="source">The source of the file.</param>
+    /// <param name="stream">The subtitle in the numbering of the remote, its URL still the stock one.</param>
+    /// <param name="session">The session of this playback, null to start one.</param>
+    /// <param name="localToken">The local token.</param>
+    /// <returns>The session.</returns>
+    public PlaybackSession MapLocalSubtitle(PlaybackIdentity identity, StubSource source, MediaStream stream, PlaybackSession? session, string localToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(stream);
+
+        if (session is null)
+        {
+            session = new PlaybackSession(identity, source, null, PlaybackStreamKind.Subtitles, string.Empty, _clock.GetUtcNow());
+            _sessions.Add(session);
+        }
+
+        var format = System.IO.Path.GetExtension(stream.DeliveryUrl?.Split('?')[0]) ?? ".vtt";
+        stream.DeliveryUrl = session.MapRootedUrl(
+            "/Videos/" + Uri.EscapeDataString(source.ItemId) + "/" + Uri.EscapeDataString(source.MediaSourceId) + "/Subtitles/" + stream.Index.ToString(CultureInfo.InvariantCulture) + "/0/Stream" + format,
+            localToken);
+        stream.IsExternalUrl = false;
+        return session;
     }
 
     /// <summary>
@@ -322,12 +354,21 @@ public sealed class PlaybackCoordinator
         var upstream = PlaybackUrls.WithoutToken(remote.TranscodingUrl);
         var kind = remote.TranscodingSubProtocol == MediaStreamProtocol.hls ? PlaybackStreamKind.Hls : PlaybackStreamKind.Progressive;
         var session = new PlaybackSession(request.Identity, source, remotePlaySessionId, kind, upstream, now);
-        var works = kind == PlaybackStreamKind.Hls
-            ? await FirstSegmentWorksAsync(session, request.DeviceProfile, cancellationToken).ConfigureAwait(false)
-            : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null), cancellationToken).ConfigureAwait(false);
-        if (works)
+        try
         {
-            return session;
+            var works = kind == PlaybackStreamKind.Hls
+                ? await FirstSegmentWorksAsync(session, request.DeviceProfile, cancellationToken).ConfigureAwait(false)
+                : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null), cancellationToken).ConfigureAwait(false);
+            if (works)
+            {
+                return session;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The client left during the probe, and nothing else would close what it started.
+            await StopEncodingAsync(session).ConfigureAwait(false);
+            throw;
         }
 
         await StopEncodingAsync(session).ConfigureAwait(false);
