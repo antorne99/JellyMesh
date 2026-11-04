@@ -17,7 +17,7 @@ STUB_PORT=${STUB_PORT:-18221}
 STUB=http://host.docker.internal:$STUB_PORT
 STUB_LOG=$P3/run/stub.log
 # Media stay in the real repo and are only ever mounted read-only.
-MEDIA=${MEDIA:-/Users/antoniotornesello/Documents/Progetti/Personal/JellyMesh/tests/Integration/media}
+MEDIA=${MEDIA:-$REPO/media}
 CLIP="$MEDIA/remoto-standard/film/JM Audio e Sottotitoli (2026)/JM Audio e Sottotitoli (2026).mkv"
 
 port_of() { case $1 in plain) echo 18220 ;; probe) echo 18222 ;; *) return 1 ;; esac; }
