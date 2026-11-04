@@ -101,6 +101,21 @@ movie_nfo() {
 EOF
 }
 
+# movie_plot <server> <title> <year> <plot>: metadata, but no provider IDs.
+movie_plot() {
+  local dir="$MEDIA/$1/film/$2 ($3)"
+  mkdir -p "$dir"
+  cat >"$dir/movie.nfo" <<EOF
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <title>$2</title>
+  <year>$3</year>
+  <plot>$4</plot>
+  <lockdata>false</lockdata>
+</movie>
+EOF
+}
+
 # episode <server> <series> <year> <season> <episode> <source> <WxH> <codec> <kbit/s>
 # Each episode number cuts its own part of the source, the same on every server.
 episode() {
@@ -109,6 +124,16 @@ episode() {
   tag=$(printf 'S%02dE%02d' "$season" "$ep")
   encode "$server/serie/$series ($year)/Season $(printf %02d "$season")/$series $tag.mkv" \
     "$src" "$start" 30 "$size" "$codec" "$rate" "$server - $tag ${size#*x}p $codec ${rate}k"
+}
+
+# episodes <server> <series> <year> <season> <first> <last> <source> <WxH> <codec> <kbit/s>
+# One file with several episodes. Jellyfin takes IndexNumberEnd from the name.
+episodes() {
+  local server=$1 series=$2 year=$3 season=$4 first=$5 last=$6 src=$7 size=$8 codec=$9 rate=${10}
+  local tag start=$((100 + season * 100 + first * 35))
+  tag=$(printf 'S%02dE%02d-E%02d' "$season" "$first" "$last")
+  encode "$server/serie/$series ($year)/Season $(printf %02d "$season")/$series $tag.mkv" \
+    "$src" "$start" 60 "$size" "$codec" "$rate" "$server - $tag ${size#*x}p $codec ${rate}k"
 }
 
 # series_nfo <server> <series> <year> <tmdb> <tvdb> <imdb>
@@ -253,6 +278,31 @@ movie remoto-jellymesh "Titolo Omonimo" 2025 "$ED" 340 "$SD" h264 2000
 movie locale "Sonda Locale Senza ID" 2026 "$ED" 410 "$SD" h264 2000
 movie remoto-standard "Sonda Locale Senza ID" 2026 "$ED" 410 "$HD" h264 4000
 
+# --- Decision 13: what merges and what must not --------------------------------
+
+# A copy without IDs joins the copy that has them, because the runtime confirms it.
+movie_nfo remoto-standard "JM Copia Senza ID" 2026 999000008 tt99000008
+movie remoto-standard "JM Copia Senza ID" 2026 "$TOS" 620 "$SD" h264 2000
+movie remoto-jellymesh "JM Copia Senza ID" 2026 "$TOS" 620 "$HD" h264 4000
+
+# One shared ID is enough, even with the other one different.
+movie_nfo remoto-standard "JM ID Parziali" 2026 999000009 tt99000009
+movie remoto-standard "JM ID Parziali" 2026 "$TOS" 690 "$SD" h264 2000
+movie_nfo remoto-jellymesh "JM ID Parziali" 2026 999000009 tt99000010
+movie remoto-jellymesh "JM ID Parziali" 2026 "$TOS" 690 "$HD" h264 4000
+
+# Equal only without articles, and with the same runtime: the plots tell them apart.
+movie_plot remoto-standard "La La Sonda Muta" 2026 "Un pianista insegue un sogno tra le colline della California."
+movie remoto-standard "La La Sonda Muta" 2026 "$ED" 480 "$SD" h264 2000
+movie_plot remoto-jellymesh "Sonda Muta" 2026 "Una spedizione polare perde i contatti con la base dopo una tempesta."
+movie remoto-jellymesh "Sonda Muta" 2026 "$ED" 480 "$HD" h264 4000
+
+# The same against a local copy, which must not hide a different film.
+movie_plot locale "Sonda Trama" 2026 "Un guardiano del faro scopre un messaggio nella sabbia."
+movie locale "Sonda Trama" 2026 "$ED" 550 "$SD" h264 2000
+movie_plot remoto-standard "Sonda Trama" 2026 "Due fratelli riaprono una vecchia officina in montagna."
+movie remoto-standard "Sonda Trama" 2026 "$ED" 550 "$HD" h264 4000
+
 # --- Series -----------------------------------------------------------------
 
 # Split across all servers. E03 overlaps local and remote, E05-E06 are on both
@@ -271,5 +321,25 @@ S="Serie Senza ID"
 episode locale "$S" 2026 1 1 "$ED" "$SD" h264 2000
 episode remoto-standard "$S" 2026 1 2 "$ED" "$SD" h264 2000
 episode remoto-jellymesh "$S" 2026 1 2 "$ED" "$HD" h264 4000
+
+# Files with several episodes, one pair of numbers per case (decision 13a).
+S="JM Serie Doppia"
+for server in locale remoto-standard remoto-jellymesh; do
+  series_nfo "$server" "$S" 2026 999000201 999000202 tt99000201
+done
+# E01-E02: a local double against remote singles, so both stay local.
+episodes locale "$S" 2026 1 1 2 "$ED" "$HD" h264 3000
+for ep in 1 2; do episode remoto-standard "$S" 2026 1 "$ep" "$ED" "$SD" h264 2000; done
+# E03-E04: a double on one remote only, so one stub with the range.
+episodes remoto-standard "$S" 2026 1 3 4 "$ED" "$SD" h264 2000
+# E05-E06: a double on both remotes, so one stub, the better one, the other as backup.
+episodes remoto-standard "$S" 2026 1 5 6 "$ED" "$SD" h264 2000
+episodes remoto-jellymesh "$S" 2026 1 5 6 "$ED" "$HD" h264 4000
+# E07-E08: E07 is local, so only E08 comes from the double (§4.2 rule 4).
+episode locale "$S" 2026 1 7 "$ED" "$SD" h264 2000
+episodes remoto-standard "$S" 2026 1 7 8 "$ED" "$SD" h264 2000
+# E09-E10: a better single of E10, so each episode has its own source.
+episodes remoto-standard "$S" 2026 1 9 10 "$ED" "$SD" h264 2000
+episode remoto-jellymesh "$S" 2026 1 10 "$ED" "$HD" h264 4000
 
 echo "done: $(du -sh "$MEDIA" | cut -f1) in $MEDIA"

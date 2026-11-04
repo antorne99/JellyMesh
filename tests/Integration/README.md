@@ -52,7 +52,7 @@ Default metadata fetchers stay on, as on the real server, so the spikes see norm
 
 ## Media
 
-Clips are 60 seconds (episodes 30) and show a burned-in label with the server and variant, so playback shows which source is really being served. All are 16:9 at exactly 1920x1080 or 1280x720, padded where needed.
+Clips are 60 seconds (single episodes 30, and `JM ID Parziali` 44, where the source ends) and show a burned-in label with the server and variant, so playback shows which source is really being served. All are 16:9 at exactly 1920x1080 or 1280x720, padded where needed.
 
 The HDR10 clip is SDR footage converted to PQ/BT.2020: tags and pixels agree, but it is not a real HDR grade. Upscaled clips are not real 1080p detail. Neither matters for dedup or playback tests.
 
@@ -72,6 +72,7 @@ Bitrates below are the video figures reported by Jellyfin, in Mbit/s. Rerun `rep
 | JM Confronto Codec (2026) | Codec decides within the 5% bitrate tolerance (3.6% apart) | | 1080p H.264 2.75 | 1080p AV1 2.65 | JellyMesh, standard as backup |
 | JM Versioni Multiple (2026) | Two versions on one server | | 1080p and 720p H.264 | | Standard |
 | JM Audio e Sottotitoli (2026) | 2 audio tracks, 1 embedded and 2 external subtitles | | 1080p H.264 3.7 | | Standard |
+| JM ID Parziali (2026) | Same TMDb ID, different IMDb IDs: one match is enough (decision 13) | | 720p H.264 1.5 | 1080p H.264 3.0 | One title, JellyMesh, standard as backup |
 
 Real IDs, checked on Wikidata:
 
@@ -83,14 +84,17 @@ Real IDs, checked on Wikidata:
 
 ### Films without provider IDs
 
-These have no `.nfo`, and their invented titles match nothing on TMDb. `report.sh` confirms that no IDs were assigned.
+These have no IDs and their invented titles match nothing on TMDb, so `report.sh` shows none. Title and year only propose a match, and the metadata must confirm it (decision 13). Most of these clips have no `.nfo`, so the runtime is the only metadata they have: these clips all last 60 seconds, which confirms the rows with the same title and year.
 
 | Title | Scenario | locale | remoto-standard | remoto-jellymesh | Expected result |
 |---|---|---|---|---|---|
-| Sonda Senza ID (2026) | Same title and year | | 720p 1.9 | 1080p 3.8 | JellyMesh, standard as backup |
+| Sonda Senza ID (2026) | Same title and year, the runtime confirms | | 720p 1.9 | 1080p 3.8 | JellyMesh, standard as backup |
 | L'Éclisse Fantasma / Eclisse Fantasma (2026) | Same after normalization | | 720p 1.9 | 1080p 3.9 | One title, JellyMesh, standard as backup |
 | Titolo Omonimo (2024) and (2025) | Same title, different year | | 2024: 720p 1.9 | 2025: 720p 1.9 | Two separate films |
-| Sonda Locale Senza ID (2026) | Local wins on title and year | 720p 2.0 | 1080p 4.0 | | Local |
+| Sonda Locale Senza ID (2026) | Local wins, the runtime confirms | 720p 2.0 | 1080p 4.0 | | Local |
+| JM Copia Senza ID (2026) | IDs on one copy only, the runtime confirms | | 720p 1.9, with IDs | 1080p 3.9 | One title, JellyMesh, standard as backup |
+| La La Sonda Muta / Sonda Muta (2026) | Equal only without articles, same runtime, a `.nfo` with a different plot | | 720p 1.9 | 1080p 3.9 | Two separate films, reported as a possible duplicate |
+| Sonda Trama (2026) | Same title, year and runtime, a `.nfo` with a different plot | 720p 1.9 | 1080p 3.6 | | Both shown: the local copy hides nothing |
 
 ### Series
 
@@ -106,6 +110,16 @@ These have no `.nfo`, and their invented titles match nothing on TMDb. `report.s
 | Serie Senza ID S01E01 | 720p | | | Local |
 | Serie Senza ID S01E02 | | 720p | 1080p | JellyMesh, standard as backup |
 
+`JM Serie Doppia (2026)` has files with several episodes (decision 13a), with invented IDs (TMDb 999000201, TVDB 999000202). A file written `E01-E02` lasts 60 seconds, and each pair of numbers is one case.
+
+| Episodes | locale | remoto-standard | remoto-jellymesh | Expected result |
+|---|---|---|---|---|
+| E01-E02 | Double, 1080p | Singles, 720p | | Local, both |
+| E03-E04 | | Double, 720p | | Standard, one stub `S01E03-E04` |
+| E05-E06 | | Double, 720p | Double, 1080p | JellyMesh, one stub `S01E05-E06`, standard as backup |
+| E07-E08 | E07, 720p | Double, 720p | | E07 local, E08 standard on a plain stub that plays the double |
+| E09-E10 | | Double, 720p | E10, 1080p | E09 standard on a plain stub, E10 JellyMesh with the double as backup |
+
 ## What 12.4 showed
 
 Observed while building this environment, on Jellyfin 12.4.0.
@@ -118,6 +132,8 @@ Observed while building this environment, on Jellyfin 12.4.0.
 - **Film names:** without a `.nfo`, `Name` keeps the year (`Sonda Senza ID (2026)`), while `ProductionYear` is correct. With a `.nfo` it is clean (`Tears of Steel`).
 - **MKV bitrate:** MKV has no per-stream bitrate, so Jellyfin reports the container bitrate minus 192 kbit/s per audio track, and shows `192000` as the bitrate of every audio track, even a 128 kbit/s AAC. MP4 values are measured.
 - **Episodes:** `ProviderIds` is empty on the test episodes, so identity has to come from the parent series plus season and episode numbers, as §4.1 expects.
+- **Files with several episodes:** `S01E01-E02` sets `IndexNumberEnd` on a video file and on a `.strm`, and a list always carries it, whatever `Fields` asks for. The name becomes `Episodio 1 / Episodio 2`, and only one item exists. NextUp treats it as both: once it is played, the next item is `E03`.
+- **`.nfo` of several episodes:** `<episodenumberend>` sets `IndexNumberEnd` even when the file name holds one number, and `<lockdata>` keeps it. Several `<episodedetails>` blocks work too, joining their titles. "Replace all metadata" on an unlocked item keeps `IndexNumber` but clears `IndexNumberEnd`, so the stub provider restores it.
 
 These observations led to the three decisions recorded in §10 of the plan: a 5% bitrate tolerance, removing the year from `Name`, and using Jellyfin's video bitrate uncorrected.
 
@@ -126,6 +142,17 @@ These observations led to the three decisions recorded in §10 of the plan: a 5%
 Phase 0 tests live in `spikes/`, and their results in `docs/fase-0-esiti.md`. `stub_server.py` stands in for a `.strm` target and logs every request. Spikes write fixtures to `federata/`, so remove them afterwards. Jellyfin skips a completely empty library path and keeps its items, so leave a hidden file there until a scan has removed them.
 
 The spikes for points 2 to 7 run on private throwaway containers, never on this stack. `private-instance.sh` starts one for `series-merge.sh` and `watch-state.sh`. `JellyMeshProbe/` is a test plugin, not the real one, built by `build-probe.sh`. `media-source-probing.sh` and `unavailable-title.sh` read `P3` and `P6`, a work folder holding `tests/Integration` and a copy of the spikes in `out/spikes`. `results.txt` and `unavailable-title-results.txt` are recorded runs.
+
+## Proof scripts
+
+`dedup/` proves decisions 13 and 13a on private containers named `jm-dedup-*`, on ports 18421-18424, from `MEDIA` (by default this folder's `media/`) and with scratch files in `WORK`:
+
+```sh
+dedup/up.sh                  # the two remotes and a consumer with the current build
+dedup/run.sh                 # what merges, what stays apart, doubles, playback, NextUp, local copies arriving
+OLD=<old checkout> dedup/upgrade.sh   # an index and stubs from the old build, then the current one
+dedup/down.sh                # removes containers, volumes and network
+```
 
 ## Not covered here
 

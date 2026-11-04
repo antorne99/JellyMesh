@@ -67,6 +67,12 @@ internal static class Fixtures
     public static CatalogItem Lasting(this CatalogItem item, int minutes) =>
         item with { Metadata = item.Metadata with { RunTimeTicks = minutes * TimeSpan.TicksPerMinute } };
 
+    /// <summary>
+    /// Gives a film a plot.
+    /// </summary>
+    public static CatalogItem Telling(this CatalogItem item, string plot) =>
+        item with { Metadata = item.Metadata with { Overview = plot } };
+
     public static Lazy<IReadOnlyList<string>> People(params string[] names) => new(names);
 
     /// <summary>
