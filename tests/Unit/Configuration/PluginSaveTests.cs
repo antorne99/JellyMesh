@@ -16,6 +16,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
 public sealed class PluginSaveTests : IDisposable
 {
     private readonly string _folder = Directory.CreateTempSubdirectory("jellymesh-tests").FullName;
+    private readonly IApplicationPaths _paths;
     private readonly Plugin _plugin;
 
     public PluginSaveTests()
@@ -23,7 +24,8 @@ public sealed class PluginSaveTests : IDisposable
         var paths = new Mock<IApplicationPaths>();
         paths.SetupGet(p => p.PluginConfigurationsPath).Returns(_folder);
         paths.SetupGet(p => p.PluginsPath).Returns(_folder);
-        _plugin = new Plugin(paths.Object, new RealXmlSerializer());
+        _paths = paths.Object;
+        _plugin = new Plugin(_paths, new RealXmlSerializer(), new CapturingLogger<Plugin>());
         var server = new RemoteServerConfig
         {
             Id = Guid.NewGuid(),
@@ -54,9 +56,9 @@ public sealed class PluginSaveTests : IDisposable
         var seen = new System.Collections.Generic.List<int>();
         store.SettingsChanged += (_, _) => seen.Add(store.Read(config => config.SyncIntervalSeconds));
 
-        _plugin.UpdateConfiguration(new PluginConfiguration { SyncIntervalSeconds = 60 });
+        _plugin.UpdateConfiguration(new PluginConfiguration { SyncIntervalSeconds = 600 });
 
-        Assert.Equal([60], seen);
+        Assert.Equal([600], seen);
     }
 
     [Fact]
@@ -91,12 +93,12 @@ public sealed class PluginSaveTests : IDisposable
     public void AStockSaveKeepsTheServers()
     {
         var incoming = JsonSerializer.Deserialize<PluginConfiguration>(
-            "{\"SyncIntervalSeconds\":60,\"ReconciliationTime\":\"04:30\",\"Servers\":[{\"Name\":\"Injected\"}]}",
+            "{\"SyncIntervalSeconds\":600,\"ReconciliationTime\":\"04:30\",\"Servers\":[{\"Name\":\"Injected\"}]}",
             JsonDefaults.Options)!;
 
         _plugin.UpdateConfiguration(incoming);
 
-        Assert.Equal(60, _plugin.Configuration.SyncIntervalSeconds);
+        Assert.Equal(600, _plugin.Configuration.SyncIntervalSeconds);
         Assert.Equal("Friend", Assert.Single(_plugin.Configuration.Servers).Name);
         Assert.Contains("ciphertext-sentinel", Xml, StringComparison.Ordinal);
         Assert.DoesNotContain("Injected", Xml, StringComparison.Ordinal);
@@ -122,6 +124,42 @@ public sealed class PluginSaveTests : IDisposable
 
         Assert.Equal(900, _plugin.Configuration.SyncIntervalSeconds);
         Assert.Single(_plugin.Configuration.Servers);
+    }
+
+    [Fact]
+    public void ASaveBelowTheMinimumIntervalIsRefused()
+    {
+        Assert.Throws<ArgumentException>(() => _plugin.UpdateConfiguration(new PluginConfiguration { SyncIntervalSeconds = 299 }));
+
+        Assert.Equal(900, _plugin.Configuration.SyncIntervalSeconds);
+    }
+
+    [Fact]
+    public void AnIntervalAlreadySavedBelowTheMinimumRunsAsTheMinimumWithAWarning()
+    {
+        var path = _plugin.ConfigurationFilePath;
+        _plugin.ChangeConfiguration(config => config.SyncIntervalSeconds = 60);
+        Assert.Contains("<SyncIntervalSeconds>60<", File.ReadAllText(path), StringComparison.Ordinal);
+        var logger = new CapturingLogger<Plugin>();
+
+        var loaded = new Plugin(_paths, new RealXmlSerializer(), logger);
+
+        Assert.Equal(300, loaded.Configuration.SyncIntervalSeconds);
+        Assert.Contains("\"SyncIntervalSeconds\":300", JsonSerializer.Serialize<object>(loaded.Configuration, JsonDefaults.Options), StringComparison.OrdinalIgnoreCase);
+        var line = Assert.Single(logger.Lines);
+        Assert.Contains("SyncIntervalSeconds", line, StringComparison.Ordinal);
+        Assert.Contains("60", line, StringComparison.Ordinal);
+        Assert.Contains("300", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AValidConfigurationLoadsWithoutAWarning()
+    {
+        var logger = new CapturingLogger<Plugin>();
+
+        _ = new Plugin(_paths, new RealXmlSerializer(), logger);
+
+        Assert.Empty(logger.Lines);
     }
 
     public void Dispose() => Directory.Delete(_folder, true);

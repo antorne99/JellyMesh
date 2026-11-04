@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
@@ -24,7 +25,18 @@ public class PluginConfiguration : BasePluginConfiguration
     public const string ReconciliationTimeFormat = "HH:mm";
 
     /// <summary>
-    /// Gets or sets the incremental sync interval in seconds.
+    /// The lowest sync interval: the overlap of the incremental sync, so that two runs never read past each other
+    /// (decision 15).
+    /// </summary>
+    public const int MinSyncIntervalSeconds = 300;
+
+    private static readonly SettingRange[] _ranges =
+    [
+        new(nameof(SyncIntervalSeconds), config => config.SyncIntervalSeconds, (config, value) => config.SyncIntervalSeconds = value, MinSyncIntervalSeconds, int.MaxValue)
+    ];
+
+    /// <summary>
+    /// Gets or sets the incremental sync interval in seconds, at least <see cref="MinSyncIntervalSeconds"/>.
     /// </summary>
     public int SyncIntervalSeconds { get; set; } = 900;
 
@@ -87,9 +99,14 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <exception cref="ArgumentException">A setting is invalid. Jellyfin answers such a save with 400.</exception>
     public void Validate()
     {
-        if (SyncIntervalSeconds <= 0)
+        foreach (var range in _ranges)
         {
-            throw new ArgumentException("The sync interval must be a positive number of seconds.", nameof(SyncIntervalSeconds));
+            if (!range.Holds(this))
+            {
+                throw new ArgumentException(
+                    string.Create(CultureInfo.InvariantCulture, $"{range.Name} must be between {range.Min} and {range.Max}."),
+                    range.Name);
+            }
         }
 
         if (!TimeOnly.TryParseExact(ReconciliationTime, ReconciliationTimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
@@ -103,6 +120,24 @@ public class PluginConfiguration : BasePluginConfiguration
         }
     }
 
+    /// <summary>
+    /// Brings a loaded configuration back into its ranges. A value saved before a range existed must not stop the server
+    /// from working, so it runs as the nearest allowed value, here and on the configuration page.
+    /// </summary>
+    /// <returns>What was changed, for the log.</returns>
+    public IReadOnlyList<CorrectedSetting> Normalize()
+    {
+        var corrected = new List<CorrectedSetting>();
+        foreach (var range in _ranges.Where(range => !range.Holds(this)))
+        {
+            var saved = range.Read(this);
+            range.Write(this, Math.Clamp(saved, range.Min, range.Max));
+            corrected.Add(new CorrectedSetting(range.Name, saved, range.Read(this)));
+        }
+
+        return corrected;
+    }
+
     private static bool IsUsableFolder(string path)
     {
         if (!Path.IsPathFullyQualified(path) || path.Split('/', '\\').Contains(".."))
@@ -111,5 +146,10 @@ public class PluginConfiguration : BasePluginConfiguration
         }
 
         return Path.GetDirectoryName(path.TrimEnd('/', '\\')) is not null;
+    }
+
+    private sealed record SettingRange(string Name, Func<PluginConfiguration, int> Read, Action<PluginConfiguration, int> Write, int Min, int Max)
+    {
+        public bool Holds(PluginConfiguration configuration) => Read(configuration) >= Min && Read(configuration) <= Max;
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Sync;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
@@ -22,9 +23,49 @@ public class PluginConfigurationTests
     [Theory]
     [InlineData(0)]
     [InlineData(-5)]
-    public void IntervalMustBePositive(int seconds)
+    [InlineData(1)]
+    [InlineData(299)]
+    public void IntervalBelowTheMinimumIsRefused(int seconds)
     {
         Assert.Throws<ArgumentException>(new PluginConfiguration { SyncIntervalSeconds = seconds }.Validate);
+    }
+
+    [Theory]
+    [InlineData(300)]
+    [InlineData(301)]
+    [InlineData(86400)]
+    public void IntervalFromTheMinimumUpIsAccepted(int seconds)
+    {
+        new PluginConfiguration { SyncIntervalSeconds = seconds }.Validate();
+    }
+
+    [Fact]
+    public void TheMinimumIntervalIsTheOverlapOfTheIncrementalSync()
+    {
+        Assert.Equal(CatalogSyncService.ChangeOverlap, TimeSpan.FromSeconds(PluginConfiguration.MinSyncIntervalSeconds));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    [InlineData(60)]
+    public void NormalizeRaisesASavedIntervalToTheMinimum(int seconds)
+    {
+        var config = new PluginConfiguration { SyncIntervalSeconds = seconds };
+
+        var corrected = Assert.Single(config.Normalize());
+
+        Assert.Equal(300, config.SyncIntervalSeconds);
+        Assert.Equal(new CorrectedSetting(nameof(PluginConfiguration.SyncIntervalSeconds), seconds, 300), corrected);
+    }
+
+    [Fact]
+    public void NormalizeLeavesAValidConfigurationAlone()
+    {
+        var config = new PluginConfiguration();
+
+        Assert.Empty(config.Normalize());
+        Assert.Equal(900, config.SyncIntervalSeconds);
     }
 
     [Theory]

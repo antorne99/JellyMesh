@@ -60,7 +60,8 @@
                     <h3 class="sectionTitle">Settings</h3>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
-                        <input id="jmSyncInterval" type="number" is="emby-input" min="1" step="1" required />
+                        <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
+                        <div class="fieldDescription">At least 300 seconds.</div>
                     </div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmReconciliationTime">Nightly reconciliation time</label>
@@ -526,7 +527,7 @@
                         Dashboard.processPluginConfigurationUpdateResult(result);
                         return load();
                     }, function () {
-                        throw new Error('The settings were refused: check the time format and that the folder is an absolute path.');
+                        throw new Error('The settings were refused: check that the sync interval is at least 300 seconds, the time format, and that the folder is an absolute path.');
                     }));
                 });
             })();
