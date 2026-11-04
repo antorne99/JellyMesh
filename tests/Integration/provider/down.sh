@@ -3,6 +3,8 @@
 # usage: MEDIA=... WORK=... down.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 pkill -f "provider/gate.py" 2>/dev/null
+# Live logins, the one of the shared stock remote among them.
+rm -f "$WORK"/gate-*.tokens "$WORK"/leaks.tokens
 for s in a b; do
   name=$(container_of "$s")
   docker rm -f "$name" >/dev/null 2>&1
