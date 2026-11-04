@@ -36,7 +36,7 @@ Both roles are active on every server with the plugin.
 
 - Jellyfin 12.x. The manifest allows any server from 12.0, but only 12.4 has been tested, and the plugin is compiled against the 12.4 packages.
 - A tailnet between your servers. Tailscale is managed outside the plugin.
-- `EnableAutomaticSeriesGrouping` on in each series library, so that a local series and its remote episodes merge. In the Dashboard it is called "Automatically merge series that are spread across multiple folders". The plugin page warns if it is off and does not change it for you.
+- `EnableAutomaticSeriesGrouping` on in the series library you link the federated `Serie` path to, so that a local series and its remote episodes merge. In the Dashboard it is called "Automatically merge series that are spread across multiple folders". The plugin page warns if it is off and does not change it for you.
 - `JELLYMESH_SECRET_KEY` set on every server that reads remote servers. See [The secret key](#the-secret-key).
 - A dedicated non-admin user on each remote.
 
@@ -99,7 +99,7 @@ services:
 
 If the key is missing, shorter than 32 characters or not the one that encrypted the credentials, JellyMesh saves and uses no credentials, suspends sync and remote playback, and shows a warning on its page. Titles already synced stay visible but won't play. To recover, restore the original key. If you can't, set a new key, remove every server on the plugin page, then add them again. Nothing can be added until all the old ones are gone. There is no way to rotate the key while keeping the servers. Removing a server takes its titles out at the next sync, and watch state on those titles can be lost.
 
-A server that only provides, with no remote servers of its own, doesn't need the key, though its plugin page still shows the warning.
+A server that only provides, with no remote servers of its own, can run without the key, but its plugin page keeps the warning and its log gets a warning at every scheduled sync. Setting a key there too avoids both.
 
 ## Setup
 
