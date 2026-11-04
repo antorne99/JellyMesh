@@ -33,17 +33,16 @@ public static class StubPlanner
 
         var catalog = IndexItemLookup.Build(input.Snapshot);
         var matcher = new StubMatcher(input.State.Stubs);
-        var contents = input.View.Contents
-            .Select(content => (Content: content, Stub: matcher.Claim(content)))
-            .ToList();
+        var claims = matcher.ClaimAll(input.View.Contents);
 
         var paths = new PathAllocator(input.State);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
         var works = new List<StubWork>();
         var unplaceable = 0;
 
-        foreach (var (content, stub) in contents.Where(entry => entry.Content.Winner is not null))
+        foreach (var claim in claims.Where(entry => entry.Content.Winner is not null))
         {
+            var (content, stub) = claim;
             var winner = catalog.Find(content.Winner!.ServerId, content.Winner.ItemId);
             if (winner is null)
             {
@@ -88,7 +87,10 @@ public static class StubPlanner
             .OrderBy(library => library.ServerName, StringComparer.Ordinal)
             .ToList();
 
-        return new StubPlan(input.State with { Stubs = stubs, Series = series }, works, seriesWorks, removals, heldLibraries, unplaceable);
+        return new StubPlan(input.State with { Stubs = stubs, Series = series }, works, seriesWorks, removals, heldLibraries, unplaceable)
+        {
+            MergedStubs = claims.Sum(claim => claim.Merged.Count)
+        };
     }
 
     /// <summary>
@@ -187,7 +189,9 @@ public static class StubPlanner
         {
             IdentityKey = content.Identity.Key,
             Sources = SourcesOf(content, catalog),
-            SeriesStubId = series.Entry.Id,
+
+            // A stub stays in the series folder it was created in, even after two series became one work.
+            SeriesStubId = stub?.SeriesStubId ?? series.Entry.Id,
             SeasonNumber = season,
             EpisodeNumber = number
         };

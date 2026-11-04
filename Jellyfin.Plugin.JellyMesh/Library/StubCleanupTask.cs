@@ -20,8 +20,9 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <summary>
 /// Runs after every library scan. When a local copy has arrived it hands the watch state of each user over to it and only
 /// then removes the stub: Jellyfin would not do it, because a real file never sees the state of a stub, and the rows of a
-/// deleted item stay behind a placeholder (decision 2). It is also where a new stub series gets its refresh, since the
-/// item exists only after the scan.
+/// deleted item stay behind a placeholder (decision 2). The same goes for a stub merged into another, when two copies
+/// shown apart became one title. It is also where a new stub series gets its refresh, since the item exists only after
+/// the scan.
 /// </summary>
 /// <remarks>
 /// A local copy is a fact about this server, so a stale server does not stop it. A corrupt index holds no decision at all.
@@ -113,23 +114,34 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             return state;
         }
 
-        var matcher = new StubMatcher(state.Stubs);
-        var replaced = view.Contents
-            .Select(content => (Content: content, Stub: matcher.Claim(content)))
-            .Where(entry => entry.Content.IsLocal && entry.Stub is not null)
-            .ToList();
-
+        var claims = new StubMatcher(state.Stubs).ClaimAll(view.Contents);
         var users = _users.GetUsers().ToList();
-        foreach (var (content, stub) in replaced)
+        foreach (var claim in claims)
         {
+            var (content, stub) = claim;
+            if (stub is null)
+            {
+                continue;
+            }
+
             try
             {
-                state = Replace(root, state, stub!, content, view, users, cancellationToken);
+                foreach (var merged in claim.Merged)
+                {
+                    state = content.IsLocal
+                        ? Replace(root, state, merged, content, view, users, cancellationToken)
+                        : Merge(root, state, merged, stub, users, cancellationToken);
+                }
+
+                if (content.IsLocal)
+                {
+                    state = Replace(root, state, stub, content, view, users, cancellationToken);
+                }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 // The stub stays, so its state is not lost, and the next scan tries again.
-                _logger.LogError("Cannot replace a stub with its local copy: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot replace a stub: {Error}", exception.GetType().Name);
             }
         }
 
@@ -165,12 +177,34 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         return _remover.Remove(root, state, stub);
     }
 
-    private void HandOver(User user, UserItemData from, BaseItem local, Func<UserItemData, UserItemData, bool> merge, CancellationToken cancellationToken)
+    private StubState Merge(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
     {
-        var data = _userData.GetUserData(user, local);
+        // Without its item, which only a scan makes, the survivor cannot receive anything yet.
+        if (_library.FindByPath(FederatedPaths.Resolve(root, into.RelativePath), false) is not { } survivor)
+        {
+            return state;
+        }
+
+        if (_library.FindByPath(FederatedPaths.Resolve(root, stub.RelativePath), false) is { } stubItem)
+        {
+            foreach (var user in users)
+            {
+                if (_userData.GetUserData(user, stubItem) is { } data)
+                {
+                    HandOver(user, data, survivor, WatchStateMerge.Merge, cancellationToken);
+                }
+            }
+        }
+
+        return _remover.Remove(root, state, stub);
+    }
+
+    private void HandOver(User user, UserItemData from, BaseItem target, Func<UserItemData, UserItemData, bool> merge, CancellationToken cancellationToken)
+    {
+        var data = _userData.GetUserData(user, target);
         if (data is not null && merge(from, data))
         {
-            _userData.SaveUserData(user, local, data, UserDataSaveReason.Import, cancellationToken);
+            _userData.SaveUserData(user, target, data, UserDataSaveReason.Import, cancellationToken);
         }
     }
 

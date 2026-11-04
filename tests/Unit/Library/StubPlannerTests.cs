@@ -178,6 +178,48 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void TwoStubsThatBecameOneTitle_BothStayForThePostScanTask()
+    {
+        var first = ExistingStub("stub1", "movie|tmdb:1", _serverA, "m");
+        var second = ExistingStub("stub2", "movie|tmdb:2", _serverB, "z") with { RelativePath = Path.Combine("Film", "Other", "Other.strm") };
+
+        var plan = Plan(
+            [Film("movie|tmdb:1", Source(_serverA, "m"), Source(_serverB, "z"))],
+            [Catalog(_serverA, ServerSyncState.Complete, Film("m")), Catalog(_serverB, ServerSyncState.Complete, Film("z"))],
+            new StubState { Stubs = [first, second] },
+            [Server(_serverA, Library), Server(_serverB, Library)]);
+
+        Assert.Equal("stub1", Assert.Single(plan.Stubs).Entry.Id);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(1, plan.MergedStubs);
+        Assert.Equal(2, plan.State.Stubs.Count);
+    }
+
+    [Fact]
+    public void ATitleThatSplits_KeepsItsStubForOneCopyAndMintsOneForTheOther()
+    {
+        // Two copies merged on title and year alone before decision 13. Their stub stays, with one of them.
+        var existing = ExistingStub("stub1", "movie|title:film|2020", _serverA, "m") with
+        {
+            Sources = [new StubSource(_serverA, "m", "m") { LibraryId = Library }, new StubSource(_serverB, "z", "z") { LibraryId = Library }]
+        };
+
+        var plan = Plan(
+            [
+                Film("movie|title:film|2020|a", Source(_serverA, "m")),
+                Film("movie|title:film|2020|b", Source(_serverB, "z"))
+            ],
+            [Catalog(_serverA, ServerSyncState.Complete, Film("m")), Catalog(_serverB, ServerSyncState.Complete, Film("z"))],
+            new StubState { Stubs = [existing] });
+
+        Assert.Equal(2, plan.Stubs.Count);
+        Assert.Equal(existing.RelativePath, plan.Stubs.Single(stub => !stub.IsNew).Entry.RelativePath);
+        Assert.NotEqual(existing.RelativePath, plan.Stubs.Single(stub => stub.IsNew).Entry.RelativePath);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(0, plan.MergedStubs);
+    }
+
+    [Fact]
     public void ANewWinnerKeepsThePathAndTheId()
     {
         var existing = ExistingStub("stub1", "k", _serverA, "m");

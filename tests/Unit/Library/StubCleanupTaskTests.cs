@@ -105,6 +105,71 @@ public sealed class StubCleanupTaskTests : IDisposable
         Assert.Empty(_fixture.Registry.State.Stubs);
     }
 
+    private async Task<(Movie Survivor, Movie Merged)> TwoFilmsThatBecomeOneAsync()
+    {
+        var byTmdb = TestItems.Movie("a", "Film", 2020, "1");
+        var byImdb = TestItems.Movie("b", "Film", 2020, "2") with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } };
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, byTmdb);
+        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, byImdb);
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.Sync.AddServerAsync("B", "films-b");
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+
+        // A third copy holds both IDs, so the two are one film from now on.
+        var both = TestItems.Movie("c", "Film", 2020, "1") with { ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = "1", ["Imdb"] = "tt1" } };
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, both);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+
+        var claim = new StubMatcher(_fixture.Registry.State.Stubs).ClaimAll(_fixture.Resolver.Resolve().Contents).Single();
+        var survivor = new Movie { Id = Guid.NewGuid(), Path = _fixture.Path_(claim.Stub!.RelativePath) };
+        var merged = new Movie { Id = Guid.NewGuid(), Path = _fixture.Path_(Assert.Single(claim.Merged).RelativePath) };
+        _fixture.Library.Setup(library => library.FindByPath(survivor.Path, false)).Returns(survivor);
+        _fixture.Library.Setup(library => library.FindByPath(merged.Path, false)).Returns(merged);
+        return (survivor, merged);
+    }
+
+    [Fact]
+    public async Task AStubMergedIntoAnother_HandsItsStateOverBeforeItGoes()
+    {
+        var (survivor, merged) = await TwoFilmsThatBecomeOneAsync();
+        GiveState(_anna, merged, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        var kept = new UserItemData { Key = "s" };
+        GiveState(_anna, survivor, kept);
+
+        await RunAsync();
+
+        Assert.True(kept.Played);
+        Assert.Equal(["save anna " + survivor.Path, "delete " + merged.Path], _calls);
+        Assert.Equal(survivor.Path, _fixture.Path_(Assert.Single(_fixture.Registry.State.Stubs).RelativePath));
+        Assert.False(File.Exists(merged.Path));
+    }
+
+    [Fact]
+    public async Task AMergedStubWaitsWhileTheSurvivorHasNoItem()
+    {
+        var (survivor, merged) = await TwoFilmsThatBecomeOneAsync();
+        _fixture.Library.Setup(library => library.FindByPath(survivor.Path, false)).Returns((BaseItem?)null);
+
+        await RunAsync();
+
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        Assert.True(File.Exists(merged.Path));
+    }
+
+    [Fact]
+    public async Task TheMaterializerAsksForTheScanThatHandlesAMerge()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        _fixture.Library.Invocations.Clear();
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
+    }
+
     [Fact]
     public async Task ANewerLocalStateIsNotOverwritten()
     {
