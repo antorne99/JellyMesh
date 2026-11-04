@@ -290,6 +290,18 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task A_remote_whose_file_is_readable_is_not_called_unreachable()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError));
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        Assert.Equal(PlaybackOutcomeKind.LocalTranscode, outcome.Kind);
+        Assert.Equal(PlaybackRefusal.FailedText, PlaybackRefusal.TextOf(outcome));
+    }
+
+    [Fact]
     public async Task A_new_playback_of_the_same_stream_closes_the_old_one_after_the_new_one_works()
     {
         var fixture = new CoordinatorFixture();

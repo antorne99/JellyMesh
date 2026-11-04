@@ -102,7 +102,7 @@ public sealed class PlaybackCoordinator
             {
                 _workingSources[request.Stub.Id] = source;
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
-                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source);
+                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true);
             }
         }
 
