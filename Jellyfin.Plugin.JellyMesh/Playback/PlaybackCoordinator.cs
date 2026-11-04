@@ -457,7 +457,12 @@ public sealed class PlaybackCoordinator
             return cached.Policy;
         }
 
-        var policy = await WithinAsync(serverId, PlaybackTimeouts.RemotePlaybackInfo, _client.GetTranscodePolicyAsync, cancellationToken).ConfigureAwait(false);
+        var readHardware = !IsJellyMesh(serverId);
+        var policy = await WithinAsync(
+            serverId,
+            PlaybackTimeouts.RemotePlaybackInfo,
+            (endpoint, session, token) => _client.GetTranscodePolicyAsync(endpoint, session, readHardware, token),
+            cancellationToken).ConfigureAwait(false);
         if (!policy.IsSuccess)
         {
             return null;

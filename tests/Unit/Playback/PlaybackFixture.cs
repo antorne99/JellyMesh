@@ -169,8 +169,11 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
         return Answer(request, cancellationToken);
     }
 
-    public Task<RemoteResult<RemoteTranscodePolicy>> GetTranscodePolicyAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    public List<bool> HardwareReads { get; } = [];
+
+    public Task<RemoteResult<RemoteTranscodePolicy>> GetTranscodePolicyAsync(RemoteEndpoint endpoint, RemoteSession session, bool readHardware, CancellationToken cancellationToken)
     {
+        HardwareReads.Add(readHardware);
         return Task.FromResult(RemoteResult.Success(Policy));
     }
 

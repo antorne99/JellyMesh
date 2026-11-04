@@ -26,9 +26,10 @@ public interface IRemotePlaybackClient
     /// </summary>
     /// <param name="endpoint">The remote.</param>
     /// <param name="session">The session.</param>
+    /// <param name="readHardware">Whether to read the hardware acceleration too. A JellyMesh remote keeps that route closed to peers.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The policy.</returns>
-    Task<RemoteResult<RemoteTranscodePolicy>> GetTranscodePolicyAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
+    Task<RemoteResult<RemoteTranscodePolicy>> GetTranscodePolicyAsync(RemoteEndpoint endpoint, RemoteSession session, bool readHardware, CancellationToken cancellationToken);
 
     /// <summary>
     /// Reads a playlist.

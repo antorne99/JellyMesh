@@ -827,6 +827,25 @@ public class StreamLimitPlaybackTests
     }
 
     [Fact]
+    public async Task A_jellymesh_remote_is_not_asked_for_its_hardware()
+    {
+        var source = PlaybackValues.Source();
+        _fixture.Registry.AddJellyMesh(source.ServerId);
+
+        await _fixture.OpenAsync(PlaybackValues.Stub(source));
+
+        Assert.Equal([false], _fixture.Client.HardwareReads);
+    }
+
+    [Fact]
+    public async Task A_stock_remote_is_asked_for_its_hardware()
+    {
+        await _fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        Assert.Equal([true], _fixture.Client.HardwareReads);
+    }
+
+    [Fact]
     public async Task A_parked_session_gives_its_slot_back()
     {
         var source = PlaybackValues.Source();
