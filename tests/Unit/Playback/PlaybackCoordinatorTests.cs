@@ -304,6 +304,18 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task Shutdown_closes_every_session()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        await fixture.Coordinator.CloseAllAsync();
+
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Single(fixture.Client.Stopped);
+    }
+
+    [Fact]
     public async Task The_file_of_a_stub_comes_from_the_first_source_that_opens()
     {
         var fixture = new CoordinatorFixture();

@@ -214,6 +214,15 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
+    /// Ends every session at shutdown: they live in memory, so after a restart nothing would close their transcodes.
+    /// </summary>
+    /// <returns>A task.</returns>
+    public Task CloseAllAsync()
+    {
+        return Task.WhenAll(_sessions.All.Select(session => CloseAsync(session.Id)));
+    }
+
+    /// <summary>
     /// Closes the transcode of an idle session and keeps the session, or forgets it when it is too old.
     /// </summary>
     /// <returns>A task.</returns>

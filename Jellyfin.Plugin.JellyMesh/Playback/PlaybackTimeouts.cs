@@ -24,6 +24,11 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan RemoteStop = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// Limit on closing all sessions at shutdown, so that a dead remote cannot hold the server up.
+    /// </summary>
+    public static readonly TimeSpan Shutdown = TimeSpan.FromSeconds(5);
+
+    /// <summary>
     /// Time without requests after which the transcode of a session is closed. A finished transcode never expires by
     /// itself on a remote.
     /// </summary>

@@ -35,6 +35,20 @@ public sealed class PlaybackSweeper : BackgroundService
     }
 
     /// <inheritdoc />
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _coordinator.CloseAllAsync().WaitAsync(PlaybackTimeouts.Shutdown, _clock, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogWarning("Shutting down with remote transcodes still open");
+        }
+    }
+
+    /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _sessionManager.PlaybackStopped += OnPlaybackStopped;
