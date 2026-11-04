@@ -86,6 +86,25 @@ public class StubPlannerTests
         RemoteItems = [new ResolvedItem(winner.ServerId, winner.ItemId)]
     };
 
+    private static ResolvedContent Covering(ResolvedContent content, params ResolvedItem[] items) => content with
+    {
+        RemoteItems = content.RemoteItems.Concat(items).Distinct().ToList()
+    };
+
+    private static StubEntry ExistingEpisode(string id, string path, string key, int number, int? end, string itemId, string seriesStub) => new()
+    {
+        Id = id,
+        Kind = StubKind.Episode,
+        RelativePath = path,
+        IdentityKey = key,
+        Sources = [new StubSource(_serverA, itemId, itemId) { LibraryId = "shows" }],
+        SeasonNumber = 1,
+        EpisodeNumber = number,
+        EpisodeNumberEnd = end,
+        SeriesStubId = seriesStub,
+        TechnicalTag = "tag"
+    };
+
     private static ServerCatalog Catalog(Guid server, ServerSyncState state, params IndexedItem[] items) => new()
     {
         ServerId = server,
@@ -203,6 +222,48 @@ public class StubPlannerTests
         Assert.Equal(existing.RelativePath, stub.Entry.RelativePath);
         Assert.Equal("movie|tmdb:1", stub.Entry.IdentityKey);
         Assert.Empty(plan.Removals);
+    }
+
+    [Fact]
+    public void TwoStubsThatBecameOneTitle_BothStayForThePostScanTask()
+    {
+        var first = ExistingStub("stub1", "movie|tmdb:1", _serverA, "m");
+        var second = ExistingStub("stub2", "movie|tmdb:2", _serverB, "z") with { RelativePath = Path.Combine("Film", "Other", "Other.strm") };
+
+        var plan = Plan(
+            [Film("movie|tmdb:1", Source(_serverA, "m"), Source(_serverB, "z"))],
+            [Catalog(_serverA, ServerSyncState.Complete, Film("m")), Catalog(_serverB, ServerSyncState.Complete, Film("z"))],
+            new StubState { Stubs = [first, second] },
+            [Server(_serverA, Library), Server(_serverB, Library)]);
+
+        Assert.Equal("stub1", Assert.Single(plan.Stubs).Entry.Id);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(1, plan.MergedStubs);
+        Assert.Equal(2, plan.State.Stubs.Count);
+    }
+
+    [Fact]
+    public void ATitleThatSplits_KeepsItsStubForOneCopyAndMintsOneForTheOther()
+    {
+        // Two copies merged on title and year alone before decision 13. Their stub stays, with one of them.
+        var existing = ExistingStub("stub1", "movie|title:film|2020", _serverA, "m") with
+        {
+            Sources = [new StubSource(_serverA, "m", "m") { LibraryId = Library }, new StubSource(_serverB, "z", "z") { LibraryId = Library }]
+        };
+
+        var plan = Plan(
+            [
+                Film("movie|title:film|2020|a", Source(_serverA, "m")),
+                Film("movie|title:film|2020|b", Source(_serverB, "z"))
+            ],
+            [Catalog(_serverA, ServerSyncState.Complete, Film("m")), Catalog(_serverB, ServerSyncState.Complete, Film("z"))],
+            new StubState { Stubs = [existing] });
+
+        Assert.Equal(2, plan.Stubs.Count);
+        Assert.Equal(existing.RelativePath, plan.Stubs.Single(stub => !stub.IsNew).Entry.RelativePath);
+        Assert.NotEqual(existing.RelativePath, plan.Stubs.Single(stub => stub.IsNew).Entry.RelativePath);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(0, plan.MergedStubs);
     }
 
     [Fact]
@@ -368,6 +429,139 @@ public class StubPlannerTests
             Path.Combine("Serie", "Show (2020)", "Season 01", "Show S01E02.strm"),
             plan.Stubs[1].Entry.RelativePath);
         Assert.Equal((1, 2), (plan.Stubs[1].Entry.SeasonNumber, plan.Stubs[1].Entry.EpisodeNumber));
+    }
+
+    [Fact]
+    public void ADoubleWinningBothEpisodes_IsOneStubWithARange()
+    {
+        var plan = Plan(
+            [Episode("w", 1, 1, Source(_serverA, "d")), Episode("w", 1, 2, Source(_serverA, "d"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("d", "s", 1, 1) with { IndexNumberEnd = 2 })]);
+
+        var stub = Assert.Single(plan.Stubs);
+        Assert.Equal((1, 2), (stub.Entry.EpisodeNumber, stub.Entry.EpisodeNumberEnd));
+        Assert.Equal(Path.Combine("Serie", "Show (2020)", "Season 01", "Show S01E01-E02.strm"), stub.Entry.RelativePath);
+        Assert.Equal(2, stub.Metadata.EpisodeNumberEnd);
+        Assert.Contains("<episodenumberend>2</episodenumberend>", stub.Nfo, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADoubleWinningOneEpisode_IsAPlainStubOfThatEpisode()
+    {
+        var local = new ResolvedContent(new ContentIdentity("w|S1E1", "w", ContentKind.Episode, MatchKind.ProviderId, 1, 1), true, null, [])
+        {
+            RemoteItems = [new ResolvedItem(_serverA, "d")]
+        };
+
+        var plan = Plan(
+            [local, Episode("w", 1, 2, Source(_serverA, "d"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("d", "s", 1, 1) with { IndexNumberEnd = 2 })]);
+
+        var stub = Assert.Single(plan.Stubs);
+        Assert.Equal((2, (int?)null), (stub.Entry.EpisodeNumber!.Value, stub.Entry.EpisodeNumberEnd));
+        Assert.EndsWith("Show S01E02.strm", stub.Entry.RelativePath, StringComparison.Ordinal);
+        Assert.Equal("d", Assert.Single(stub.Entry.Sources).ItemId);
+    }
+
+    [Fact]
+    public void AStubThatComesToCoverARange_KeepsItsPathAndGetsItsNumbersAgain()
+    {
+        // Written before IndexNumberEnd was read: the double had a plain stub of its first episode.
+        var existing = ExistingEpisode("stub1", Path.Combine("Serie", "Show (2020)", "Season 01", "Show S01E01.strm"), "w|S1E1", 1, null, "d", "series1");
+
+        var plan = Plan(
+            [Episode("w", 1, 1, Source(_serverA, "d")), Episode("w", 1, 2, Source(_serverA, "d"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("d", "s", 1, 1) with { IndexNumberEnd = 2 })],
+            new StubState { Stubs = [existing] });
+
+        var stub = Assert.Single(plan.Stubs);
+        Assert.False(stub.IsNew);
+        Assert.Equal(existing.RelativePath, stub.Entry.RelativePath);
+        Assert.Equal(2, stub.Entry.EpisodeNumberEnd);
+        Assert.Null(stub.Entry.TechnicalTag);
+        Assert.Equal("series1", stub.Entry.SeriesStubId);
+    }
+
+    [Fact]
+    public void AStubThatKeepsItsNumbers_KeepsItsTechnicalTag()
+    {
+        var existing = ExistingEpisode("stub1", Path.Combine("Serie", "Show (2020)", "Season 01", "Show S01E01.strm"), "w|S1E1", 1, null, "e", "series1");
+
+        var plan = Plan(
+            [Episode("w", 1, 1, Source(_serverA, "e"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("e", "s", 1, 1))],
+            new StubState { Stubs = [existing] });
+
+        Assert.Equal("tag", Assert.Single(plan.Stubs).Entry.TechnicalTag);
+    }
+
+    [Fact]
+    public void WithOneEpisodeLocal_AStubOfARange_ShrinksToTheOtherAndStays()
+    {
+        var existing = ExistingEpisode("stub1", Path.Combine("Serie", "Show (2020)", "Season 01", "Show S01E01-E02.strm"), "w|S1E1", 1, 2, "d", "series1");
+        var local = new ResolvedContent(new ContentIdentity("w|S1E1", "w", ContentKind.Episode, MatchKind.ProviderId, 1, 1), true, null, [])
+        {
+            RemoteItems = [new ResolvedItem(_serverA, "d")]
+        };
+
+        var plan = Plan(
+            [local, Episode("w", 1, 2, Source(_serverA, "d"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("d", "s", 1, 1) with { IndexNumberEnd = 2 })],
+            new StubState { Stubs = [existing] });
+
+        var stub = Assert.Single(plan.Stubs);
+        Assert.Equal("stub1", stub.Entry.Id);
+        Assert.Equal((2, (int?)null), (stub.Entry.EpisodeNumber!.Value, stub.Entry.EpisodeNumberEnd));
+        Assert.Equal(existing.RelativePath, stub.Entry.RelativePath);
+        Assert.Null(stub.Entry.TechnicalTag);
+        Assert.Empty(plan.Removals);
+    }
+
+    [Fact]
+    public void AStubOfARange_ThatLosesOneEpisodeToABetterCopy_ShrinksAndTheCopyGetsItsOwn()
+    {
+        var existing = ExistingEpisode("stub1", Path.Combine("Serie", "Show (2020)", "Season 01", "Show S01E01-E02.strm"), "w|S1E1", 1, 2, "d", "series1");
+
+        var plan = Plan(
+            [
+                Episode("w", 1, 1, Source(_serverA, "d")),
+                Covering(Episode("w", 1, 2, Source(_serverB, "better")), new ResolvedItem(_serverA, "d"))
+            ],
+            [
+                Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("d", "s", 1, 1) with { IndexNumberEnd = 2 }),
+                Catalog(_serverB, ServerSyncState.Complete, SeriesItem("t"), EpisodeItem("better", "t", 1, 2))
+            ],
+            new StubState { Stubs = [existing] });
+
+        Assert.Equal((1, (int?)null), (plan.Stubs.Single(stub => !stub.IsNew).Entry.EpisodeNumber!.Value, plan.Stubs.Single(stub => !stub.IsNew).Entry.EpisodeNumberEnd));
+        Assert.EndsWith("Show S01E02.strm", plan.Stubs.Single(stub => stub.IsNew).Entry.RelativePath, StringComparison.Ordinal);
+        Assert.Empty(plan.Removals);
+    }
+
+    [Fact]
+    public void TwoStubsThatBecomeARange_KeepTheFirstAndMergeTheOther()
+    {
+        var folder = Path.Combine("Serie", "Show (2020)", "Season 01");
+        var first = ExistingEpisode("stub1", Path.Combine(folder, "Show S01E01.strm"), "w|S1E1", 1, null, "e1", "series1");
+        var second = ExistingEpisode("stub2", Path.Combine(folder, "Show S01E02.strm"), "w|S1E2", 2, null, "e2", "series1");
+
+        var plan = Plan(
+            [
+                Covering(Episode("w", 1, 1, Source(_serverB, "d")), new ResolvedItem(_serverA, "e1")),
+                Covering(Episode("w", 1, 2, Source(_serverB, "d")), new ResolvedItem(_serverA, "e2"))
+            ],
+            [
+                Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("e1", "s", 1, 1), EpisodeItem("e2", "s", 1, 2)),
+                Catalog(_serverB, ServerSyncState.Complete, SeriesItem("t"), EpisodeItem("d", "t", 1, 1) with { IndexNumberEnd = 2 })
+            ],
+            new StubState { Stubs = [first, second] },
+            [Server(_serverA, "shows"), Server(_serverB, "shows")]);
+
+        var stub = Assert.Single(plan.Stubs);
+        Assert.Equal("stub1", stub.Entry.Id);
+        Assert.Equal(2, stub.Entry.EpisodeNumberEnd);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(1, plan.MergedStubs);
     }
 
     [Fact]

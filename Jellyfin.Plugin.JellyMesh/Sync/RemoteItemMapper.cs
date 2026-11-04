@@ -52,6 +52,7 @@ public static class RemoteItemMapper
             DateCreated = item.DateCreated,
             Etag = item.Etag,
             IndexNumber = item.IndexNumber,
+            IndexNumberEnd = item.IndexNumberEnd,
             ParentIndexNumber = item.ParentIndexNumber,
             SeriesId = item.SeriesId,
             SeriesName = item.SeriesName,

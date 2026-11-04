@@ -36,6 +36,9 @@ public sealed record StubEntry
     /// <summary>Gets the number of an episode.</summary>
     public int? EpisodeNumber { get; init; }
 
+    /// <summary>Gets the last episode of a stub that covers several, null otherwise.</summary>
+    public int? EpisodeNumberEnd { get; init; }
+
     /// <summary>Gets a hash of what was written for the stub, null until it is on disk.</summary>
     public string? ContentHash { get; init; }
 

@@ -98,11 +98,13 @@ public static partial class FederatedPaths
     /// <param name="seriesName">The series name, for the file name.</param>
     /// <param name="season">The season.</param>
     /// <param name="episode">The episode.</param>
+    /// <param name="lastEpisode">The last episode of a stub that covers several.</param>
     /// <returns>The relative path of the <c>.strm</c>.</returns>
-    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode)
+    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null)
     {
         var folder = string.Create(CultureInfo.InvariantCulture, $"Season {season:00}");
-        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}.strm");
+        var range = lastEpisode is { } last ? string.Create(CultureInfo.InvariantCulture, $"-E{last:00}") : string.Empty;
+        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}.strm");
         return Path.Combine(seriesFolder, folder, file);
     }
 

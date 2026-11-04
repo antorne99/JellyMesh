@@ -126,7 +126,17 @@ public sealed class StubTechnicalData
         }
 
         var changed = Set(episode.ParentIndexNumber, stub.SeasonNumber, value => episode.ParentIndexNumber = value);
-        return Set(episode.IndexNumber, stub.EpisodeNumber, value => episode.IndexNumber = value) | changed;
+        changed |= Set(episode.IndexNumber, stub.EpisodeNumber, value => episode.IndexNumber = value);
+
+        // Unlike the others this one can go away, when a stub comes to cover fewer episodes, and "replace all metadata"
+        // clears it while it keeps the numbers (observed on 12.4).
+        if (episode.IndexNumberEnd != stub.EpisodeNumberEnd)
+        {
+            episode.IndexNumberEnd = stub.EpisodeNumberEnd;
+            changed = true;
+        }
+
+        return changed;
     }
 
     /// <summary>
