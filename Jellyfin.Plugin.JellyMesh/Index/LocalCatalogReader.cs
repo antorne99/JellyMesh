@@ -76,7 +76,16 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
                 Kind = ContentKind.Movie,
                 Title = item.Name,
                 Year = item.ProductionYear,
-                Ids = ContentIds.FromProviderIds(item.ProviderIds)
+                Ids = ContentIds.FromProviderIds(item.ProviderIds),
+                Metadata = new ComparableMetadata
+                {
+                    OriginalTitle = item.OriginalTitle,
+                    RunTimeTicks = item.RunTimeTicks,
+                    Overview = item.Overview,
+                    Genres = item.Genres,
+                    Studios = item.Studios,
+                    People = new Lazy<IReadOnlyList<string>>(() => _libraryManager.GetPeople(item).Select(person => person.Name).OfType<string>().ToList())
+                }
             };
         }
 

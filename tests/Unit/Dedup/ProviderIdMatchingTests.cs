@@ -6,9 +6,9 @@ using static Jellyfin.Plugin.JellyMesh.Tests.Dedup.Fixtures;
 namespace Jellyfin.Plugin.JellyMesh.Tests.Dedup;
 
 /// <summary>
-/// The plan does not define what happens when IDs only partly agree. These tests pin the behaviour chosen in
-/// <c>WorkResolver</c>: a shared ID links items unless their IDs contradict each other, and anything less certain stays
-/// separate and is reported, because a duplicate can be seen and a hidden title cannot.
+/// Decision 13: one matching ID is enough, even when the others differ. These tests also pin what the plan leaves to
+/// <c>WorkResolver</c>: a chain of shared IDs merges unless it joins two copies that contradict each other, and anything
+/// less certain stays separate and is reported, because a duplicate can be seen and a hidden title cannot.
 /// </summary>
 public class ProviderIdMatchingTests
 {
@@ -132,53 +132,140 @@ public class ProviderIdMatchingTests
     }
 
     [Fact]
-    public void SharedIdWithAContradiction_StaysSeparate_AndIsReported()
+    public void OneSharedId_Merges_EvenWhenTheOtherIdDiffers()
     {
         var result = Resolve(
             Movie(Standard, "Sintel", 2010, new ContentIds("45745", "tt1"), _hd),
             Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds("45745", "tt2"), _fullHd));
 
-        Assert.Equal(
-            ["movie|tmdb:45745|imdb:tt1", "movie|tmdb:45745|imdb:tt2"],
-            result.Decisions.Select(decision => decision.Identity.Key));
-        var issue = result.Issues.Single(candidate => candidate.Kind == DedupIssueKind.ConflictingProviderIds);
-        Assert.Equal(["movie|tmdb:45745|imdb:tt1", "movie|tmdb:45745|imdb:tt2"], issue.WorkKeys);
+        var decision = Assert.Single(result.Decisions);
+        Assert.Equal("movie|tmdb:45745", decision.Identity.Key);
+        Assert.Equal(RemoteJellyMesh, decision.Winner?.ServerId);
+        Assert.Equal(Standard, Assert.Single(decision.Backups).ServerId);
     }
 
     [Fact]
-    public void Contradiction_WithALocalCopy_DoesNotHideTheRemote()
+    public void AMergeOnPartlyDifferingIds_IsReported()
+    {
+        var result = Resolve(
+            Movie(Standard, "Sintel", 2010, new ContentIds("45745", "tt1"), _hd),
+            Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds("45745", "tt2"), _fullHd));
+
+        var issue = Assert.Single(result.Issues);
+        Assert.Equal(DedupIssueKind.ConflictingProviderIds, issue.Kind);
+        Assert.Equal(["movie|tmdb:45745"], issue.WorkKeys);
+    }
+
+    [Fact]
+    public void OneSharedId_LocalWins_EvenWhenTheOtherIdDiffers()
     {
         var result = DedupEngine.Resolve(
             [Movie(Local, "Sintel", 2010, new ContentIds("45745", "tt1"))],
             [Movie(Standard, "Sintel", 2010, new ContentIds("45745", "tt2"), _hd)]);
 
-        Assert.False(Assert.Single(result.Decisions).IsLocal);
+        Assert.True(Assert.Single(result.Decisions).IsLocal);
     }
 
     [Fact]
-    public void Contradiction_ThroughABridge_SplitsEveryDistinctSetOfIds()
+    public void AllCopiesThatShareOneId_Merge_WhateverTheirOtherIds()
     {
-        // tt1 and tt2 both link to the item with TMDb only, which belongs to one of them at most.
         var result = Resolve(
             Movie(Standard, "Sintel", 2010, new ContentIds("45745"), _hd),
             Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds("45745", "tt1"), _hd),
             Movie("server-c", "Sintel", 2010, new ContentIds("45745", "tt2"), _hd),
             Movie("server-d", "Sintel", 2010, new ContentIds("45745", "tt2"), _fullHd));
 
-        Assert.Equal(3, result.Decisions.Count);
-        var decision = result.Decisions.Single(candidate => candidate.Identity.Key.EndsWith("tt2", System.StringComparison.Ordinal));
+        var decision = Assert.Single(result.Decisions);
         Assert.Equal("server-d", decision.Winner?.ServerId);
-        Assert.Equal("server-c", Assert.Single(decision.Backups).ServerId);
+        Assert.Equal(3, decision.Backups.Count);
     }
 
     [Fact]
-    public void Contradiction_InASeries_AppliesToItsEpisodes()
+    public void TheKey_IsTheLowestValue_WhenTheMergedCopiesDiffer()
+    {
+        CatalogItem[] items =
+        [
+            Movie(Standard, "Sintel", 2010, new ContentIds("20", "tt1"), _hd),
+            Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds("3", "tt1"), _hd),
+        ];
+
+        foreach (var order in Permutations(items))
+        {
+            Assert.Equal("movie|tmdb:20", Assert.Single(DedupEngine.Resolve([], order).Decisions).Identity.Key);
+        }
+    }
+
+    [Fact]
+    public void AThirdCopy_JoinsTwoCopiesThatDoNotContradictEachOther()
+    {
+        // The first two have different IDs but no provider in common, so nothing says they are different.
+        var result = Resolve(
+            Movie(Standard, "Sintel", 2010, new ContentIds("45745"), _hd),
+            Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds(Imdb: "tt1"), _hd),
+            Movie("server-c", "Sintel", 2010, new ContentIds("45745", "tt1"), _hd));
+
+        Assert.Single(result.Decisions);
+    }
+
+    [Fact]
+    public void AChain_ThatJoinsTwoContradictingCopies_StaysSeparate_AndIsReported()
+    {
+        // The ends share no ID and disagree on both providers, so one of the links is wrong and nobody can tell which.
+        var result = Resolve(
+            Movie(Standard, "Sintel", 2010, new ContentIds("1", "tt1"), _hd),
+            Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds("1", "tt2"), _hd),
+            Movie("server-c", "Sintel", 2010, new ContentIds("2", "tt2"), _hd));
+
+        Assert.Equal(
+            ["movie|tmdb:1|imdb:tt1", "movie|tmdb:1|imdb:tt2", "movie|tmdb:2|imdb:tt2"],
+            result.Decisions.Select(decision => decision.Identity.Key));
+        Assert.Equal(
+            ["movie|tmdb:1|imdb:tt1", "movie|tmdb:1|imdb:tt2", "movie|tmdb:2|imdb:tt2"],
+            result.Issues.Single(issue => issue.Kind == DedupIssueKind.ConflictingProviderIds).WorkKeys);
+    }
+
+    [Fact]
+    public void AChain_WithAContradiction_LeavesALocalCopyOnlyItsOwnSetOfIds()
+    {
+        var result = DedupEngine.Resolve(
+            [Movie(Local, "Sintel", 2010, new ContentIds("1", "tt1"))],
+            [
+                Movie(Standard, "Sintel", 2010, new ContentIds("1", "tt1"), _hd),
+                Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds("1", "tt2"), _hd),
+                Movie("server-c", "Sintel", 2010, new ContentIds("2", "tt2"), _hd),
+            ]);
+
+        Assert.Equal(3, result.Decisions.Count);
+        Assert.Single(result.Decisions, decision => decision.IsLocal);
+    }
+
+    [Fact]
+    public void Chains_DoNotDependOnOrder()
+    {
+        CatalogItem[] items =
+        [
+            Movie(Standard, "Sintel", 2010, new ContentIds("1", "tt1"), _hd),
+            Movie(RemoteJellyMesh, "Sintel", 2010, new ContentIds("1", "tt2"), _hd),
+            Movie("server-c", "Sintel", 2010, new ContentIds("2", "tt2"), _hd),
+            Movie("server-d", "Altro", 2011, new ContentIds("7", "tt7"), _hd),
+            Movie("server-e", "Altro", 2011, new ContentIds("8", "tt7"), _hd),
+        ];
+
+        var expected = Fingerprint(DedupEngine.Resolve([], items));
+        foreach (var order in Permutations(items))
+        {
+            Assert.Equal(expected, Fingerprint(DedupEngine.Resolve([], order)));
+        }
+    }
+
+    [Fact]
+    public void PartlyDifferingIds_InASeries_ApplyToItsEpisodes()
     {
         var result = Resolve(
             Episode(Standard, "Serie", 2020, new ContentIds("100", Tvdb: "1"), 1, 1, _hd),
             Episode(RemoteJellyMesh, "Serie", 2020, new ContentIds("100", Tvdb: "2"), 1, 1, _fullHd));
 
-        Assert.Equal(2, result.Decisions.Count);
+        Assert.Single(result.Decisions);
         Assert.Contains(result.Issues, issue => issue.Kind == DedupIssueKind.ConflictingProviderIds);
     }
 
@@ -221,18 +308,18 @@ public class ProviderIdMatchingTests
     public void BlankIds_CountAsMissing(string blank)
     {
         var result = Resolve(
-            Movie(Standard, "Sintel", 2010, new ContentIds(blank, blank), _hd),
-            Movie(RemoteJellyMesh, "Sintel", 2010, null, _hd));
+            Movie(Standard, "Sintel", 2010, new ContentIds(blank, blank), _hd).Lasting(90),
+            Movie(RemoteJellyMesh, "Sintel", 2010, null, _hd).Lasting(90));
 
         Assert.Equal(MatchKind.TitleYear, Assert.Single(result.Decisions).Identity.Match);
     }
 
     [Fact]
-    public void NoIds_MergeOnTitleAndYear_AndNoIssueIsRaised()
+    public void NoIds_MergeWhenMetadataConfirmTitleAndYear_AndNoIssueIsRaised()
     {
         var result = Resolve(
-            Movie(Standard, "L'Éclisse Fantasma (2026)", 2026, null, _hd),
-            Movie(RemoteJellyMesh, "Eclisse Fantasma (2026)", 2026, null, _fullHd));
+            Movie(Standard, "L'Éclisse Fantasma (2026)", 2026, null, _hd).Lasting(90),
+            Movie(RemoteJellyMesh, "Eclisse Fantasma (2026)", 2026, null, _fullHd).Lasting(90));
 
         Assert.Equal(MatchKind.TitleYear, Assert.Single(result.Decisions).Identity.Match);
         Assert.Empty(result.Issues);

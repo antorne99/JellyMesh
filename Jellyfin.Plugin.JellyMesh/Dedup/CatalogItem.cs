@@ -45,6 +45,11 @@ public sealed record CatalogItem
     public ContentIds Ids { get; init; } = ContentIds.None;
 
     /// <summary>
+    /// Gets what confirms a film copy that has no IDs (decision 13). Filled on films only.
+    /// </summary>
+    public ComparableMetadata Metadata { get; init; } = ComparableMetadata.None;
+
+    /// <summary>
     /// Gets the season of an episode, <c>ParentIndexNumber</c>.
     /// </summary>
     public int? SeasonNumber { get; init; }

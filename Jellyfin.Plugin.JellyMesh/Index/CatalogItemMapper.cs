@@ -47,6 +47,15 @@ public static class CatalogItemMapper
                 Title = item.Name,
                 Year = item.ProductionYear,
                 Ids = ContentIds.FromProviderIds(item.ProviderIds),
+                Metadata = new ComparableMetadata
+                {
+                    OriginalTitle = item.OriginalTitle,
+                    RunTimeTicks = item.RunTimeTicks,
+                    Overview = item.Overview,
+                    Genres = item.Genres,
+                    Studios = item.Studios,
+                    People = new Lazy<IReadOnlyList<string>>(item.People.Select(person => person.Name).OfType<string>().ToList())
+                },
                 Versions = versions
             };
         }

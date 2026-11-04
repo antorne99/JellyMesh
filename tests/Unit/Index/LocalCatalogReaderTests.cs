@@ -45,6 +45,37 @@ public class LocalCatalogReaderTests
     }
 
     [Fact]
+    public void AFilmCarriesTheMetadataThatConfirmsAMatch()
+    {
+        var film = Film("/media/film/a.mkv");
+        film.OriginalTitle = "Original";
+        film.RunTimeTicks = 600;
+        film.Overview = "Plot";
+        film.Genres = ["Drama"];
+        film.Studios = ["Studio"];
+
+        var metadata = Assert.Single(ReaderOver(film).Read()).Metadata;
+
+        Assert.Equal("Original", metadata.OriginalTitle);
+        Assert.Equal(600, metadata.RunTimeTicks);
+        Assert.Equal("Plot", metadata.Overview);
+        Assert.Equal(["Drama"], metadata.Genres);
+        Assert.Equal(["Studio"], metadata.Studios);
+    }
+
+    [Fact]
+    public void PeopleAreReadOnlyWhenAComparisonAsks()
+    {
+        var film = Film("/media/film/a.mkv");
+        _library.Setup(library => library.GetPeople(film)).Returns([new PersonInfo { Name = "Anna" }]);
+
+        var metadata = Assert.Single(ReaderOver(film).Read()).Metadata;
+
+        _library.Verify(library => library.GetPeople(It.IsAny<BaseItem>()), Times.Never);
+        Assert.Equal(["Anna"], metadata.People.Value);
+    }
+
+    [Fact]
     public void AnEpisodeTakesTitleYearAndIdsFromItsSeries()
     {
         var series = new Series
