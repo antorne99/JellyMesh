@@ -24,6 +24,7 @@ public sealed class IndexLeakTests : IDisposable
         {
           "Id": "item", "Name": "Film", "Type": "Movie", "Path": "/secret/path/film.mkv",
           "ProviderIds": { "Tmdb": "1" },
+          "Chapters": [{ "Name": "Uno", "StartPositionTicks": 0, "ImagePath": "/secret/path/chapter.jpg" }],
           "MediaSources": [{
             "Id": "source",
             "Path": "http://friend.tailnet.ts.net:8096/Videos/1/stream?api_key=tok3n0123456789sentinel",
@@ -33,7 +34,7 @@ public sealed class IndexLeakTests : IDisposable
             "MediaStreams": [
               { "Type": "Video", "Codec": "h264", "Height": 1080, "BitRate": 1000, "VideoRange": "SDR", "IsDefault": true,
                 "Path": "/secret/path/video" },
-              { "Type": "Subtitle", "Path": "/secret/path/film.srt", "DeliveryUrl": "/Videos/1/subs?api_key=tok3n0123456789sentinel" }
+              { "Type": "Subtitle", "Index": 1, "IsExternal": true, "Path": "/secret/path/film.srt", "DeliveryUrl": "/Videos/1/subs?api_key=tok3n0123456789sentinel" }
             ]
           }]
         }

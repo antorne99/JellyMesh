@@ -1,0 +1,5 @@
+run/
+web/
+extra/
+Jellyfin.Api.xml
+__pycache__/

@@ -326,7 +326,14 @@
                         return 'The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.';
                     }
 
-                    return status.IndexSaveFailed ? 'The last sync could not save the federation index. Check the disk.' : '';
+                    if (status.IndexSaveFailed) {
+                        return 'The last sync could not save the federation index. Check the disk.';
+                    }
+
+                    return status.HeldLibraries.map(function (held) {
+                        return 'A complete read of a library of ' + held.ServerName + ' came back empty. Its ' + held.Stubs
+                            + ' titles are kept until it has items again. If it is really empty, deselect it.';
+                    }).join(' ');
                 }
 
                 function renderSync(status) {

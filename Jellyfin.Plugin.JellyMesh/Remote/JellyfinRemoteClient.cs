@@ -52,7 +52,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     // Everything a catalog entry keeps. ImageTags, BackdropImageTags, ratings, dates and numbers come by default, and
     // MediaSources holds the streams of each version. The list is what can reach the index: see RemoteItem.
-    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle";
+    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters";
 
     private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly string[] _importableCollectionTypes = ["movies", "tvshows"];
@@ -168,6 +168,23 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             : RemoteResult.Fail<DateTimeOffset?>(response.Failure);
     }
 
+    /// <inheritdoc />
+    public async Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var path = string.Create(CultureInfo.InvariantCulture, $"/Items/{Uri.EscapeDataString(itemId)}/Images/{Uri.EscapeDataString(imageType)}/{imageIndex}");
+        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteImage>(response.Failure);
+        }
+
+        return response.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true && response.Body.Length > 0
+            ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType))
+            : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
+    }
+
     private static string ItemsPath(RemoteSession session, RemoteItemQuery query)
     {
         // Sorted so that pages hold still: new items land at the end instead of shifting the pages already read.
@@ -218,7 +235,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
     }
 
-    private static string AuthorizationHeader(RemoteEndpoint endpoint, RemoteSession? session)
+    internal static string AuthorizationHeader(RemoteEndpoint endpoint, RemoteSession? session)
     {
         var header = string.Create(CultureInfo.InvariantCulture, $"MediaBrowser Client=\"JellyMesh\", Device=\"JellyMesh\", DeviceId=\"{endpoint.DeviceId}\", Version=\"{_version}\"");
         return session is null ? header : string.Create(CultureInfo.InvariantCulture, $"{header}, Token=\"{session.AccessToken}\"");
@@ -300,7 +317,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
                     return RawResponse.Failed(FailureOf(response.StatusCode), response.StatusCode);
                 }
 
-                return new RawResponse(response.StatusCode, await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false), RemoteFailure.None, response.Headers.Date);
+                var content = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+                return new RawResponse(response.StatusCode, content, RemoteFailure.None, response.Headers.Date, response.Content.Headers.ContentType?.MediaType);
             }
 
             return RawResponse.Failed(RemoteFailure.RedirectRefused, null);
@@ -319,7 +337,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
     }
 
-    private sealed record RawResponse(HttpStatusCode? Status, byte[] Body, RemoteFailure Failure, DateTimeOffset? Date = null)
+    private sealed record RawResponse(HttpStatusCode? Status, byte[] Body, RemoteFailure Failure, DateTimeOffset? Date = null, string? ContentType = null)
     {
         public bool IsSuccess => Failure == RemoteFailure.None;
 

@@ -28,31 +28,41 @@ public static class DedupEngine
         var remote = remoteItems.Where(item => !item.IsFederated && item.Versions.Count > 0).ToList();
         var works = WorkResolver.Create([.. local, .. remote]);
 
-        var localKeys = local
-            .Select(item => Identify(item, works)?.Key)
-            .OfType<string>()
-            .ToHashSet(StringComparer.Ordinal);
+        var localByKey = local
+            .Select(item => (Identify(item, works)?.Key, item.ItemId))
+            .Where(entry => entry.Key is not null)
+            .ToLookup(entry => entry.Key!, entry => entry.ItemId, StringComparer.Ordinal);
 
         var decisions = remote
             .GroupBy(item => Identify(item, works) ?? IdentifyAlone(item, works))
-            .Select(group => Decide(group.Key, group, localKeys.Contains(group.Key.Key)))
+            .Select(group => Decide(group.Key, group, localByKey[group.Key.Key].Order(StringComparer.Ordinal).ToList()))
             .OrderBy(decision => decision.Identity.Key, StringComparer.Ordinal)
             .ToList();
 
-        return new DedupResult(decisions, works.Issues);
+        return new DedupResult(decisions, works.Issues) { LocalItemByWork = LocalItemsByWork(local, works) };
     }
 
-    private static FederationDecision Decide(ContentIdentity identity, IEnumerable<CatalogItem> items, bool isLocal)
+    private static Dictionary<string, string> LocalItemsByWork(List<CatalogItem> local, WorkResolver works)
     {
-        if (isLocal)
+        return local
+            .Select(item => (Key: works.Find(item)?.Key, item.ItemId))
+            .Where(entry => entry.Key is not null)
+            .GroupBy(entry => entry.Key!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Select(entry => entry.ItemId).Min(StringComparer.Ordinal)!, StringComparer.Ordinal);
+    }
+
+    private static FederationDecision Decide(ContentIdentity identity, IGrouping<ContentIdentity, CatalogItem> items, List<string> localItemIds)
+    {
+        var remoteItems = items.Select(item => new RemoteItemKey(item.ServerId, item.ItemId)).ToList();
+        if (localItemIds.Count > 0)
         {
-            return new FederationDecision(identity, null, []);
+            return new FederationDecision(identity, null, []) { LocalItemIds = localItemIds, RemoteItems = remoteItems };
         }
 
         var ranked = QualityRanking.Rank(items.SelectMany(item => item.Versions.Select(version =>
             new RemoteSource(item.ServerId, item.ItemId, version.MediaSourceId, version.Quality))));
 
-        return new FederationDecision(identity, ranked[0], ranked.Skip(1).ToList());
+        return new FederationDecision(identity, ranked[0], ranked.Skip(1).ToList()) { RemoteItems = remoteItems };
     }
 
     private static ContentIdentity? Identify(CatalogItem item, WorkResolver works)

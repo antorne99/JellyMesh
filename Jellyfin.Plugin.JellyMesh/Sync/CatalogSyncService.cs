@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ICredentialVault _vault;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CatalogSyncService> _logger;
+    private readonly ILibraryMaterializer? _materializer;
     private readonly CancellationTokenSource _shutdown = new();
 
     private int _busy;
@@ -43,13 +45,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="vault">The credential vault.</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="materializer">What brings the federated folder in step after a sync.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
         IFederationIndex index,
         ICredentialVault vault,
         TimeProvider timeProvider,
-        ILogger<CatalogSyncService> logger)
+        ILogger<CatalogSyncService> logger,
+        ILibraryMaterializer? materializer = null)
     {
         _registry = registry;
         _reader = reader;
@@ -57,6 +61,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _vault = vault;
         _timeProvider = timeProvider;
         _logger = logger;
+        _materializer = materializer;
     }
 
     /// <inheritdoc />
@@ -102,7 +107,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var snapshot = _index.Snapshot;
         var run = _run;
         var servers = _registry.GetServers().Select(server => ToReport(server, snapshot.Find(server.Id))).ToList();
-        return new SyncStatus(run.IsRunning, snapshot.Health, run.IndexSaveFailed, run.StartedUtc, run.FinishedUtc, servers);
+        return new SyncStatus(run.IsRunning, snapshot.Health, run.IndexSaveFailed, run.StartedUtc, run.FinishedUtc, servers)
+        {
+            HeldLibraries = _materializer?.LastReport?.Held ?? []
+        };
     }
 
     /// <inheritdoc />
@@ -175,11 +183,32 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             {
                 await syncServer(server, cancellationToken).ConfigureAwait(false);
             }
+
+            await MaterializeAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
             Interlocked.Exchange(ref _busy, 0);
+        }
+    }
+
+    // After every sync, also a failed one: what one server sent is still good, and removals check each server by itself.
+    private async Task MaterializeAsync(CancellationToken cancellationToken)
+    {
+        if (_materializer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _materializer.MaterializeAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Could not materialize the federated folder: {Error}", exception.GetType().Name);
         }
     }
 

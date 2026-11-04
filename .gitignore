@@ -5,3 +5,4 @@ obj/
 artifacts
 .claude/settings.local.json
 bin-out/
+.claude/worktrees/

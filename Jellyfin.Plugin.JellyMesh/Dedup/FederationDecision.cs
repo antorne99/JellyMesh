@@ -15,6 +15,18 @@ public sealed record FederationDecision(
     IReadOnlyList<RemoteSource> Backups)
 {
     /// <summary>
+    /// Gets the local copies, empty unless <see cref="IsLocal"/>. A stub being replaced needs them to hand its watch
+    /// state over.
+    /// </summary>
+    public IReadOnlyList<string> LocalItemIds { get; init; } = [];
+
+    /// <summary>
+    /// Gets every remote item of this identity, whatever was decided. <see cref="Winner"/> and <see cref="Backups"/> are
+    /// empty when a local copy exists, and a stub still has to be found from its items.
+    /// </summary>
+    public IReadOnlyList<RemoteItemKey> RemoteItems { get; init; } = [];
+
+    /// <summary>
     /// Gets a value indicating whether a local copy exists, so the local copy wins.
     /// </summary>
     [MemberNotNullWhen(false, nameof(Winner))]
