@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -180,7 +181,9 @@ public sealed partial class PlaybackSession
 
     private static string ShapeOf(int folder, string file)
     {
-        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{folder}/{NumberedFile().Replace(file, "N.")}");
+        // jellyfin-web asks for an external subtitle in its own format: Stream.js for a Stream.vtt it was given.
+        var shape = file.StartsWith("Stream.", StringComparison.OrdinalIgnoreCase) ? "Stream" : NumberedFile().Replace(file, "N.");
+        return string.Create(CultureInfo.InvariantCulture, $"{folder}/{shape}");
     }
 
     private string? Map(string uri, string remoteFolder, string prefix, string localToken)
@@ -242,7 +245,7 @@ public sealed partial class PlaybackSession
         _queries[ShapeOf(index, file)] = string.Join('&', kept);
 
         client.Append("ApiKey=").Append(Uri.EscapeDataString(localToken));
-        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{prefix}{index}/{file}?{client}");
+        return string.Create(CultureInfo.InvariantCulture, $"{prefix}{index}/{file}?{client}");
     }
 
     private sealed class RequestScope : IDisposable
