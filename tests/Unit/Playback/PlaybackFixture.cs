@@ -201,6 +201,16 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
         return Task.FromResult(RemoteResult.Success(true));
     }
 
+    public List<string> Renewed { get; } = [];
+
+    public RemoteFailure RenewalFailure { get; set; } = RemoteFailure.None;
+
+    public Task<RemoteResult<bool>> RenewStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
+    {
+        Renewed.Add(playSessionId);
+        return Task.FromResult(RenewalFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(RenewalFailure));
+    }
+
     public List<string> Released { get; } = [];
 
     public Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)

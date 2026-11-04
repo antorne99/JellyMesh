@@ -215,16 +215,28 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<bool>> RenewStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(session);
+
+        using var message = BuildRequest(endpoint, session, HttpMethod.Put, StreamPath(playSessionId));
+        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(session);
 
-        var path = "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
-        using var message = BuildRequest(endpoint, session, HttpMethod.Delete, path);
+        using var message = BuildRequest(endpoint, session, HttpMethod.Delete, StreamPath(playSessionId));
         var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
         return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
     }
+
+    private static string StreamPath(string playSessionId) => "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
 
     private static HttpRequestMessage BuildRequest(RemoteEndpoint endpoint, RemoteSession session, HttpMethod method, string path)
     {

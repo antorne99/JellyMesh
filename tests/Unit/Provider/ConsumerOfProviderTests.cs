@@ -119,6 +119,19 @@ public class ProviderClientTests
     }
 
     [Fact]
+    public async Task Renewal_calls_the_provider_api()
+    {
+        var client = Playback(_ => StubHandler.Status(HttpStatusCode.NoContent), out var handler);
+
+        var result = await client.RenewStreamAsync(_endpoint, _session, "play/session", CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("/JellyMesh/Provider/Streams/play%2Fsession", request.Uri.AbsolutePath);
+    }
+
+    [Fact]
     public async Task Release_calls_the_provider_api()
     {
         var client = Playback(_ => StubHandler.Status(HttpStatusCode.NoContent), out var handler);
@@ -824,6 +837,104 @@ public class StreamLimitPlaybackTests
         await _fixture.OpenAsync(PlaybackValues.Stub(source));
 
         Assert.Equal([PlaybackValues.RemotePlaySession + source.ItemId], _fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_stream_being_read_renews_its_slot()
+    {
+        var source = PlaybackValues.Source();
+        _fixture.Registry.AddJellyMesh(source.ServerId);
+        await _fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(_fixture.Sessions.All);
+        using var reading = session.BeginRequest(_fixture.Clock);
+
+        _fixture.Clock.Advance(PlaybackTimeouts.SlotRenewal);
+        await _fixture.Coordinator.SweepAsync();
+
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Renewed);
+    }
+
+    [Fact]
+    public async Task A_stream_renews_once_per_interval()
+    {
+        var source = PlaybackValues.Source();
+        _fixture.Registry.AddJellyMesh(source.ServerId);
+        await _fixture.OpenAsync(PlaybackValues.Stub(source));
+        using var reading = Assert.Single(_fixture.Sessions.All).BeginRequest(_fixture.Clock);
+
+        await _fixture.Coordinator.SweepAsync();
+        Assert.Empty(_fixture.Client.Renewed);
+
+        _fixture.Clock.Advance(PlaybackTimeouts.SlotRenewal);
+        await _fixture.Coordinator.SweepAsync();
+        await _fixture.Coordinator.SweepAsync();
+        Assert.Single(_fixture.Client.Renewed);
+
+        _fixture.Clock.Advance(PlaybackTimeouts.SlotRenewal);
+        await _fixture.Coordinator.SweepAsync();
+        Assert.Equal(2, _fixture.Client.Renewed.Count);
+    }
+
+    [Fact]
+    public void A_lost_renewal_or_two_still_fit_in_the_idle_time_of_a_slot()
+    {
+        var worstGap = (PlaybackTimeouts.SlotRenewal + PlaybackTimeouts.SweepInterval + PlaybackTimeouts.RemoteStop) * 2;
+
+        Assert.True(worstGap < StreamSlots.IdleTimeout);
+    }
+
+    [Fact]
+    public async Task A_pause_renews_nothing_and_gives_the_slot_back_at_the_sweep()
+    {
+        var source = PlaybackValues.Source();
+        _fixture.Registry.AddJellyMesh(source.ServerId);
+        await _fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(_fixture.Sessions.All);
+        session.BeginRequest(_fixture.Clock).Dispose();
+
+        _fixture.Clock.Advance(PlaybackTimeouts.Idle - TimeSpan.FromSeconds(1));
+        await _fixture.Coordinator.SweepAsync();
+        Assert.Empty(_fixture.Client.Released);
+
+        _fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        await _fixture.Coordinator.SweepAsync();
+
+        Assert.Empty(_fixture.Client.Renewed);
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_stock_remote_gets_no_renewal()
+    {
+        await _fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        using var reading = Assert.Single(_fixture.Sessions.All).BeginRequest(_fixture.Clock);
+
+        _fixture.Clock.Advance(PlaybackTimeouts.SlotRenewal);
+        await _fixture.Coordinator.SweepAsync();
+
+        Assert.Empty(_fixture.Client.Renewed);
+    }
+
+    [Theory]
+    [InlineData(RemoteFailure.Timeout)]
+    [InlineData(RemoteFailure.ServerError)]
+    public async Task A_failed_renewal_leaves_the_stream_alone_and_is_tried_again(RemoteFailure failure)
+    {
+        var source = PlaybackValues.Source();
+        _fixture.Registry.AddJellyMesh(source.ServerId);
+        await _fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(_fixture.Sessions.All);
+        using var reading = session.BeginRequest(_fixture.Clock);
+        _fixture.Client.RenewalFailure = failure;
+
+        _fixture.Clock.Advance(PlaybackTimeouts.SlotRenewal);
+        await _fixture.Coordinator.SweepAsync();
+        _fixture.Clock.Advance(PlaybackTimeouts.SlotRenewal);
+        await _fixture.Coordinator.SweepAsync();
+
+        Assert.Equal(2, _fixture.Client.Renewed.Count);
+        Assert.Same(session, Assert.Single(_fixture.Sessions.All));
+        Assert.Empty(_fixture.Client.Released);
     }
 
     [Fact]

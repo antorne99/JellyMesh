@@ -224,6 +224,7 @@ public class ProviderControllerTests
         Assert.Equal(403, ((StatusCodeResult)(await _controller.GetItems(RemoteItemType.Movie, ProviderFixture.SharedLibrary, null)).Result!).StatusCode);
         Assert.Equal(403, ((StatusCodeResult)(await _controller.GetChanges(null)).Result!).StatusCode);
         Assert.Equal(403, ((StatusCodeResult)await _controller.ReleaseStream("play")).StatusCode);
+        Assert.Equal(403, ((StatusCodeResult)await _controller.RenewStream("play")).StatusCode);
     }
 
     [Fact]
@@ -325,6 +326,27 @@ public class ProviderControllerTests
     public async Task A_bad_feed_limit_is_refused()
     {
         Assert.IsType<BadRequestResult>((await _controller.GetChanges(null, 0)).Result);
+    }
+
+    [Fact]
+    public async Task Renewal_keeps_the_slot_of_the_caller()
+    {
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 1, "play")!.Dispose();
+        _fixture.Clock.Advance(StreamSlots.IdleTimeout - TimeSpan.FromSeconds(1));
+
+        var result = await _controller.RenewStream("play");
+        _fixture.Clock.Advance(TimeSpan.FromSeconds(2));
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public async Task Renewing_a_slot_that_is_gone_takes_none()
+    {
+        Assert.IsType<NoContentResult>(await _controller.RenewStream("gone"));
+
+        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]

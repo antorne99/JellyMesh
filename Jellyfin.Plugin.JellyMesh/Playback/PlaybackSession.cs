@@ -32,6 +32,7 @@ public sealed partial class PlaybackSession
     private readonly ConcurrentDictionary<int, string> _folders = new();
     private readonly ConcurrentDictionary<string, string> _queries = new(StringComparer.Ordinal);
     private long _lastRequestTicks;
+    private long _lastRenewalTicks;
     private int _activeRequests;
     private int _parked;
 
@@ -55,6 +56,7 @@ public sealed partial class PlaybackSession
         Kind = kind;
         UpstreamPath = upstreamPath;
         _lastRequestTicks = now.UtcTicks;
+        _lastRenewalTicks = now.UtcTicks;
     }
 
     /// <summary>Gets the opaque identifier, which is also the local <c>PlaySessionId</c>.</summary>
@@ -111,6 +113,24 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <returns>Whether this call parked it.</returns>
     public bool TryPark() => Interlocked.Exchange(ref _parked, 1) == 0;
+
+    /// <summary>
+    /// Tells whether the stream slot of this session is due for a renewal, and if so counts it as done. Only while a
+    /// request is being served: a pause has none, and its slot goes with the sweep (decision 6).
+    /// </summary>
+    /// <param name="now">The current time.</param>
+    /// <param name="interval">The time between renewals.</param>
+    /// <returns>Whether to renew now.</returns>
+    public bool TryRenew(DateTimeOffset now, TimeSpan interval)
+    {
+        if (!IsActive || now.UtcTicks - Interlocked.Read(ref _lastRenewalTicks) < interval.Ticks)
+        {
+            return false;
+        }
+
+        Interlocked.Exchange(ref _lastRenewalTicks, now.UtcTicks);
+        return true;
+    }
 
     /// <summary>
     /// Turns a URI of a remote playlist into a URL for the client, keeping the remote form here.

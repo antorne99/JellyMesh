@@ -140,6 +140,25 @@ public class ProviderController : ControllerBase
     }
 
     /// <summary>
+    /// Keeps the slot of a play session a client of the caller is still reading.
+    /// </summary>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>Nothing.</returns>
+    [HttpPut("Streams/{playSessionId}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult> RenewStream([FromRoute] string playSessionId)
+    {
+        if (await _peers.FindCallerAsync(HttpContext).ConfigureAwait(false) is not { } caller)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        _slots.Renew(caller.Grant.UserId, playSessionId);
+        return NoContent();
+    }
+
+    /// <summary>
     /// Frees the slot of a play session the caller has finished with.
     /// </summary>
     /// <param name="playSessionId">The play session.</param>

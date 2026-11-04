@@ -63,6 +63,16 @@ public interface IRemotePlaybackClient
     Task<RemoteResult<bool>> StopEncodingAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Keeps a stream slot on a JellyMesh remote while a client is still reading what the remote has already sent.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="playSessionId">The play session on the remote.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the remote accepted it.</returns>
+    Task<RemoteResult<bool>> RenewStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Gives a stream slot back to a JellyMesh remote. Only saves time: an unused slot expires there by itself.
     /// </summary>
     /// <param name="endpoint">The remote.</param>
