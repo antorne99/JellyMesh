@@ -133,7 +133,7 @@ Observed while building this environment, on Jellyfin 12.4.0.
 - **MKV bitrate:** MKV has no per-stream bitrate, so Jellyfin reports the container bitrate minus 192 kbit/s per audio track, and shows `192000` as the bitrate of every audio track, even a 128 kbit/s AAC. MP4 values are measured.
 - **Episodes:** `ProviderIds` is empty on the test episodes, so identity has to come from the parent series plus season and episode numbers, as §4.1 expects.
 - **Files with several episodes:** `S01E01-E02` sets `IndexNumberEnd` on a video file and on a `.strm`, and a list always carries it, whatever `Fields` asks for. The name becomes `Episodio 1 / Episodio 2`, and only one item exists. NextUp treats it as both: once it is played, the next item is `E03`.
-- **`.nfo` of several episodes:** `<episodenumberend>` sets `IndexNumberEnd` even when the file name holds one number, and `<lockdata>` keeps it. Several `<episodedetails>` blocks work too, joining their titles. "Replace all metadata" on an unlocked item keeps `IndexNumber` but clears `IndexNumberEnd`, so the stub provider restores it.
+- **`.nfo` of several episodes:** `<episodenumberend>` sets `IndexNumberEnd` even when the file name holds one number, and `<lockdata>` keeps it. Several `<episodedetails>` blocks work too, joining their titles. "Replace all metadata" on an unlocked item keeps `IndexNumber` but clears `IndexNumberEnd`, so the stub provider restores it, also on a stub whose file name holds one number.
 
 These observations led to the three decisions recorded in §10 of the plan: a 5% bitrate tolerance, removing the year from `Name`, and using Jellyfin's video bitrate uncorrected.
 

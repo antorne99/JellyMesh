@@ -47,4 +47,12 @@ check "and gets its range" '{"E":3,"End":4}' "$(get upgrade "/Users/$uid/Items/$
 check "and keeps its state" true "$(get upgrade "/Users/$uid/Items/$stub3" | jq .UserData.Played)"
 echo "series as a client sees it: $(doppia upgrade)"
 stubs upgrade | grep "JM Serie Doppia " | sed 's/.*\///'
+
+echo "--- an old stub without protection: its file name holds one number, and a refresh reads it again"
+configure upgrade false
+sync_and_scan upgrade
+check "the range survives a rescan" '{"E":3,"End":4,"Lock":false}' "$(get upgrade "/Users/$uid/Items/$stub3" | jq -c '{E:.IndexNumber,End:.IndexNumberEnd,Lock:.LockData}')"
+post upgrade "/Items/$stub3/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=None&replaceAllMetadata=true&replaceAllImages=false" >/dev/null
+sleep 5
+check "the range survives replace all" '{"E":3,"End":4}' "$(get upgrade "/Users/$uid/Items/$stub3" | jq -c '{E:.IndexNumber,End:.IndexNumberEnd}')"
 exit "${FAILED:-0}"
