@@ -7,9 +7,9 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 
 /// <summary>
 /// The concurrent streams of each peer, counted here because the consumer goes through stock routes and nothing it
-/// claims can be trusted. A slot lives as long as this server sees it used: a request in progress holds it, and after
-/// <see cref="IdleTimeout"/> without one it is gone, so a consumer that vanishes leaves nothing behind. In memory on
-/// purpose: a restart ends the streams too.
+/// claims can be trusted. A slot lives as long as this server sees it used: a request in progress holds it, a renewal
+/// from the consumer extends it, and after <see cref="IdleTimeout"/> without either it is gone, so a consumer that
+/// vanishes leaves nothing behind. In memory on purpose: a restart ends the streams too.
 /// </summary>
 public sealed class StreamSlots
 {
@@ -108,6 +108,23 @@ public sealed class StreamSlots
             }
 
             return new Scope(this, peerId, key, slot);
+        }
+    }
+
+    /// <summary>
+    /// Restarts the idle time of a slot. The last bytes of a stream can leave this server long before a client has read
+    /// them, and only the consumer can tell. Never takes a slot: one that expired is gone, and an unknown one is ignored.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    /// <param name="key">The play session.</param>
+    public void Renew(Guid peerId, string key)
+    {
+        lock (_lock)
+        {
+            if (SlotsOf(peerId).TryGetValue(key, out var slot))
+            {
+                slot.LastUsed = _clock.GetUtcNow();
+            }
         }
     }
 

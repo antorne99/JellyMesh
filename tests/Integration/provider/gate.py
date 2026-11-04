@@ -10,11 +10,13 @@ State file, read per request:
   notranscode   500 on HLS playlists, as a remote that cannot transcode
 One line per request is logged, without any token: state, method, path without the query, status.
 A stream logs a second line with END and the bytes passed when it is over.
+The tokens that pass go to <state file>.tokens and nowhere else: they are what leaks.sh looks for.
 """
-import http.client, http.server, socketserver, sys, threading, time
+import http.client, http.server, re, socketserver, sys, threading, time
 
 LISTEN, TARGET, STATE, LOG = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
 lock = threading.Lock()
+tokens = set()
 
 
 def mode():
@@ -22,6 +24,14 @@ def mode():
         return open(STATE).read().strip() or "up"
     except OSError:
         return "up"
+
+
+def note_token(header):
+    found = re.search(r'Token="([^"]+)"', header or "")
+    if found and found.group(1) not in tokens:
+        with lock, open(STATE + ".tokens", "a") as f:
+            tokens.add(found.group(1))
+            f.write(found.group(1) + "\n")
 
 
 def record(m, method, path, status):
@@ -38,6 +48,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def go(self):
         m = mode()
         path = self.path.split("?")[0]
+        note_token(self.headers.get("Authorization"))
         if m == "down":
             record(m, self.command, path, "closed")
             self.close_connection = True

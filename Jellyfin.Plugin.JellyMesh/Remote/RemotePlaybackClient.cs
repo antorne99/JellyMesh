@@ -115,7 +115,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<RemoteTranscodePolicy>> GetTranscodePolicyAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    public async Task<RemoteResult<RemoteTranscodePolicy>> GetTranscodePolicyAsync(RemoteEndpoint endpoint, RemoteSession session, bool readHardware, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(session);
@@ -132,12 +132,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             return RemoteResult.Fail<RemoteTranscodePolicy>(RemoteFailure.InvalidResponse);
         }
 
-        using var encodingRequest = BuildRequest(endpoint, session, HttpMethod.Get, "/System/Configuration/encoding");
-        var encoding = await ReadDocumentAsync(encodingRequest, cancellationToken).ConfigureAwait(false);
-        var hardware = encoding.IsSuccess ? Parse<EncodingResponse>(encoding.Value!)?.HardwareAccelerationType : null;
-
         return RemoteResult.Success(new RemoteTranscodePolicy(
-            hardware,
+            readHardware ? await ReadHardwareAsync(endpoint, session, cancellationToken).ConfigureAwait(false) : null,
             policy.EnableVideoPlaybackTranscoding,
             policy.EnableAudioPlaybackTranscoding,
             policy.EnablePlaybackRemuxing));
@@ -219,16 +215,28 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<bool>> RenewStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(session);
+
+        using var message = BuildRequest(endpoint, session, HttpMethod.Put, StreamPath(playSessionId));
+        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(session);
 
-        var path = "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
-        using var message = BuildRequest(endpoint, session, HttpMethod.Delete, path);
+        using var message = BuildRequest(endpoint, session, HttpMethod.Delete, StreamPath(playSessionId));
         var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
         return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
     }
+
+    private static string StreamPath(string playSessionId) => "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
 
     private static HttpRequestMessage BuildRequest(RemoteEndpoint endpoint, RemoteSession session, HttpMethod method, string path)
     {
@@ -294,6 +302,13 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
 
             return buffer.ToArray();
         }
+    }
+
+    private async Task<string?> ReadHardwareAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/System/Configuration/encoding");
+        var encoding = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        return encoding.IsSuccess ? Parse<EncodingResponse>(encoding.Value!)?.HardwareAccelerationType : null;
     }
 
     private async Task<RemoteResult<byte[]>> ReadDocumentAsync(HttpRequestMessage message, CancellationToken cancellationToken)
