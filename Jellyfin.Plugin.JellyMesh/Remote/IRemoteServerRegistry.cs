@@ -1,0 +1,76 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Security;
+
+namespace Jellyfin.Plugin.JellyMesh.Remote;
+
+/// <summary>
+/// The configured remote servers and the only way to act on them. Every operation that talks to a
+/// remote fails with <see cref="RemoteFailure.Suspended"/>, without sending anything, when the key
+/// state is not <see cref="KeyState.Ok"/>.
+/// </summary>
+public interface IRemoteServerRegistry
+{
+    /// <summary>
+    /// Lists the configured servers.
+    /// </summary>
+    /// <returns>The servers.</returns>
+    IReadOnlyList<RemoteServerInfo> GetServers();
+
+    /// <summary>
+    /// Adds a server, once the login on it succeeded. On failure nothing is saved.
+    /// </summary>
+    /// <param name="name">The display name.</param>
+    /// <param name="url">The base URL.</param>
+    /// <param name="credentials">The dedicated user.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The added server.</returns>
+    Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes a server. Possible in any key state: it uses no credential, and it is how to
+    /// recover from a lost key.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>Whether the server existed.</returns>
+    bool Remove(Guid serverId);
+
+    /// <summary>
+    /// Tests the login and refreshes the capabilities of a server.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The report.</returns>
+    Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lists the importable libraries of a server.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The libraries.</returns>
+    Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the libraries to import from a server.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraryIds">The remote library identifiers.</param>
+    /// <returns>Whether the server exists.</returns>
+    bool SetImportedLibraries(Guid serverId, IEnumerable<string> libraryIds);
+
+    /// <summary>
+    /// Runs a call with an authenticated session, logging in again once if the token was refused.
+    /// </summary>
+    /// <typeparam name="T">The result type.</typeparam>
+    /// <param name="serverId">The server.</param>
+    /// <param name="call">The call.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The result of <paramref name="call"/>, or why it could not run.</returns>
+    Task<RemoteResult<T>> RunWithSessionAsync<T>(
+        Guid serverId,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken);
+}

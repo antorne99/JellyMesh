@@ -1,0 +1,253 @@
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Sync;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyMesh.Tests.Sync;
+
+public sealed class RemoteCatalogReaderTests : IDisposable
+{
+    private readonly SyncFixture _fixture = new();
+
+    public void Dispose() => _fixture.Dispose();
+
+    private Task<RemoteResult<System.Collections.Generic.IReadOnlyList<IndexedItem>>> ReadAsync(RemoteServerInfo server)
+        => _fixture.Reader.ReadAsync(server, SyncFixture.Start, CancellationToken.None);
+
+    [Fact]
+    public async Task ReadsEveryPageInOrder()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies((2 * RemoteCatalogReader.PageSize) + 3));
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal((2 * RemoteCatalogReader.PageSize) + 3, result.Value!.Count);
+        Assert.Equal([0, RemoteCatalogReader.PageSize, 2 * RemoteCatalogReader.PageSize], _fixture.Client.Queries.Select(query => query.StartIndex));
+        Assert.All(_fixture.Client.Queries, query => Assert.Equal(RemoteCatalogReader.PageSize, query.Limit));
+    }
+
+    [Fact]
+    public async Task AnEmptyLibraryIsOneRequest()
+    {
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Empty(result.Value!);
+        Assert.Single(_fixture.Client.Queries);
+    }
+
+    [Fact]
+    public async Task ATooLargePageIsAskedAgainWithALowerLimit()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(70));
+        _fixture.Client.OnPage = (query, _) => query.Limit > 50 ? RemoteFailure.ResponseTooLarge : RemoteFailure.None;
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(70, result.Value!.Count);
+        Assert.Equal([200, 100, 50, 50], _fixture.Client.Queries.Select(query => query.Limit));
+        Assert.Equal([0, 0, 0, 50], _fixture.Client.Queries.Select(query => query.StartIndex));
+    }
+
+    [Fact]
+    public async Task ASingleItemOverTheLimitFailsTheRead()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        _fixture.Client.OnPage = (_, _) => RemoteFailure.ResponseTooLarge;
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
+        Assert.Equal(1, _fixture.Client.Queries[^1].Limit);
+    }
+
+    [Fact]
+    public async Task AnItemRemovedDuringTheReadRestartsIt()
+    {
+        var movies = TestItems.Movies(RemoteCatalogReader.PageSize + 10);
+        _fixture.Client.Add("films", RemoteItemType.Movie, movies);
+        _fixture.Client.OnPage = (_, call) =>
+        {
+            if (call == 2)
+            {
+                _fixture.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+            }
+
+            return RemoteFailure.None;
+        };
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        // The removal shifts the item at the page boundary into the page already read: the count alone would still match.
+        Assert.Equal(movies.Skip(1).Select(movie => movie.Id).Order(), result.Value!.Select(item => item.ItemId).Order());
+    }
+
+    [Fact]
+    public async Task ACatalogThatNeverHoldsStillFailsInsteadOfGivingAPartialRead()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 10));
+        var total = 0;
+        _fixture.Client.Rewrite = (_, page) => page with { TotalRecordCount = page.TotalRecordCount + total++ };
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.CatalogChanged, result.Failure);
+        Assert.Null(result.Value);
+    }
+
+    [Fact]
+    public async Task AnItemSeenTwiceAcrossPagesCountsOnceAndFailsTheCount()
+    {
+        var movies = TestItems.Movies(RemoteCatalogReader.PageSize + 1);
+        _fixture.Client.Add("films", RemoteItemType.Movie, movies);
+        _fixture.Client.Rewrite = (query, page) => query.StartIndex == RemoteCatalogReader.PageSize
+            ? page with { Items = [movies[0]] }
+            : page;
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.CatalogChanged, result.Failure);
+    }
+
+    [Fact]
+    public async Task AnEmptyPageBeforeTheTotalStopsTheRead()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        _fixture.Client.Rewrite = (_, page) => new RemoteItemPage([], 5);
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.CatalogChanged, result.Failure);
+        Assert.Equal(3, _fixture.Client.Queries.Count);
+    }
+
+    [Fact]
+    public async Task AnAbsurdTotalIsRefused()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        _fixture.Client.Rewrite = (_, page) => page with { TotalRecordCount = RemoteCatalogReader.MaxItemsPerQuery + 1 };
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Fact]
+    public async Task ASeriesLibraryReadsSeriesSeasonsAndEpisodes()
+    {
+        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Client.Add("shows", RemoteItemType.Season, TestItems.Season("s1", "s", 1));
+        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
+        var server = await _fixture.AddServerAsync("A", "shows");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(
+            [IndexedItemKind.Series, IndexedItemKind.Season, IndexedItemKind.Episode],
+            result.Value!.Select(item => item.Kind));
+        Assert.Equal(
+            [RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode],
+            _fixture.Client.Queries.Select(query => query.Type));
+    }
+
+    [Fact]
+    public async Task ASeriesRowThatItemsCollapsesIsLookedUpById()
+    {
+        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("listed"));
+        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "collapsed", 1, 1));
+        _fixture.Client.ItemsById.Add(TestItems.Series("collapsed"));
+        var server = await _fixture.AddServerAsync("A", "shows");
+
+        var result = await ReadAsync(server);
+
+        var series = result.Value!.Single(item => item.ItemId == "collapsed");
+        Assert.Equal(IndexedItemKind.Series, series.Kind);
+        Assert.Equal("shows", series.LibraryId);
+        Assert.Equal("71", series.ProviderIds["Tvdb"]);
+    }
+
+    [Fact]
+    public async Task AnEpisodeWhoseSeriesCannotBeFoundIsKeptAndLogged()
+    {
+        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "gone", 1, 1));
+        var server = await _fixture.AddServerAsync("Friend", "shows");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal("e1", Assert.Single(result.Value!).ItemId);
+        Assert.Contains(_fixture.ReaderLogger.Lines, line => line.Contains("Friend", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AChosenLibraryThatIsGoneFailsTheRead()
+    {
+        var server = await _fixture.AddServerAsync("A", "films", "deleted");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.LibraryUnavailable, result.Failure);
+        Assert.Empty(_fixture.Client.Queries);
+    }
+
+    [Fact]
+    public async Task OnlyChosenLibrariesAreRead()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal("m", Assert.Single(result.Value!).ItemId);
+    }
+
+    [Fact]
+    public async Task NoChosenLibraryMeansNoRequest()
+    {
+        var server = await _fixture.AddServerAsync("A");
+
+        var result = await ReadAsync(server);
+
+        Assert.Empty(result.Value!);
+        Assert.Empty(_fixture.Client.Queries);
+    }
+
+    [Fact]
+    public async Task ARefusedTokenIsRenewedInTheMiddleOfARead()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1));
+        _fixture.Client.OnPage = (_, call) => call == 2 ? RemoteFailure.AuthenticationFailed : RemoteFailure.None;
+        var server = await _fixture.AddServerAsync("A", "films");
+        var logins = _fixture.Client.Logins;
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteCatalogReader.PageSize + 1, result.Value!.Count);
+        Assert.Equal(logins + 1, _fixture.Client.Logins);
+    }
+
+    [Fact]
+    public async Task ALostKeyStopsTheReadBeforeAnyRequest()
+    {
+        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.KeySource.Key = null;
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.Suspended, result.Failure);
+        Assert.Empty(_fixture.Client.Queries);
+    }
+}

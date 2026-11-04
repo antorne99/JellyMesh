@@ -1,0 +1,18 @@
+---
+name: "JellyMesh"
+guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
+version: "0.1.0.0"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
+overview: "Federates multiple Jellyfin servers into one library"
+description: >
+  JellyMesh shows titles from other Jellyfin servers in your existing libraries
+  and streams them through the local server. Remote servers can be stock
+  Jellyfin or run JellyMesh.
+category: "General"
+owner: "antoniotornesello"
+artifacts:
+- "Jellyfin.Plugin.JellyMesh.dll"
+changelog: >
+  Plugin skeleton, configuration page, encrypted credentials, remote login and
+  capability detection.

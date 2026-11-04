@@ -1,0 +1,67 @@
+# JellyMesh test environment (plan §8): three Jellyfin 12.4 instances.
+#
+# Config and cache live in named volumes, not bind mounts: Jellyfin keeps its
+# SQLite database under /config, and SQLite locking is unreliable on the file
+# sharing layer Docker Desktop uses for bind mounts on macOS.
+#
+# Instances reach each other by service name, e.g. http://remoto-standard:8096.
+# Ports bind to loopback by default because the admin password is a fixed test
+# value. Set BIND_ADDRESS to expose them, e.g. to test from a phone or TV.
+
+name: jellymesh-test
+
+x-jellyfin: &jellyfin
+  image: jellyfin/jellyfin:12.4.20261026-211555
+  environment: &jellyfin-env
+    TZ: Europe/Rome
+
+services:
+  # Consumer under test. Gets the JellyMesh plugin from Phase 1.
+  locale:
+    <<: *jellyfin
+    hostname: locale
+    environment:
+      <<: *jellyfin-env
+      JELLYMESH_SECRET_KEY:
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8096:8096"
+    volumes:
+      - locale-config:/config
+      - locale-cache:/cache
+      - ./media/locale:/media:ro
+      # The only path the plugin may write to, added to the Film and Serie
+      # libraries as a second path.
+      - ./federata:/federata
+
+  # Stock Jellyfin. Never gets the plugin.
+  remoto-standard:
+    <<: *jellyfin
+    hostname: remoto-standard
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8097:8096"
+    volumes:
+      - remoto-standard-config:/config
+      - remoto-standard-cache:/cache
+      - ./media/remoto-standard:/media:ro
+
+  # Remote with the JellyMesh plugin from Phase 1.
+  remoto-jellymesh:
+    <<: *jellyfin
+    hostname: remoto-jellymesh
+    environment:
+      <<: *jellyfin-env
+      JELLYMESH_SECRET_KEY:
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8098:8096"
+    volumes:
+      - remoto-jellymesh-config:/config
+      - remoto-jellymesh-cache:/cache
+      - ./media/remoto-jellymesh:/media:ro
+
+volumes:
+  locale-config:
+  locale-cache:
+  remoto-standard-config:
+  remoto-standard-cache:
+  remoto-jellymesh-config:
+  remoto-jellymesh-cache:

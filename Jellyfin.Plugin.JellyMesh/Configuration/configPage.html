@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JellyMesh</title>
+</head>
+<body>
+    <div id="JellyMeshConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <h2 class="sectionTitle">JellyMesh</h2>
+
+                <div id="jmWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmMessage" role="status" hidden style="padding:0.5em 0;font-weight:bold;"></div>
+
+                <h3 class="sectionTitle">Status</h3>
+                <p id="jmStatus"></p>
+
+                <h3 class="sectionTitle">Remote servers</h3>
+                <div id="jmServers"></div>
+
+                <h3 class="sectionTitle">Catalog</h3>
+                <div id="jmIndexWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <p id="jmSyncStatus"></p>
+                <div id="jmSyncServers"></div>
+                <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
+                    <span>Sync now</span>
+                </button>
+
+                <form id="jmAddServerForm" autocomplete="off">
+                    <h3 class="sectionTitle">Add a server</h3>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmServerName">Name</label>
+                        <input id="jmServerName" type="text" is="emby-input" required />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Tailnet URL</label>
+                        <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server.tailnet.ts.net:8096" />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmServerUser">User</label>
+                        <input id="jmServerUser" type="text" is="emby-input" required autocomplete="off" />
+                        <div class="fieldDescription">A dedicated non-admin user on the remote. API keys are not used.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmServerPassword">Password</label>
+                        <input id="jmServerPassword" type="password" is="emby-input" autocomplete="new-password" />
+                        <div class="fieldDescription">Stored encrypted and never shown again.</div>
+                    </div>
+                    <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>Test and add</span>
+                    </button>
+                </form>
+
+                <form id="jmSettingsForm">
+                    <h3 class="sectionTitle">Settings</h3>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
+                        <input id="jmSyncInterval" type="number" is="emby-input" min="1" step="1" required />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmReconciliationTime">Nightly reconciliation time</label>
+                        <input id="jmReconciliationTime" type="time" is="emby-input" required />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
+                        <input id="jmFederatedFolder" type="text" is="emby-input" />
+                        <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
+                    </div>
+                    <div id="jmFolderInfo" class="fieldDescription" style="margin-bottom:1.5em;"></div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
+                            <span>Protect metadata</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
+                    </div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>Save</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+        <script type="text/javascript">
+            (function () {
+                var pluginId = '28c43ea1-fb5a-4b3a-8e6e-30aa3245c653';
+                var page = document.querySelector('#JellyMeshConfigPage');
+                var connectionLabels = {
+                    NotChecked: 'not checked yet',
+                    Online: 'online',
+                    Offline: 'offline',
+                    AuthenticationFailed: 'login refused',
+                    AdministratorAccount: 'administrator account refused',
+                    RedirectRefused: 'redirect refused',
+                    ServerError: 'server error',
+                    InvalidResponse: 'unexpected answer',
+                    ResponseTooLarge: 'answer too large',
+                    LibraryUnavailable: 'a chosen library is gone: open Libraries and save again',
+                    CatalogChanged: 'the catalog kept changing, try again',
+                    Suspended: 'suspended'
+                };
+                var modeLabels = { Unknown: 'mode unknown', Standard: 'standard', JellyMesh: 'JellyMesh' };
+                var syncPollMilliseconds = 2000;
+                var suspended = false;
+                var syncTimer = null;
+
+                function el(selector) {
+                    return page.querySelector(selector);
+                }
+
+                // Names come from remote servers, so everything goes through textContent.
+                function create(tag, text) {
+                    var node = document.createElement(tag);
+                    if (text !== undefined) {
+                        node.textContent = text;
+                    }
+
+                    return node;
+                }
+
+                function showMessage(text) {
+                    var message = el('#jmMessage');
+                    message.textContent = text || '';
+                    message.hidden = !text;
+                }
+
+                function api(method, path, body) {
+                    var headers = {
+                        Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
+                        Accept: 'application/json; profile="PascalCase"'
+                    };
+                    var options = { method: method, headers: headers };
+                    if (body !== undefined) {
+                        headers['Content-Type'] = 'application/json';
+                        options.body = JSON.stringify(body);
+                    }
+
+                    return fetch(ApiClient.getUrl('JellyMesh/Admin/' + path), options).then(function (response) {
+                        if (response.status === 204) {
+                            return null;
+                        }
+
+                        return response.json().catch(function () {
+                            return {};
+                        }).then(function (data) {
+                            if (!response.ok) {
+                                throw new Error(data.Message || 'The request failed.');
+                            }
+
+                            return data;
+                        });
+                    });
+                }
+
+                function act(promise) {
+                    Dashboard.showLoadingMsg();
+                    return promise.catch(function (error) {
+                        showMessage(error.message);
+                    }).then(function () {
+                        Dashboard.hideLoadingMsg();
+                    });
+                }
+
+                function button(text, onClick) {
+                    var node = create('button', text);
+                    node.type = 'button';
+                    node.setAttribute('is', 'emby-button');
+                    node.className = 'raised emby-button';
+                    node.addEventListener('click', onClick);
+                    return node;
+                }
+
+                function renderLibraries(container, server, libraries) {
+                    container.textContent = '';
+                    if (libraries.length === 0) {
+                        container.appendChild(create('p', 'This user sees no film or series libraries.'));
+                        return;
+                    }
+
+                    var boxes = libraries.map(function (library) {
+                        var label = create('label');
+                        label.style.display = 'block';
+                        var box = create('input');
+                        box.type = 'checkbox';
+                        box.value = library.Id;
+                        box.checked = library.Selected;
+                        label.appendChild(box);
+                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
+                        container.appendChild(label);
+                        return box;
+                    });
+
+                    container.appendChild(button('Save libraries', function () {
+                        var ids = boxes.filter(function (box) {
+                            return box.checked;
+                        }).map(function (box) {
+                            return box.value;
+                        });
+                        act(api('POST', 'Servers/' + server.Id + '/Libraries', { LibraryIds: ids }).then(function () {
+                            showMessage('Libraries saved for ' + server.Name + '.');
+                            return load();
+                        }));
+                    }));
+                }
+
+                function renderServer(server) {
+                    var row = create('div');
+                    row.className = 'jmServer';
+                    row.style.marginBottom = '1.5em';
+                    row.appendChild(create('h4', server.Name));
+                    row.appendChild(create('p', server.Url + ' - ' + (modeLabels[server.Mode] || server.Mode) + ' - '
+                        + (connectionLabels[server.Connection] || server.Connection) + ' - '
+                        + 'libraries to import: ' + server.ImportedLibraryIds.length));
+
+                    var libraries = create('div');
+                    row.appendChild(button('Test connection', function () {
+                        act(api('POST', 'Servers/' + server.Id + '/Test').then(function (report) {
+                            showMessage(server.Name + ': connected, ' + (modeLabels[report.Capabilities.Mode] || report.Capabilities.Mode)
+                                + ', importable libraries: ' + report.LibraryCount + '.');
+                            return load();
+                        }));
+                    }));
+                    row.appendChild(button('Libraries', function () {
+                        act(api('GET', 'Servers/' + server.Id + '/Libraries').then(function (result) {
+                            renderLibraries(libraries, server, result);
+                        }));
+                    }));
+                    row.appendChild(button('Remove', function () {
+                        if (!window.confirm('Remove ' + server.Name + '?')) {
+                            return;
+                        }
+
+                        act(api('DELETE', 'Servers/' + server.Id).then(load));
+                    }));
+                    row.appendChild(libraries);
+                    return row;
+                }
+
+                function renderFolder(folder) {
+                    var info = el('#jmFolderInfo');
+                    info.textContent = '';
+                    if (!folder.Path) {
+                        info.textContent = 'Choose a folder to see the paths to link.';
+                        return;
+                    }
+
+                    info.appendChild(create('div', 'Add these paths by hand in Dashboard > Libraries: ' + folder.MoviesPath + ' to the film library, ' + folder.SeriesPath + ' to the series library.'));
+                    if (folder.Link === 'NotChecked') {
+                        info.appendChild(create('div', 'The libraries could not be read to check these paths.'));
+                        return;
+                    }
+
+                    if (folder.Link === 'Linked') {
+                        info.appendChild(create('div', 'Both paths are linked.'));
+                    }
+
+                    var warnings = [
+                        pathWarning(folder.MoviesPath, 'a film', folder.Movies),
+                        pathWarning(folder.SeriesPath, 'a series', folder.Series)
+                    ];
+                    if (folder.SeriesGroupingOff.length > 0) {
+                        warnings.push('Warning: "Automatically merge series that are spread across multiple folders" is off in '
+                            + folder.SeriesGroupingOff.join(', ') + ', so a series present in two folders stays split. Turn it on in the library options.');
+                    }
+
+                    warnings.filter(Boolean).forEach(function (text) {
+                        var warning = create('div', text);
+                        warning.className = 'jmFolderWarning';
+                        warning.style.fontWeight = 'bold';
+                        info.appendChild(warning);
+                    });
+                }
+
+                function pathWarning(path, kind, status) {
+                    var libraries = status.Libraries.join(', ');
+                    switch (status.Link) {
+                        case 'NotLinked':
+                            return 'Warning: ' + path + ' is not linked to a library yet.';
+                        case 'DifferentCase':
+                            return 'Warning: ' + libraries + ' has this path with different capitals, which is another folder here. Add exactly ' + path + '.';
+                        case 'WrongLibraryType':
+                            return 'Warning: ' + path + ' is linked to ' + libraries + ', which is not ' + kind + ' library.';
+                        default:
+                            return '';
+                    }
+                }
+
+                function render(status) {
+                    suspended = status.Suspended;
+                    var warning = el('#jmWarning');
+                    warning.textContent = status.Warning || '';
+                    warning.hidden = !status.Warning;
+                    el('#jmStatus').textContent = (status.Suspended ? 'Suspended' : 'Active') + '. Servers configured: ' + status.Servers.length + '.';
+                    el('#jmAddServer').disabled = suspended;
+
+                    var servers = el('#jmServers');
+                    servers.textContent = '';
+                    status.Servers.forEach(function (server) {
+                        servers.appendChild(renderServer(server));
+                    });
+                    renderFolder(status.FederatedFolder);
+                }
+
+                function formatDate(value) {
+                    return value ? new Date(value).toLocaleString() : 'never';
+                }
+
+                function syncLine(server) {
+                    var text = server.ServerName + ': ' + server.Movies + ' films, ' + server.Series + ' series, '
+                        + server.Episodes + ' episodes, last complete sync ' + formatDate(server.LastSuccessUtc);
+                    if (server.IsOffline) {
+                        text += '. OFFLINE: the sync of ' + formatDate(server.LastAttemptUtc) + ' could not reach it. These entries are kept as they were, and a full read runs when it answers again';
+                    } else if (server.State === 'Stale') {
+                        text += '. Last sync failed (' + (connectionLabels[server.Failure] || server.Failure || 'unknown') + '): these entries are kept as they were';
+                    }
+
+                    return text + '.';
+                }
+
+                function indexWarning(status) {
+                    if (status.Health === 'Corrupt') {
+                        return 'The federation index was damaged and no copy could be read. It is empty until a sync fills it again.';
+                    }
+
+                    if (status.Health === 'RestoredFromBackup') {
+                        return 'The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.';
+                    }
+
+                    return status.IndexSaveFailed ? 'The last sync could not save the federation index. Check the disk.' : '';
+                }
+
+                function renderSync(status) {
+                    var warning = el('#jmIndexWarning');
+                    warning.textContent = indexWarning(status);
+                    warning.hidden = !warning.textContent;
+                    el('#jmSyncStatus').textContent = status.IsRunning
+                        ? 'Sync running...'
+                        : 'Last sync: ' + formatDate(status.LastFinishedUtc) + '.';
+                    el('#jmSyncNow').disabled = suspended || status.IsRunning;
+
+                    var servers = el('#jmSyncServers');
+                    servers.textContent = '';
+                    status.Servers.forEach(function (server) {
+                        servers.appendChild(create('p', syncLine(server)));
+                    });
+
+                    window.clearTimeout(syncTimer);
+                    syncTimer = status.IsRunning ? window.setTimeout(loadSync, syncPollMilliseconds) : null;
+                }
+
+                function loadSync() {
+                    return api('GET', 'Sync').then(renderSync).catch(function (error) {
+                        showMessage(error.message);
+                    });
+                }
+
+                function load() {
+                    return api('GET', 'Status').then(render).then(loadSync);
+                }
+
+                function loadSettings() {
+                    return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        el('#jmSyncInterval').value = config.SyncIntervalSeconds;
+                        el('#jmReconciliationTime').value = config.ReconciliationTime;
+                        el('#jmFederatedFolder').value = config.FederatedFolderPath;
+                        el('#jmMetadataProtection').checked = config.MetadataProtection;
+                    });
+                }
+
+                page.addEventListener('pageshow', function () {
+                    showMessage('');
+                    act(Promise.all([loadSettings(), load()]));
+                });
+
+                page.addEventListener('pagehide', function () {
+                    window.clearTimeout(syncTimer);
+                    syncTimer = null;
+                });
+
+                el('#jmSyncNow').addEventListener('click', function () {
+                    showMessage('');
+                    act(api('POST', 'Sync').then(renderSync));
+                });
+
+                el('#jmAddServerForm').addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    var password = el('#jmServerPassword');
+                    var request = {
+                        Name: el('#jmServerName').value,
+                        Url: el('#jmServerUrl').value,
+                        Username: el('#jmServerUser').value,
+                        Password: password.value
+                    };
+                    password.value = '';
+                    showMessage('');
+                    act(api('POST', 'Servers', request).then(function (server) {
+                        el('#jmAddServerForm').reset();
+                        showMessage('Added ' + server.Name + '.');
+                        return load();
+                    }));
+                });
+
+                el('#jmSettingsForm').addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    showMessage('');
+                    act(ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        config.SyncIntervalSeconds = parseInt(el('#jmSyncInterval').value, 10);
+                        config.ReconciliationTime = el('#jmReconciliationTime').value;
+                        config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
+                        config.MetadataProtection = el('#jmMetadataProtection').checked;
+                        return ApiClient.updatePluginConfiguration(pluginId, config);
+                    }).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                        return load();
+                    }, function () {
+                        throw new Error('The settings were refused: check the time format and that the folder is an absolute path.');
+                    }));
+                });
+            })();
+        </script>
+    </div>
+</body>
+</html>

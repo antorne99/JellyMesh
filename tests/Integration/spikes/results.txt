@@ -1,0 +1,292 @@
+{"Name":"JellyMesh Probe","Version":"0.0.1.0","Status":"Active"}
+
+== baseline, no plugin, lock=on
+after scan:
+{"RunTimeTicks":null,"Container":null,"Path":"http://host.docker.internal:18221/JellyMesh/Play/baseline","Streams":[]}
+PlaybackInfo took 0.13s
+PlaybackInfo took 0.06s
+3 PlaybackInfo: stub requests 3, ffprobe runs 3
+all-direct profile:
+{"Id":"55ea4ba8488e85a91e7edc2261f2d119","Name":"JM Baseline (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/baseline","Container":"mkv","Size":58,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+web-like profile:
+{"Id":"55ea4ba8488e85a91e7edc2261f2d119","Name":"JM Baseline (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/baseline","Container":"mkv","Size":58,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/55ea4ba8-488e-85a9-1e7e-dc2261f2d119/master.m3u8?...","DefaultAudioStreamIndex":2,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+persisted:
+{"RunTimeTicks":595190000,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/baseline","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== source modes=[source] lock=on
+after scan:
+{"RunTimeTicks":null,"Container":null,"Path":"http://host.docker.internal:18221/JellyMesh/Play/s-source","Streams":[]}
+PlaybackInfo took 0.18s
+PlaybackInfo took 0.08s
+3 PlaybackInfo: stub requests 3, ffprobe runs 3
+all-direct profile:
+{"Id":"e470205174f0e100ab7764fa0ecac021","Name":"JM S source (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-source","Container":"mkv","Size":58,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+{"Id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Name":"JellyMesh probe source","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/dynamic","Container":"mkv","Size":30378097,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":false,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":3,"Streams":["2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+web-like profile:
+{"Id":"e470205174f0e100ab7764fa0ecac021","Name":"JM S source (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-source","Container":"mkv","Size":58,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/e4702051-74f0-e100-ab77-64fa0ecac021/master.m3u8?...","DefaultAudioStreamIndex":2,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+{"Id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Name":"JellyMesh probe source","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/dynamic","Container":"mkv","Size":30378097,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":false,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/e4702051-74f0-e100-ab77-64fa0ecac021/master.m3u8?DeviceId=jellymesh-p3-spike&MediaSourceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&VideoCodec=h264&AudioCodec=aac&AudioStreamIndex=3&VideoBitrate=119616000&AudioBitrate=384000&MaxFramerate=24&SegmentContainer=ts&PlaySessionId=5fa5f913b35f40e581bc413983d52335&ApiKey=<token>&TranscodingMaxAudioChannels=2&RequireAvc=false&EnableAudioVbrEncoding=true&h264-level=40&h264-videobitdepth=8&h264-profile=high&TranscodeReasons=ContainerNotSupported,AudioCodecNotSupported","DefaultAudioStreamIndex":3,"Streams":["2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+persisted:
+{"RunTimeTicks":595190000,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-source","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== sameid modes=[source,sameid] lock=on
+after scan:
+{"RunTimeTicks":null,"Container":null,"Path":"http://host.docker.internal:18221/JellyMesh/Play/s-sameid","Streams":[]}
+PlaybackInfo took 0.16s
+PlaybackInfo took 0.08s
+3 PlaybackInfo: stub requests 3, ffprobe runs 3
+all-direct profile:
+{"Id":"7d9d63c3e57fd60e4151088df97c8c7c","Name":"JM S sameid (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-sameid","Container":"mkv","Size":58,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+{"Id":"7d9d63c3e57fd60e4151088df97c8c7c","Name":"JellyMesh probe source","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/dynamic","Container":"mkv","Size":30378097,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":false,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":3,"Streams":["2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+web-like profile:
+{"Id":"7d9d63c3e57fd60e4151088df97c8c7c","Name":"JM S sameid (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-sameid","Container":"mkv","Size":58,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/7d9d63c3-e57f-d60e-4151-088df97c8c7c/master.m3u8?...","DefaultAudioStreamIndex":2,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+{"Id":"7d9d63c3e57fd60e4151088df97c8c7c","Name":"JellyMesh probe source","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/dynamic","Container":"mkv","Size":30378097,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":false,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/7d9d63c3-e57f-d60e-4151-088df97c8c7c/master.m3u8?DeviceId=jellymesh-p3-spike&MediaSourceId=7d9d63c3e57fd60e4151088df97c8c7c&VideoCodec=h264&AudioCodec=aac&AudioStreamIndex=3&VideoBitrate=119616000&AudioBitrate=384000&MaxFramerate=24&SegmentContainer=ts&PlaySessionId=90e48ca7921246efac4dee8648691e99&ApiKey=<token>&TranscodingMaxAudioChannels=2&RequireAvc=false&EnableAudioVbrEncoding=true&h264-level=40&h264-videobitdepth=8&h264-profile=high&TranscodeReasons=ContainerNotSupported,AudioCodecNotSupported","DefaultAudioStreamIndex":3,"Streams":["2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+persisted:
+{"RunTimeTicks":595190000,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-sameid","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== hooksonly modes=[noprobe] lock=on
+after scan:
+{"RunTimeTicks":null,"Container":null,"Path":"http://host.docker.internal:18221/JellyMesh/Play/s-hooksonly","Streams":[]}
+PlaybackInfo took 0.07s
+PlaybackInfo took 0.03s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"7df6ffb9acebfa2278ac3f42b88ae6b5","Name":"JM S hooksonly (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-hooksonly","Container":"strm","Size":61,"Bitrate":null,"RunTimeTicks":null,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":null,"Streams":[]}
+web-like profile:
+{"Id":"7df6ffb9acebfa2278ac3f42b88ae6b5","Name":"JM S hooksonly (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-hooksonly","Container":"strm","Size":61,"Bitrate":null,"RunTimeTicks":null,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/7df6ffb9-aceb-fa22-78ac-3f42b88ae6b5/master.m3u8?...","DefaultAudioStreamIndex":null,"Streams":[]}
+persisted:
+{"RunTimeTicks":null,"Container":null,"Path":"http://host.docker.internal:18221/JellyMesh/Play/s-hooksonly","Streams":[]}
+
+== prefillonly modes=[prefill] lock=on
+after scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-prefillonly","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+PlaybackInfo took 0.17s
+PlaybackInfo took 0.09s
+3 PlaybackInfo: stub requests 3, ffprobe runs 3
+all-direct profile:
+{"Id":"3c0eb441d07218d7d5673aa33034c7e6","Name":"JM S prefillonly (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-prefillonly","Container":"mkv","Size":63,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+web-like profile:
+{"Id":"3c0eb441d07218d7d5673aa33034c7e6","Name":"JM S prefillonly (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-prefillonly","Container":"mkv","Size":63,"Bitrate":4083146,"RunTimeTicks":595190000,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/3c0eb441-d072-18d7-d567-3aa33034c7e6/master.m3u8?...","DefaultAudioStreamIndex":2,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+persisted:
+{"RunTimeTicks":595190000,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-prefillonly","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== pre modes=[noprobe,prefill] lock=on
+after scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-pre","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+PlaybackInfo took 0.08s
+PlaybackInfo took 0.03s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"4e782132cc5e32b5b74896cd46e8a8fb","Name":"JM S pre (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-pre","Container":"mkv","Size":55,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+web-like profile:
+{"Id":"4e782132cc5e32b5b74896cd46e8a8fb","Name":"JM S pre (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-pre","Container":"mkv","Size":55,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/4e782132-cc5e-32b5-b748-96cd46e8a8fb/master.m3u8?...","DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-pre","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== preresave modes=[noprobe,prefill,external,resave] lock=on
+after scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-preresave","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+PlaybackInfo took 0.15s
+PlaybackInfo took 0.07s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"ff5810993b3c963d14ba4dc1048134ef","Name":"JM S preresave (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-preresave","Container":"mkv","Size":61,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":3,"Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+web-like profile:
+{"Id":"ff5810993b3c963d14ba4dc1048134ef","Name":"JM S preresave (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-preresave","Container":"mkv","Size":61,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/ff581099-3b3c-963d-14ba-4dc1048134ef/master.m3u8?...","DefaultAudioStreamIndex":3,"Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-preresave","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+
+== unlocked modes=[noprobe,prefill,external,resave] lock=
+after scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-unlocked","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+PlaybackInfo took 0.25s
+PlaybackInfo took 0.21s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"7069b7ff959cec7d2e728c6da1afb17c","Name":"JM S unlocked (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-unlocked","Container":"mkv","Size":60,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":3,"Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+web-like profile:
+{"Id":"7069b7ff959cec7d2e728c6da1afb17c","Name":"JM S unlocked (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-unlocked","Container":"mkv","Size":60,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/7069b7ff-959c-ec7d-2e72-8c6da1afb17c/master.m3u8?...","DefaultAudioStreamIndex":3,"Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-unlocked","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+
+== dec modes=[decorator,prefill] lock=on
+after scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-dec","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+PlaybackInfo took 0.11s
+PlaybackInfo took 0.04s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"fcf79bdc5b125b642c3fbde0fefc278d","Name":"JM S dec (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-dec","Container":"mkv","Size":55,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+web-like profile:
+{"Id":"fcf79bdc5b125b642c3fbde0fefc278d","Name":"JM S dec (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-dec","Container":"mkv","Size":55,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/fcf79bdc-5b12-5b64-2c3f-bde0fefc278d/master.m3u8?...","DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-dec","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== decrewrite modes=[decorator,prefill,rewrite] lock=on
+after scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/rewritten","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+PlaybackInfo took 0.08s
+PlaybackInfo took 0.03s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"ae30337e897b9a7cde720b3819fcb50e","Name":"JM S decrewrite (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/rewritten","Container":"mkv","Size":62,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+web-like profile:
+{"Id":"ae30337e897b9a7cde720b3819fcb50e","Name":"JM S decrewrite (2026)","Protocol":"Http","Path":"http://host.docker.internal:18221/JellyMesh/Play/rewritten","Container":"mkv","Size":62,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/ae30337e-897b-9a7c-de72-0b3819fcb50e/master.m3u8?...","DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/rewritten","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== server playback with Path rewritten by the decorator
+static stream: 200
+  stub: 02:25:35 GET /JellyMesh/Play/rewritten range=bytes=0-99 ua=Jellyfin-Server/12.4.0
+segment: 200
+  stub: 02:25:37 GET /JellyMesh/Play/rewritten range=bytes=0- ua=Lavf/62.12.103
+
+== filt modes=[filter] lock=on
+after scan:
+{"RunTimeTicks":null,"Container":null,"Path":"http://host.docker.internal:18221/JellyMesh/Play/s-filt","Streams":[]}
+PlaybackInfo took 0.08s
+PlaybackInfo took 0.07s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"ade4b5ac2838a3b719ea4c2d12702aa4","Name":"JellyMesh probe source","Protocol":"Http","Path":"/JellyMesh/Play/ade4b5ac2838a3b719ea4c2d12702aa4","Container":"mkv","Size":30378097,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":false,"SupportsProbing":false,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/JellyMesh/Hls/ade4b5ac2838a3b719ea4c2d12702aa4/master.m3u8","DefaultAudioStreamIndex":null,"Streams":["2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+web-like profile:
+{"Id":"ade4b5ac2838a3b719ea4c2d12702aa4","Name":"JellyMesh probe source","Protocol":"Http","Path":"/JellyMesh/Play/ade4b5ac2838a3b719ea4c2d12702aa4","Container":"mkv","Size":30378097,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":false,"SupportsProbing":false,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/JellyMesh/Hls/ade4b5ac2838a3b719ea4c2d12702aa4/master.m3u8","DefaultAudioStreamIndex":null,"Streams":["2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+persisted:
+{"RunTimeTicks":null,"Container":null,"Path":"http://host.docker.internal:18221/JellyMesh/Play/s-filt","Streams":[]}
+
+== filter, user without access to the library
+PlaybackInfo as blocked user: 404
+PlaybackInfo with no token: 401
+
+== filtafter modes=[filter-after,noprobe,prefill] lock=on
+after scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-filtafter","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+PlaybackInfo took 0.26s
+PlaybackInfo took 0.09s
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+all-direct profile:
+{"Id":"6f71649a6dad325317ef575a7c0de502","Name":"JM S filtafter (2026)","Protocol":"Http","Path":"/JellyMesh/Play/6f71649a6dad325317ef575a7c0de502","Container":"mkv","Size":61,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":true,"SupportsDirectStream":true,"SupportsTranscoding":false,"TranscodingUrl":null,"DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+web-like profile:
+{"Id":"6f71649a6dad325317ef575a7c0de502","Name":"JM S filtafter (2026)","Protocol":"Http","Path":"/JellyMesh/Play/6f71649a6dad325317ef575a7c0de502","Container":"mkv","Size":61,"Bitrate":4083146,"RunTimeTicks":1234567890,"IsRemote":true,"SupportsProbing":true,"SupportsDirectPlay":false,"SupportsDirectStream":false,"SupportsTranscoding":true,"TranscodingUrl":"/videos/6f71649a-6dad-3253-17ef-575a7c0de502/master.m3u8?...","DefaultAudioStreamIndex":1,"Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-filtafter","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== checks on a prefilled locked stub, remote Index layout
+static stream: 200
+  stub: 02:26:32 GET /JellyMesh/Play/s-checks range=bytes=0-99 ua=Jellyfin-Server/12.4.0
+transcode, AudioStreamIndex in URL: AudioStreamIndex=3
+segment: 200 4364044
+  stub: 02:26:34 GET /JellyMesh/Play/s-checks range=bytes=0- ua=Lavf/62.12.103
+-i "http://host.docker.internal:18221/JellyMesh/Play/s-checks" -map 0:0 -map 0:1 -map -0:s 
+{"Index":0,"IsExternal":true,"DeliveryMethod":"External","Path":"http://host.docker.internal:18221/JellyMesh/Sub/eng"}
+{"Index":1,"IsExternal":true,"DeliveryMethod":"External","Path":"http://host.docker.internal:18221/JellyMesh/Sub/ita"}
+{"Index":5,"IsExternal":false,"DeliveryMethod":"External","Path":null}
+embedded subtitle via local endpoint: 200
+  stub: 02:26:37 GET /JellyMesh/Play/s-checks range=bytes=0- ua=Lavf/62.12.103
+ffprobe runs 0
+reporting: stub requests 0, ffprobe runs 0, played: {"PlaybackPositionTicks":0,"Played":true}
+local file on the same server, source untouched:
+{"Path":"/media/film/Sintel (2010)/Sintel (2010).mkv","Protocol":"File","RunTimeTicks":522090000,"Streams":2}
+
+== persistence persist modes=[noprobe,prefill,external,resave] lock=on
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persist","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persist","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+full refresh:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persist","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+replace all:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persist","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+ffprobe runs 0
+
+== persistence persistun modes=[noprobe,prefill,external,resave] lock=
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persistun","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persistun","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+full refresh:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persistun","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+replace all:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-persistun","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+ffprobe runs 0
+
+== data written once, then hooks off
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-nohooks","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+scan:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-nohooks","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+replace all:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/s-nohooks","Streams":["0:V:h264","1:A:ac3","2:A:aac","3:S:subrip"]}
+
+== chapters on a locked stub
+["Uno","Due"]
+after PlaybackInfo, provider on:
+["Uno","Due"]
+after PlaybackInfo, provider off:
+[]
+
+== episodes, locked series, E02 added by a later scan
+{"Name":"Stub 1","IndexNumber":1,"ParentIndexNumber":1,"LockData":true,"RunTimeTicks":1234567890}
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/ep1","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+{"Name":"JM Serie Stub S01E02","IndexNumber":null,"ParentIndexNumber":null,"LockData":true,"RunTimeTicks":1234567890}
+3 PlaybackInfo: stub requests 0, ffprobe runs 0
+persisted:
+{"RunTimeTicks":1234567890,"Container":"mkv","Path":"http://host.docker.internal:18221/JellyMesh/Play/ep2","Streams":["0:S:srt:ext","1:S:srt:ext","2:V:h264","3:A:ac3","4:A:aac","5:S:subrip"]}
+E03 added by a later scan, with the plugin filling numbers:
+{"Name":"JM Serie Stub S01E02","IndexNumber":null,"ParentIndexNumber":null,"SeasonName":"Season 1"}
+{"Name":"Stub 1","IndexNumber":1,"ParentIndexNumber":1,"SeasonName":"Season 1"}
+{"Name":"JM Serie Stub S01E03","IndexNumber":3,"ParentIndexNumber":1,"SeasonName":"Season 1"}
+
+== web client, no plugin, playable container
+REQ GET http://host.docker.internal:18223/JellyMesh/Play/web no-auth
+REQ POST http://127.0.0.1:8096/Items/<hex>/PlaybackInfo auth
+RES 200 http://127.0.0.1:8096/Items/<hex>/PlaybackInfo
+RES 200 http://host.docker.internal:18223/JellyMesh/Play/web
+codecs {'h264': '', 'vp9': 'probably'}
+video src {'src': 'http://host.docker.internal:18223/JellyMesh/Play/web', 'readyState': 4, 'time': 7.523368, 'error': None}
+stub:
+  02:28:21 GET /JellyMesh/Play/web range=bytes=0- ua=Lavf/62.12.103
+  02:28:22 GET /JellyMesh/Play/web range=bytes=0- ua=Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/130.0.6723.3
+
+== web client, no plugin, mkv/h264 not playable here
+REQ GET http://127.0.0.1:8096/videos/55ea4ba8-488e-85a9-1e7e-dc2261f2d119/hls1/main/-1.mp4 auth
+REQ GET http://127.0.0.1:8096/videos/55ea4ba8-488e-85a9-1e7e-dc2261f2d119/main.m3u8 auth
+REQ GET http://127.0.0.1:8096/videos/55ea4ba8-488e-85a9-1e7e-dc2261f2d119/master.m3u8 auth
+REQ POST http://127.0.0.1:8096/Items/<hex>/PlaybackInfo auth
+RES 200 http://127.0.0.1:8096/Items/<hex>/PlaybackInfo
+RES 200 http://127.0.0.1:8096/videos/55ea4ba8-488e-85a9-1e7e-dc2261f2d119/main.m3u8
+RES 200 http://127.0.0.1:8096/videos/55ea4ba8-488e-85a9-1e7e-dc2261f2d119/master.m3u8
+codecs {'h264': '', 'vp9': 'probably'}
+video src {'src': 'blob:http://127.0.0.1:8096/21d1e7d5-0079-4405-9f4d-15038183e496', 'readyState': 0, 'time': 0, 'error': None}
+stub:
+  02:28:36 GET /JellyMesh/Play/baseline range=bytes=0- ua=Lavf/62.12.103
+  02:28:37 GET /JellyMesh/Play/baseline range=bytes=0- ua=Lavf/62.12.103
+
+== web client, filter sets DirectPlay false and DirectStream true
+REQ GET http://127.0.0.1:8096/Videos/<hex>/stream.webm auth
+REQ POST http://127.0.0.1:8096/Items/<hex>/PlaybackInfo auth
+RES 200 http://127.0.0.1:8096/Items/<hex>/PlaybackInfo
+RES 200 http://127.0.0.1:8096/Videos/<hex>/stream.webm
+codecs {'h264': '', 'vp9': 'probably'}
+video src {'src': 'http://127.0.0.1:8096/Videos/<hex>/stream.webm?Static=true&mediaSourceId=<hex>&deviceId=TW96aWxsYS81LjAgKFgxMTsgTGludXggYWFyY2g2NCkgQXBwbGVXZWJLaXQvNTM
+stub:
+  02:29:15 GET /JellyMesh/Play/proxy range=bytes=0- ua=Lavf/62.12.103
+  02:29:16 GET /JellyMesh/Play/proxy range=bytes=0- ua=Jellyfin-Server/12.4.0
+
+== web client, filter answers PlaybackInfo, TranscodingUrl on a plugin path (no endpoint: 404 expected)
+REQ GET http://127.0.0.1:8096/JellyMesh/Hls/<hex>/master.m3u8 no-auth
+REQ POST http://127.0.0.1:8096/Items/<hex>/PlaybackInfo auth
+RES 200 http://127.0.0.1:8096/Items/<hex>/PlaybackInfo
+RES 404 http://127.0.0.1:8096/JellyMesh/Hls/<hex>/master.m3u8
+codecs {'h264': '', 'vp9': 'probably'}
+video src {'src': 'blob:http://127.0.0.1:8096/65aeea67-72ed-4288-b594-e5f4a445a12a', 'readyState': 0, 'time': 0, 'error': None}
+stub:
+
+== web client, filter reports Protocol File and IsRemote false
+REQ GET http://127.0.0.1:8096/Videos/<hex>/stream.webm auth
+REQ POST http://127.0.0.1:8096/Items/<hex>/PlaybackInfo auth
+RES 200 http://127.0.0.1:8096/Items/<hex>/PlaybackInfo
+RES 200 http://127.0.0.1:8096/Videos/<hex>/stream.webm
+codecs {'h264': '', 'vp9': 'probably'}
+video src {'src': 'http://127.0.0.1:8096/Videos/<hex>/stream.webm?Static=true&mediaSourceId=<hex>&deviceId=TW96aWxsYS81LjAgKFgxMTsgTGludXggYWFyY2g2NCkgQXBwbGVXZWJLaXQvNTM
+stub:
+  02:29:52 GET /JellyMesh/Play/proxy range=bytes=0- ua=Lavf/62.12.103
+  02:29:53 GET /JellyMesh/Play/proxy range=bytes=0- ua=Jellyfin-Server/12.4.0

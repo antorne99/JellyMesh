@@ -1,0 +1,126 @@
+using System;
+using System.Linq;
+using System.Security.Cryptography;
+using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Security;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyMesh.Tests.Security;
+
+public class CredentialVaultTests
+{
+    private readonly InMemoryConfigurationStore _store = new();
+    private readonly FixedKeySource _key = new(TestValues.Key);
+
+    private CredentialVault Vault => new(_key, _store);
+
+    [Theory]
+    [InlineData(null, KeyState.Missing)]
+    [InlineData("", KeyState.Missing)]
+    [InlineData("   ", KeyState.Missing)]
+    [InlineData("short", KeyState.TooShort)]
+    [InlineData("0123456789012345678901234567890", KeyState.TooShort)]
+    [InlineData("01234567890123456789012345678901", KeyState.Ok)]
+    public void KeyStateFollowsTheKeyWithNothingStored(string? key, KeyState expected)
+    {
+        _key.Key = key;
+
+        Assert.Equal(expected, Vault.GetKeyState());
+    }
+
+    [Fact]
+    public void CredentialsRoundTrip()
+    {
+        var id = Guid.NewGuid();
+        var encrypted = Vault.Protect(id, TestValues.Credentials);
+
+        var credentials = Vault.Unprotect(id, encrypted!);
+
+        Assert.Equal(TestValues.Username, credentials!.Username);
+        Assert.Equal(TestValues.Password, credentials.Password);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("short")]
+    public void WithoutAUsableKeyNothingIsProtected(string? key)
+    {
+        _key.Key = key;
+
+        Assert.Null(Vault.Protect(Guid.NewGuid(), TestValues.Credentials));
+    }
+
+    [Fact]
+    public void AChangedKeyIsDetectedAndBlocksEverything()
+    {
+        var server = StoreServer();
+        Assert.Equal(KeyState.Ok, Vault.GetKeyState());
+
+        _key.Key = TestValues.OtherKey;
+
+        Assert.Equal(KeyState.Wrong, Vault.GetKeyState());
+        Assert.Null(Vault.Protect(Guid.NewGuid(), TestValues.Credentials));
+        Assert.Null(Vault.Unprotect(server.Id, server.EncryptedCredentials));
+    }
+
+    [Fact]
+    public void TheRightKeyComingBackClearsTheState()
+    {
+        StoreServer();
+        _key.Key = TestValues.OtherKey;
+        Assert.Equal(KeyState.Wrong, Vault.GetKeyState());
+
+        _key.Key = TestValues.Key;
+
+        Assert.Equal(KeyState.Ok, Vault.GetKeyState());
+    }
+
+    [Fact]
+    public void RemovingTheLastCredentialClearsAWrongKey()
+    {
+        var server = StoreServer();
+        _key.Key = TestValues.OtherKey;
+
+        _store.Configuration.Servers.Remove(server);
+
+        Assert.Equal(KeyState.Ok, Vault.GetKeyState());
+    }
+
+    [Fact]
+    public void AValueCopiedFromAnotherServerIsWrong()
+    {
+        var first = StoreServer();
+        var second = StoreServer();
+
+        second.EncryptedCredentials = first.EncryptedCredentials;
+
+        Assert.Equal(KeyState.Wrong, Vault.GetKeyState());
+    }
+
+    [Fact]
+    public void OneAlteredValueSuspendsEverything()
+    {
+        StoreServer();
+        var altered = StoreServer();
+
+        altered.EncryptedCredentials = "AA" + altered.EncryptedCredentials[2..];
+
+        Assert.Equal(KeyState.Wrong, Vault.GetKeyState());
+    }
+
+    [Fact]
+    public void UnprotectWithAValueOfAnotherServerThrows()
+    {
+        var encrypted = Vault.Protect(Guid.NewGuid(), TestValues.Credentials);
+
+        Assert.ThrowsAny<CryptographicException>(() => Vault.Unprotect(Guid.NewGuid(), encrypted!));
+    }
+
+    private RemoteServerConfig StoreServer()
+    {
+        var id = Guid.NewGuid();
+        var server = new RemoteServerConfig { Id = id, EncryptedCredentials = Vault.Protect(id, TestValues.Credentials)! };
+        _store.Configuration.Servers.Add(server);
+        return server;
+    }
+}

@@ -1,0 +1,13 @@
+{
+  "category": "Other",
+  "description": "Phase 0 probe",
+  "guid": "6f1c1e0a-7c55-4a0e-9b53-0d5a3b8e2f11",
+  "name": "JellyMesh Probe",
+  "overview": "Phase 0 probe",
+  "owner": "jellymesh",
+  "targetAbi": "12.0.0.0",
+  "version": "0.0.1.0",
+  "status": "Active",
+  "autoUpdate": false,
+  "assemblies": ["JellyMeshProbe.dll"]
+}

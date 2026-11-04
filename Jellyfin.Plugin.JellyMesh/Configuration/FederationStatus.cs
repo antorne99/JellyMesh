@@ -1,0 +1,23 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Security;
+
+namespace Jellyfin.Plugin.JellyMesh.Configuration;
+
+/// <summary>
+/// Everything the configuration page shows that is not a stock setting. Holds no credentials.
+/// </summary>
+/// <param name="KeyState">The state of the secret key.</param>
+/// <param name="Suspended">Whether sync and remote playback are suspended.</param>
+/// <param name="Warning">The warning to show, if any.</param>
+/// <param name="FederatedFolder">The federated folder.</param>
+/// <param name="Servers">The configured servers.</param>
+public sealed record FederationStatus(
+    KeyState KeyState,
+    bool Suspended,
+    string? Warning,
+    FederatedFolderStatus FederatedFolder,
+    IReadOnlyList<ServerStatus> Servers);

@@ -1,0 +1,137 @@
+# JellyMesh test environment
+
+Three Jellyfin 12.4 instances and free test media, as described in §8 of the plan.
+
+| Instance | From the host | From another instance | Plugin |
+|---|---|---|---|
+| `locale` | http://127.0.0.1:8096 | `http://locale:8096` | From Phase 1 |
+| `remoto-standard` | http://127.0.0.1:8097 | `http://remoto-standard:8096` | Never |
+| `remoto-jellymesh` | http://127.0.0.1:8098 | `http://remoto-jellymesh:8096` | From Phase 1 |
+
+The containers start without the plugin. Install it with `install-plugin.sh` below.
+
+Accounts, for testing only:
+
+- `admin` / `jellymesh-test` on all three instances
+- `jellymesh` / `jellymesh-test`, non-admin, on the two remotes. This is the dedicated user from §3.1.
+
+## Usage
+
+Run from this folder. It needs Docker, `curl` and `jq`, plus about 1.2 GB of disk. Encoding uses the ffmpeg inside the Jellyfin image, so no host ffmpeg is needed.
+
+```sh
+./scripts/prepare-media.sh     # download sources and encode clips, takes several minutes
+docker compose up -d --wait
+./scripts/provision.sh         # wizard, libraries, users, scan
+./scripts/report.sh            # what each server really indexed
+```
+
+All three scripts can be re-run safely. `prepare-media.sh` skips what already exists, and `provision.sh` skips finished steps and rescans.
+
+```sh
+docker compose down            # stop, keep the data
+docker compose down -v         # also delete config and databases
+rm -rf media federata          # delete the media, then rebuild with prepare-media.sh
+```
+
+To install the plugin, run this with the instance running. It builds in the .NET SDK image, copies the plugin into `/config/plugins` and restarts the container:
+
+```sh
+./scripts/install-plugin.sh jellymesh-test-locale-1
+```
+
+Copy `.env.example` to `.env` to set `JELLYMESH_SECRET_KEY` or `BIND_ADDRESS`. Ports bind to loopback by default, so set `BIND_ADDRESS` to test from a phone or TV.
+
+## Folders
+
+- `media/<instance>/film` and `media/<instance>/serie` are mounted read-only at `/media`.
+- `federata/` is mounted writable at `/federata` on `locale` only. It stands in for the federated folder and is empty until something writes to it.
+- On `locale`, the `Film` library has the paths `/media/film` and `/federata/Film`, and `Serie` has `/media/serie` and `/federata/Serie`. These are the two-path libraries the Phase 0 spikes need.
+
+Default metadata fetchers stay on, as on the real server, so the spikes see normal Jellyfin behaviour. Nothing is locked in the `.nfo` files.
+
+## Media
+
+Clips are 60 seconds (episodes 30) and show a burned-in label with the server and variant, so playback shows which source is really being served. All are 16:9 at exactly 1920x1080 or 1280x720, padded where needed.
+
+The HDR10 clip is SDR footage converted to PQ/BT.2020: tags and pixels agree, but it is not a real HDR grade. Upscaled clips are not real 1080p detail. Neither matters for dedup or playback tests.
+
+Bitrates below are the video figures reported by Jellyfin, in Mbit/s. Rerun `report.sh` for exact values. Clips with a `JM` title use invented IDs in the `999…` range, which match nothing on TMDb.
+
+### Films with provider IDs
+
+| Title | Scenario | locale | remoto-standard | remoto-jellymesh | Expected result |
+|---|---|---|---|---|---|
+| Elephants Dream (2006) | Local only | 720p H.264 2.9 | | | Local |
+| Tears of Steel (2012) | Remote only | | 720p H.264 2.7 | | Standard |
+| JM Solo JellyMesh (2026) | Remote only | | | 720p H.264 3.0 | JellyMesh |
+| Sintel (2010) | Local wins though worse | 720p H.264 1.2 | | 1080p HEVC 4.8 | Local |
+| JM Confronto Risoluzione (2026) | Resolution beats bitrate | | 720p H.264 6.0 | 1080p H.264 2.8 | JellyMesh, standard as backup |
+| JM Confronto HDR (2026) | HDR beats bitrate | | 1080p HEVC SDR 5.9 | 1080p HEVC HDR10 2.9 | JellyMesh, standard as backup |
+| JM Confronto Bitrate (2026) | Bitrate alone, MP4 | | 1080p H.264 2.8 | 1080p H.264 5.9 | JellyMesh, standard as backup |
+| JM Confronto Codec (2026) | Codec decides within the 5% bitrate tolerance (3.6% apart) | | 1080p H.264 2.75 | 1080p AV1 2.65 | JellyMesh, standard as backup |
+| JM Versioni Multiple (2026) | Two versions on one server | | 1080p and 720p H.264 | | Standard |
+| JM Audio e Sottotitoli (2026) | 2 audio tracks, 1 embedded and 2 external subtitles | | 1080p H.264 3.7 | | Standard |
+
+Real IDs, checked on Wikidata:
+
+| Film | TMDb | IMDb |
+|---|---|---|
+| Elephants Dream | 9761 | tt0807840 |
+| Sintel | 45745 | tt1727587 |
+| Tears of Steel | 133701 | tt2285752 |
+
+### Films without provider IDs
+
+These have no `.nfo`, and their invented titles match nothing on TMDb. `report.sh` confirms that no IDs were assigned.
+
+| Title | Scenario | locale | remoto-standard | remoto-jellymesh | Expected result |
+|---|---|---|---|---|---|
+| Sonda Senza ID (2026) | Same title and year | | 720p 1.9 | 1080p 3.8 | JellyMesh, standard as backup |
+| L'Éclisse Fantasma / Eclisse Fantasma (2026) | Same after normalization | | 720p 1.9 | 1080p 3.9 | One title, JellyMesh, standard as backup |
+| Titolo Omonimo (2024) and (2025) | Same title, different year | | 2024: 720p 1.9 | 2025: 720p 1.9 | Two separate films |
+| Sonda Locale Senza ID (2026) | Local wins on title and year | 720p 2.0 | 1080p 4.0 | | Local |
+
+### Series
+
+`JM Serie Divisa (2026)` has a `tvshow.nfo` with invented IDs (TMDb 999000101, TVDB 999000102). `Serie Senza ID (2026)` has none.
+
+| Episode | locale | remoto-standard | remoto-jellymesh | Expected result |
+|---|---|---|---|---|
+| JM Serie Divisa S01E01-E02 | 1080p | | | Local |
+| JM Serie Divisa S01E03 | 1080p | 720p | | Local |
+| JM Serie Divisa S01E04 | | 720p | | Standard |
+| JM Serie Divisa S01E05-E06 | | 720p | 1080p | JellyMesh, standard as backup |
+| JM Serie Divisa S02E01-E02 | | | 720p | JellyMesh |
+| Serie Senza ID S01E01 | 720p | | | Local |
+| Serie Senza ID S01E02 | | 720p | 1080p | JellyMesh, standard as backup |
+
+## What 12.4 showed
+
+Observed while building this environment, on Jellyfin 12.4.0.
+
+- **JSON casing:** Jellyfin may answer in camelCase. Send `Accept: application/json; profile="PascalCase"` to get the casing of the OpenAPI schema.
+- **Startup:** `/health` answers while the server still shows its "starting" page and returns 503 elsewhere. Wait for `/System/Info/Public` to return JSON.
+- **Non-admin access:** `/Library/VirtualFolders`, `/ScheduledTasks` and `/System/Logs` return 403, so remote libraries must be listed with `/UserViews`. `/Users/New` is also 403.
+- **Non-admin visibility:** `/Users` and `/System/Configuration` return 200, and `/Users` includes the admin account. The dedicated user can see more than its role suggests.
+- **Direct stream:** the non-admin user gets `206` on `/Videos/{id}/stream?static=true` with a `Range` header.
+- **Film names:** without a `.nfo`, `Name` keeps the year (`Sonda Senza ID (2026)`), while `ProductionYear` is correct. With a `.nfo` it is clean (`Tears of Steel`).
+- **MKV bitrate:** MKV has no per-stream bitrate, so Jellyfin reports the container bitrate minus 192 kbit/s per audio track, and shows `192000` as the bitrate of every audio track, even a 128 kbit/s AAC. MP4 values are measured.
+- **Episodes:** `ProviderIds` is empty on the test episodes, so identity has to come from the parent series plus season and episode numbers, as §4.1 expects.
+
+These observations led to the three decisions recorded in §10 of the plan: a 5% bitrate tolerance, removing the year from `Name`, and using Jellyfin's video bitrate uncorrected.
+
+## Spikes
+
+Phase 0 tests live in `spikes/`, and their results in `docs/fase-0-esiti.md`. `stub_server.py` stands in for a `.strm` target and logs every request. Spikes write fixtures to `federata/`, so remove them afterwards. Jellyfin skips a completely empty library path and keeps its items, so leave a hidden file there until a scan has removed them.
+
+The spikes for points 2 to 7 run on private throwaway containers, never on this stack. `private-instance.sh` starts one for `series-merge.sh` and `watch-state.sh`. `JellyMeshProbe/` is a test plugin, not the real one, built by `build-probe.sh`. `media-source-probing.sh` and `unavailable-title.sh` read `P3` and `P6`, a work folder holding `tests/Integration` and a copy of the spikes in `out/spikes`. `results.txt` and `unavailable-title-results.txt` are recorded runs.
+
+## Not covered here
+
+- **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so the test needs the OPS pc.
+- **Slow network, offline server, stream limit (§8):** belong to the Phase 6 task. To simulate an offline server, stop its service with `docker compose stop remoto-standard`.
+
+## Licences
+
+Source films are from the Blender Foundation under Creative Commons: Elephants Dream (CC BY 2.5), Sintel and Tears of Steel (CC BY 3.0). The media is generated locally and not committed.

@@ -1,0 +1,745 @@
+# Point 6 transcript of one 'unavailable-title.sh all' run. Case ids are in web_cases.json.
+# Second pass (from the second control of status-503 on): stubs with a two hour length. Tokens and ids masked.
+Episode JM Mezzo S01E01 1
+Episode JM Testa S01E01 Offline 1
+Episode JM Mezzo S01E02 Offline 2
+Episode JM Testa S01E02 2
+Episode JM Mezzo S01E03 3
+Series JM Mezzo -
+Movie JM Offline -
+Movie JM Online -
+Series JM Testa -
+=== control-online refuse='' item=''
+  details {"title": "JM Online", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.1s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.6s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 0, "err": null}, "pb": true}
+  +  0.8s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 0, "err": null}, "pb": false}
+  +  1.8s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 1, "err": null}, "pb": false}
+  +  2.6s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  +  3.6s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 3, "err": null}, "pb": false}
+  +  4.7s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 4, "err": null}, "pb": false}
+  requests before dismiss:
+    1x GET /JellyMesh/Play/film-online -> 206
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 4, "err": null}, "pb": false}
+  after back {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true} requests in 3s: 2
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": true, "PlayCount": 1, "Ticks": 0}
+=== code-NotAllowed refuse='code=NotAllowed' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== code-NoCompatibleStream refuse='code=NoCompatibleStream' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Il client è incompatibile con il media e il server non sta inviando un formato compatibile. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Il client è incompatibile con il media e il server non sta inviando un formato compatibile. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== code-RateLimitExceeded refuse='code=RateLimitExceeded' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Questo file non può essere riprodotto in questo momento a causa dei limiti di banda. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Questo file non può essere riprodotto in questo momento a causa dei limiti di banda. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== empty refuse='empty' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== raw-unknown refuse='raw=ServerUnreachable' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione PlaybackError.ServerUnreachable Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione PlaybackError.ServerUnreachable Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== status-401 refuse='status=401' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 401
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== status-403 refuse='status=403' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 403
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== status-404 refuse='status=404' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 404
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== status-500 refuse='status=500' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 500
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== status-503 refuse='status=503' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== late-direct-dead refuse='source=direct,target=dead' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  video element reset or errored 18 times without a visible change
+  requests before dismiss:
+    1x GET /JellyMesh/Play/film-offline -> 503
+    672x GET /Videos/<id>/stream.webm -> 503
+    674x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": false} requests in 3s: 419
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": true, "PlayCount": 1, "Ticks": 0}
+=== late-file-dead refuse='source=file,target=dead' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  video element reset or errored 17 times without a visible change
+  requests before dismiss:
+    683x GET /Videos/<id>/stream.webm -> 503
+    683x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 425
+  user data {"Played": true, "PlayCount": 1, "Ticks": 0} -> {"Played": true, "PlayCount": 2, "Ticks": 0}
+=== late-hls-dead refuse='source=hls,target=dead' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  1.6s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    39x GET /JellyMesh/Hls/<id>/master.m3u8 -> 503
+    20x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 9
+  user data {"Played": true, "PlayCount": 2, "Ticks": 0} -> {"Played": true, "PlayCount": 3, "Ticks": 0}
+=== hang-direct refuse='source=direct,target=hang' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 0
+  user data {"Played": true, "PlayCount": 3, "Ticks": 0} -> {"Played": true, "PlayCount": 3, "Ticks": 0}
+=== hang-file refuse='source=file,target=hang' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 0
+  user data {"Played": true, "PlayCount": 3, "Ticks": 0} -> {"Played": true, "PlayCount": 3, "Ticks": 0}
+=== hang-hls refuse='source=hls,target=hang' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 0
+  user data {"Played": true, "PlayCount": 3, "Ticks": 0} -> {"Played": true, "PlayCount": 3, "Ticks": 0}
+=== after-file-503 refuse='after=1,source=file,target=dead,status=503' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.6s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  requests before dismiss:
+    1x GET /Videos/<id>/stream.webm -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Items/<id>/PlaybackInfo -> 503
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": false} requests in 3s: 0
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 3, "Ticks": 0} -> {"Played": true, "PlayCount": 4, "Ticks": 0}
+=== after-direct-503 refuse='after=1,source=direct,target=dead,status=503' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  requests before dismiss:
+    1x GET /JellyMesh/Play/film-offline -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Items/<id>/PlaybackInfo -> 503
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": false} requests in 3s: 0
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 4, "Ticks": 0} -> {"Played": true, "PlayCount": 4, "Ticks": 0}
+=== after-hls-503 refuse='after=1,source=hls,target=dead,status=503' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  1.6s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    2x GET /JellyMesh/Hls/<id>/master.m3u8 -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Items/<id>/PlaybackInfo -> 503
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 2
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 4, "Ticks": 0} -> {"Played": true, "PlayCount": 5, "Ticks": 0}
+=== after-file-code refuse='after=1,source=file,target=dead,code=NotAllowed' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito"], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  requests before dismiss:
+    1x GET /Videos/<id>/stream.webm -> 503
+    2x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": false} requests in 3s: 0
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 5, "Ticks": 0} -> {"Played": true, "PlayCount": 6, "Ticks": 0}
+=== after-hls-code refuse='after=1,source=hls,target=dead,code=NotAllowed' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  1.6s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito"], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    2x GET /JellyMesh/Hls/<id>/master.m3u8 -> 503
+    2x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 2
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 6, "Ticks": 0} -> {"Played": true, "PlayCount": 7, "Ticks": 0}
+=== after-file-empty refuse='after=1,source=file,target=dead,empty' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.6s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  requests before dismiss:
+    1x GET /Videos/<id>/stream.webm -> 503
+    2x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": false} requests in 3s: 0
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 7, "Ticks": 0} -> {"Played": true, "PlayCount": 7, "Ticks": 0}
+=== notrans-file refuse='source=file,target=dead,notranscode' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita perché il file non è supportato da questo client. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x GET /Videos/<id>/stream.webm -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+    1x POST /Sessions/Playing/Stopped -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  under the centre of the page: P.overview detail-clamp-text
+  on another title, centre of the page: SELECT.selectVideo detailTrackSelect emby-select-withcolor emby-sel
+  second title by click {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 7, "Ticks": 0} -> {"Played": true, "PlayCount": 8, "Ticks": 0}
+=== notrans-direct refuse='source=direct,target=dead,notranscode' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita perché il file non è supportato da questo client. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x GET /JellyMesh/Play/film-offline -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+    1x POST /Sessions/Playing/Stopped -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  under the centre of the page: P.overview detail-clamp-text
+  on another title, centre of the page: SELECT.selectVideo detailTrackSelect emby-select-withcolor emby-sel
+  second title by click {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 8, "Ticks": 0} -> {"Played": true, "PlayCount": 8, "Ticks": 0}
+=== notrans-hls refuse='source=hls,target=dead,notranscode' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 0
+  user data {"Played": true, "PlayCount": 8, "Ticks": 0} -> {"Played": true, "PlayCount": 8, "Ticks": 0}
+=== guard-hls refuse='source=hls,target=dead,guard' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  1.6s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita a causa di un errore del lettore multimediale. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    2x GET /JellyMesh/Hls/<id>/master.m3u8 -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+    1x POST /Sessions/Playing/Stopped -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  under the centre of the page: P.overview detail-clamp-text
+  on another title, centre of the page: SELECT.selectVideo detailTrackSelect emby-select-withcolor emby-sel
+  second title by click {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 8, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== msg-code-toast refuse='code=NotAllowed,msg=toast' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "toasts": ["Server non raggiungibile"], "spinner": false, "video": null, "pb": true}
+  +  4.2s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "toasts": ["Server non raggiungibile"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== msg-code-alert refuse='code=NotAllowed,msg=alert' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["JellyMesh Server non raggiungibile Ho capito", "Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 3 with Ho capito
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["JellyMesh Server non raggiungibile Ho capito", "Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== msg-empty-alert refuse='empty,msg=alert' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["JellyMesh Server non raggiungibile Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["JellyMesh Server non raggiungibile Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== s503-toast refuse='status=503,msg=toast' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "toasts": ["Server non raggiungibile"], "spinner": false, "video": null, "pb": true}
+  +  4.2s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "toasts": ["Server non raggiungibile"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== s503-alert refuse='status=503,msg=alert' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["JellyMesh Server non raggiungibile Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["JellyMesh Server non raggiungibile Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== s503-late refuse='status=503,msg=late' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito", "JellyMesh Server non raggiungibile Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito", "JellyMesh Server non raggiungibile Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== slow-20s refuse='delay=20,msg=toast,code=NotAllowed' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "toasts": ["Server non raggiungibile"], "spinner": true, "video": null, "pb": true}
+  +  4.2s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  + 20.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== smart-first refuse='smart,msg=late' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  +  0.6s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito", "JellyMesh Server non raggiungibile Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito", "JellyMesh Server non raggiungibile Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 9, "Ticks": 0}
+=== smart-after-file refuse='after=1,source=file,target=dead,smart,msg=late' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito"], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  +  1.1s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "JellyMesh Server non raggiungibile Ho capito"], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  requests before dismiss:
+    1x GET /Videos/<id>/stream.webm -> 503
+    2x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": false} requests in 3s: 0
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 9, "Ticks": 0} -> {"Played": true, "PlayCount": 10, "Ticks": 0}
+=== smart-after-hls refuse='after=1,source=hls,target=dead,smart,msg=late' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  1.6s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito"], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  2.1s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "JellyMesh Server non raggiungibile Ho capito"], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    2x GET /JellyMesh/Hls/<id>/master.m3u8 -> 503
+    2x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 0
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 4, "t": 2, "err": null}, "pb": false}
+  user data {"Played": true, "PlayCount": 10, "Ticks": 0} -> {"Played": true, "PlayCount": 11, "Ticks": 0}
+=== queue-mezzo-503 refuse='status=503' item=''
+  details {"title": "JM Mezzo", "overview": "", "tags": "", "misc": "2026"}
+  first episode playing, seeking to the end
+  +  1.0s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 1, "t": 7, "err": null}, "pb": false}
+  +  2.1s {"hash": "#/video", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": false}
+  video element reset or errored 1 times without a visible change
+  requests before dismiss:
+    1x GET /JellyMesh/Play/mezzo-1 -> 206
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Items/<id>/PlaybackInfo -> 503
+    1x POST /Sessions/Playing -> 204
+    2x POST /Sessions/Playing/Progress -> 204
+    2x POST /Sessions/Playing/Stopped -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/video", "dialogs": [], "spinner": false, "video": null, "pb": false}
+  after back {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true} requests in 3s: 0
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== queue-mezzo-code refuse='code=NotAllowed' item=''
+  details {"title": "JM Mezzo", "overview": "", "tags": "", "misc": "2026"}
+  first episode playing, seeking to the end
+  +  1.0s {"hash": "#/video", "dialogs": [], "spinner": false, "video": {"ready": 1, "t": 7, "err": null}, "pb": false}
+  +  2.1s {"hash": "#/video", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": false}
+  video element reset or errored 1 times without a visible change
+  requests before dismiss:
+    1x GET /JellyMesh/Play/mezzo-1 -> 206
+    2x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    2x POST /Sessions/Playing/Progress -> 204
+    2x POST /Sessions/Playing/Stopped -> 204
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/video", "dialogs": [], "spinner": false, "video": null, "pb": false}
+  after back {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true} requests in 3s: 0
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== queue-testa-503 refuse='status=503' item=''
+  details {"title": "JM Testa", "overview": "", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== queue-testa-code refuse='code=NotAllowed' item=''
+  details {"title": "JM Testa", "overview": "", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== item-none refuse='status=503' item=''
+  view film [{"text": "movie JM Offline 2026", "missing": false, "indicators": [], "playOverlay": true}, {"text": "movie JM Online 2026", "missing": false, "indicators": [], "playOverlay": true}]
+  view season [{"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "1. JM Mezzo S01E01 1m Finirà alle 2:59", "missing": false, "indicators": [], "playOverlay": true}, {"text": "2. JM Mezzo S01E02 Offline", "missing": false, "indicators": [], "playOverlay": true}, {"text": "3. JM Mezzo S01E03", "mis
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 11, "Ticks": 0} -> {"Played": true, "PlayCount": 11, "Ticks": 0}
+=== item-placeholder refuse='status=503' item='placeholder'
+  view film [{"text": "movie JM Offline 2026", "missing": false, "indicators": [], "playOverlay": true}, {"text": "movie JM Online 2026", "missing": false, "indicators": [], "playOverlay": true}]
+  view season [{"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "1. JM Mezzo S01E01 1m Finirà alle 3:00", "missing": false, "indicators": [], "playOverlay": true}, {"text": "2. JM Mezzo S01E02 Offline", "missing": false, "indicators": [], "playOverlay": true}, {"text": "3. JM Mezzo S01E03", "mis
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Questo è il segnaposto per un contenuto fisico che Jellyfin non può riprodurre. Inserire il disco per riprodurre. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 11, "Ticks": 0} -> {"Played": true, "PlayCount": 11, "Ticks": 0}
+=== item-virtual refuse='status=503' item='virtual'
+  view film [{"text": "movie JM Offline 2026", "missing": false, "indicators": [], "playOverlay": false}, {"text": "movie JM Online 2026", "missing": false, "indicators": [], "playOverlay": true}]
+  view season [{"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "1. JM Mezzo S01E01 1m Finirà alle 3:00", "missing": false, "indicators": [], "playOverlay": true}, {"text": "2. JM Mezzo S01E02 Offline Missing", "missing": true, "indicators": ["Missing"], "playOverlay": true}, {"text": "3. JM Mez
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  no play button on the details page
+=== item-name refuse='status=503' item='name'
+  view film [{"text": "movie JM Offline (non disponibile) 2026", "missing": false, "indicators": [], "playOverlay": true}, {"text": "movie JM Online 2026", "missing": false, "indicators": [], "playOverlay": true}]
+  view season [{"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "1. JM Mezzo S01E01 1m Finirà alle 3:00", "missing": false, "indicators": [], "playOverlay": true}, {"text": "2. JM Mezzo S01E02 Offline (non disponibile)", "missing": false, "indicators": [], "playOverlay": true}, {"text": "3. JM M
+  details {"title": "JM Offline (non disponibile)", "overview": "Trama del film.", "tags": "", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 11, "Ticks": 0} -> {"Played": true, "PlayCount": 11, "Ticks": 0}
+=== item-overview refuse='status=503' item='overview,tag,status,playaccess'
+  view film [{"text": "movie JM Offline 2026", "missing": false, "indicators": [], "playOverlay": true}, {"text": "movie JM Online 2026", "missing": false, "indicators": [], "playOverlay": true}]
+  view season [{"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "", "missing": false, "indicators": [], "playOverlay": false}, {"text": "1. JM Mezzo S01E01 1m Finirà alle 3:00", "missing": false, "indicators": [], "playOverlay": true}, {"text": "2. JM Mezzo S01E02 Offline Non disponibile: server non raggiungibile.", "missing": false, "indicators": [], "playOverlay":
+  details {"title": "JM Offline", "overview": "Non disponibile: server non raggiungibile. Trama del film.", "tags": "Tag: Non disponibile", "misc": "2026"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  user data {"Played": true, "PlayCount": 11, "Ticks": 0} -> {"Played": true, "PlayCount": 11, "Ticks": 0}
+Episode JM Mezzo S01E01 1
+Episode JM Testa S01E01 Offline 1
+Episode JM Mezzo S01E02 Offline 2
+Episode JM Testa S01E02 2
+Episode JM Mezzo S01E03 3
+Series JM Mezzo -
+Movie JM Offline -
+Movie JM Online -
+Series JM Testa -
+{"Name":"JM Offline","RunTimeTicks":72000000000}
+=== code-NotAllowed refuse='code=NotAllowed' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026 2h 0m Finirà alle 5:01"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 200
+  dismiss top of 2 with Ho capito
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione di questo file non è consentita. Ho capito", "Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== status-503 refuse='status=503' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026 2h 0m Finirà alle 5:01"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x POST /Items/<id>/PlaybackInfo -> 503
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  second click: 1 more PlaybackInfo {"hash": "#/details", "dialogs": ["Errore di riproduzione Si è verificato un errore durante l'elaborazione della richiesta. Riprova più tardi. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== late-hls-dead refuse='source=hls,target=dead' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026 2h 0m Finirà alle 5:01"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  1.6s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  requests before dismiss:
+    39x GET /JellyMesh/Hls/<id>/master.m3u8 -> 503
+    20x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": null}, "pb": false} requests in 3s: 7
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 0, "Ticks": 0}
+=== after-file-503 refuse='after=1,source=file,target=dead,status=503' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026 2h 0m Finirà alle 5:02"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  requests before dismiss:
+    1x GET /Videos/<id>/stream.webm -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Items/<id>/PlaybackInfo -> 503
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": true}
+  after back {"hash": "#/home", "dialogs": [], "spinner": false, "video": {"ready": 0, "t": 0, "err": 4}, "pb": false} requests in 3s: 0
+  under the centre of the page: VIDEO.htmlvideoplayer
+  on another title, centre of the page: VIDEO.htmlvideoplayer
+  second title cannot be clicked: Locator.click: Timeout 4000ms exceeded.
+  after a page reload {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita a causa di un errore del lettore multimediale. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 0, "Ticks": 0} -> {"Played": false, "PlayCount": 1, "Ticks": 0}
+=== notrans-file refuse='source=file,target=dead,notranscode' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026 2h 0m Finirà alle 5:02"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  0.5s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita perché il file non è supportato da questo client. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    1x GET /Videos/<id>/stream.webm -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+    1x POST /Sessions/Playing/Stopped -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  under the centre of the page: P.overview detail-clamp-text
+  on another title, centre of the page: P.overview detail-clamp-text
+  second title by click {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita a causa di un errore del lettore multimediale. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 1, "Ticks": 0} -> {"Played": false, "PlayCount": 2, "Ticks": 0}
+=== guard-hls refuse='source=hls,target=dead,guard' item=''
+  details {"title": "JM Offline", "overview": "Trama del film.", "tags": "", "misc": "2026 2h 0m Finirà alle 5:02"}
+  +  0.0s {"hash": "#/details", "dialogs": [], "spinner": true, "video": null, "pb": true}
+  +  0.3s {"hash": "#/details", "dialogs": [], "spinner": true, "video": {"ready": 0, "t": 0, "err": null}, "pb": true}
+  +  1.6s {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita a causa di un errore del lettore multimediale. Ho capito"], "spinner": false, "video": null, "pb": true}
+  requests before dismiss:
+    2x GET /JellyMesh/Hls/<id>/master.m3u8 -> 503
+    1x POST /Items/<id>/PlaybackInfo -> 200
+    1x POST /Sessions/Playing -> 204
+    1x POST /Sessions/Playing/Progress -> 204
+    1x POST /Sessions/Playing/Stopped -> 204
+  dismiss top of 1 with Ho capito
+  after dismiss {"hash": "#/details", "dialogs": [], "spinner": false, "video": null, "pb": true}
+  under the centre of the page: P.overview detail-clamp-text
+  on another title, centre of the page: P.overview detail-clamp-text
+  second title by click {"hash": "#/details", "dialogs": ["Errore di riproduzione La riproduzione non è riuscita a causa di un errore del lettore multimediale. Ho capito"], "spinner": false, "video": null, "pb": true}
+  user data {"Played": false, "PlayCount": 2, "Ticks": 0} -> {"Played": false, "PlayCount": 3, "Ticks": 0}
+--- ErrorCode as sent on the wire
+code=NotAllowed                                      200  {"MediaSources":[],"PlaySessionId":"<hex>","ErrorCode":"NotAllowed"}
+same, GET variant                                    200  {"MediaSources":[],"PlaySessionId":"<hex>","ErrorCode":"NotAllowed"}
+--- refusal only after the local checks (status=503 set)
+no token                                             401  
+wrong token                                          401  
+user without the library                             404  {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"traceId":"00-<hex>-60f0364e2
+same user, id that does not exist                    404  {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"traceId":"00-<hex>-262022ee3
+refusal branch reached by those calls: 0 (expected 0)
+user with the library                                503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+    ^ body carries the remote name
+--- user with EnableMediaPlayback=false
+stock answer, no filter involved                     200  {"MediaSources":[{"Protocol":"Http","Id":"<hex>","Path":"http://127.0.0.1:8096/JellyMesh/Play/film-online","Type":"Default"
+{"ErrorCode":null,"sources":1,"directPlay":true}
+filter refusing as offline                           503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+    ^ body carries the remote name
+--- late failure, what the server passes on from the play endpoint
+server proxies a 503                                 503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+    ^ body carries the remote name
+same, no token                                       503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+    ^ body carries the remote name
+play endpoint itself, no token (spike only)          503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+    ^ body carries the remote name
+stock static stream of a live stub, no token         206 1000 bytes
+--- unfiltered dead target with the remote name in the .strm (never in JellyMesh)
+PlaybackInfo                                         200  {"MediaSources":[{"Protocol":"Http","Id":"<hex>","Path":"http://remoto-segreto.tailnet-sentinel.ts.net:8096/Videos/x/stream
+    ^ body carries the remote name
+static stream, unresolvable host                     500  Error processing request.
+item for a non admin                                 200  {"Name":"JM Segreto (2026)","ServerId":"<hex>","Id":"<hex>","Etag":"ddd075ab4e95c1a24a4f34edc263
+    ^ body carries the remote name
+["http://remoto-segreto.tailnet-sentinel.ts.net:8096/Videos/x/stream"]
+server log lines naming the remote: 3
+--- DTO rewrite reaches the API (item=placeholder,virtual,playaccess)
+{"Name":"JM Offline","IsPlaceHolder":true,"LocationType":"Virtual","PlayAccess":"None"}
+{"Name":"JM Online","IsPlaceHolder":null,"LocationType":"FileSystem","PlayAccess":"Full"}
+{"Name":"JM Offline","IsPlaceHolder":true,"LocationType":"Virtual","PlayAccess":"None"}
+{"Name":"JM Offline","IsPlaceHolder":true,"LocationType":"Virtual","PlayAccess":"None"}
+{"Name":"JM Testa S01E01 Offline","Type":"Episode"}
+{"Name":"JM Mezzo S01E02 Offline","Type":"Episode"}
+{"Name":"JM Offline","Type":"Movie"}
+--- stored IsPlaceHolder, set by the pre-refresh provider
+before: {"IsPlaceHolder":null,"LocationType":"FileSystem"}
+after refresh with the mode on: {"IsPlaceHolder":true,"LocationType":"FileSystem"}
+after a library scan: {"IsPlaceHolder":true,"LocationType":"FileSystem"}
+after refresh with the mode off (server back): {"IsPlaceHolder":true,"LocationType":"FileSystem"}
+after a library scan: {"IsPlaceHolder":true,"LocationType":"FileSystem"}

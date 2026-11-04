@@ -1,0 +1,7 @@
+bin/
+obj/
+.vs/
+.idea/
+artifacts
+.claude/settings.local.json
+bin-out/
