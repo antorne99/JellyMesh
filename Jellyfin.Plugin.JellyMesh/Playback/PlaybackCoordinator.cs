@@ -228,12 +228,17 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Closes the transcode of an idle session and keeps the session, or forgets it when it is too old.
+    /// Renews the stream slots clients are using, closes the transcode of an idle session and keeps the session, or
+    /// forgets it when it is too old.
     /// </summary>
     /// <returns>A task.</returns>
     public async Task SweepAsync()
     {
         var now = _clock.GetUtcNow();
+        await Task.WhenAll(_sessions.All
+            .Where(session => session.RemotePlaySessionId is not null && IsJellyMesh(session.Source.ServerId) && session.TryRenew(now, PlaybackTimeouts.SlotRenewal))
+            .Select(RenewSlotAsync)).ConfigureAwait(false);
+
         foreach (var session in _sessions.All.Where(session => !session.IsActive))
         {
             var idle = now - session.LastRequest;
@@ -457,7 +462,12 @@ public sealed class PlaybackCoordinator
             return cached.Policy;
         }
 
-        var policy = await WithinAsync(serverId, PlaybackTimeouts.RemotePlaybackInfo, _client.GetTranscodePolicyAsync, cancellationToken).ConfigureAwait(false);
+        var readHardware = !IsJellyMesh(serverId);
+        var policy = await WithinAsync(
+            serverId,
+            PlaybackTimeouts.RemotePlaybackInfo,
+            (endpoint, session, token) => _client.GetTranscodePolicyAsync(endpoint, session, readHardware, token),
+            cancellationToken).ConfigureAwait(false);
         if (!policy.IsSuccess)
         {
             return null;
@@ -474,6 +484,20 @@ public sealed class PlaybackCoordinator
         if (session.RemotePlaySessionId is { } playSessionId)
         {
             await ReleaseSlotAsync(session.Source.ServerId, playSessionId).ConfigureAwait(false);
+        }
+    }
+
+    // A lost renewal is covered by the next one, and a provider without this route only keeps its idle time.
+    private async Task RenewSlotAsync(PlaybackSession session)
+    {
+        var result = await WithinAsync(
+            session.Source.ServerId,
+            PlaybackTimeouts.RemoteStop,
+            (endpoint, remote, token) => _client.RenewStreamAsync(endpoint, remote, session.RemotePlaySessionId!, token),
+            CancellationToken.None).ConfigureAwait(false);
+        if (!result.IsSuccess)
+        {
+            _logger.LogInformation("Could not renew a stream slot: {Failure}", result.Failure);
         }
     }
 

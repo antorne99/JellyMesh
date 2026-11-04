@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -156,7 +157,7 @@ public class RemotePlaybackClientTests
             ? StubHandler.Json("{\"Policy\":{\"EnableVideoPlaybackTranscoding\":false,\"EnableAudioPlaybackTranscoding\":true,\"EnablePlaybackRemuxing\":true}}")
             : StubHandler.Json("{\"HardwareAccelerationType\":\"qsv\"}"));
 
-        var result = await client.GetTranscodePolicyAsync(_endpoint, _session, CancellationToken.None);
+        var result = await client.GetTranscodePolicyAsync(_endpoint, _session, true, CancellationToken.None);
 
         Assert.Equal(new RemoteTranscodePolicy("qsv", false, true, true), result.Value);
     }
@@ -168,9 +169,25 @@ public class RemotePlaybackClientTests
             ? StubHandler.Json("{\"Policy\":{\"EnableVideoPlaybackTranscoding\":true,\"EnableAudioPlaybackTranscoding\":true,\"EnablePlaybackRemuxing\":true}}")
             : StubHandler.Status(HttpStatusCode.Forbidden));
 
-        var result = await client.GetTranscodePolicyAsync(_endpoint, _session, CancellationToken.None);
+        var result = await client.GetTranscodePolicyAsync(_endpoint, _session, true, CancellationToken.None);
 
         Assert.Null(result.Value!.HardwareAccelerationType);
+    }
+
+    [Fact]
+    public async Task A_policy_without_the_hardware_never_touches_the_configuration()
+    {
+        var paths = new List<string>();
+        var (client, _) = Build(request =>
+        {
+            paths.Add(request.RequestUri!.AbsolutePath);
+            return StubHandler.Json("{\"Policy\":{\"EnableVideoPlaybackTranscoding\":true,\"EnableAudioPlaybackTranscoding\":true,\"EnablePlaybackRemuxing\":true}}");
+        });
+
+        var result = await client.GetTranscodePolicyAsync(_endpoint, _session, false, CancellationToken.None);
+
+        Assert.Equal(["/Users/Me"], paths);
+        Assert.Equal(new RemoteTranscodePolicy(null, true, true, true), result.Value);
     }
 
     [Fact]

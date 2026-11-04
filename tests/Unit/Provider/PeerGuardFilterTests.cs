@@ -90,6 +90,7 @@ public class PeerGuardFilterTests
     [InlineData("Library", "GetFile")]
     [InlineData("Library", "GetDownload")]
     [InlineData("Search", "GetSearchHints")]
+    [InlineData("Configuration", "GetNamedConfiguration")]
     [InlineData("Unknown", "AddedByAFutureJellyfin")]
     public async Task Stock_routes_are_closed_to_a_peer(string controller, string action)
     {
@@ -120,6 +121,34 @@ public class PeerGuardFilterTests
         var (_, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", null);
 
         Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task A_peer_can_close_its_transcode()
+    {
+        var (_, ran) = await RunAsync(ProviderFixture.Stock("HlsSegment", "StopEncodingProcess"), "DELETE", null);
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task Closing_a_transcode_takes_no_slot_even_on_a_full_server()
+    {
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 1, "holding")!.Dispose();
+
+        var (_, ran) = await RunAsync(ProviderFixture.Stock("HlsSegment", "StopEncodingProcess"), "DELETE", null);
+
+        Assert.True(ran);
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public async Task The_close_route_opens_for_delete_only()
+    {
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("HlsSegment", "StopEncodingProcess"), "GET", null);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(context));
     }
 
     [Fact]

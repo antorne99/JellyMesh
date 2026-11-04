@@ -188,6 +188,19 @@ close_stream() {
 }
 stream_url() { echo "http://127.0.0.1:18411$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/open-$1")"; }
 active_streams() { get a /JellyMesh/Admin/Peers | jq -r '.[0].ActiveStreams'; }
+folder_of() { local plain=${1%%\?*}; echo "${plain%/*}/"; }
+# hls_segments <device> <how many>: walks an HLS stream as a player does, each URI against the playlist it came from. Prints
+# the status of each segment. What the client was given stays in $WORK/seen-*, for leaks.sh.
+hls_segments() {
+  local device=$1 count=$2 url variant segment
+  url=$(stream_url "$device")
+  curl -sS "$url" >"$WORK/seen-$device-master"
+  variant=$(folder_of "$url")$(grep -v '^#' "$WORK/seen-$device-master" | head -1)
+  curl -sS "$variant" >"$WORK/seen-$device-variant"
+  for segment in $(grep -v '^#' "$WORK/seen-$device-variant" | head -"$count"); do
+    curl -sS -o /dev/null -w '%{http_code}\n' --max-time 60 "$(folder_of "$variant")$segment"
+  done
+}
 # movie_on_b <title>: the stub of a title on b.
 movie_on_b() { get b '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$1" '[.Items[] | select((.Path // "") | contains($t))][0].Id'; }
 # message_during <device> <seconds> <command...>: runs the command with the device connected, prints what it was told.

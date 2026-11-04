@@ -40,6 +40,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// How often a stream slot is renewed on a JellyMesh remote while a client reads. Well under the idle time of a slot
+    /// there, so that a lost renewal costs nothing.
+    /// </summary>
+    public static readonly TimeSpan SlotRenewal = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Time without requests after which a session is forgotten. Until then a paused player can resume with its URLs:
     /// the remote restarts ffmpeg at the requested segment.
     /// </summary>

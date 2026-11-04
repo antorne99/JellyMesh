@@ -203,6 +203,61 @@ public class StreamSlotsTests
     }
 
     [Fact]
+    public void A_renewal_restarts_the_idle_time()
+    {
+        Hold("one");
+
+        _clock.Advance(StreamSlots.IdleTimeout - TimeSpan.FromSeconds(1));
+        _slots.Renew(_peer, "one");
+        _clock.Advance(StreamSlots.IdleTimeout - TimeSpan.FromSeconds(1));
+
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_slot_expires_once_the_renewals_stop()
+    {
+        Hold("one");
+        _slots.Renew(_peer, "one");
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(0, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_renewal_never_takes_a_slot()
+    {
+        _slots.Renew(_peer, "unknown");
+
+        Assert.Equal(0, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_renewal_comes_too_late_for_a_slot_that_expired()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        _slots.Renew(_peer, "one");
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.NotNull(_slots.TryReserve(_peer, 1, null));
+    }
+
+    [Fact]
+    public void A_renewal_only_reaches_the_slots_of_that_peer()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout - TimeSpan.FromSeconds(1));
+
+        _slots.Renew(_other, "one");
+        _clock.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(0, _slots.Count(_peer));
+    }
+
+    [Fact]
     public void Ending_a_request_twice_counts_once()
     {
         Hold("one");

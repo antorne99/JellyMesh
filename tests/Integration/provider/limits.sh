@@ -6,6 +6,20 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 FAILED=0
 SOLO="JM Solo Provider"
+REFUSED=' (403|404|429)$'
+
+# Never grep -q on a pipe here: with pipefail, grep leaving early makes a found line a failure.
+limit_lines() { docker logs jm-prov-b 2>&1 | grep -c 'is at its stream limit'; }
+transcode_files() { docker exec jm-prov-a sh -c 'ls /cache/transcodes | wc -l' | tr -d ' '; }
+# wait_transcodes <files>: a removes them about 2 s after the stop.
+wait_transcodes() {
+  local i
+  for i in $(seq 1 15); do
+    [ "$(transcode_files)" -le "$1" ] && break
+    sleep 1
+  done
+  transcode_files
+}
 
 share a 1 Film Serie
 gate_mode a up
@@ -24,6 +38,7 @@ real=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r 
 echo "--- over the limit: the next source"
 : >"$WORK/gate-a.log"
 : >"$WORK/gate-stock.log"
+logged=$(limit_lines)
 check "first stream" 200 "$(open_stream c1 "$tears" "$PROFILE_DIRECT")"
 check "it holds the slot on a" 1 "$(active_streams)"
 check "it came from a" 1 "$(grep -c 'POST /Items/.*/PlaybackInfo 200' "$WORK/gate-a.log")"
@@ -31,7 +46,8 @@ check "second stream" 200 "$(open_stream c2 "$tears" "$PROFILE_DIRECT")"
 check "a refused it" 1 "$(grep -c 'POST /Items/.*/PlaybackInfo 429' "$WORK/gate-a.log")"
 check "the stock remote served it" 1 "$(grep -c 'POST /Items/.*/PlaybackInfo 200' "$WORK/gate-stock.log")"
 check "a still holds one slot" 1 "$(active_streams)"
-check "b logged the limit" true "$(docker logs jm-prov-b 2>&1 | grep -q 'is at its stream limit' && echo true || echo false)"
+sleep 1
+check "b logged the limit" true "$([ "$(limit_lines)" -gt "$logged" ] && echo true || echo false)"
 check "a client sees no remote address" 0 "$(cat "$WORK/open-c1" "$WORK/open-c2" | grep -c -E 'host\.docker\.internal|18412|18414')"
 close_stream c2
 close_stream c1
@@ -82,10 +98,7 @@ case "$url" in *JellyMesh/Session*) fallback=no ;; *) fallback=yes ;; esac
 check "by the local server" yes "$fallback"
 check "reading the file of the source with a free slot" true "$(grep -q 'GET /Videos/.*/stream 20' "$WORK/gate-stock.log" && echo true || echo false)"
 check "and not the one at its limit" 0 "$(grep -c '/stream' "$WORK/gate-a.log")"
-playlist=$(curl -sS "$url" | grep -v '^#' | head -1)
-variant="${url%%master.m3u8*}$playlist"
-segment=$(curl -sS "$variant" | grep -v '^#' | head -1)
-check "the local transcode really plays" 200 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "${url%%master.m3u8*}$segment")"
+check "the local transcode really plays" 200 "$(hls_segments c5 1)"
 close_stream c5
 gate_mode stock up
 close_stream c1
@@ -93,19 +106,17 @@ check "free again" 0 "$(active_streams)"
 
 echo "--- HLS keeps one slot through playlists and segments"
 : >"$WORK/gate-a.log"
+files=$(transcode_files)
 check "HLS stream" 200 "$(open_stream c6 "$tears" "$PROFILE_HLS")"
-url=$(stream_url c6)
-base=${url%%master.m3u8*}
-master=$(curl -sS "$url")
-variant=$(grep -v '^#' <<<"$master" | head -1)
-segments=$(curl -sS "$base$variant" | grep -v '^#' | head -3)
-for segment in $segments; do
-  check "segment through b" 200 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$base$segment")"
-done
+check "three segments through b" "200 200 200" "$(echo $(hls_segments c6 3))"
 check "one slot" 1 "$(active_streams)"
-check "no request of the stream was refused" 0 "$(grep -c -E ' (403|404|429)$' "$WORK/gate-a.log")"
+check "no request of the stream was refused" 0 "$(grep -c -E "$REFUSED" "$WORK/gate-a.log")"
 close_stream c6
 check "free again" 0 "$(active_streams)"
+check "the transcode was closed on a" 1 "$(grep -c 'DELETE /Videos/ActiveEncodings 204' "$WORK/gate-a.log")"
+check "no request of the close was refused" 0 "$(grep -c -E "$REFUSED" "$WORK/gate-a.log")"
+check "closing needs no new login" 0 "$(grep -c 'AuthenticateByName' "$WORK/gate-a.log")"
+check "a keeps no file of the transcode" "$files" "$(wait_transcodes "$files")"
 
 echo "--- a new PlaybackInfo of the same client takes over its slot, as a change of audio track does"
 : >"$WORK/gate-a.log"
@@ -115,16 +126,51 @@ check "a served both" 2 "$(grep -c 'POST /Items/.*/PlaybackInfo 200' "$WORK/gate
 check "one slot" 1 "$(active_streams)"
 close_stream c10
 
-echo "--- a long stream holds its slot past the idle time"
+echo "--- a client still reading holds its slot, long after a has sent everything"
+: >"$WORK/gate-a.log"
 check "open" 200 "$(open_stream c7 "$tears" "$PROFILE_DIRECT")"
 url=$(stream_url c7)
 curl -sS -o /dev/null --limit-rate 50k "$url" &
 reader=$!
 sleep 130
-check "still held after 130 s, with one request running" 1 "$(active_streams)"
+# The buffers on the way hold the file, so a is done early and has nothing in flight: only the renewals can hold the slot.
+check "a has sent the whole file" 1 "$(grep -c -E 'END /Videos/.*/stream [0-9]{3,}$' "$WORK/gate-a.log")"
+check "the client is still reading" true "$(kill -0 "$reader" 2>/dev/null && echo true || echo false)"
+check "still held after 130 s" 1 "$(active_streams)"
+check "b renewed it while the client read" true "$([ "$(grep -c 'PUT /JellyMesh/Provider/Streams/.* 204' "$WORK/gate-a.log")" -ge 3 ] && echo true || echo false)"
+check "so the limit still counts it" 503 "$(open_stream c12 "$solo" "$PROFILE_DIRECT")"
+
+echo "--- a client that leaves without a word stops the renewals: b frees the slot"
 kill "$reader" 2>/dev/null
 wait "$reader" 2>/dev/null
+: >"$WORK/gate-a.log"
+freed=never
+for waited in $(seq 10 10 120); do
+  sleep 10
+  if [ "$(active_streams)" = 0 ]; then
+    freed=$waited
+    break
+  fi
+done
+echo "slot of the client that left freed after: $freed s"
+check "free again" true "$([ "$freed" != never ] && echo true || echo false)"
+check "b gave it back, a did not have to expire it" 1 "$(grep -c 'DELETE /JellyMesh/Provider/Streams/.* 204' "$WORK/gate-a.log")"
 close_stream c7
+
+echo "--- a pause: nothing keeps the stream alive on a, and resuming works (decision 6)"
+files=$(transcode_files)
+check "open" 200 "$(open_stream c11 "$tears" "$PROFILE_HLS")"
+check "two segments before the pause" "200 200" "$(echo $(hls_segments c11 2))"
+: >"$WORK/gate-a.log"
+sleep 112
+check "no renewal during the pause" 0 "$(grep -c 'PUT /JellyMesh/Provider/Streams' "$WORK/gate-a.log")"
+check "no ping during the pause" 0 "$(grep -c '/Sessions/Playing' "$WORK/gate-a.log")"
+check "b closed the transcode" 1 "$(grep -c 'DELETE /Videos/ActiveEncodings 204' "$WORK/gate-a.log")"
+check "and gave the slot back" 0 "$(active_streams)"
+check "a keeps no file of it" "$files" "$(wait_transcodes "$files")"
+check "resuming with the same URLs works" 200 "$(hls_segments c11 1)"
+check "and takes a slot again" 1 "$(active_streams)"
+close_stream c11
 check "free again" 0 "$(active_streams)"
 
 echo "--- a consumer that cannot release: the slot expires"
