@@ -1,5 +1,10 @@
 using System;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Xunit;
 
@@ -66,6 +71,114 @@ public class PluginConfigurationTests
 
         Assert.Empty(config.Normalize());
         Assert.Equal(900, config.SyncIntervalSeconds);
+    }
+
+    [Fact]
+    public void ThePlaybackTimesDefaultToDecision17()
+    {
+        var times = PlaybackTimes.From(new PluginConfiguration());
+
+        Assert.Equal(TimeSpan.FromSeconds(10), times.RemotePlaybackInfo);
+        Assert.Equal(TimeSpan.FromSeconds(15), times.StreamOpen);
+        Assert.Equal(TimeSpan.FromSeconds(90), times.Idle);
+        Assert.Equal(TimeSpan.FromHours(24), times.SessionRetention);
+        Assert.Equal(TimeSpan.FromMinutes(5), times.PolicyRetention);
+    }
+
+    public static TheoryData<Action<PluginConfiguration, int>, int, int> PlaybackRanges => new()
+    {
+        { (config, value) => config.RemotePlaybackInfoTimeoutSeconds = value, 3, 60 },
+        { (config, value) => config.StreamOpenTimeoutSeconds = value, 5, 60 },
+        { (config, value) => config.PlaybackIdleSeconds = value, 30, 109 },
+        { (config, value) => config.SessionRetentionHours = value, 1, 168 },
+        { (config, value) => config.PolicyCacheMinutes = value, 1, 60 }
+    };
+
+    [Theory]
+    [MemberData(nameof(PlaybackRanges))]
+    public void APlaybackTimeMustBeInItsRange(Action<PluginConfiguration, int> set, int min, int max)
+    {
+        foreach (var valid in new[] { min, max })
+        {
+            var config = new PluginConfiguration();
+            set(config, valid);
+            config.Validate();
+        }
+
+        foreach (var invalid in new[] { min - 1, max + 1, 0, -1 })
+        {
+            var config = new PluginConfiguration();
+            set(config, invalid);
+            Assert.Throws<ArgumentException>(config.Validate);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(PlaybackRanges))]
+    public void NormalizeBringsAPlaybackTimeBackIntoItsRange(Action<PluginConfiguration, int> set, int min, int max)
+    {
+        var low = new PluginConfiguration();
+        set(low, min - 1);
+        var high = new PluginConfiguration();
+        set(high, max + 1);
+
+        Assert.Equal(min, Assert.Single(low.Normalize()).Applied);
+        Assert.Equal(max, Assert.Single(high.Normalize()).Applied);
+        low.Validate();
+        high.Validate();
+    }
+
+    [Fact]
+    public void TheHighestIdleTimeEndsBeforeASlotOfAProviderExpires()
+    {
+        var latest = TimeSpan.FromSeconds(PluginConfiguration.MaxPlaybackIdleSeconds) + PlaybackTimeouts.SweepInterval;
+
+        Assert.True(latest < StreamSlots.IdleTimeout);
+        Assert.Equal(109, PluginConfiguration.MaxPlaybackIdleSeconds);
+    }
+
+    [Fact]
+    public void TheDefaultIdleTimeIsWithinTheLimit()
+    {
+        Assert.True(PlaybackTimeouts.Idle.TotalSeconds <= PluginConfiguration.MaxPlaybackIdleSeconds);
+    }
+
+    private static string ConfigPage()
+    {
+        using var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.JellyMesh.Configuration.configPage.html")!;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    [Theory]
+    [InlineData("jmSyncInterval", 300, null)]
+    [InlineData("jmRemotePlaybackInfoTimeout", 3, 60)]
+    [InlineData("jmStreamOpenTimeout", 5, 60)]
+    [InlineData("jmPlaybackIdle", 30, 109)]
+    [InlineData("jmSessionRetention", 1, 168)]
+    [InlineData("jmPolicyCache", 1, 60)]
+    public void TheConfigPageOffersTheSameRanges(string id, int min, int? max)
+    {
+        var input = Regex.Match(ConfigPage(), "<input id=\"" + id + "\"[^>]*>").Value;
+
+        Assert.Contains("min=\"" + min + "\"", input, StringComparison.Ordinal);
+        if (max is not null)
+        {
+            Assert.Contains("max=\"" + max + "\"", input, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("RemotePlaybackInfoTimeoutSeconds")]
+    [InlineData("StreamOpenTimeoutSeconds")]
+    [InlineData("PlaybackIdleSeconds")]
+    [InlineData("SessionRetentionHours")]
+    [InlineData("PolicyCacheMinutes")]
+    public void TheConfigPageLoadsAndSavesEveryPlaybackTime(string setting)
+    {
+        var page = ConfigPage();
+
+        Assert.Equal(2, Regex.Matches(page, "config\\." + setting + "\\b").Count);
     }
 
     [Theory]

@@ -5,6 +5,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
+using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
@@ -30,9 +32,20 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public const int MinSyncIntervalSeconds = 300;
 
+    /// <summary>
+    /// The highest idle time of a playback. A JellyMesh provider must not see a slot expire while this server still holds
+    /// the stream, so the idle time plus a sweep stays below the slot expiry (<see cref="StreamSlots.IdleTimeout"/>).
+    /// </summary>
+    public static readonly int MaxPlaybackIdleSeconds = (int)(StreamSlots.IdleTimeout - PlaybackTimeouts.SweepInterval).TotalSeconds - 1;
+
     private static readonly SettingRange[] _ranges =
     [
-        new(nameof(SyncIntervalSeconds), config => config.SyncIntervalSeconds, (config, value) => config.SyncIntervalSeconds = value, MinSyncIntervalSeconds, int.MaxValue)
+        new(nameof(SyncIntervalSeconds), config => config.SyncIntervalSeconds, (config, value) => config.SyncIntervalSeconds = value, MinSyncIntervalSeconds, int.MaxValue),
+        new(nameof(RemotePlaybackInfoTimeoutSeconds), config => config.RemotePlaybackInfoTimeoutSeconds, (config, value) => config.RemotePlaybackInfoTimeoutSeconds = value, 3, 60),
+        new(nameof(StreamOpenTimeoutSeconds), config => config.StreamOpenTimeoutSeconds, (config, value) => config.StreamOpenTimeoutSeconds = value, 5, 60),
+        new(nameof(PlaybackIdleSeconds), config => config.PlaybackIdleSeconds, (config, value) => config.PlaybackIdleSeconds = value, 30, MaxPlaybackIdleSeconds),
+        new(nameof(SessionRetentionHours), config => config.SessionRetentionHours, (config, value) => config.SessionRetentionHours = value, 1, 168),
+        new(nameof(PolicyCacheMinutes), config => config.PolicyCacheMinutes, (config, value) => config.PolicyCacheMinutes = value, 1, 60)
     ];
 
     /// <summary>
@@ -54,6 +67,32 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets a value indicating whether federated items are locked against metadata fetchers.
     /// </summary>
     public bool MetadataProtection { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the limit in seconds on the <c>PlaybackInfo</c> call to a remote.
+    /// </summary>
+    public int RemotePlaybackInfoTimeoutSeconds { get; set; } = (int)PlaybackTimeouts.RemotePlaybackInfo.TotalSeconds;
+
+    /// <summary>
+    /// Gets or sets the limit in seconds on each step of opening a stream: a playlist, a segment or the first byte of a file.
+    /// </summary>
+    public int StreamOpenTimeoutSeconds { get; set; } = (int)PlaybackTimeouts.StreamOpen.TotalSeconds;
+
+    /// <summary>
+    /// Gets or sets the seconds without requests after which the transcode of a session is closed, at most
+    /// <see cref="MaxPlaybackIdleSeconds"/>.
+    /// </summary>
+    public int PlaybackIdleSeconds { get; set; } = (int)PlaybackTimeouts.Idle.TotalSeconds;
+
+    /// <summary>
+    /// Gets or sets the hours without requests after which a session is forgotten, and a paused player can no longer resume.
+    /// </summary>
+    public int SessionRetentionHours { get; set; } = (int)PlaybackTimeouts.SessionRetention.TotalHours;
+
+    /// <summary>
+    /// Gets or sets the minutes the transcode policy of a remote is kept.
+    /// </summary>
+    public int PolicyCacheMinutes { get; set; } = (int)PlaybackTimeouts.PolicyRetention.TotalMinutes;
 
     /// <summary>
     /// Gets the configured remote servers. Never sent to the browser through this object.

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml.Serialization;
 using Jellyfin.Extensions.Json;
 using Jellyfin.Plugin.JellyMesh.Configuration;
@@ -150,6 +151,40 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Contains("SyncIntervalSeconds", line, StringComparison.Ordinal);
         Assert.Contains("60", line, StringComparison.Ordinal);
         Assert.Contains("300", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AConfigurationSavedBeforeThePlaybackTimesGetsTheDefaults()
+    {
+        var path = _plugin.ConfigurationFilePath;
+        _plugin.ChangeConfiguration(config => config.PlaybackIdleSeconds = 45);
+        File.WriteAllText(path, Regex.Replace(File.ReadAllText(path), "\\s*<PlaybackIdleSeconds>.*</PlaybackIdleSeconds>", string.Empty));
+        var logger = new CapturingLogger<Plugin>();
+
+        var loaded = new Plugin(_paths, new RealXmlSerializer(), logger);
+
+        Assert.Equal(90, loaded.Configuration.PlaybackIdleSeconds);
+        Assert.Empty(logger.Lines);
+    }
+
+    [Fact]
+    public void AnIdleTimeSavedAboveTheLimitRunsAsTheLimitWithAWarning()
+    {
+        _plugin.ChangeConfiguration(config => config.PlaybackIdleSeconds = 200);
+        var logger = new CapturingLogger<Plugin>();
+
+        var loaded = new Plugin(_paths, new RealXmlSerializer(), logger);
+
+        Assert.Equal(109, loaded.Configuration.PlaybackIdleSeconds);
+        Assert.Contains("PlaybackIdleSeconds", Assert.Single(logger.Lines), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASaveWithAnIdleTimeAboveTheLimitIsRefused()
+    {
+        Assert.Throws<ArgumentException>(() => _plugin.UpdateConfiguration(new PluginConfiguration { PlaybackIdleSeconds = 110 }));
+
+        Assert.Equal(90, _plugin.Configuration.PlaybackIdleSeconds);
     }
 
     [Fact]
