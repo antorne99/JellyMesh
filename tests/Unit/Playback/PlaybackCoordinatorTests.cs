@@ -304,6 +304,24 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public void Subtitles_of_a_local_transcode_go_to_the_remote_of_the_file()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source("file");
+        var external = new MediaBrowser.Model.Entities.MediaStream { Index = 1, DeliveryUrl = "/Videos/local/local/Subtitles/1/0/Stream.vtt?ApiKey=" + PlaybackValues.LocalToken };
+        var embedded = new MediaBrowser.Model.Entities.MediaStream { Index = 5, DeliveryUrl = "/Videos/local/local/Subtitles/5/0/Stream.vtt?ApiKey=" + PlaybackValues.LocalToken };
+
+        var session = fixture.Coordinator.MapLocalSubtitle(PlaybackValues.Identity(), source, external, null, PlaybackValues.LocalToken);
+        var same = fixture.Coordinator.MapLocalSubtitle(PlaybackValues.Identity(), source, embedded, session, PlaybackValues.LocalToken);
+
+        Assert.Same(session, same);
+        Assert.Equal(PlaybackStreamKind.Subtitles, Assert.Single(fixture.Sessions.All).Kind);
+        Assert.Equal("/Videos/file/file-ms/Subtitles/1/0/Stream.vtt", session.FindUpstream(0, "Stream.vtt", []));
+        Assert.Equal("/Videos/file/file-ms/Subtitles/5/0/Stream.vtt", session.FindUpstream(1, "Stream.vtt", []));
+        Assert.StartsWith("/JellyMesh/Playback/" + session.Id + "/f/1/Stream.vtt?ApiKey=", embedded.DeliveryUrl, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task No_source_for_the_file_means_nothing_to_serve()
     {
         var fixture = new CoordinatorFixture();
