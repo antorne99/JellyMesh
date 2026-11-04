@@ -26,4 +26,14 @@ public sealed record FederationView(
     /// is the parent of its item.
     /// </summary>
     public IReadOnlyDictionary<string, Guid> LocalItemByWork { get; init; } = new Dictionary<string, Guid>();
+
+    /// <summary>
+    /// Gets the film titles the administrator can merge (decision 20).
+    /// </summary>
+    public IReadOnlyList<MergeCaseView> MergeCases { get; init; } = [];
+
+    /// <summary>
+    /// Gets the merges the administrator made.
+    /// </summary>
+    public IReadOnlyList<ManualMergeView> ManualMerges { get; init; } = [];
 }

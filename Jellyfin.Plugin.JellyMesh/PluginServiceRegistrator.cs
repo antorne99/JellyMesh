@@ -37,6 +37,10 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             provider.GetRequiredService<ILogger<IndexFile>>()));
         serviceCollection.AddSingleton<IFederationIndex, FederationIndex>();
         serviceCollection.AddSingleton<ILocalCatalogReader, LocalCatalogReader>();
+        serviceCollection.AddSingleton<IManualMergeStore>(provider => new ManualMergeStore(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<ManualMergeStore>>()));
+        serviceCollection.AddSingleton<ManualMergeService>();
         serviceCollection.AddSingleton<IFederationResolver, FederationResolver>();
         serviceCollection.AddSingleton<IRemoteCatalogReader, RemoteCatalogReader>();
         serviceCollection.AddSingleton(provider => new StubRegistry(

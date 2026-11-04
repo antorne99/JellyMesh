@@ -30,7 +30,8 @@ internal sealed class StubFixture : IDisposable
         Root = Path.Combine(_data, "federata");
         Sync.Store.Configuration.FederatedFolderPath = Root;
         Registry = new StubRegistry(Path.Combine(_data, "plugin"), Sync.Store, new CapturingLogger<StubRegistry>());
-        Resolver = new FederationResolver(Sync.Index, LocalCatalog, Sync.Registry);
+        Merges = new ManualMergeStore(Path.Combine(_data, "plugin"), new CapturingLogger<ManualMergeStore>());
+        Resolver = new FederationResolver(Sync.Index, LocalCatalog, Sync.Registry, Merges);
 
         Network.Setup(configuration => configuration.GetConfiguration("network")).Returns(new NetworkConfiguration());
         Host.Setup(host => host.HttpPort).Returns(8096);
@@ -74,6 +75,8 @@ internal sealed class StubFixture : IDisposable
     public StubRegistry Registry { get; }
 
     public StrmSigner Signer { get; }
+
+    public ManualMergeStore Merges { get; }
 
     public FederationResolver Resolver { get; }
 
