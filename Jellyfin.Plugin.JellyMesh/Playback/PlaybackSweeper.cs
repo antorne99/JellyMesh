@@ -9,8 +9,8 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
-/// Closes what clients leave open: on a reported stop right away, and after <see cref="PlaybackTimeouts.Idle"/> when the
-/// client simply went away. Nothing pings the remote during a pause: its job ends, and resuming restarts it.
+/// Closes what clients leave open: on a reported stop right away, and after the idle time when the client simply went
+/// away. Nothing pings the remote during a pause: its job ends, and resuming restarts it.
 /// </summary>
 public sealed class PlaybackSweeper : BackgroundService
 {

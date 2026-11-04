@@ -143,6 +143,8 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
 
     public RemoteTranscodePolicy Policy { get; set; } = new("none", true, true, true);
 
+    public int PolicyReads { get; private set; }
+
     public Action? OnStop { get; set; }
 
     public static RemoteResult<PlaybackInfoResponse> Hls(RemotePlaybackRequest request)
@@ -174,6 +176,7 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     public Task<RemoteResult<RemoteTranscodePolicy>> GetTranscodePolicyAsync(RemoteEndpoint endpoint, RemoteSession session, bool readHardware, CancellationToken cancellationToken)
     {
         HardwareReads.Add(readHardware);
+        PolicyReads++;
         return Task.FromResult(RemoteResult.Success(Policy));
     }
 
@@ -234,7 +237,7 @@ internal sealed class CoordinatorFixture
 {
     public CoordinatorFixture()
     {
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Clock, NullLogger<PlaybackCoordinator>.Instance);
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, Clock, NullLogger<PlaybackCoordinator>.Instance);
     }
 
     public FakeRegistry Registry { get; } = new();
@@ -242,6 +245,8 @@ internal sealed class CoordinatorFixture
     public FakePlaybackClient Client { get; } = new();
 
     public PlaybackSessionStore Sessions { get; } = new();
+
+    public InMemoryConfigurationStore Store { get; } = new();
 
     public ManualClock Clock { get; } = new();
 

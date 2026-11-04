@@ -50,6 +50,20 @@ public static class PlaybackUrls
     }
 
     /// <summary>
+    /// Builds the <c>TranscodingUrl</c> of the file of a local copy. A client reads a direct stream by the item it knows,
+    /// the stub, so a local copy reaches it only this way.
+    /// </summary>
+    /// <param name="itemId">The local item.</param>
+    /// <param name="mediaSourceId">The media source of the local item.</param>
+    /// <param name="container">The container.</param>
+    /// <param name="localToken">The local token.</param>
+    /// <returns>The URL.</returns>
+    public static string LocalFile(Guid itemId, string mediaSourceId, string container, string localToken)
+    {
+        return "/Videos/" + itemId.ToString("N") + "/stream." + container + "?static=true&MediaSourceId=" + Uri.EscapeDataString(mediaSourceId) + "&CopyTimestamps=true&" + NoClientRetry + "&ApiKey=" + Uri.EscapeDataString(localToken);
+    }
+
+    /// <summary>
     /// Adds what stops the retry of jellyfin-web to a local <c>TranscodingUrl</c>.
     /// </summary>
     /// <param name="url">The URL.</param>

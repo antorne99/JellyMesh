@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Dlna;
@@ -28,6 +29,7 @@ public sealed class PlaybackCoordinator
     private readonly IRemoteServerRegistry _registry;
     private readonly IRemotePlaybackClient _client;
     private readonly PlaybackSessionStore _sessions;
+    private readonly IPluginConfigurationStore _store;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ConcurrentDictionary<string, StubSource> _workingSources = new(StringComparer.Ordinal);
@@ -39,21 +41,26 @@ public sealed class PlaybackCoordinator
     /// <param name="registry">The server registry.</param>
     /// <param name="client">The playback client.</param>
     /// <param name="sessions">The sessions.</param>
+    /// <param name="store">The configuration store.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
     public PlaybackCoordinator(
         IRemoteServerRegistry registry,
         IRemotePlaybackClient client,
         PlaybackSessionStore sessions,
+        IPluginConfigurationStore store,
         TimeProvider clock,
         ILogger<PlaybackCoordinator> logger)
     {
         _registry = registry;
         _client = client;
         _sessions = sessions;
+        _store = store;
         _clock = clock;
         _logger = logger;
     }
+
+    private PlaybackTimes Times => _store.Read(PlaybackTimes.From);
 
     /// <summary>
     /// Finds how to serve a <c>PlaybackInfo</c>.
@@ -95,14 +102,17 @@ public sealed class PlaybackCoordinator
             {
                 _workingSources[request.Stub.Id] = source;
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
-                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source);
+                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true);
             }
         }
 
         await ClosePreviousAsync(previous).ConfigureAwait(false);
 
         // Only when the limit is the whole story: with any source down or broken, trying later may not help.
-        return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable, AtStreamLimit: refused > 0 && refused == request.Stub.Sources.Count);
+        return new PlaybackOutcome(
+            PlaybackOutcomeKind.Unavailable,
+            AtStreamLimit: refused > 0 && refused == request.Stub.Sources.Count,
+            AnyReachable: refused > 0 || reachable.Count > 0);
     }
 
     /// <summary>
@@ -172,7 +182,7 @@ public sealed class PlaybackCoordinator
     {
         return WithinAsync(
             serverId,
-            PlaybackTimeouts.StreamOpen,
+            Times.StreamOpen,
             (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
             cancellationToken);
     }
@@ -188,7 +198,7 @@ public sealed class PlaybackCoordinator
     {
         return WithinAsync(
             serverId,
-            PlaybackTimeouts.StreamOpen,
+            Times.StreamOpen,
             (endpoint, session, token) => _client.ReadPlaylistAsync(endpoint, session, path, token),
             cancellationToken);
     }
@@ -239,14 +249,15 @@ public sealed class PlaybackCoordinator
             .Where(session => session.RemotePlaySessionId is not null && IsJellyMesh(session.Source.ServerId) && session.TryRenew(now, PlaybackTimeouts.SlotRenewal))
             .Select(RenewSlotAsync)).ConfigureAwait(false);
 
+        var times = Times;
         foreach (var session in _sessions.All.Where(session => !session.IsActive))
         {
             var idle = now - session.LastRequest;
-            if (idle >= PlaybackTimeouts.SessionRetention)
+            if (idle >= times.SessionRetention)
             {
                 await CloseAsync(session.Id).ConfigureAwait(false);
             }
-            else if (idle >= PlaybackTimeouts.Idle && session.TryPark())
+            else if (idle >= times.Idle && session.TryPark())
             {
                 await CloseRemoteAsync(session).ConfigureAwait(false);
             }
@@ -327,7 +338,7 @@ public sealed class PlaybackCoordinator
         var remoteRequest = ToRemote(request, source, keepIndexes, replaces);
         var answer = await WithinAsync(
             source.ServerId,
-            PlaybackTimeouts.RemotePlaybackInfo,
+            Times.RemotePlaybackInfo,
             (endpoint, session, token) => _client.GetPlaybackInfoAsync(endpoint, session, remoteRequest, token),
             cancellationToken).ConfigureAwait(false);
         if (answer.Failure == RemoteFailure.StreamLimitReached)
@@ -457,7 +468,8 @@ public sealed class PlaybackCoordinator
     private async Task<RemoteTranscodePolicy?> GetPolicyAsync(Guid serverId, CancellationToken cancellationToken)
     {
         var now = _clock.GetUtcNow();
-        if (_policies.TryGetValue(serverId, out var cached) && now - cached.ReadAt < PlaybackTimeouts.PolicyRetention)
+        var times = Times;
+        if (_policies.TryGetValue(serverId, out var cached) && now - cached.ReadAt < times.PolicyRetention)
         {
             return cached.Policy;
         }
@@ -465,7 +477,7 @@ public sealed class PlaybackCoordinator
         var readHardware = !IsJellyMesh(serverId);
         var policy = await WithinAsync(
             serverId,
-            PlaybackTimeouts.RemotePlaybackInfo,
+            times.RemotePlaybackInfo,
             (endpoint, session, token) => _client.GetTranscodePolicyAsync(endpoint, session, readHardware, token),
             cancellationToken).ConfigureAwait(false);
         if (!policy.IsSuccess)

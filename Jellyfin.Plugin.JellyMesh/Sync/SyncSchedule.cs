@@ -6,8 +6,9 @@ using MediaBrowser.Model.Tasks;
 namespace Jellyfin.Plugin.JellyMesh.Sync;
 
 /// <summary>
-/// The Jellyfin triggers of the configured schedule. A value that cannot be turned into a trigger gives no trigger rather
-/// than a remote polled at a rate nobody chose: the save endpoint refuses such values, so only an edited file has them.
+/// The Jellyfin triggers of the configured schedule. A reconciliation time that cannot be turned into a trigger gives no
+/// trigger: the save endpoint refuses such a value, so only an edited file has it. An interval below the minimum runs at
+/// the minimum: the sync keeps working, and a remote is never polled faster than that.
 /// </summary>
 public static class SyncSchedule
 {
@@ -20,9 +21,8 @@ public static class SyncSchedule
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        return configuration.SyncIntervalSeconds > 0
-            ? [new TaskTriggerInfo { Type = TaskTriggerInfoType.IntervalTrigger, IntervalTicks = TimeSpan.FromSeconds(configuration.SyncIntervalSeconds).Ticks }]
-            : [];
+        var seconds = Math.Max(configuration.SyncIntervalSeconds, PluginConfiguration.MinSyncIntervalSeconds);
+        return [new TaskTriggerInfo { Type = TaskTriggerInfoType.IntervalTrigger, IntervalTicks = TimeSpan.FromSeconds(seconds).Ticks }];
     }
 
     /// <summary>

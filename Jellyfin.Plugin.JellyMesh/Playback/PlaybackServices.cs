@@ -24,6 +24,7 @@ public static class PlaybackServices
         services.AddSingleton<PlaybackCoordinator>();
         services.AddSingleton<PlaybackRefusal>();
         services.AddSingleton<StubLookup>();
+        services.AddSingleton<LocalCopyLookup>();
         services.AddSingleton<PlaybackInfoFilter>();
         services.AddSingleton<StockRouteGuardFilter>();
         services.AddHostedService<PlaybackSweeper>();
