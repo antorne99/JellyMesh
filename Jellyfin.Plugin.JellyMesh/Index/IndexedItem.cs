@@ -111,6 +111,9 @@ public sealed record IndexedItem
     /// <summary>Gets the backdrop image tags.</summary>
     public IReadOnlyList<string> BackdropImageTags { get; init; } = [];
 
+    /// <summary>Gets the chapters of a film or an episode.</summary>
+    public IReadOnlyList<IndexedChapter> Chapters { get; init; } = [];
+
     /// <summary>Gets the playable versions of a film or an episode.</summary>
     public IReadOnlyList<IndexedVersion> Versions { get; init; } = [];
 }

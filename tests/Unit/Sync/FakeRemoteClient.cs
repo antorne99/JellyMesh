@@ -73,6 +73,20 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         return Task.FromResult(ClockFailure == RemoteFailure.None ? RemoteResult.Success(ServerTime) : RemoteResult.Fail<DateTimeOffset?>(ClockFailure));
     }
 
+    /// <summary>The images requested, as item/type/index.</summary>
+    public List<string> ImageReads { get; } = [];
+
+    /// <summary>Fails the image reads.</summary>
+    public RemoteFailure ImageFailure { get; set; }
+
+    public Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken)
+    {
+        ImageReads.Add(itemId + "/" + imageType + "/" + imageIndex);
+        return Task.FromResult(ImageFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteImage(new byte[] { 0xFF, 0xD8, 0xFF }, "image/jpeg"))
+            : RemoteResult.Fail<RemoteImage>(ImageFailure));
+    }
+
     public Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken)
     {
         Queries.Add(query);

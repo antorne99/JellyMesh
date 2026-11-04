@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 
@@ -18,4 +19,11 @@ public sealed record FederationView(
     IndexHealth Health,
     int LocalItemCount,
     IReadOnlyList<ResolvedContent> Contents,
-    IReadOnlyList<DedupIssue> Issues);
+    IReadOnlyList<DedupIssue> Issues)
+{
+    /// <summary>
+    /// Gets one local item per work that has local copies, by <see cref="ContentIdentity.WorkKey"/>. The series of a work
+    /// is the parent of its item.
+    /// </summary>
+    public IReadOnlyDictionary<string, Guid> LocalItemByWork { get; init; } = new Dictionary<string, Guid>();
+}
