@@ -23,6 +23,9 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
     /// <summary>Items only found by ID, such as the rows of a series that <c>/Items</c> collapses.</summary>
     public List<RemoteItem> ItemsById { get; } = [];
 
+    /// <summary>A hidden row and the row a lookup of its ID answers with, as Jellyfin does for a split series.</summary>
+    public Dictionary<string, string> RepresentedBy { get; } = [];
+
     public List<RemoteItemQuery> Queries { get; } = [];
 
     public int Logins { get; private set; }
@@ -98,7 +101,8 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
 
         if (query.Ids is { } ids)
         {
-            var found = ItemsById.Where(item => ids.Contains(item.Id)).ToList();
+            var wanted = ids.Select(id => RepresentedBy.GetValueOrDefault(id, id)).ToList();
+            var found = ItemsById.Where(item => wanted.Contains(item.Id)).ToList();
             return Task.FromResult(RemoteResult.Success(new RemoteItemPage(found, found.Count)));
         }
 
