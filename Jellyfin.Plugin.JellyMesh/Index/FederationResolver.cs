@@ -64,11 +64,22 @@ public sealed class FederationResolver : IFederationResolver
                 decision.Identity,
                 decision.IsLocal,
                 decision.Winner is { } winner ? ToSource(winner) : null,
-                decision.Backups.Select(ToSource).ToList()))
+                decision.Backups.Select(ToSource).ToList())
+            {
+                LocalItemIds = decision.LocalItemIds.Select(ToLocalId).ToList(),
+                RemoteItems = decision.RemoteItems.Select(ToResolvedItem).ToList()
+            })
             .ToList();
 
-        return new FederationView(snapshot.Health, local.Count, contents, result.Issues);
+        return new FederationView(snapshot.Health, local.Count, contents, result.Issues)
+        {
+            LocalItemByWork = result.LocalItemByWork.ToDictionary(entry => entry.Key, entry => ToLocalId(entry.Value), StringComparer.Ordinal)
+        };
     }
+
+    private static Guid ToLocalId(string itemId) => Guid.TryParse(itemId, out var id) ? id : Guid.Empty;
+
+    private static ResolvedItem ToResolvedItem(RemoteItemKey item) => new(Guid.Parse(item.ServerId), item.ItemId);
 
     private static string? TitleOf(IndexedItem item)
     {

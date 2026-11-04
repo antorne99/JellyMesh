@@ -38,6 +38,16 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ILocalCatalogReader, LocalCatalogReader>();
         serviceCollection.AddSingleton<IFederationResolver, FederationResolver>();
         serviceCollection.AddSingleton<IRemoteCatalogReader, RemoteCatalogReader>();
+        serviceCollection.AddSingleton(provider => new StubRegistry(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<IPluginConfigurationStore>(),
+            provider.GetRequiredService<ILogger<StubRegistry>>()));
+        serviceCollection.AddSingleton<IStubRegistry>(provider => provider.GetRequiredService<StubRegistry>());
+        serviceCollection.AddSingleton<StubUrlBuilder>();
+        serviceCollection.AddSingleton<StubTechnicalData>();
+        serviceCollection.AddSingleton<StubItemUpdater>();
+        serviceCollection.AddSingleton<StubRemover>();
+        serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 

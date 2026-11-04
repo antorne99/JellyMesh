@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace Jellyfin.Plugin.JellyMesh.Remote;
 
 /// <summary>
-/// An entry of <c>BaseItemDto.MediaSources</c>. Like <see cref="RemoteItem"/>, a whitelist with no path or URL.
+/// An entry of <c>BaseItemDto.MediaSources</c>. Like <see cref="RemoteItem"/>, a whitelist.
 /// </summary>
 public sealed record RemoteMediaSource
 {
@@ -33,6 +33,18 @@ public sealed record RemoteMediaSource
 
     /// <summary>Gets a value indicating whether the source is remote from its server, as a <c>.strm</c> is.</summary>
     public bool IsRemote { get; init; }
+
+    /// <summary>
+    /// Gets the path, the URL of the target for a <c>.strm</c>. Read only to recognise the stub of another JellyMesh
+    /// (decision 11): it can hold a remote address, so the mapper never copies it.
+    /// </summary>
+    public string? Path { get; init; }
+
+    /// <summary>Gets the transport stream timestamp type.</summary>
+    public string? Timestamp { get; init; }
+
+    /// <summary>Gets the 3D format.</summary>
+    public string? Video3DFormat { get; init; }
 
     /// <summary>Gets the streams.</summary>
     public IReadOnlyList<RemoteStreamInfo>? MediaStreams { get; init; }
