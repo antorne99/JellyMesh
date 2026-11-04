@@ -3,6 +3,7 @@ using System.Net.Http;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
@@ -67,5 +68,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
                 UseProxy = false
             })
             .RemoveAllLoggers();
+
+        serviceCollection.AddPlayback();
     }
 }

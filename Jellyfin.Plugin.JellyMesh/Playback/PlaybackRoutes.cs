@@ -77,7 +77,10 @@ public static class PlaybackRoutes
 
     private static string? PathOf(string? url)
     {
-        return Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) ? uri.AbsolutePath : null;
+        // On Linux a rooted file path parses as an absolute file URI.
+        return Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? uri.AbsolutePath
+            : null;
     }
 
     private static bool IsValidStubId(string? stubId)
