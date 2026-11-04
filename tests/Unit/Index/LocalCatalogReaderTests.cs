@@ -98,6 +98,16 @@ public class LocalCatalogReaderTests
     }
 
     [Fact]
+    public void ALocalDoubleKeepsItsLastNumber()
+    {
+        var series = new Series { Id = Guid.NewGuid(), Name = "Show" };
+        _library.Setup(library => library.GetItemById(series.Id)).Returns(series);
+        var episode = new Episode { Id = Guid.NewGuid(), SeriesId = series.Id, ParentIndexNumber = 1, IndexNumber = 1, IndexNumberEnd = 2, Path = "/media/serie/e.mkv" };
+
+        Assert.Equal(2, Assert.Single(ReaderOver(episode).Read()).EpisodeNumberEnd);
+    }
+
+    [Fact]
     public void ASeriesIsLookedUpOnce()
     {
         var series = new Series { Id = Guid.NewGuid(), Name = "Show" };

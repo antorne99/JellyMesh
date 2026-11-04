@@ -62,6 +62,15 @@ public class CatalogItemMapperTests
     }
 
     [Fact]
+    public void AFileWithSeveralEpisodesKeepsItsLastNumber()
+    {
+        var episode = Map(TestItems.Episode("e", "s", 1, 2) with { IndexNumberEnd = 3 }, RemoteItemType.Episode);
+
+        Assert.Equal(3, episode.IndexNumberEnd);
+        Assert.Equal(3, Assert.Single(CatalogItemMapper.ToCatalogItems(Catalog(episode))).EpisodeNumberEnd);
+    }
+
+    [Fact]
     public void AnEpisodeWithoutItsSeriesKeepsTheSeriesNameAndNoYear()
     {
         var episode = Map(TestItems.Episode("e", "gone", 1, 1), RemoteItemType.Episode);

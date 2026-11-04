@@ -67,6 +67,9 @@ public sealed record StubMetadata
     /// <summary>Gets the number of an episode.</summary>
     public int? EpisodeNumber { get; init; }
 
+    /// <summary>Gets the last episode of a stub that covers several.</summary>
+    public int? EpisodeNumberEnd { get; init; }
+
     /// <summary>
     /// Builds the metadata of a catalog entry.
     /// </summary>

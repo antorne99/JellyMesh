@@ -60,6 +60,12 @@ public sealed record CatalogItem
     public int? EpisodeNumber { get; init; }
 
     /// <summary>
+    /// Gets the last episode of a file that holds several, <c>IndexNumberEnd</c>. The file covers every episode from
+    /// <see cref="EpisodeNumber"/> to this one (decision 13a).
+    /// </summary>
+    public int? EpisodeNumberEnd { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether the item is itself federated on its server (plan §4.4). Such an item is ignored
     /// in both catalogs: a remote one is never imported, and a local one is JellyMesh's own stub, not a local copy.
     /// </summary>

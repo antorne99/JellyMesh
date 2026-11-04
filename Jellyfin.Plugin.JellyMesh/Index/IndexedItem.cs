@@ -90,6 +90,12 @@ public sealed record IndexedItem
     /// <summary>Gets the number of a season, or of an episode within its season.</summary>
     public int? IndexNumber { get; init; }
 
+    /// <summary>
+    /// Gets the last episode of a file that holds several. Files written before this existed have none, and the next
+    /// complete read fills it in.
+    /// </summary>
+    public int? IndexNumberEnd { get; init; }
+
     /// <summary>Gets the season number of an episode.</summary>
     public int? ParentIndexNumber { get; init; }
 

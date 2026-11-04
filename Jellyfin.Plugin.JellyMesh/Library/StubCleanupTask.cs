@@ -114,7 +114,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             return state;
         }
 
-        var claims = new StubMatcher(state.Stubs).ClaimAll(view.Contents);
+        var claims = new StubMatcher(state.Stubs).ClaimAll(StubContents.Group(view.Contents));
         var users = _users.GetUsers().ToList();
         foreach (var claim in claims)
         {

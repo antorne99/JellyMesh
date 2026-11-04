@@ -71,6 +71,7 @@ public static class CatalogItemMapper
             Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
             SeasonNumber = item.ParentIndexNumber,
             EpisodeNumber = item.IndexNumber,
+            EpisodeNumberEnd = item.IndexNumberEnd,
             Versions = versions
         };
     }

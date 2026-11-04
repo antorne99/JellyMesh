@@ -22,4 +22,10 @@ public sealed record ResolvedContent(
 
     /// <summary>Gets every remote item of this identity, whatever was decided.</summary>
     public IReadOnlyList<ResolvedItem> RemoteItems { get; init; } = [];
+
+    /// <summary>
+    /// Gets the last episode, when this is a group of episodes starting at the one of <see cref="Identity"/>. The resolver
+    /// never sets it: see <see cref="Library.StubContents"/>.
+    /// </summary>
+    public int? EpisodeNumberEnd { get; init; }
 }

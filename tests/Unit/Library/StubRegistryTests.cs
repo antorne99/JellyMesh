@@ -35,6 +35,20 @@ public sealed class StubRegistryTests : IDisposable
     };
 
     [Fact]
+    public void ARegistryWrittenBeforeTheLastEpisodeNumberExistedStillLoads()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, StubRegistry.FileName),
+            "{\"Version\":1,\"Stubs\":[{\"Id\":\"abc\",\"Kind\":\"Episode\",\"RelativePath\":\"Serie/S/S.strm\",\"IdentityKey\":\"key\",\"EpisodeNumber\":1,\"Sources\":[]}],\"Series\":[]}");
+
+        using var registry = Create();
+
+        Assert.Equal(1, registry.Find("abc")?.EpisodeNumber);
+        Assert.Null(registry.Find("abc")?.EpisodeNumberEnd);
+    }
+
+    [Fact]
     public async Task AStubIsFoundByIdAndByPath()
     {
         using var registry = Create();

@@ -105,7 +105,8 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             Year = parent?.ProductionYear,
             Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
             SeasonNumber = episode.ParentIndexNumber,
-            EpisodeNumber = episode.IndexNumber
+            EpisodeNumber = episode.IndexNumber,
+            EpisodeNumberEnd = episode.IndexNumberEnd
         };
     }
 }

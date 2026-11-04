@@ -33,7 +33,7 @@ public static class StubPlanner
 
         var catalog = IndexItemLookup.Build(input.Snapshot);
         var matcher = new StubMatcher(input.State.Stubs);
-        var claims = matcher.ClaimAll(input.View.Contents);
+        var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
 
         var paths = new PathAllocator(input.State);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
@@ -181,8 +181,9 @@ public static class StubPlanner
     {
         var season = content.Identity.SeasonNumber!.Value;
         var number = content.Identity.EpisodeNumber!.Value;
+        var last = content.EpisodeNumberEnd;
         var id = stub?.Id ?? NewId();
-        var relative = stub?.RelativePath ?? FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number);
+        var relative = stub?.RelativePath ?? FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last);
         var stem = Path.ChangeExtension(relative, null);
 
         var entry = (stub ?? NewEntry(id, StubKind.Episode, relative)) with
@@ -193,10 +194,14 @@ public static class StubPlanner
             // A stub stays in the series folder it was created in, even after two series became one work.
             SeriesStubId = stub?.SeriesStubId ?? series.Entry.Id,
             SeasonNumber = season,
-            EpisodeNumber = number
+            EpisodeNumber = number,
+            EpisodeNumberEnd = last,
+
+            // New numbers reach an existing item with the technical data, because its .nfo is not read again.
+            TechnicalTag = (stub?.SeasonNumber, stub?.EpisodeNumber, stub?.EpisodeNumberEnd) == (season, number, last) ? stub!.TechnicalTag : null
         };
 
-        var metadata = StubMetadata.From(winner, input.IsProtected) with { SeasonNumber = season, EpisodeNumber = number };
+        var metadata = StubMetadata.From(winner, input.IsProtected) with { SeasonNumber = season, EpisodeNumber = number, EpisodeNumberEnd = last };
         var nfo = NfoDocument.Episode(metadata);
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();

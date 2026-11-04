@@ -170,6 +170,70 @@ public sealed class StubCleanupTaskTests : IDisposable
         _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
     }
 
+    private async Task<Episode> DoubleEpisodeStubAsync()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("d", "s", 1, 1) with { IndexNumberEnd = 2 });
+        await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+
+        var path = _fixture.Path_("Serie", "Show (2020)", "Season 01", "Show S01E01-E02.strm");
+        var stub = new Episode { Id = Guid.NewGuid(), Path = path };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(stub);
+        return stub;
+    }
+
+    private Episode AddLocalEpisode(int number)
+    {
+        var local = new Episode { Id = Guid.NewGuid(), Path = "/media/serie/e" + number + ".mkv" };
+        _fixture.Library.Setup(library => library.GetItemById(local.Id)).Returns(local);
+        _fixture.LocalCatalog.Items.Add(new CatalogItem
+        {
+            ServerId = "local",
+            ItemId = local.Id.ToString("N"),
+            Kind = ContentKind.Episode,
+            Title = "Show",
+            Year = 2020,
+            Ids = new ContentIds("72", "tt71", "71"),
+            SeasonNumber = 1,
+            EpisodeNumber = number
+        });
+        return local;
+    }
+
+    [Fact]
+    public async Task AStubOfADouble_StaysWhileOneOfItsEpisodesIsNotLocal()
+    {
+        var stub = await DoubleEpisodeStubAsync();
+        AddLocalEpisode(1);
+
+        await RunAsync();
+
+        Assert.True(File.Exists(stub.Path));
+        Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.Empty(_calls);
+    }
+
+    [Fact]
+    public async Task AStubOfADouble_HandsItsStateToEveryLocalEpisode_WhenAllHaveArrived()
+    {
+        var stub = await DoubleEpisodeStubAsync();
+        var first = AddLocalEpisode(1);
+        var second = AddLocalEpisode(2);
+        GiveState(_anna, stub, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        var firstData = new UserItemData { Key = "1" };
+        var secondData = new UserItemData { Key = "2" };
+        GiveState(_anna, first, firstData);
+        GiveState(_anna, second, secondData);
+
+        await RunAsync();
+
+        Assert.True(firstData.Played);
+        Assert.True(secondData.Played);
+        Assert.False(File.Exists(stub.Path));
+        Assert.Empty(_fixture.Registry.State.Stubs);
+    }
+
     [Fact]
     public async Task ANewerLocalStateIsNotOverwritten()
     {
