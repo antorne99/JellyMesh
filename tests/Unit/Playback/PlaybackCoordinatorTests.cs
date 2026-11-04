@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Playback;
@@ -177,6 +178,115 @@ public class PlaybackCoordinatorTests
             .WaitAsync(PlaybackTimeouts.RemotePlaybackInfo + TimeSpan.FromSeconds(10));
 
         Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+    }
+
+    [Fact]
+    public async Task The_limit_on_a_remote_comes_from_the_settings()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Store.Configuration.RemotePlaybackInfoTimeoutSeconds = 0;
+        fixture.Client.Answer = async (_, token) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            throw new InvalidOperationException();
+        };
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source())).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+        Assert.False(outcome.AnyReachable);
+    }
+
+    [Fact]
+    public async Task The_limit_on_opening_a_stream_comes_from_the_settings()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Store.Configuration.StreamOpenTimeoutSeconds = 0;
+        fixture.Client.Open = async (_, token) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            throw new InvalidOperationException();
+        };
+        var stream = new RemoteStreamRequest(HttpMethod.Get, "/x", null);
+
+        var opened = await fixture.Coordinator.OpenAsync(Guid.NewGuid(), stream, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(RemoteFailure.Timeout, opened.Failure);
+    }
+
+    [Fact]
+    public async Task A_new_idle_time_applies_to_a_running_session()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        fixture.Clock.Advance(TimeSpan.FromSeconds(45));
+        await fixture.Coordinator.SweepAsync();
+        Assert.Empty(fixture.Client.Stopped);
+
+        fixture.Store.Configuration.PlaybackIdleSeconds = 45;
+        await fixture.Coordinator.SweepAsync();
+        Assert.Single(fixture.Client.Stopped);
+    }
+
+    [Fact]
+    public async Task The_time_a_session_is_kept_comes_from_the_settings()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Store.Configuration.SessionRetentionHours = 2;
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        fixture.Clock.Advance(TimeSpan.FromHours(1));
+        await fixture.Coordinator.SweepAsync();
+        Assert.NotEmpty(fixture.Sessions.All);
+
+        fixture.Clock.Advance(TimeSpan.FromHours(1));
+        await fixture.Coordinator.SweepAsync();
+        Assert.Empty(fixture.Sessions.All);
+    }
+
+    [Fact]
+    public async Task The_time_a_policy_is_kept_comes_from_the_settings()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Store.Configuration.PolicyCacheMinutes = 1;
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+
+        await fixture.OpenAsync(stub);
+        fixture.Clock.Advance(TimeSpan.FromSeconds(59));
+        await fixture.OpenAsync(stub);
+        Assert.Equal(1, fixture.Client.PolicyReads);
+
+        fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        await fixture.OpenAsync(stub);
+        Assert.Equal(2, fixture.Client.PolicyReads);
+    }
+
+    [Fact]
+    public async Task Every_server_offline_is_the_only_outcome_where_nobody_answered()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.Offline.Add(source.ServerId);
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(source));
+
+        Assert.False(outcome.AnyReachable);
+        Assert.Equal(PlaybackRefusal.Text, PlaybackRefusal.TextOf(outcome));
+    }
+
+    [Fact]
+    public async Task A_server_that_answers_but_cannot_serve_is_not_called_unreachable()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError));
+        fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.ServerError));
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+        Assert.True(outcome.AnyReachable);
+        Assert.Equal(PlaybackRefusal.FailedText, PlaybackRefusal.TextOf(outcome));
     }
 
     [Fact]

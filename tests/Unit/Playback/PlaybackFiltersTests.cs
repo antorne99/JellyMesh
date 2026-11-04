@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -10,6 +12,9 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Dlna;
+using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -27,12 +32,14 @@ public class PlaybackFiltersTests
 {
     private const string Token = PlaybackValues.LocalToken;
     private static readonly Guid _itemId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+    private static readonly Guid _localId = Guid.Parse("44444444-4444-4444-4444-444444444444");
 
     private readonly CoordinatorFixture _fixture = new();
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IStubRegistry> _stubs = new();
     private readonly Mock<IAuthorizationContext> _authorization = new();
     private readonly Mock<ISessionManager> _sessionManager = new();
+    private readonly Mock<IFederationResolver> _resolver = new();
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StubEntry _stub;
 
@@ -42,6 +49,7 @@ public class PlaybackFiltersTests
         var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") };
         _library.Setup(library => library.GetItemById(_itemId)).Returns(video);
         _stubs.Setup(stubs => stubs.Find("stub")).Returns(_stub);
+        _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 0, [], []));
         SignedIn();
     }
 
@@ -69,7 +77,8 @@ public class PlaybackFiltersTests
             _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
-            new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance));
+            new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
+            new LocalCopyLookup(_resolver.Object, _library.Object));
     }
 
     private StockRouteGuardFilter GuardFilter()
@@ -229,6 +238,152 @@ public class PlaybackFiltersTests
         Anonymous();
 
         Assert.True(await RunAsync(GuardFilter(), Context("Items", "GetItem", ("itemId", _itemId))));
+    }
+
+    private void LocalCopyArrived(bool visible = true, bool isLocal = true)
+    {
+        var identity = new ContentIdentity("key", "work", ContentKind.Movie, MatchKind.ProviderId);
+        var content = new ResolvedContent(identity, isLocal, null, [])
+        {
+            LocalItemIds = [_localId],
+            RemoteItems = [new ResolvedItem(_stub.Sources[0].ServerId, _stub.Sources[0].ItemId)]
+        };
+        _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 1, [content], []));
+        if (visible)
+        {
+            _library.Setup(library => library.GetItemById<BaseItem>(_localId, _user)).Returns(new Movie { Id = _localId });
+        }
+    }
+
+    private void Offline()
+    {
+        CanSeeItem();
+        _fixture.Registry.Offline.Add(_stub.Sources[0].ServerId);
+    }
+
+    private static MediaSourceInfo LocalFile(bool directPlay) => new()
+    {
+        Id = _localId.ToString("N"),
+        Path = "/media/film/secret-local-path.mp4",
+        Protocol = MediaProtocol.File,
+        Container = "mov,mp4,m4a,3gp,3g2,mj2",
+        SupportsDirectPlay = directPlay,
+        SupportsDirectStream = directPlay,
+        SupportsTranscoding = true,
+        TranscodingUrl = directPlay ? null : "/videos/" + _localId.ToString("N") + "/master.m3u8?ApiKey=" + Token,
+        MediaStreams = [new MediaStream { Index = 0, Type = MediaStreamType.Video, Path = "/media/film/secret-local-path.mp4" }]
+    };
+
+    private async Task<ActionExecutedContext> RunStockAsync(ActionExecutingContext context, MediaSourceInfo source)
+    {
+        var executed = new ActionExecutedContext(context, [], new object())
+        {
+            Result = new OkObjectResult(new PlaybackInfoResponse { MediaSources = [source], PlaySessionId = "local-session" })
+        };
+        await InfoFilter().OnActionExecutionAsync(context, () => Task.FromResult(executed));
+        return executed;
+    }
+
+    [Fact]
+    public async Task A_local_copy_answers_for_a_stub_whose_server_is_offline()
+    {
+        Offline();
+        LocalCopyArrived();
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId), ("mediaSourceId", _itemId.ToString("N")));
+
+        var executed = await RunStockAsync(context, LocalFile(directPlay: true));
+
+        Assert.Null(context.Result);
+        Assert.Equal(_localId, context.ActionArguments["itemId"]);
+        Assert.Equal(_localId.ToString("N"), context.ActionArguments["mediaSourceId"]);
+        var response = Assert.IsType<PlaybackInfoResponse>(Assert.IsType<OkObjectResult>(executed.Result).Value);
+        var source = Assert.Single(response.MediaSources);
+        Assert.StartsWith("/Videos/" + _localId.ToString("N") + "/stream.mp4?static=true", source.TranscodingUrl, StringComparison.Ordinal);
+        Assert.Contains("ApiKey=" + Token, source.TranscodingUrl, StringComparison.Ordinal);
+        Assert.Equal(_itemId.ToString("N"), source.Id);
+        Assert.False(source.SupportsDirectPlay);
+        Assert.False(source.SupportsDirectStream);
+        Assert.True(source.SupportsTranscoding);
+        Assert.Null(source.Path);
+        Assert.Null(source.MediaStreams[0].Path);
+    }
+
+    [Fact]
+    public async Task A_local_copy_the_client_cannot_play_keeps_the_stock_transcode()
+    {
+        Offline();
+        LocalCopyArrived();
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+
+        var executed = await RunStockAsync(context, LocalFile(directPlay: false));
+
+        var response = Assert.IsType<PlaybackInfoResponse>(Assert.IsType<OkObjectResult>(executed.Result).Value);
+        Assert.StartsWith("/videos/" + _localId.ToString("N") + "/master.m3u8", response.MediaSources[0].TranscodingUrl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_local_copy_in_a_library_the_user_cannot_see_does_not_count()
+    {
+        Offline();
+        LocalCopyArrived(visible: false);
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_copy_of_another_title_does_not_count()
+    {
+        Offline();
+        var identity = new ContentIdentity("other", "other", ContentKind.Movie, MatchKind.ProviderId);
+        var content = new ResolvedContent(identity, true, null, []) { LocalItemIds = [_localId] };
+        _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 1, [content], []));
+        _library.Setup(library => library.GetItemById<BaseItem>(_localId, _user)).Returns(new Movie { Id = _localId });
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stock_failure_on_the_local_copy_is_a_503_and_shows_no_stock_body()
+    {
+        Offline();
+        LocalCopyArrived();
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+        var failed = new ActionExecutedContext(context, [], new object()) { Result = new NotFoundResult() };
+
+        await InfoFilter().OnActionExecutionAsync(context, () => Task.FromResult(failed));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(failed.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stock_answer_with_an_error_code_on_the_local_copy_is_a_503()
+    {
+        Offline();
+        LocalCopyArrived();
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+        var failed = new ActionExecutedContext(context, [], new object())
+        {
+            Result = new OkObjectResult(new PlaybackInfoResponse { MediaSources = [], ErrorCode = PlaybackErrorCode.NoCompatibleStream })
+        };
+
+        await InfoFilter().OnActionExecutionAsync(context, () => Task.FromResult(failed));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(failed.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_working_remote_never_needs_the_whole_library_read()
+    {
+        CanSeeItem();
+        LocalCopyArrived();
+
+        await RunAsync(InfoFilter(), Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId)));
+
+        _resolver.Verify(resolver => resolver.Resolve(), Times.Never);
     }
 
     private async Task<PlaybackSession> OpenSessionAsync()
