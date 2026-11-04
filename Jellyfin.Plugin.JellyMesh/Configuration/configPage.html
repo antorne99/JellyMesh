@@ -27,6 +27,10 @@
                     <span>Sync now</span>
                 </button>
 
+                <h3 class="sectionTitle">Connected JellyMesh servers</h3>
+                <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
+                <div id="jmPeers"></div>
+
                 <form id="jmAddServerForm" autocomplete="off">
                     <h3 class="sectionTitle">Add a server</h3>
                     <div class="inputContainer">
@@ -361,8 +365,110 @@
                     });
                 }
 
+                function renderPeerEditor(container, userId, libraries, shared, maxStreams) {
+                    var boxes = libraries.map(function (library) {
+                        var label = create('label');
+                        label.style.display = 'block';
+                        var box = create('input');
+                        box.type = 'checkbox';
+                        box.value = library.Id;
+                        box.checked = shared.indexOf(library.Id) >= 0;
+                        label.appendChild(box);
+                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
+                        container.appendChild(label);
+                        return box;
+                    });
+
+                    var limitLabel = create('label', 'Stream limit ');
+                    limitLabel.style.display = 'block';
+                    var limit = create('input');
+                    limit.type = 'number';
+                    limit.min = '1';
+                    limit.value = maxStreams;
+                    limitLabel.appendChild(limit);
+                    container.appendChild(limitLabel);
+
+                    return function () {
+                        var ids = boxes.filter(function (box) {
+                            return box.checked;
+                        }).map(function (box) {
+                            return box.value;
+                        });
+                        return api('PUT', 'Peers/' + userId(), { SharedLibraryIds: ids, MaxStreams: parseInt(limit.value, 10) || 0 });
+                    };
+                }
+
+                function renderPeer(peer, libraries) {
+                    var row = create('div');
+                    row.style.marginBottom = '1.5em';
+                    row.appendChild(create('h4', peer.UserName));
+                    row.appendChild(create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams));
+                    var save = renderPeerEditor(row, function () {
+                        return peer.UserId;
+                    }, libraries, peer.SharedLibraryIds, peer.MaxStreams);
+                    row.appendChild(button('Save', function () {
+                        act(save().then(function () {
+                            showMessage('Saved ' + peer.UserName + '.');
+                            return loadPeers();
+                        }));
+                    }));
+                    row.appendChild(button('Remove', function () {
+                        if (!window.confirm('Disconnect ' + peer.UserName + '?')) {
+                            return;
+                        }
+
+                        act(api('DELETE', 'Peers/' + peer.UserId).then(loadPeers));
+                    }));
+                    return row;
+                }
+
+                function renderNewPeer(users, libraries) {
+                    var row = create('div');
+                    row.appendChild(create('h4', 'Connect a server'));
+                    var select = create('select');
+                    users.forEach(function (user) {
+                        var option = create('option', user.Name);
+                        option.value = user.Id;
+                        select.appendChild(option);
+                    });
+                    row.appendChild(select);
+                    var save = renderPeerEditor(row, function () {
+                        return select.value;
+                    }, libraries, [], 2);
+                    row.appendChild(button('Connect', function () {
+                        act(save().then(function () {
+                            showMessage('Connected.');
+                            return loadPeers();
+                        }));
+                    }));
+                    return row;
+                }
+
+                function loadPeers() {
+                    return Promise.all([api('GET', 'Peers'), api('GET', 'Peers/Options')]).then(function (results) {
+                        var peers = results[0];
+                        var options = results[1];
+                        var container = el('#jmPeers');
+                        container.textContent = '';
+                        peers.forEach(function (peer) {
+                            container.appendChild(renderPeer(peer, options.Libraries));
+                        });
+
+                        var free = options.Users.filter(function (user) {
+                            return !peers.some(function (peer) {
+                                return peer.UserId === user.Id;
+                            });
+                        });
+                        if (free.length > 0) {
+                            container.appendChild(renderNewPeer(free, options.Libraries));
+                        } else if (peers.length === 0) {
+                            container.appendChild(create('p', 'Create a non-admin user for the other server first.'));
+                        }
+                    });
+                }
+
                 function load() {
-                    return api('GET', 'Status').then(render).then(loadSync);
+                    return api('GET', 'Status').then(render).then(loadSync).then(loadPeers);
                 }
 
                 function loadSettings() {

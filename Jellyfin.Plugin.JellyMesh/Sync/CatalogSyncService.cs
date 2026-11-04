@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -32,6 +33,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ILogger<CatalogSyncService> _logger;
     private readonly ILibraryMaterializer? _materializer;
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
 
     private int _busy;
     private volatile RunState _run = new(false, false, null, null);
@@ -181,7 +183,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             foreach (var server in _registry.GetServers())
             {
-                await syncServer(server, cancellationToken).ConfigureAwait(false);
+                // With nothing chosen there is nothing to read, and no reason to call the remote at all.
+                var current = server.ImportedLibraryIds.Count == 0
+                    ? server
+                    : await _registry.RefreshCapabilitiesAsync(server.Id, cancellationToken).ConfigureAwait(false) ?? server;
+                await syncServer(current, cancellationToken).ConfigureAwait(false);
             }
 
             await MaterializeAsync(cancellationToken).ConfigureAwait(false);
@@ -221,6 +227,20 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             return;
         }
 
+        // Before the read, so that what changes during it comes up in the next one.
+        string? cursor = null;
+        if (server.Mode == RemoteMode.JellyMesh)
+        {
+            var position = await _reader.GetFeedPositionAsync(server, cancellationToken).ConfigureAwait(false);
+            if (!position.IsSuccess)
+            {
+                await MarkFailedAsync(server, position.Failure, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            cursor = position.Value;
+        }
+
         var read = await _reader.ReadAsync(server, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
@@ -230,7 +250,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         _logger.LogInformation("Read {Count} catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
         var mark = new SyncMark(started.Value, server.ImportedLibraryIds);
-        TrackSave(await _index.ReplaceServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false));
+        var saved = await _index.ReplaceServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false);
+        TrackSave(saved);
+        RememberCursor(server.Id, saved ? cursor : null);
     }
 
     private async Task SyncChangesAsync(RemoteServerInfo server, CancellationToken cancellationToken)
@@ -239,6 +261,12 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         if (catalog is not { State: ServerSyncState.Complete, Mark: { } mark } || !CoversSameLibraries(mark, server))
         {
             await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (server.Mode == RemoteMode.JellyMesh)
+        {
+            await SyncFeedAsync(server, catalog, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -260,6 +288,62 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger.LogInformation("Read {Count} changed catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
         TrackSave(await _index.MergeServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false));
+    }
+
+    // The change feed instead of polling. The mark still moves: if the remote stops being a JellyMesh one, polling goes on
+    // from here. Without a cursor, as after a restart of this server, only a full read can tell where things stand.
+    private async Task SyncFeedAsync(RemoteServerInfo server, ServerCatalog catalog, CancellationToken cancellationToken)
+    {
+        if (!_feedCursors.TryGetValue(server.Id, out var cursor))
+        {
+            await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var started = await ReadClockAsync(server, cancellationToken).ConfigureAwait(false);
+        if (!started.IsSuccess)
+        {
+            await MarkFailedAsync(server, started.Failure, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var known = catalog.Items.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
+        var read = await _reader.ReadFeedAsync(server, cursor, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        if (!read.IsSuccess)
+        {
+            await MarkFailedAsync(server, read.Failure, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (read.Value!.Reset)
+        {
+            _logger.LogInformation("The change feed of remote server {ServerName} cannot be continued, reading it all", server.Name);
+            await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        _logger.LogInformation("Read {Count} entries from the change feed of remote server {ServerName}", read.Value.Items.Count, server.Name);
+        var next = new SyncMark(started.Value, server.ImportedLibraryIds);
+        var saved = await _index.MergeServerAsync(server.Id, read.Value.Items, _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false);
+        TrackSave(saved);
+
+        // Not saved means not applied, so the old cursor reads the same changes again.
+        if (saved)
+        {
+            RememberCursor(server.Id, read.Value.Cursor);
+        }
+    }
+
+    private void RememberCursor(Guid serverId, string? cursor)
+    {
+        if (cursor is null)
+        {
+            _feedCursors.TryRemove(serverId, out _);
+        }
+        else
+        {
+            _feedCursors[serverId] = cursor;
+        }
     }
 
     private async Task<RemoteResult<DateTimeOffset>> ReadClockAsync(RemoteServerInfo server, CancellationToken cancellationToken)

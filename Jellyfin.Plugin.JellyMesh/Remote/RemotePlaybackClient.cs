@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Extensions.Json;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.MediaInfo;
 
@@ -89,6 +90,10 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         using var message = BuildRequest(endpoint, session, HttpMethod.Post, "/Items/" + Uri.EscapeDataString(request.ItemId) + "/PlaybackInfo");
         message.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, _requestOptions));
         message.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        if (request.ReplacesPlaySessionId is { } replaces)
+        {
+            message.Headers.TryAddWithoutValidation(ProviderProtocol.ReplacesHeader, replaces);
+        }
 
         var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
         if (!document.IsSuccess)
@@ -177,7 +182,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
 
         if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.RequestedRangeNotSatisfiable)
         {
-            var failure = FailureOf(response.StatusCode);
+            var failure = FailureOf(response);
             response.Dispose();
             return RemoteResult.Fail<RemoteContent>(failure);
         }
@@ -213,6 +218,18 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
     }
 
+    /// <inheritdoc />
+    public async Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(session);
+
+        var path = "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
+        using var message = BuildRequest(endpoint, session, HttpMethod.Delete, path);
+        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
+    }
+
     private static HttpRequestMessage BuildRequest(RemoteEndpoint endpoint, RemoteSession session, HttpMethod method, string path)
     {
         var request = new HttpRequestMessage(method, new Uri(endpoint.BaseUrl + path.TrimStart('/')));
@@ -222,12 +239,21 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         return request;
     }
 
-    private static RemoteFailure FailureOf(HttpStatusCode status)
+    private static RemoteFailure FailureOf(HttpResponseMessage response)
     {
+        var status = response.StatusCode;
         var code = (int)status;
         if (code is >= 300 and < 400)
         {
             return RemoteFailure.RedirectRefused;
+        }
+
+        // The header, not the status: a proxy can answer 429 for its own reasons, and that says nothing about a limit.
+        if (status == HttpStatusCode.TooManyRequests
+            && response.Headers.TryGetValues(ProviderProtocol.RefusalHeader, out var refusal)
+            && refusal.Contains(ProviderProtocol.StreamLimitRefusal, StringComparer.Ordinal))
+        {
+            return RemoteFailure.StreamLimitReached;
         }
 
         return status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
@@ -278,7 +304,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return RemoteResult.Fail<byte[]>(FailureOf(response.StatusCode));
+                return RemoteResult.Fail<byte[]>(FailureOf(response));
             }
 
             var body = await ReadLimitedAsync(response.Content, cancellationToken).ConfigureAwait(false);

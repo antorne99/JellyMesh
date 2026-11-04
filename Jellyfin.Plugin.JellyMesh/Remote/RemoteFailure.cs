@@ -73,5 +73,11 @@ public enum RemoteFailure
     /// <summary>
     /// The catalog kept changing while it was being read, so no complete copy of it was obtained.
     /// </summary>
-    CatalogChanged
+    CatalogChanged,
+
+    /// <summary>
+    /// A JellyMesh remote refused a stream because this server is at its limit there. It says nothing about the health
+    /// of the remote, and a stock server never answers this.
+    /// </summary>
+    StreamLimitReached
 }

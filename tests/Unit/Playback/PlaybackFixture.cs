@@ -95,7 +95,16 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public RemoteFailure OfflineFailure { get; set; } = RemoteFailure.Unreachable;
 
-    public IReadOnlyList<RemoteServerInfo> GetServers() => [];
+    public List<RemoteServerInfo> Servers { get; } = [];
+
+    public IReadOnlyList<RemoteServerInfo> GetServers() => Servers;
+
+    public Task<RemoteServerInfo?> RefreshCapabilitiesAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public void AddJellyMesh(Guid serverId)
+    {
+        Servers.Add(new RemoteServerInfo(serverId, "peer", "http://peer", RemoteMode.JellyMesh, 1, [], null, null));
+    }
 
     public Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -186,6 +195,14 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     {
         Stopped.Add(playSessionId);
         OnStop?.Invoke();
+        return Task.FromResult(RemoteResult.Success(true));
+    }
+
+    public List<string> Released { get; } = [];
+
+    public Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
+    {
+        Released.Add(playSessionId);
         return Task.FromResult(RemoteResult.Success(true));
     }
 }

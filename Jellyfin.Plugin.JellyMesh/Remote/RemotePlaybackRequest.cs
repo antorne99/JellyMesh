@@ -48,4 +48,9 @@ public sealed record RemotePlaybackRequest
 
     /// <summary>Gets whether subtitles are burned in whenever the remote transcodes.</summary>
     public bool? AlwaysBurnInSubtitleWhenTranscoding { get; init; }
+
+    /// <summary>
+    /// Gets the play session on a JellyMesh remote that this request replaces, so that its slot passes to the new one.
+    /// </summary>
+    public string? ReplacesPlaySessionId { get; init; }
 }

@@ -127,15 +127,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             serverId,
             async (endpoint, session, token) =>
             {
-                var libraries = await _client.GetLibrariesAsync(endpoint, session, token).ConfigureAwait(false);
-                if (!libraries.IsSuccess)
-                {
-                    return RemoteResult.Fail<ConnectionReport>(libraries.Failure);
-                }
-
+                // Capabilities first: they decide where the libraries are read from.
                 var name = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.Name) ?? string.Empty;
                 var capabilities = await DetectCapabilitiesAsync(endpoint, session, name, token).ConfigureAwait(false);
-                return RemoteResult.Success<ConnectionReport>(new ConnectionReport(capabilities, libraries.Value!.Count));
+                var libraries = await ReadLibrariesAsync(capabilities.Mode, endpoint, session, token).ConfigureAwait(false);
+                return libraries.IsSuccess
+                    ? RemoteResult.Success<ConnectionReport>(new ConnectionReport(capabilities, libraries.Value!.Count))
+                    : RemoteResult.Fail<ConnectionReport>(libraries.Failure);
             },
             cancellationToken).ConfigureAwait(false);
 
@@ -159,7 +157,36 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     /// <inheritdoc />
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken)
     {
-        return RunWithSessionAsync(serverId, _client.GetLibrariesAsync, cancellationToken);
+        var mode = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.Mode) ?? RemoteMode.Unknown;
+        return RunWithSessionAsync(serverId, (endpoint, session, token) => ReadLibrariesAsync(mode, endpoint, session, token), cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteServerInfo?> RefreshCapabilitiesAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        var detected = await RunWithSessionAsync(
+            serverId,
+            (endpoint, session, token) => _client.DetectCapabilitiesAsync(endpoint, session, token),
+            cancellationToken).ConfigureAwait(false);
+
+        var known = GetServers().FirstOrDefault(server => server.Id == serverId);
+        if (!detected.IsSuccess || known is null || (known.Mode == detected.Value!.Mode && known.ProtocolVersion == detected.Value.ProtocolVersion))
+        {
+            return known;
+        }
+
+        _store.Update(config =>
+        {
+            var server = config.Servers.FirstOrDefault(candidate => candidate.Id == serverId);
+            if (server is not null)
+            {
+                server.Mode = detected.Value.Mode;
+                server.ProtocolVersion = detected.Value.ProtocolVersion;
+            }
+        });
+
+        _logger.LogInformation("Remote server {ServerName} is now in {Mode} mode", known.Name, detected.Value.Mode);
+        return GetServers().FirstOrDefault(server => server.Id == serverId);
     }
 
     /// <inheritdoc />
@@ -238,6 +265,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private static RemoteEndpoint EndpointOf(Guid serverId, string url)
     {
         return new RemoteEndpoint(new Uri(url + "/"), $"jellymesh-{serverId:N}");
+    }
+
+    private Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteMode mode, RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        return mode == RemoteMode.JellyMesh
+            ? _client.GetSharedLibrariesAsync(endpoint, session, cancellationToken)
+            : _client.GetLibrariesAsync(endpoint, session, cancellationToken);
     }
 
     private async Task<SessionAttempt<T>> CallOnceAsync<T>(

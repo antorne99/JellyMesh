@@ -64,11 +64,41 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         return Task.FromResult(RemoteResult.Success(new RemoteSession(TestValues.Token, "abc")));
     }
 
+    /// <summary>What the capability endpoint answers.</summary>
+    public RemoteCapabilities Capabilities { get; set; } = new(RemoteMode.Standard, 0);
+
+    /// <summary>Fails the capability detection.</summary>
+    public RemoteFailure CapabilityFailure { get; set; }
+
+    /// <summary>The libraries a JellyMesh remote shares. Null lists <see cref="Libraries"/>.</summary>
+    public List<RemoteLibrary>? SharedLibraries { get; set; }
+
+    public int SharedLibraryReads { get; private set; }
+
+    /// <summary>The cursors the feed was read with.</summary>
+    public List<string?> FeedReads { get; } = [];
+
+    /// <summary>Answers the feed. Without a cursor the default says where it stands.</summary>
+    public Func<string?, RemoteResult<RemoteChangePage>> Feed { get; set; } =
+        cursor => RemoteResult.Success(new RemoteChangePage(cursor is null, "cursor-0", false, []));
+
     public Task<RemoteResult<RemoteCapabilities>> DetectCapabilitiesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
-        => Task.FromResult(RemoteResult.Success(new RemoteCapabilities(RemoteMode.Standard, 0)));
+        => Task.FromResult(CapabilityFailure == RemoteFailure.None ? RemoteResult.Success(Capabilities) : RemoteResult.Fail<RemoteCapabilities>(CapabilityFailure));
 
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
         => Task.FromResult(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(Libraries.ToList()));
+
+    public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetSharedLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        SharedLibraryReads++;
+        return Task.FromResult(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>((SharedLibraries ?? Libraries).ToList()));
+    }
+
+    public Task<RemoteResult<RemoteChangePage>> GetChangesAsync(RemoteEndpoint endpoint, RemoteSession session, string? cursor, CancellationToken cancellationToken)
+    {
+        FeedReads.Add(cursor);
+        return Task.FromResult(Feed(cursor));
+    }
 
     public Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
