@@ -723,6 +723,7 @@ public class StreamLimitPlaybackTests
 
         Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
         Assert.True(outcome.AtStreamLimit);
+        Assert.Equal(PlaybackRefusal.LimitText, PlaybackRefusal.TextOf(outcome));
     }
 
     [Fact]
@@ -737,6 +738,7 @@ public class StreamLimitPlaybackTests
 
         Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
         Assert.False(outcome.AtStreamLimit);
+        Assert.Equal(PlaybackRefusal.FailedText, PlaybackRefusal.TextOf(outcome));
     }
 
     [Fact]

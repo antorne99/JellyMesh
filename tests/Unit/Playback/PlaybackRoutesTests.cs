@@ -9,15 +9,16 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
 public class PlaybackRoutesTests
 {
     private const string StubId = "0f5a64432ea2468e99dfe6f2749fe353";
+    private const string Signature = "00ff";
 
     [Theory]
-    [InlineData(null, "http://127.0.0.1:8096/JellyMesh/Play/" + StubId)]
-    [InlineData("", "http://127.0.0.1:8096/JellyMesh/Play/" + StubId)]
-    [InlineData("jf", "http://127.0.0.1:8096/jf/JellyMesh/Play/" + StubId)]
-    [InlineData("/jf/", "http://127.0.0.1:8096/jf/JellyMesh/Play/" + StubId)]
+    [InlineData(null, "http://127.0.0.1:8096/JellyMesh/Play/" + StubId + "?sig=" + Signature)]
+    [InlineData("", "http://127.0.0.1:8096/JellyMesh/Play/" + StubId + "?sig=" + Signature)]
+    [InlineData("jf", "http://127.0.0.1:8096/jf/JellyMesh/Play/" + StubId + "?sig=" + Signature)]
+    [InlineData("/jf/", "http://127.0.0.1:8096/jf/JellyMesh/Play/" + StubId + "?sig=" + Signature)]
     public void A_strm_url_is_loopback_and_reads_back(string? baseUrl, string expected)
     {
-        var url = PlaybackRoutes.StrmUrl(8096, baseUrl, StubId);
+        var url = PlaybackRoutes.StrmUrl(8096, baseUrl, StubId, Signature);
 
         Assert.Equal(expected, url);
         Assert.True(PlaybackRoutes.TryGetStubId(url, out var parsed));
@@ -30,7 +31,7 @@ public class PlaybackRoutesTests
     [InlineData("")]
     public void A_stub_id_must_be_url_safe(string stubId)
     {
-        Assert.Throws<ArgumentException>(() => PlaybackRoutes.StrmUrl(8096, null, stubId));
+        Assert.Throws<ArgumentException>(() => PlaybackRoutes.StrmUrl(8096, null, stubId, Signature));
     }
 
     [Theory]
@@ -40,6 +41,8 @@ public class PlaybackRoutesTests
     [InlineData("http://127.0.0.1:8096/Videos/x/stream")]
     [InlineData("http://127.0.0.1:8096/JellyMesh/Play/")]
     [InlineData("http://127.0.0.1:8096/JellyMesh/Play/a/b")]
+    [InlineData("http://127.0.0.1:8096/Videos/x/stream?sig=00ff")]
+    [InlineData("http://127.0.0.1:8096/film.mkv?u=/JellyMesh/Play/abc")]
     public void Anything_else_is_not_a_stub(string? url)
     {
         Assert.False(PlaybackRoutes.TryGetStubId(url, out _));
@@ -47,6 +50,8 @@ public class PlaybackRoutesTests
 
     [Theory]
     [InlineData("http://127.0.0.1:8096/JellyMesh/Play/abc", true)]
+    [InlineData("http://127.0.0.1:8096/JellyMesh/Play/abc?sig=00ff", true)]
+    [InlineData("https://friend.ts.net/jf/jellymesh/play/abc?sig=00ff", true)]
     [InlineData("https://friend.ts.net/jf/jellymesh/play/abc", true)]
     [InlineData("http://example.com/film.mkv", false)]
     [InlineData("/media/film/JellyMesh/Play/x.mkv", false)]

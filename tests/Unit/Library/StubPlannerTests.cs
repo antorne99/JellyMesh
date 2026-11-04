@@ -103,7 +103,8 @@ public class StubPlannerTests
         IReadOnlyList<RemoteServerInfo>? servers = null,
         IndexHealth health = IndexHealth.Ok,
         bool isProtected = true,
-        Func<string, LocalSeries?>? localSeries = null)
+        Func<string, LocalSeries?>? localSeries = null,
+        Func<string, string>? url = null)
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = health, Servers = catalogs };
         return StubPlanner.Plan(new StubPlanInput(
@@ -112,7 +113,7 @@ public class StubPlannerTests
             state ?? StubState.Empty,
             servers ?? [Server(_serverA, Library, "shows"), Server(_serverB, Library, "shows")],
             isProtected,
-            id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
+            url ?? (id => "http://127.0.0.1:8096/JellyMesh/Play/" + id),
             localSeries ?? (_ => null)));
     }
 
@@ -138,13 +139,40 @@ public class StubPlannerTests
     }
 
     [Fact]
-    public void TheStrmUrlHoldsOnlyTheStubId()
+    public void TheStrmUrlHoldsNothingAboutTheRemote()
     {
         var plan = Plan([Film("k", Source(_serverA, "m"))], [Catalog(_serverA, ServerSyncState.Complete, Film("m"))]);
 
         var stub = Assert.Single(plan.Stubs);
         Assert.Equal("http://127.0.0.1:8096/JellyMesh/Play/" + stub.Entry.Id, stub.StrmUrl);
         Assert.DoesNotContain("aaaaaaaa", stub.StrmUrl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASignatureIsNoChangeOfContent()
+    {
+        var contents = new[] { Film("k", Source(_serverA, "m")) };
+        var catalogs = new[] { Catalog(_serverA, ServerSyncState.Complete, Film("m")) };
+        var unsigned = Assert.Single(Plan(contents, catalogs).Stubs);
+        var state = StubState.Empty with { Stubs = [unsigned.Entry] };
+
+        var signed = Assert.Single(Plan(contents, catalogs, state, url: id => "http://127.0.0.1:8096/JellyMesh/Play/" + id + "?sig=aaaa").Stubs);
+
+        Assert.Equal(unsigned.ContentHash, signed.ContentHash);
+        Assert.EndsWith("?sig=aaaa", signed.StrmUrl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANewPortIsAChangeOfContent()
+    {
+        var contents = new[] { Film("k", Source(_serverA, "m")) };
+        var catalogs = new[] { Catalog(_serverA, ServerSyncState.Complete, Film("m")) };
+        var first = Assert.Single(Plan(contents, catalogs).Stubs);
+        var state = StubState.Empty with { Stubs = [first.Entry] };
+
+        var moved = Assert.Single(Plan(contents, catalogs, state, url: id => "http://127.0.0.1:9000/JellyMesh/Play/" + id).Stubs);
+
+        Assert.NotEqual(first.ContentHash, moved.ContentHash);
     }
 
     [Fact]

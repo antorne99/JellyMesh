@@ -41,21 +41,23 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public void TheDefaultTriggersFollowTheConfiguration()
     {
-        _fixture.Store.Configuration.SyncIntervalSeconds = 60;
+        _fixture.Store.Configuration.SyncIntervalSeconds = 600;
         _fixture.Store.Configuration.ReconciliationTime = "22:30";
 
-        Assert.Equal(TimeSpan.FromMinutes(1).Ticks, Assert.Single(Incremental().GetDefaultTriggers()).IntervalTicks);
+        Assert.Equal(TimeSpan.FromMinutes(10).Ticks, Assert.Single(Incremental().GetDefaultTriggers()).IntervalTicks);
         Assert.Equal(new TimeSpan(22, 30, 0).Ticks, Assert.Single(Reconciliation().GetDefaultTriggers()).TimeOfDayTicks);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-5)]
-    public void AnIntervalThatMakesNoSenseGivesNoTrigger(int seconds)
+    [InlineData(60)]
+    [InlineData(299)]
+    public void AnIntervalBelowTheMinimumRunsAtTheMinimum(int seconds)
     {
         _fixture.Store.Configuration.SyncIntervalSeconds = seconds;
 
-        Assert.Empty(Incremental().GetDefaultTriggers());
+        Assert.Equal(TimeSpan.FromSeconds(300).Ticks, Assert.Single(Incremental().GetDefaultTriggers()).IntervalTicks);
     }
 
     [Fact]

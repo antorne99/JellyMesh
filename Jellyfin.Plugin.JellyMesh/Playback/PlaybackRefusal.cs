@@ -17,7 +17,7 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 public sealed class PlaybackRefusal
 {
     /// <summary>
-    /// The text shown to the user.
+    /// The text shown to the user when no server has the title within reach, local or remote (decision 17).
     /// </summary>
     public const string Text = "Server non raggiungibile";
 
@@ -26,6 +26,12 @@ public sealed class PlaybackRefusal
     /// would be wrong, and trying later can work.
     /// </summary>
     public const string LimitText = "Limite di stream raggiunto sul server di origine. Riprova più tardi.";
+
+    /// <summary>
+    /// The text shown to the user when a server that has the title answered but nothing could serve it, so that
+    /// <see cref="Text"/> would be false.
+    /// </summary>
+    public const string FailedText = "Riproduzione non disponibile al momento. Riprova più tardi.";
 
     private const string Header = "JellyMesh";
     private const string ToastMilliseconds = "8000";
@@ -42,6 +48,23 @@ public sealed class PlaybackRefusal
     {
         _sessionManager = sessionManager;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Chooses the text for a playback nothing can serve.
+    /// </summary>
+    /// <param name="outcome">The outcome.</param>
+    /// <returns>The text.</returns>
+    public static string TextOf(PlaybackOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        if (outcome.AtStreamLimit)
+        {
+            return LimitText;
+        }
+
+        return outcome.AnyReachable ? FailedText : Text;
     }
 
     /// <summary>

@@ -101,6 +101,10 @@ public static class StubPlanner
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', parts))));
     }
 
+    // A signature is no change of content: a new key must not put remote metadata back on every item, and the materializer
+    // keeps the file and the item on the current URL by itself.
+    private static string Unsigned(string url) => url.Split('?', 2)[0];
+
     private static bool IsGone(StubPlanInput input, StubEntry stub, Dictionary<(Guid ServerId, string LibraryId), int> held)
     {
         // A damaged index says nothing, and a server missing from it is not proof either.
@@ -172,7 +176,7 @@ public static class StubPlanner
         var images = new List<StubImage>();
         AddRemote(images, winner, content.Winner!.ServerId, ImageType.Primary, Path.Combine(folder, "poster"));
         AddRemote(images, winner, content.Winner.ServerId, ImageType.Backdrop, Path.Combine(folder, "fanart"));
-        return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, url), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
+        return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
     }
 
     private static StubWork EpisodeWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, SeriesPlan series, IndexItemLookup catalog)
@@ -197,7 +201,7 @@ public static class StubPlanner
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();
         AddRemote(images, winner, content.Winner!.ServerId, ImageType.Primary, stem + "-thumb");
-        return new StubWork(entry, stub is null, metadata, nfo, stem + ".nfo", url, Hash(nfo, url), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
+        return new StubWork(entry, stub is null, metadata, nfo, stem + ".nfo", url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
     }
 
     private static SeriesPlan SeriesPlanOf(

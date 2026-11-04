@@ -52,7 +52,7 @@ public sealed class LibraryMaterializerTests : IDisposable
             ],
             _fixture.Files);
         var stub = Assert.Single(_fixture.Registry.State.Stubs);
-        Assert.Equal(PlaybackRoutes.StrmUrl(8096, null, stub.Id), StubFixture.Text(_fixture.Path_("Film", "Film (2020)", "Film (2020).strm")));
+        Assert.Equal(PlaybackRoutes.StrmUrl(8096, null, stub.Id, _fixture.Signer.Sign(stub.Id)), StubFixture.Text(_fixture.Path_("Film", "Film (2020)", "Film (2020).strm")));
         Assert.Contains("<lockdata>true</lockdata>", StubFixture.Text(_fixture.Path_("Film", "Film (2020)", "movie.nfo")), StringComparison.Ordinal);
         _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
     }
@@ -171,7 +171,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         await _fixture.Sync.AddServerAsync("A", "films");
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_("Film", "Film (2020)", "Film (2020).strm");
-        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
+        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film", ShortcutPath = StubFixture.Text(path) };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
         _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { Overview = "New plot", Genres = ["New"] };
 
@@ -266,6 +266,100 @@ public sealed class LibraryMaterializerTests : IDisposable
 
         Assert.Equal(0, report.Removed);
         Assert.True(File.Exists(_fixture.Path_("Film", "Film (2020)", "Film (2020).strm")));
+    }
+
+    private async Task<(string Path, string Signed, Movie Item)> AnIndexedStubHoldingAsync(Func<string, string> url)
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_("Film", "Film (2020)", "Film (2020).strm");
+        var signed = StubFixture.Text(path);
+        var old = url(signed);
+        await File.WriteAllTextAsync(path, old);
+        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Renamed by a fetcher", ShortcutPath = old };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        return (path, signed, item);
+    }
+
+    [Theory]
+    [InlineData("?sig=")]
+    [InlineData("?sig=0000")]
+    [InlineData("")]
+    public async Task AStubWithoutAValidSignatureIsSignedInPlace(string query)
+    {
+        var (path, signed, item) = await AnIndexedStubHoldingAsync(url => url.Split('?')[0] + query);
+        var nfo = _fixture.Path_("Film", "Film (2020)", "movie.nfo");
+        var nfoWritten = File.GetLastWriteTimeUtc(nfo);
+        var stub = Assert.Single(_fixture.Registry.State.Stubs);
+
+        var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(signed, StubFixture.Text(path));
+        Assert.Equal(signed, item.ShortcutPath);
+        Assert.Equal((0, 1, 0, 0), (report.Created, report.Updated, report.Removed, report.Failed));
+
+        // The stub, its path and hence the item stay, and nothing but the URL is touched.
+        var after = Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.Equal((stub.Id, stub.RelativePath), (after.Id, after.RelativePath));
+        Assert.Equal("Renamed by a fetcher", item.Name);
+        Assert.Equal(nfoWritten, File.GetLastWriteTimeUtc(nfo));
+        _fixture.Library.Verify(library => library.UpdateItemAsync(item, It.IsAny<BaseItem>(), ItemUpdateType.MetadataImport, It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.Library.Verify(library => library.DeleteItem(It.IsAny<BaseItem>(), It.IsAny<DeleteOptions>()), Times.Never);
+        _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
+    }
+
+    [Fact]
+    public async Task AnItemLeftOnAnOldUrlIsMovedEvenWithTheFileRight()
+    {
+        var (path, signed, item) = await AnIndexedStubHoldingAsync(url => url);
+        item.ShortcutPath = signed.Split('?')[0];
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(signed, StubFixture.Text(path));
+        Assert.Equal(signed, item.ShortcutPath);
+    }
+
+    [Fact]
+    public async Task ASignedStubIsLeftAlone()
+    {
+        var (path, _, item) = await AnIndexedStubHoldingAsync(url => url);
+        var written = File.GetLastWriteTimeUtc(path);
+
+        var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(0, report.Updated);
+        Assert.Equal(written, File.GetLastWriteTimeUtc(path));
+        _fixture.Library.Verify(library => library.UpdateItemAsync(item, It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AStubWaitingForThePostScanTaskIsSignedToo()
+    {
+        var (path, signed, item) = await AnIndexedStubHoldingAsync(url => url.Split('?')[0]);
+        _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), Kind = ContentKind.Movie, Ids = new ContentIds("1") });
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(signed, StubFixture.Text(path));
+        Assert.Equal(signed, item.ShortcutPath);
+    }
+
+    [Fact]
+    public async Task AStrmHoldsNothingButTheEndpointAndTheLocalSignature()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", "films");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var text = StubFixture.Text(_fixture.Path_("Film", "Film (2020)", "Film (2020).strm"));
+        var stub = Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.Equal("http://127.0.0.1:8096/JellyMesh/Play/" + stub.Id + "?sig=" + _fixture.Signer.Sign(stub.Id), text);
+        Assert.True(PlaybackRoutes.IsPlaybackEndpoint(text));
+        Assert.True(PlaybackRoutes.TryGetStubId(text, out var parsed));
+        Assert.Equal(stub.Id, parsed);
     }
 
     [Fact]

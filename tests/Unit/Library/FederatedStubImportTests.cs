@@ -25,7 +25,9 @@ public sealed class FederatedStubImportTests : IDisposable
 
     [Theory]
     [InlineData(StubUrl)]
+    [InlineData(StubUrl + "?sig=0123456789abcdef")]
     [InlineData("https://other.host:8920/jf/JellyMesh/Play/abc")]
+    [InlineData("https://other.host:8920/jf/JellyMesh/Play/abc?sig=00ff")]
     public void AVersionThatIsAStubOfAnotherServerIsDropped(string path)
     {
         var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), path), RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);

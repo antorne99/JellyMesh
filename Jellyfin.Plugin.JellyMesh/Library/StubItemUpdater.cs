@@ -77,6 +77,23 @@ public sealed class StubItemUpdater
     }
 
     /// <summary>
+    /// Points an item to the URL of its <c>.strm</c>. Jellyfin reads the file only when it refreshes the item, and until
+    /// then it keeps opening the old URL.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="url">The URL.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public async Task ApplyStrmUrlAsync(BaseItem item, string url, CancellationToken cancellationToken)
+    {
+        if (item is Video video && !string.Equals(video.ShortcutPath, url, StringComparison.Ordinal))
+        {
+            video.ShortcutPath = url;
+            await SaveAsync(video, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Points an item to an image written next to it.
     /// </summary>
     /// <param name="item">The item.</param>

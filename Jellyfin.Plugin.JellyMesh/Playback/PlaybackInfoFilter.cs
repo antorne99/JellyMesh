@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
+using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Dlna;
+using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -20,12 +23,15 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 public sealed class PlaybackInfoFilter : IAsyncActionFilter
 {
     private const string BodyArgument = "playbackInfoDto";
+    private const string ItemArgument = "itemId";
+    private const string MediaSourceArgument = "mediaSourceId";
 
     private readonly StubLookup _stubs;
     private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
     private readonly PlaybackRefusal _refusal;
+    private readonly LocalCopyLookup _localCopies;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackInfoFilter"/> class.
@@ -35,18 +41,21 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     /// <param name="authorization">The authorization context.</param>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="refusal">The refusal.</param>
+    /// <param name="localCopies">The lookup of local copies.</param>
     public PlaybackInfoFilter(
         StubLookup stubs,
         ILibraryManager libraryManager,
         IAuthorizationContext authorization,
         PlaybackCoordinator coordinator,
-        PlaybackRefusal refusal)
+        PlaybackRefusal refusal,
+        LocalCopyLookup localCopies)
     {
         _stubs = stubs;
         _libraryManager = libraryManager;
         _authorization = authorization;
         _coordinator = coordinator;
         _refusal = refusal;
+        _localCopies = localCopies;
     }
 
     /// <inheritdoc />
@@ -109,8 +118,69 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
                 await RunLocalTranscodeAsync(context, next, request, outcome).ConfigureAwait(false);
                 break;
             default:
-                context.Result = _refusal.Refuse(http, deviceId, outcome.AtStreamLimit ? PlaybackRefusal.LimitText : PlaybackRefusal.Text);
+                await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user).ConfigureAwait(false);
                 break;
+        }
+    }
+
+    private static void HideFile(MediaSourceInfo source)
+    {
+        source.Path = null;
+        source.SupportsDirectPlay = false;
+        source.SupportsDirectStream = false;
+        source.SupportsTranscoding = true;
+        source.IsRemote = false;
+    }
+
+    private static bool CleanLocalCopyResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, Guid localItemId)
+    {
+        if (response.ErrorCode is not null || response.MediaSources.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var source in response.MediaSources)
+        {
+            // What the client could play as it is goes by file, without a transcode nobody needs.
+            if (source.SupportsDirectPlay || source.SupportsDirectStream || string.IsNullOrEmpty(source.TranscodingUrl))
+            {
+                var container = PlaybackResponseBuilder.ContainerOf(source);
+                source.TranscodingUrl = PlaybackUrls.LocalFile(localItemId, source.Id, container, request.LocalToken);
+                source.TranscodingSubProtocol = MediaStreamProtocol.http;
+                source.TranscodingContainer = container;
+            }
+
+            HideFile(source);
+            source.Protocol = MediaProtocol.Http;
+
+            // The client reports playback on the item it opened, and the server looks this source up on that item.
+            source.Id = request.Identity.ItemId.ToString("N");
+            foreach (var stream in source.MediaStreams ?? [])
+            {
+                stream.Path = null;
+            }
+        }
+
+        return true;
+    }
+
+    private async Task RefuseOrPlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, User user)
+    {
+        if (_localCopies.Find(request.Stub, user) is not { } local)
+        {
+            context.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.TextOf(outcome));
+            return;
+        }
+
+        // The stock action answers for the local item. The source the client asked for is one of the stub.
+        context.ActionArguments[ItemArgument] = local.Id;
+        context.ActionArguments[MediaSourceArgument] = local.Id.ToString("N");
+        var executed = await next().ConfigureAwait(false);
+        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, request, local.Id))
+        {
+            executed.Exception = null;
+            executed.ExceptionHandled = true;
+            executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
         }
     }
 
@@ -135,7 +205,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         {
             executed.Exception = null;
             executed.ExceptionHandled = true;
-            executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId);
+            executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
         }
     }
 
@@ -149,11 +219,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
                 return false;
             }
 
-            source.Path = null;
-            source.SupportsDirectPlay = false;
-            source.SupportsDirectStream = false;
-            source.SupportsTranscoding = true;
-            source.IsRemote = false;
+            HideFile(source);
             source.TranscodingUrl = PlaybackUrls.WithoutClientRetry(source.TranscodingUrl);
             foreach (var stream in source.MediaStreams ?? [])
             {

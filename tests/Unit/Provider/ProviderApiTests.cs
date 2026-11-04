@@ -31,6 +31,7 @@ public class ProviderCatalogTests
     [InlineData("/federata/Film/x/x.strm", null, true)]
     [InlineData("/federata/Serie/x", null, true)]
     [InlineData("/elsewhere/x.strm", "http://127.0.0.1:8096/JellyMesh/Play/stub", true)]
+    [InlineData("/elsewhere/x.strm", "http://127.0.0.1:8096/JellyMesh/Play/stub?sig=0123456789abcdef", true)]
     [InlineData("/media/film/x.mkv", null, false)]
     [InlineData("/federata-other/x.mkv", null, false)]
     [InlineData("/elsewhere/x.strm", "http://cdn.example/film.mp4", false)]

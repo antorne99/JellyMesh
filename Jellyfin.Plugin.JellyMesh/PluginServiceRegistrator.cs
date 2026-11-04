@@ -44,6 +44,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             provider.GetRequiredService<IPluginConfigurationStore>(),
             provider.GetRequiredService<ILogger<StubRegistry>>()));
         serviceCollection.AddSingleton<IStubRegistry>(provider => provider.GetRequiredService<StubRegistry>());
+        serviceCollection.AddSingleton(provider => new StrmSigner(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<StrmSigner>>()));
         serviceCollection.AddSingleton<StubUrlBuilder>();
         serviceCollection.AddSingleton<StubTechnicalData>();
         serviceCollection.AddSingleton<StubItemUpdater>();
