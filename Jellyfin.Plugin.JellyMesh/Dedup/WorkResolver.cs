@@ -25,7 +25,11 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// title matches nothing.
 /// </para>
 /// <para>Series without IDs keep §4.1: normalized title and year, and never a link to a series with IDs.</para>
-/// <para>The result is a property of the set of items, so it does not depend on their order.</para>
+/// <para>
+/// Manual merges (decision 20) come last and only join works found by the rules above, so they cannot split anything. Works
+/// joined take the lowest of their keys: the stub that had that key stays, and it gets the key back after an undo. Films only.
+/// </para>
+/// <para>The result is a property of the set of items and merges, so it does not depend on their order.</para>
 /// </remarks>
 internal sealed class WorkResolver
 {
@@ -34,30 +38,39 @@ internal sealed class WorkResolver
 
     private readonly Dictionary<WorkIds, string> _keysByIds;
     private readonly Dictionary<(string ServerId, string ItemId), Work> _filmsWithoutIds;
+    private readonly List<DedupIssue> _issues;
+    private readonly Dictionary<string, string> _mergedKeys = new(StringComparer.Ordinal);
 
     private WorkResolver(Dictionary<WorkIds, string> keysByIds, List<DedupIssue> issues)
     {
         _keysByIds = keysByIds;
         _filmsWithoutIds = [];
-        Issues = issues;
+        _issues = issues;
     }
 
     /// <summary>
     /// Gets the doubtful matches found, sorted.
     /// </summary>
-    public IReadOnlyList<DedupIssue> Issues { get; }
+    public IReadOnlyList<DedupIssue> Issues => _issues;
+
+    /// <summary>
+    /// Gets what the manual merges found, sorted by merge.
+    /// </summary>
+    public IReadOnlyList<AppliedMerge> Merges { get; private set; } = [];
 
     /// <summary>
     /// Resolves the works of a catalog.
     /// </summary>
     /// <param name="items">Every item taking part, local and remote.</param>
+    /// <param name="merges">The manual merges.</param>
     /// <returns>The resolver.</returns>
-    public static WorkResolver Create(IReadOnlyCollection<CatalogItem> items)
+    public static WorkResolver Create(IReadOnlyCollection<CatalogItem> items, IReadOnlyList<ManualMerge> merges)
     {
         var issues = new List<DedupIssue>();
         var signatures = items.Select(CanonicalIds).OfType<WorkIds>().Distinct().ToList();
         var resolver = new WorkResolver(LinkByIds(signatures, issues), issues);
         resolver.LinkFilmsWithoutIds(items);
+        resolver.ApplyMerges(items, merges);
 
         var possibleDuplicates = items
             .Where(item => !string.IsNullOrWhiteSpace(item.Title))
@@ -83,20 +96,17 @@ internal sealed class WorkResolver
     /// <returns>The work, or <c>null</c> when the item has no IDs and lacks a title or a year.</returns>
     public Work? Find(CatalogItem item)
     {
-        if (CanonicalIds(item) is { } ids)
-        {
-            return new Work(_keysByIds[ids], MatchKind.ProviderId);
-        }
-
-        if (!HasTitleAndYear(item))
-        {
-            return null;
-        }
-
-        return item.Kind == ContentKind.Movie
-            ? _filmsWithoutIds[(item.ServerId, item.ItemId)]
-            : new Work(TitleKey(item), MatchKind.TitleYear);
+        var work = FindNatural(item);
+        return work is not null && _mergedKeys.TryGetValue(work.Key, out var merged) ? new Work(merged, MatchKind.Manual) : work;
     }
+
+    /// <summary>
+    /// Puts an ID in the form used for comparing.
+    /// </summary>
+    /// <param name="id">The ID.</param>
+    /// <returns>The ID, null when there is none.</returns>
+    internal static string? Canonical(string? id) =>
+        string.IsNullOrWhiteSpace(id) ? null : id.Trim().ToLowerInvariant();
 
     private static string Prefix(ContentKind kind) => kind == ContentKind.Movie ? MoviePrefix : SeriesPrefix;
 
@@ -115,9 +125,6 @@ internal sealed class WorkResolver
         var ids = new ContentIds(Canonical(item.Ids.Tmdb), Canonical(item.Ids.Imdb), tvdb);
         return ids == ContentIds.None ? null : new WorkIds(item.Kind, ids);
     }
-
-    private static string? Canonical(string? id) =>
-        string.IsNullOrWhiteSpace(id) ? null : id.Trim().ToLowerInvariant();
 
     private static Dictionary<WorkIds, string> LinkByIds(List<WorkIds> signatures, List<DedupIssue> issues)
     {
@@ -229,6 +236,116 @@ internal sealed class WorkResolver
         var copyPairs = copies.SelectMany((low, index) => copies.Skip(index + 1).Select(high => (low, high)));
         var workPairs = copies.SelectMany(copy => works.Select(work => (copy, work)));
         return copyPairs.Concat(workPairs).All(confirmed.Contains);
+    }
+
+    private static bool IsCopy(CatalogItem film, MergedCopy copy)
+    {
+        if (string.Equals(film.ServerId, copy.ServerId, StringComparison.Ordinal) && string.Equals(film.ItemId, copy.ItemId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var ids = new ContentIds(Canonical(copy.Tmdb), Canonical(copy.Imdb));
+        return ids != ContentIds.None && CanonicalIds(film) == new WorkIds(ContentKind.Movie, ids);
+    }
+
+    private static (ManualMerge Merge, List<string> Keys, List<AppliedCopy> Copies) FindCopies(ManualMerge merge, List<(CatalogItem Item, string Key)> films)
+    {
+        var copies = merge.Copies
+            .DistinctBy(copy => (copy.ServerId, copy.ItemId))
+            .OrderBy(copy => copy.ServerId, StringComparer.Ordinal)
+            .ThenBy(copy => copy.ItemId, StringComparer.Ordinal)
+            .ToList();
+
+        var keys = new SortedSet<string>(StringComparer.Ordinal);
+        var applied = new List<AppliedCopy>();
+        foreach (var copy in copies)
+        {
+            // Sorted films, so that the item shown for a copy found by its IDs does not depend on the order of a read.
+            var found = films.Where(film => IsCopy(film.Item, copy)).ToList();
+            keys.UnionWith(found.Select(film => film.Key));
+            var exact = found.FindIndex(film => string.Equals(film.Item.ServerId, copy.ServerId, StringComparison.Ordinal) && string.Equals(film.Item.ItemId, copy.ItemId, StringComparison.Ordinal));
+            applied.Add(new AppliedCopy(copy, found.Count == 0 ? null : found[Math.Max(exact, 0)].Item));
+        }
+
+        return (merge, keys.ToList(), applied);
+    }
+
+    private Work? FindNatural(CatalogItem item)
+    {
+        if (CanonicalIds(item) is { } ids)
+        {
+            return new Work(_keysByIds[ids], MatchKind.ProviderId);
+        }
+
+        if (!HasTitleAndYear(item))
+        {
+            return null;
+        }
+
+        return item.Kind == ContentKind.Movie
+            ? _filmsWithoutIds[(item.ServerId, item.ItemId)]
+            : new Work(TitleKey(item), MatchKind.TitleYear);
+    }
+
+    private void ApplyMerges(IReadOnlyCollection<CatalogItem> items, IReadOnlyList<ManualMerge> merges)
+    {
+        if (merges.Count == 0)
+        {
+            return;
+        }
+
+        var films = items
+            .Where(item => item.Kind == ContentKind.Movie)
+            .Select(item => (Item: item, Key: FindNatural(item)?.Key))
+            .Where(film => film.Key is not null)
+            .Select(film => (film.Item, Key: film.Key!))
+            .DistinctBy(film => (film.Item.ServerId, film.Item.ItemId))
+            .OrderBy(film => film.Item.ServerId, StringComparer.Ordinal)
+            .ThenBy(film => film.Item.ItemId, StringComparer.Ordinal)
+            .ToList();
+
+        var found = merges.OrderBy(merge => merge.Id).Select(merge => FindCopies(merge, films)).ToList();
+        JoinWorks(found.ConvertAll(merge => merge.Keys));
+
+        Merges = found.ConvertAll(merge => new AppliedMerge(
+            merge.Merge,
+            merge.Keys.Count > 0 ? _mergedKeys.GetValueOrDefault(merge.Keys[0], merge.Keys[0]) : null,
+            merge.Keys.Count > 1,
+            merge.Copies));
+
+        // An issue whose keys all became one is settled. One that always had a single key is about IDs, and stays.
+        var remapped = _issues
+            .Select(issue => (Issue: issue, Keys: issue.WorkKeys.Select(key => _mergedKeys.GetValueOrDefault(key, key)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList()))
+            .Where(entry => entry.Keys.Count > 1 || entry.Issue.WorkKeys.Count == 1)
+            .Select(entry => entry.Issue with { WorkKeys = entry.Keys })
+            .ToList();
+        _issues.Clear();
+        _issues.AddRange(remapped);
+    }
+
+    private void JoinWorks(List<List<string>> keysOfMerges)
+    {
+        var keys = keysOfMerges.SelectMany(list => list).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        var positions = keys.Select((key, index) => (key, index)).ToDictionary(entry => entry.key, entry => entry.index, StringComparer.Ordinal);
+        var groups = new DisjointSets(keys.Count);
+        foreach (var list in keysOfMerges)
+        {
+            foreach (var key in list.Skip(1))
+            {
+                groups.Union(positions[key], positions[list[0]]);
+            }
+        }
+
+        foreach (var group in Enumerable.Range(0, keys.Count).GroupBy(groups.Find).Where(group => group.Skip(1).Any()))
+        {
+            // Positions follow the sorted keys, so the lowest position is the lowest key.
+            var lowest = keys[group.Min()];
+            foreach (var member in group)
+            {
+                _mergedKeys[keys[member]] = lowest;
+            }
+        }
     }
 
     private void LinkFilmsWithoutIds(IReadOnlyCollection<CatalogItem> items)

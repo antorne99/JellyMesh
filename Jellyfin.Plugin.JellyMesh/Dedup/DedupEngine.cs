@@ -25,15 +25,16 @@ public static class DedupEngine
     /// ignored when flagged with <see cref="CatalogItem.IsFederated"/>.
     /// </param>
     /// <param name="remoteItems">The items of every remote server. Those flagged as federated are never imported.</param>
+    /// <param name="merges">The merges made by the administrator (decision 20), none if null.</param>
     /// <returns>The decisions and the doubtful matches.</returns>
-    public static DedupResult Resolve(IEnumerable<CatalogItem> localItems, IEnumerable<CatalogItem> remoteItems)
+    public static DedupResult Resolve(IEnumerable<CatalogItem> localItems, IEnumerable<CatalogItem> remoteItems, IReadOnlyList<ManualMerge>? merges = null)
     {
         ArgumentNullException.ThrowIfNull(localItems);
         ArgumentNullException.ThrowIfNull(remoteItems);
 
         var local = localItems.Where(item => !item.IsFederated).ToList();
         var remote = remoteItems.Where(item => !item.IsFederated && item.Versions.Count > 0).ToList();
-        var works = WorkResolver.Create([.. local, .. remote]);
+        var works = WorkResolver.Create([.. local, .. remote], merges ?? []);
 
         var localByKey = local
             .SelectMany(item => Identify(item, works).Select(identity => (identity.Key, item.ItemId)))
@@ -46,7 +47,55 @@ public static class DedupEngine
             .OrderBy(decision => decision.Identity.Key, StringComparer.Ordinal)
             .ToList();
 
-        return new DedupResult(decisions, works.Issues) { LocalItemByWork = LocalItemsByWork(local, works) };
+        return new DedupResult(decisions, works.Issues)
+        {
+            LocalItemByWork = LocalItemsByWork(local, works),
+            MergeCases = MergeCases(local, remote, works),
+            Merges = works.Merges
+        };
+    }
+
+    // Issues that share a title become one case, or a title would show twice and could be merged two ways. A case needs a
+    // title with no local copy: two local films cannot become one, because a local item is never touched.
+    private static List<MergeCase> MergeCases(List<CatalogItem> local, List<CatalogItem> remote, WorkResolver works)
+    {
+        var films = local.Select(item => new WorkCopy(item, true))
+            .Concat(remote.Select(item => new WorkCopy(item, false)))
+            .Where(copy => copy.Item.Kind == ContentKind.Movie)
+            .Select(copy => (Copy: copy, works.Find(copy.Item)?.Key))
+            .Where(film => film.Key is not null)
+            .ToLookup(film => film.Key!, film => film.Copy, StringComparer.Ordinal);
+
+        var cases = new List<(DedupIssueKind Kind, SortedSet<string> Keys)>();
+        foreach (var issue in works.Issues.Where(issue => issue.WorkKeys.Count > 1 && issue.WorkKeys.All(films.Contains)))
+        {
+            var overlapping = cases.Where(entry => entry.Keys.Overlaps(issue.WorkKeys)).ToList();
+            cases.RemoveAll(overlapping.Contains);
+
+            // Issues are sorted by kind, so the earliest kind of the case is the one already there.
+            var kind = overlapping.Count > 0 ? overlapping.Min(entry => entry.Kind) : issue.Kind;
+            cases.Add((kind, new SortedSet<string>(overlapping.SelectMany(entry => entry.Keys).Concat(issue.WorkKeys), StringComparer.Ordinal)));
+        }
+
+        return cases
+            .Select(entry => new MergeCase(entry.Kind, entry.Keys.Select(key => CaseWork(key, films[key], works)).ToList()))
+            .Where(entry => entry.Works.Any(work => !work.HasLocalCopy))
+            .OrderBy(entry => entry.Works[0].WorkKey, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static MergeCaseWork CaseWork(string key, IEnumerable<WorkCopy> copies, WorkResolver works)
+    {
+        var mergeIds = works.Merges
+            .Where(merge => string.Equals(merge.WorkKey, key, StringComparison.Ordinal))
+            .Select(merge => merge.Merge.Id)
+            .ToList();
+        var sorted = copies
+            .DistinctBy(copy => (copy.Item.ServerId, copy.Item.ItemId))
+            .OrderBy(copy => copy.Item.ServerId, StringComparer.Ordinal)
+            .ThenBy(copy => copy.Item.ItemId, StringComparer.Ordinal)
+            .ToList();
+        return new MergeCaseWork(key, mergeIds, sorted);
     }
 
     private static Dictionary<string, string> LocalItemsByWork(List<CatalogItem> local, WorkResolver works)
@@ -60,7 +109,12 @@ public static class DedupEngine
 
     private static FederationDecision Decide(ContentIdentity identity, IGrouping<ContentIdentity, CatalogItem> items, List<string> localItemIds)
     {
-        var remoteItems = items.Select(item => new RemoteItemKey(item.ServerId, item.ItemId)).ToList();
+        // Sorted, because StubMatcher tries them in turn, and the order of a read must not choose which stub stays.
+        var remoteItems = items
+            .Select(item => new RemoteItemKey(item.ServerId, item.ItemId))
+            .OrderBy(item => item.ServerId, StringComparer.Ordinal)
+            .ThenBy(item => item.ItemId, StringComparer.Ordinal)
+            .ToList();
         if (localItemIds.Count > 0)
         {
             return new FederationDecision(identity, null, []) { LocalItemIds = localItemIds, RemoteItems = remoteItems };

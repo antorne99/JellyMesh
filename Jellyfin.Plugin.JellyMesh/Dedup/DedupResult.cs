@@ -18,4 +18,14 @@ public sealed record DedupResult(IReadOnlyList<FederationDecision> Decisions, IR
     /// per episode, so its stubs follow the local series even when no decision of it is local.
     /// </summary>
     public IReadOnlyDictionary<string, string> LocalItemByWork { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Gets the film titles the administrator can merge, sorted by the first key of each case.
+    /// </summary>
+    public IReadOnlyList<MergeCase> MergeCases { get; init; } = [];
+
+    /// <summary>
+    /// Gets what each manual merge found, sorted by merge.
+    /// </summary>
+    public IReadOnlyList<AppliedMerge> Merges { get; init; } = [];
 }
