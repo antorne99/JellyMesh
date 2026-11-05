@@ -689,6 +689,7 @@ def outcomes_shown(page, name):
     page.locator(u.CONFIRM_OK).click()
     until(page, lambda: hold)
     check(name + " a new action clears the old outcome at once", u.message(page) == "", u.message(page))
+    page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
     hold.pop().fulfill(status=204)
     outcome(page, name + " a removal", "Done", "Removed stock")
 
