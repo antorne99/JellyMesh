@@ -174,8 +174,6 @@ If nothing works, the title stays visible and playback is refused with HTTP 503 
 
 Remote tokens stay on your server: they never appear in `.strm` files, in logs or in anything sent to clients, and players never see a remote's address.
 
-<!-- CHECK AT MERGE: the hardening work may add limits or admin-visible changes here. Nothing is claimed yet. -->
-
 ## Limits
 
 - **Clients:** only jellyfin-web has been tested. Real Android and TV clients have not, including how they show series and what they do when playback is refused.
@@ -186,6 +184,26 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.
 - **Jellyfin versions:** tested on 12.4 only.
+
+<!-- CHECK AT MERGE: provisional text from the hardening agent, not in this branch's code, and its values may still change. Update or delete this section. -->
+### Built-in limits
+
+These protect your server and are not settings. They don't stop a dishonest peer.
+
+| Limit | Value |
+|---|---|
+| Playback calls at once, per remote | 16 |
+| Open streams, per remote | 32 |
+| Requests at once, per playback session | 8 |
+| Playback sessions, per user | 16 |
+| Reads at once, per connected JellyMesh server | 8 |
+| Size of a JSON answer | 32 MiB |
+| Size of an image or a playlist | 16 MiB |
+| One catalog read of one server | 2 GiB in total |
+| Time one server may take of a sync | 4 hours |
+
+At 16 playback sessions, the oldest unused one closes first. If all are in use, the new playback is refused. A remote that goes silent mid-stream ends at the idle time in **Settings**. If a remote refuses a call from a valid login, the connection status shows "not allowed for the dedicated user".
+<!-- END CHECK AT MERGE -->
 
 ## Development
 
