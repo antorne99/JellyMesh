@@ -169,6 +169,20 @@ public sealed class StreamSlots
     }
 
     /// <summary>
+    /// Frees every slot of a peer, for when what it may do has changed. What is running keeps running without one, and the
+    /// next request of a stream that goes on takes a slot like any other. Its play sessions stay its own: they still have
+    /// transcodes to close.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    public void ReleaseAll(Guid peerId)
+    {
+        lock (_lock)
+        {
+            SlotsOf(peerId).Clear();
+        }
+    }
+
+    /// <summary>
     /// Counts the slots of a peer.
     /// </summary>
     /// <param name="peerId">The peer.</param>
