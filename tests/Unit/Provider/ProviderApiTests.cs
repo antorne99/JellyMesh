@@ -480,23 +480,125 @@ public class PeerAdminControllerTests
     }
 
     [Fact]
-    public void Changing_the_limit_of_a_peer_frees_its_slots_at_once()
+    public void A_higher_limit_frees_nothing()
     {
         _controller.SetPeer(_fixture.Peer.Id, Request());
-        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play")!.Dispose();
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play", ProviderFixture.SharedItem)!.Dispose();
 
         _controller.SetPeer(_fixture.Peer.Id, Request(3));
+
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void A_lower_limit_ends_what_no_longer_fits_and_keeps_the_rest_counted()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request(3));
+        var cut = new List<string>();
+        using var oldest = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "oldest", ProviderFixture.SharedItem, () => cut.Add("oldest"));
+        using var middle = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "middle", ProviderFixture.SharedItem, () => cut.Add("middle"));
+        using var newest = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "newest", ProviderFixture.SharedItem, () => cut.Add("newest"));
+
+        _controller.SetPeer(_fixture.Peer.Id, Request(1));
+
+        Assert.Equal(["middle", "newest"], cut.Order(StringComparer.Ordinal));
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+        Assert.Equal(["middle", "newest"], _fixture.Slots.TakeClosing().Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void A_limit_lowered_to_what_is_running_ends_nothing()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request(3));
+        var cut = false;
+        using var one = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "one", ProviderFixture.SharedItem, () => cut = true);
+        using var two = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "two", ProviderFixture.SharedItem, () => cut = true);
+
+        _controller.SetPeer(_fixture.Peer.Id, Request(2));
+
+        Assert.False(cut);
+        Assert.Equal(2, _fixture.Slots.Count(_fixture.Peer.Id));
+        Assert.Empty(_fixture.Slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_save_that_lowers_the_limit_and_takes_a_library_away_counts_what_was_lost_first()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(Both().SharedLibraryIds, 3));
+        var cut = new List<string>();
+        using var lost = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "lost", ProviderFixture.SharedItem, () => cut.Add("lost"));
+        using var older = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "older", ProviderFixture.PrivateItem, () => cut.Add("older"));
+        using var newer = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "newer", ProviderFixture.PrivateItem, () => cut.Add("newer"));
+
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(OnlyPrivate().SharedLibraryIds, 1));
+
+        Assert.Equal(["lost", "newer"], cut.Order(StringComparer.Ordinal));
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void A_save_that_takes_a_library_away_can_leave_nothing_more_to_cut_for_the_lower_limit()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(Both().SharedLibraryIds, 3));
+        var cut = new List<string>();
+        using var lost = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "lost", ProviderFixture.SharedItem, () => cut.Add("lost"));
+        using var kept = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "kept", ProviderFixture.PrivateItem, () => cut.Add("kept"));
+
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(OnlyPrivate().SharedLibraryIds, 1));
+
+        Assert.Equal(["lost"], cut);
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void Taking_a_library_away_frees_the_slots_on_it()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play", ProviderFixture.SharedItem)!.Dispose();
+
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest([], 2));
 
         Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]
-    public void Changing_the_libraries_of_a_peer_frees_its_slots_at_once()
+    public void Taking_a_library_away_leaves_the_slot_of_what_is_still_shared_counted()
     {
-        _controller.SetPeer(_fixture.Peer.Id, Request());
-        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play")!.Dispose();
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "lost", ProviderFixture.SharedItem)!.Dispose();
+        using var kept = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "kept", ProviderFixture.PrivateItem);
 
-        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest([], 2));
+        _controller.SetPeer(_fixture.Peer.Id, OnlyPrivate());
+
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+        Assert.NotNull(_fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "another", ProviderFixture.PrivateItem));
+        Assert.Null(_fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "over", ProviderFixture.PrivateItem));
+    }
+
+    [Fact]
+    public void An_added_library_frees_nothing()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play", ProviderFixture.SharedItem)!.Dispose();
+
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void Removing_a_peer_frees_all_its_slots()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "one", ProviderFixture.SharedItem)!.Dispose();
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "two", ProviderFixture.PrivateItem)!.Dispose();
+
+        _controller.RemovePeer(_fixture.Peer.Id);
 
         Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
     }
@@ -570,6 +672,7 @@ public class PeerAdminControllerTests
         _controller.SetPeer(_fixture.Peer.Id, OnlyPrivate());
 
         Assert.False(cut);
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]
@@ -596,6 +699,12 @@ public class PeerAdminControllerTests
 
 public class ProviderConfigurationTests
 {
+    [Fact]
+    public void A_transcode_closes_at_the_expiry_of_its_slot_by_default()
+    {
+        Assert.True(new PluginConfiguration().CloseTranscodeAtSlotExpiry);
+    }
+
     [Fact]
     public void A_save_from_the_stock_endpoint_keeps_the_peers()
     {

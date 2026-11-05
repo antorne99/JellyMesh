@@ -905,6 +905,231 @@ public class StreamLimitPlaybackTests
         Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Released);
     }
 
+    private async Task<PlaybackSession> OpenAsync(bool direct = false, bool jellyMesh = true)
+    {
+        var source = PlaybackValues.Source();
+        if (jellyMesh)
+        {
+            _fixture.Registry.AddJellyMesh(source.ServerId);
+        }
+
+        if (direct)
+        {
+            _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        }
+
+        await _fixture.OpenAsync(PlaybackValues.Stub(source));
+        return Assert.Single(_fixture.Sessions.All);
+    }
+
+    private void Abort(PlaybackSession session)
+    {
+        using var client = new CancellationTokenSource();
+        var request = session.TryBeginRequest(_fixture.Clock, client.Token)!;
+        client.Cancel();
+        request.Dispose();
+    }
+
+    private Task AfterTheGraceAsync()
+    {
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace);
+        return _fixture.Coordinator.ReleaseAbandonedAsync();
+    }
+
+    [Fact]
+    public async Task A_client_that_goes_closes_the_transcode_and_gives_the_slot_back_after_the_grace()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+
+        await AfterTheGraceAsync();
+
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Stopped);
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_client_that_goes_leaves_its_session_so_that_it_can_come_back()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+
+        await AfterTheGraceAsync();
+
+        Assert.Same(session, Assert.Single(_fixture.Sessions.All));
+    }
+
+    [Fact]
+    public async Task A_direct_stream_only_gives_the_slot_back()
+    {
+        var session = await OpenAsync(direct: true);
+        Abort(session);
+
+        await AfterTheGraceAsync();
+
+        Assert.Empty(_fixture.Client.Stopped);
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task Nothing_is_sent_during_the_grace()
+    {
+        Abort(await OpenAsync());
+
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace - TimeSpan.FromMilliseconds(1));
+        await _fixture.Coordinator.ReleaseAbandonedAsync();
+
+        Assert.Empty(_fixture.Client.Stopped);
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_seek_within_the_grace_sends_nothing()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace - TimeSpan.FromSeconds(1));
+
+        session.TryBeginRequest(_fixture.Clock)!.Dispose();
+        await AfterTheGraceAsync();
+
+        Assert.Empty(_fixture.Client.Stopped);
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_seek_still_running_at_the_end_of_the_grace_sends_nothing()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+        _fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        using var running = session.TryBeginRequest(_fixture.Clock);
+
+        await AfterTheGraceAsync();
+
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_seek_that_starts_before_the_old_request_is_dropped_sends_nothing()
+    {
+        var session = await OpenAsync();
+        var seek = session.TryBeginRequest(_fixture.Clock)!;
+        Abort(session);
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace);
+
+        seek.Dispose();
+        await AfterTheGraceAsync();
+
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_seek_that_goes_too_starts_the_grace_again()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace - TimeSpan.FromSeconds(1));
+        Abort(session);
+
+        _fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        await _fixture.Coordinator.ReleaseAbandonedAsync();
+        Assert.Empty(_fixture.Client.Released);
+
+        await AfterTheGraceAsync();
+        Assert.Single(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_request_still_running_keeps_the_stream_when_another_is_dropped()
+    {
+        var session = await OpenAsync();
+        using var running = session.TryBeginRequest(_fixture.Clock);
+        Abort(session);
+
+        await AfterTheGraceAsync();
+
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_pause_sends_nothing()
+    {
+        var session = await OpenAsync();
+        session.TryBeginRequest(_fixture.Clock, CancellationToken.None)!.Dispose();
+
+        await AfterTheGraceAsync();
+        await AfterTheGraceAsync();
+
+        Assert.Empty(_fixture.Client.Stopped);
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_stock_remote_is_told_nothing()
+    {
+        Abort(await OpenAsync(jellyMesh: false));
+
+        await AfterTheGraceAsync();
+
+        Assert.Empty(_fixture.Client.Stopped);
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task The_provider_is_told_once_even_when_the_sweep_comes_by()
+    {
+        Abort(await OpenAsync());
+
+        await AfterTheGraceAsync();
+        await AfterTheGraceAsync();
+        _fixture.Clock.Advance(PlaybackTimeouts.Idle);
+        await _fixture.Coordinator.SweepAsync();
+
+        Assert.Single(_fixture.Client.Released);
+        Assert.Single(_fixture.Client.Stopped);
+    }
+
+    [Fact]
+    public async Task A_client_that_came_back_and_goes_again_is_told_again()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+        await AfterTheGraceAsync();
+
+        session.TryBeginRequest(_fixture.Clock)!.Dispose();
+        Abort(session);
+        await AfterTheGraceAsync();
+
+        Assert.Equal(2, _fixture.Client.Released.Count);
+    }
+
+    [Fact]
+    public async Task A_failed_call_leaves_the_session_and_its_return_alone()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+        _fixture.Client.ReleaseFailure = RemoteFailure.Unreachable;
+
+        await AfterTheGraceAsync();
+
+        Assert.Same(session, Assert.Single(_fixture.Sessions.All));
+        Assert.NotNull(session.TryBeginRequest(_fixture.Clock));
+    }
+
+    [Fact]
+    public async Task A_server_that_is_offline_costs_nothing()
+    {
+        var session = await OpenAsync();
+        Abort(session);
+        _fixture.Registry.Offline.Add(session.Source.ServerId);
+
+        await AfterTheGraceAsync();
+
+        Assert.Same(session, Assert.Single(_fixture.Sessions.All));
+        Assert.Empty(_fixture.Client.Released);
+    }
+
     [Fact]
     public async Task A_stock_remote_gets_no_renewal()
     {

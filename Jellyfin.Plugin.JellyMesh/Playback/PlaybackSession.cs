@@ -35,6 +35,7 @@ public sealed partial class PlaybackSession
     private long _lastRenewalTicks;
     private int _activeRequests;
     private int _parked;
+    private int _abandoned;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSession"/> class.
@@ -105,7 +106,7 @@ public sealed partial class PlaybackSession
         Interlocked.Exchange(ref _lastRequestTicks, clock.GetUtcNow().UtcTicks);
         Interlocked.Exchange(ref _parked, 0);
         Interlocked.Increment(ref _activeRequests);
-        return new RequestScope(this, clock);
+        return new RequestScope(this, clock, CancellationToken.None);
     }
 
     /// <summary>
@@ -113,8 +114,9 @@ public sealed partial class PlaybackSession
     /// the result when it ends.
     /// </summary>
     /// <param name="clock">The clock.</param>
+    /// <param name="aborted">What tells that the connection of the request went.</param>
     /// <returns>The end of the request, null if there are too many.</returns>
-    public IDisposable? TryBeginRequest(TimeProvider clock)
+    public IDisposable? TryBeginRequest(TimeProvider clock, CancellationToken aborted = default)
     {
         ArgumentNullException.ThrowIfNull(clock);
 
@@ -126,7 +128,7 @@ public sealed partial class PlaybackSession
 
         Interlocked.Exchange(ref _lastRequestTicks, clock.GetUtcNow().UtcTicks);
         Interlocked.Exchange(ref _parked, 0);
-        return new RequestScope(this, clock);
+        return new RequestScope(this, clock, aborted);
     }
 
     /// <summary>
@@ -134,6 +136,18 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <returns>Whether this call parked it.</returns>
     public bool TryPark() => Interlocked.Exchange(ref _parked, 1) == 0;
+
+    /// <summary>
+    /// Tells whether the client went: its last request lost the connection and no other has come for the whole grace. A
+    /// seek drops a connection too, and a pause drops none.
+    /// </summary>
+    /// <param name="now">The current time.</param>
+    /// <param name="grace">The time a client has to come back.</param>
+    /// <returns>Whether the client is gone.</returns>
+    public bool IsAbandoned(DateTimeOffset now, TimeSpan grace)
+    {
+        return Volatile.Read(ref _abandoned) != 0 && !IsActive && now - LastRequest >= grace;
+    }
 
     /// <summary>
     /// Tells whether the stream slot of this session is due for a renewal, and if so counts it as done. Only while a
@@ -307,20 +321,24 @@ public sealed partial class PlaybackSession
     {
         private readonly PlaybackSession _session;
         private readonly TimeProvider _clock;
+        private readonly CancellationToken _aborted;
         private int _ended;
 
-        public RequestScope(PlaybackSession session, TimeProvider clock)
+        public RequestScope(PlaybackSession session, TimeProvider clock, CancellationToken aborted)
         {
             _session = session;
             _clock = clock;
+            _aborted = aborted;
         }
 
-        // A long stream counts as a request until its end, so the idle time starts there.
+        // A long stream counts as a request until its end, so the idle time starts there, and the last request to end
+        // decides whether the client went, as on the provider.
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _ended, 1) == 0)
             {
                 Interlocked.Exchange(ref _session._lastRequestTicks, _clock.GetUtcNow().UtcTicks);
+                Interlocked.Exchange(ref _session._abandoned, _aborted.IsCancellationRequested ? 1 : 0);
                 Interlocked.Decrement(ref _session._activeRequests);
             }
         }

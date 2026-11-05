@@ -15,11 +15,12 @@ public class StreamSlotsTests
     private static readonly Guid _other = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 
     private readonly ManualClock _clock = new();
+    private readonly InMemoryConfigurationStore _store = new();
     private readonly StreamSlots _slots;
 
     public StreamSlotsTests()
     {
-        _slots = new StreamSlots(_clock);
+        _slots = new StreamSlots(_clock, _store);
     }
 
     private void Hold(string playSession, int limit = 1)
@@ -267,6 +268,102 @@ public class StreamSlotsTests
     }
 
     [Fact]
+    public void Coming_down_to_a_lower_limit_ends_the_newest_and_keeps_the_oldest()
+    {
+        Paused("oldest", _kept);
+        Paused("middle", _kept);
+        Paused("newest", _kept);
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Equal(1, _slots.Count(_peer));
+        Assert.Equal(["middle", "newest"], _slots.TakeClosing().Order(StringComparer.Ordinal));
+        using var oldest = _slots.TryEnter(_peer, 1, "oldest", _kept);
+        Assert.NotNull(oldest);
+    }
+
+    [Fact]
+    public void Coming_down_to_a_lower_limit_ends_reservations_before_any_stream()
+    {
+        var pending = _slots.TryReserve(_peer, 3, null)!;
+        Paused("oldest", _kept);
+        Paused("newest", _kept);
+
+        _slots.CutToLimit(_peer, 2);
+
+        Assert.Equal(2, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+        _slots.Confirm(_peer, pending, "late", _kept);
+        Assert.Equal(2, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void Coming_down_to_a_lower_limit_cuts_the_requests_of_what_goes_and_no_others()
+    {
+        var cut = new List<string>();
+        using var oldest = _slots.TryEnter(_peer, 3, "oldest", _kept, () => cut.Add("oldest"));
+        using var newest = _slots.TryEnter(_peer, 3, "newest", _kept, () => cut.Add("newest"));
+        using var second = _slots.TryEnter(_peer, 3, "newest", _kept, () => cut.Add("newest again"));
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Equal(["newest", "newest again"], cut.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void Coming_down_to_a_lower_limit_cuts_a_read_with_no_play_session_and_has_nothing_to_close()
+    {
+        Paused("oldest", _kept);
+        var cut = false;
+        using var read = _slots.TryEnter(_peer, 2, null, _kept, () => cut = true);
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.True(cut);
+        Assert.Equal(1, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(5)]
+    public void A_limit_at_or_above_what_is_held_cuts_nothing(int limit)
+    {
+        var cut = false;
+        using var first = _slots.TryEnter(_peer, 5, "one", _kept, () => cut = true);
+        using var second = _slots.TryEnter(_peer, 5, "two", _kept, () => cut = true);
+
+        _slots.CutToLimit(_peer, limit);
+
+        Assert.False(cut);
+        Assert.Equal(2, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void After_coming_down_a_stream_that_was_cut_is_refused()
+    {
+        Paused("oldest", _kept);
+        Paused("newest", _kept);
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Null(_slots.TryEnter(_peer, 1, "newest", _kept));
+        Assert.True(_slots.Owns(_peer, "newest"));
+    }
+
+    [Fact]
+    public void Coming_down_leaves_the_others_alone()
+    {
+        using var other = _slots.TryEnter(_other, 3, "one", _kept);
+        using var another = _slots.TryEnter(_other, 3, "two", _kept);
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Equal(2, _slots.Count(_other));
+    }
+
+    [Fact]
     public void Revoking_a_peer_leaves_the_others_alone()
     {
         var cut = false;
@@ -361,6 +458,102 @@ public class StreamSlotsTests
         _clock.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(0, _slots.Count(_peer));
         Assert.NotNull(_slots.TryReserve(_peer, 1, null));
+    }
+
+    [Fact]
+    public void An_idle_slot_that_expires_has_its_transcode_closed()
+    {
+        Hold("one");
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void With_the_setting_off_an_idle_slot_goes_and_leaves_its_transcode()
+    {
+        Hold("one");
+        _store.Configuration.CloseTranscodeAtSlotExpiry = false;
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void The_setting_counts_as_it_is_when_the_slot_expires()
+    {
+        _store.Configuration.CloseTranscodeAtSlotExpiry = false;
+        Hold("one");
+
+        _store.Configuration.CloseTranscodeAtSlotExpiry = true;
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void With_the_setting_off_a_lost_connection_still_closes_the_transcode()
+    {
+        Hold("one");
+        _store.Configuration.CloseTranscodeAtSlotExpiry = false;
+        var request = _slots.TryEnter(_peer, 1, "one")!;
+        request.Abandon();
+        request.Dispose();
+
+        _clock.Advance(StreamSlots.AbandonGrace);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_request_running_at_the_idle_time_keeps_its_transcode()
+    {
+        Hold("one");
+        using var request = _slots.TryEnter(_peer, 1, "one");
+
+        _clock.Advance(TimeSpan.FromHours(3));
+
+        Assert.Empty(_slots.TakeClosing());
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_request_that_outlived_its_slot_keeps_the_transcode_when_the_next_slot_expires()
+    {
+        using var running = _slots.TryEnter(_peer, 2, "one");
+        _slots.Release(_peer, "one");
+        _slots.TryEnter(_peer, 2, "one")!.Dispose();
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_stream_back_after_the_idle_time_keeps_its_transcode()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Assert.Equal(0, _slots.Count(_peer));
+
+        using var back = _slots.TryEnter(_peer, 1, "one");
+
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_read_with_no_play_session_has_no_transcode_to_close()
+    {
+        _slots.TryEnter(_peer, 1, null)!.Dispose();
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Empty(_slots.TakeClosing());
     }
 
     [Fact]

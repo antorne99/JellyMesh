@@ -71,7 +71,8 @@ public class PeerAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Connects a server, or changes what is shared with it. Taking a library away cuts what is playing from it.
+    /// Connects a server, or changes what is shared with it. Taking a library away cuts what is playing from it, and a lower
+    /// limit what no longer fits.
     /// </summary>
     /// <param name="userId">The dedicated user.</param>
     /// <param name="request">What to share.</param>
@@ -95,7 +96,7 @@ public class PeerAdminController : ControllerBase
             return BadRequest();
         }
 
-        var changed = false;
+        var lowerLimit = false;
         var lostLibrary = false;
         _store.Update(config =>
         {
@@ -106,8 +107,7 @@ public class PeerAdminController : ControllerBase
                 config.Peers.Add(peer);
             }
 
-            changed = peer.MaxStreams != request.MaxStreams
-                || !peer.SharedLibraryIds.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(request.SharedLibraryIds);
+            lowerLimit = request.MaxStreams < peer.MaxStreams;
             lostLibrary = peer.SharedLibraryIds.Except(request.SharedLibraryIds, StringComparer.OrdinalIgnoreCase).Any();
             peer.MaxStreams = request.MaxStreams;
             peer.SharedLibraryIds.Clear();
@@ -117,16 +117,17 @@ public class PeerAdminController : ControllerBase
             }
         });
 
-        // What a library took away goes now. Anything else leaves running streams alone.
+        // What a library took away goes now. What is still shared keeps its slot, so that the limit goes on counting it.
         if (lostLibrary)
         {
             var caller = new PeerCaller(new PeerGrant(userId, request.SharedLibraryIds.ToHashSet(StringComparer.OrdinalIgnoreCase), request.MaxStreams), user);
             _slots.Revoke(userId, item => _catalog.FindVisible(caller, item) is not null);
         }
 
-        if (changed)
+        // After what was lost: only what is still over the limit has to go.
+        if (lowerLimit)
         {
-            _slots.ReleaseAll(userId);
+            _slots.CutToLimit(userId, request.MaxStreams);
         }
 
         return NoContent();

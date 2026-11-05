@@ -1,0 +1,160 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Remote;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Net;
+using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Session;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
+
+public class PlaybackProxyTests
+{
+    private static readonly Guid _item = Guid.Parse("33333333-3333-3333-3333-333333333333");
+
+    private readonly CoordinatorFixture _fixture = new();
+    private readonly Mock<ILibraryManager> _library = new();
+    private readonly Mock<IAuthorizationContext> _authorization = new();
+    private readonly Mock<ISessionManager> _sessionManager = new();
+    private readonly User _user = new("viewer", "auth", "reset");
+    private readonly CompletionFeature _response = new();
+    private readonly PlaybackProxyController _controller;
+
+    public PlaybackProxyTests()
+    {
+        _library.Setup(library => library.GetItemById<BaseItem>(_item, _user)).Returns(new Movie());
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .ReturnsAsync(new AuthorizationInfo { User = _user, Token = PlaybackValues.LocalToken, DeviceId = "device" });
+        var http = new DefaultHttpContext();
+        http.Features.Set<IHttpResponseFeature>(_response);
+        _controller = new PlaybackProxyController(
+            _fixture.Sessions,
+            _fixture.Coordinator,
+            _library.Object,
+            _authorization.Object,
+            _fixture.Clock,
+            new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance))
+        {
+            ControllerContext = new ControllerContext { HttpContext = http }
+        };
+    }
+
+    private PlaybackSession Session(PlaybackStreamKind kind)
+    {
+        var identity = new PlaybackIdentity(_user.Id, "device", _item, "stub");
+        var session = new PlaybackSession(identity, PlaybackValues.Source(), PlaybackValues.RemotePlaySession, kind, PlaybackUrls.WithoutToken(PlaybackValues.Master), _fixture.Clock.GetUtcNow());
+        _fixture.Sessions.Add(session);
+        return session;
+    }
+
+    private void StreamsFailWith(RemoteFailure failure)
+    {
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(failure));
+    }
+
+    private void VerifyMessage(Times times)
+    {
+        _sessionManager.Verify(
+            manager => manager.SendMessageToUserDeviceSessions(
+                "device",
+                SessionMessageType.GeneralCommand,
+                It.Is<MediaBrowser.Model.Session.GeneralCommand>(command => command.Arguments["Text"] == PlaybackRefusal.LimitText),
+                It.IsAny<CancellationToken>()),
+            times);
+    }
+
+    [Fact]
+    public async Task A_stream_refused_for_the_limit_gets_the_503_and_the_message_on_the_device()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        StreamsFailWith(RemoteFailure.StreamLimitReached);
+
+        var result = await _controller.GetStream(session.Id, CancellationToken.None);
+        await _response.CompleteAsync();
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        VerifyMessage(Times.Once());
+    }
+
+    [Fact]
+    public async Task A_playlist_refused_for_the_limit_gets_the_503_and_the_message_on_the_device()
+    {
+        var session = Session(PlaybackStreamKind.Hls);
+        _fixture.Client.Playlists = _ => RemoteFailure.StreamLimitReached;
+
+        var result = await _controller.GetMaster(session.Id, CancellationToken.None);
+        await _response.CompleteAsync();
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        VerifyMessage(Times.Once());
+    }
+
+    [Fact]
+    public async Task The_refusal_leaves_the_session_so_that_the_same_url_plays_later()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        StreamsFailWith(RemoteFailure.StreamLimitReached);
+
+        await _controller.GetStream(session.Id, CancellationToken.None);
+
+        Assert.Same(session, Assert.Single(_fixture.Sessions.All));
+    }
+
+    [Theory]
+    [InlineData(RemoteFailure.Unreachable)]
+    [InlineData(RemoteFailure.Timeout)]
+    [InlineData(RemoteFailure.Forbidden)]
+    [InlineData(RemoteFailure.ServerError)]
+    [InlineData(RemoteFailure.Busy)]
+    public async Task Any_other_failure_of_a_stream_stays_a_bare_bad_gateway(RemoteFailure failure)
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        StreamsFailWith(failure);
+
+        var result = await _controller.GetStream(session.Id, CancellationToken.None);
+        await _response.CompleteAsync();
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        VerifyMessage(Times.Never());
+    }
+
+    [Theory]
+    [InlineData(RemoteFailure.Unreachable)]
+    [InlineData(RemoteFailure.ServerError)]
+    public async Task Any_other_failure_of_a_playlist_stays_a_bare_bad_gateway(RemoteFailure failure)
+    {
+        var session = Session(PlaybackStreamKind.Hls);
+        _fixture.Client.Playlists = _ => failure;
+
+        var result = await _controller.GetMaster(session.Id, CancellationToken.None);
+        await _response.CompleteAsync();
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        VerifyMessage(Times.Never());
+    }
+
+    private sealed class CompletionFeature : HttpResponseFeature
+    {
+        private Func<object, Task>? _completed;
+        private object? _state;
+
+        public override void OnCompleted(Func<object, Task> callback, object state)
+        {
+            _completed = callback;
+            _state = state;
+        }
+
+        public Task CompleteAsync() => _completed?.Invoke(_state!) ?? Task.CompletedTask;
+    }
+}

@@ -135,6 +135,7 @@ If you connect both ways, each server needs its own dedicated user on the other.
 | Sync interval | 900 s | At least 300 s |
 | Nightly reconciliation time | 03:00 | |
 | Protect metadata | On | |
+| Close the transcode of an expired stream | On | |
 | Wait for a remote to answer | 10 s | 3 to 60 |
 | Wait for each step of opening a stream | 15 s | 5 to 60 |
 | Close an idle remote transcode after | 90 s | 30 to 109 |
@@ -142,6 +143,8 @@ If you connect both ways, each server needs its own dedicated user on the other.
 | Remember the transcoding rights of a remote | 5 min | 1 to 60 |
 
 **Protect metadata** locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, `.nfo` files hold less, fetchers complete the rest, and titles without provider IDs can be matched to the wrong film.
+
+**Close the transcode of an expired stream** is for the servers connected to yours. When a stream has no activity for 2 minutes its slot is freed, and this closes its transcode at that moment. When off, the slot is still freed and Jellyfin's own timer closes the transcode. It applies from the next expiry, without a restart. A dropped connection closes the transcode either way.
 
 ## Merging duplicates by hand
 
@@ -155,7 +158,7 @@ This works for films only, not series. Two local films can't be merged, so such 
 
 The stream limit exists only between JellyMesh servers, because a stock remote can't report one. It counts the streams a connected server holds on the provider, including a local transcode of that provider's file, since that reads the file from the provider too.
 
-A stream gives its slot back as soon as it ends, fails or is closed. If its connection drops, or the provider fails it with a server error, and nothing else of that stream is running, the slot stays for 5 seconds, so that a seek or a retry keeps it, and then it's free and its transcode is closed, so that the limit also holds on your hardware. If the stream comes back later it takes a free slot and the transcode restarts from there. A paused HLS stream frees it in under 2 minutes. A server that vanishes with its connection left open is released after 2 minutes without activity. Disconnecting a server, or changing what it may do, frees all its slots at once. Disconnecting it also ends everything it is playing, and taking a library away from it ends what plays from that library, including transcodes. Any other change, such as a higher limit or an added library, leaves running streams alone.
+A stream gives its slot back as soon as it ends, fails or is closed. If its connection drops, or the provider fails it with a server error, and nothing else of that stream is running, the slot stays for 5 seconds, so that a seek or a retry keeps it, and then it's free and its transcode is closed, so that the limit also holds on your hardware. If the stream comes back later it takes a free slot and the transcode restarts from there, and if none is free the client gets the 503 and the limit message below, as a new playback does. The provider may have sent everything already and not see a client go, so the server playing the title tells it when a client drops its connection and no new request arrives within those 5 seconds, which ends in the same way. A stock remote gets no such call. A paused HLS stream frees it in under 2 minutes. A server that vanishes with its connection left open is released after 2 minutes without activity, and its transcode is closed then too, unless **Close the transcode of an expired stream** is off. Disconnecting a server frees all its slots at once and ends everything it is playing, including transcodes. Taking a library away from it frees only the slots of what it can no longer reach and ends those streams, including transcodes, while what is still shared with it, from any library, keeps playing and stays counted. Lowering its limit ends at once what no longer fits, including transcodes: first streams that are still opening, then the most recently opened, so the oldest keep playing and stay counted. A limit still at or above what is running ends nothing. Any other change, such as a higher limit or an added library, frees nothing and leaves running streams alone.
 
 When a title is played, JellyMesh tries in this order:
 
