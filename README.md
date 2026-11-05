@@ -8,6 +8,7 @@ JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series
 
 - Reads the film and series libraries you choose on other Jellyfin servers. Those servers can be stock Jellyfin.
 - Removes duplicates. A local copy always wins. Between remote copies the best quality wins, compared by resolution, then HDR, video bitrate and codec, with bitrates within 5% counted as a tie. Losing copies stay as backup sources.
+- Lets an admin merge films it can't match safely, as described in [Merging duplicates by hand](#merging-duplicates-by-hand).
 - Completes series per episode: episodes you lack arrive from remotes inside your own series.
 - Writes a `.strm`, a `.nfo` and local images for each title into a federated folder you choose, which you then link to your libraries.
 - At playback, sends the real client's device profile to the remote, which decides between direct play and transcode and does any transcoding on its own hardware. Your server proxies the stream.
@@ -142,7 +143,6 @@ If you connect both ways, each server needs its own dedicated user on the other.
 
 **Protect metadata** locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, `.nfo` files hold less, fetchers complete the rest, and titles without provider IDs can be matched to the wrong film.
 
-<!-- CHECK AT MERGE: text from the merge agent (decision 20), provisional and not in this branch's code. Delete this section if the feature does not land, and confirm the section and button names. -->
 ## Merging duplicates by hand
 
 Films that JellyMesh cannot safely match, such as copies with contradicting provider IDs or the same title and year with nothing to confirm them, stay separate and are listed in the **Duplicate films** section of the plugin page. An admin can select copies and choose **Merge selected**: the best quality wins, the others stay as backups, a local copy still wins, and watch state moves to the title that stays. The choice survives restarts and syncs.
@@ -150,7 +150,6 @@ Films that JellyMesh cannot safely match, such as copies with contradicting prov
 **Undo merge** separates the copies again. The title that stayed keeps all the watch state. A separated copy usually gets back what it had before the merge, but it can start with no watch state, for instance two copies with the same title and no provider IDs.
 
 This works for films only, not series. Two local films can't be merged, so such cases aren't listed. Merges belong to one server and don't travel to other JellyMesh servers.
-<!-- END CHECK AT MERGE -->
 
 ## Stream limit and fallback
 
@@ -190,8 +189,8 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.
 - **Jellyfin versions:** tested on 12.4 only.
+- **Provider restart:** a stream in progress ends when the provider restarts, and the client has to open the title again.
 
-<!-- CHECK AT MERGE: provisional text from the hardening agent, not in this branch's code, and its values may still change. Update or delete this section. -->
 ### Built-in limits
 
 These protect your server and are not settings. They don't stop a dishonest peer.
@@ -209,7 +208,6 @@ These protect your server and are not settings. They don't stop a dishonest peer
 | Time one server may take of a sync | 4 hours |
 
 At 16 playback sessions, the oldest unused one closes first. If all are in use, the new playback is refused. A remote that goes silent mid-stream ends at the idle time in **Settings**. If a remote refuses a call from a valid login, the connection status shows "not allowed for the dedicated user".
-<!-- END CHECK AT MERGE -->
 
 ## Development
 

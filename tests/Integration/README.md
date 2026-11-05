@@ -190,7 +190,7 @@ bash provider/up.sh               # two servers with the plugin, each with the m
 bash provider/federate.sh         # connects them, and b with the stock remote too
 bash provider/boundaries.sh       # what a peer can reach, no cycles, shared libraries
 bash provider/feed.sh             # the change feed, and polling on a stock remote
-bash provider/limits.sh           # the stream limit, about 11 minutes because it waits for real timeouts
+bash provider/limits.sh           # the stream limit, about 15 minutes because it waits for real timeouts
 bash provider/network.sh          # a slow and an offline provider, after limits.sh
 bash provider/leaks.sh            # no remote token or address in a client answer or a log
 bash provider/down.sh             # removes containers and volumes, and the recorded tokens
