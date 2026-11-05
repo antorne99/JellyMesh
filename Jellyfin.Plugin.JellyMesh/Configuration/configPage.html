@@ -6,12 +6,78 @@
 </head>
 <body>
     <div id="JellyMeshConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+        <style>
+            #JellyMeshConfigPage [data-role="content"] {
+                display: flow-root;
+                overflow: visible;
+            }
+
+            .jmOutcome {
+                position: sticky;
+                bottom: 1em;
+                z-index: 1;
+            }
+
+            .jmOutcome.jmOutcomeDone,
+            .jmOutcome.jmOutcomeError {
+                display: flex;
+                align-items: baseline;
+                justify-content: space-between;
+                gap: 1em;
+                margin-top: 1.5em;
+                padding: 0.75em 1em;
+                border-radius: 4px;
+                box-shadow: 0 0.25em 1em rgba(0, 0, 0, 0.4);
+            }
+
+            .jmOutcome.jmOutcomeDone {
+                background: var(--jf-palette-success-main, #2e7d32);
+                color: var(--jf-palette-success-contrastText, #fff);
+            }
+
+            .jmOutcome.jmOutcomeError {
+                background: var(--jf-palette-error-main, #c62828);
+                color: var(--jf-palette-error-contrastText, #fff);
+            }
+
+            .jmOutcomeKind {
+                font-weight: bold;
+            }
+
+            .jmOutcome button {
+                flex: none;
+                min-height: 24px;
+                padding: 0;
+                border: 0;
+                background: none;
+                color: inherit;
+                font: inherit;
+                text-decoration: underline;
+                cursor: pointer;
+            }
+
+            .jmOutcome button:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmFieldError {
+                margin-top: 0.25em;
+                padding: 0.25em 0.5em;
+                border-radius: 4px;
+                background: var(--jf-palette-error-main, #c62828);
+                color: var(--jf-palette-error-contrastText, #fff);
+            }
+
+            #JellyMeshConfigPage input[aria-invalid="true"] {
+                border-color: var(--jf-palette-error-main, #c62828);
+            }
+        </style>
         <div data-role="content">
             <div class="content-primary">
                 <h2 class="sectionTitle">JellyMesh</h2>
 
                 <div id="jmWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <div id="jmMessage" role="status" hidden style="padding:0.5em 0;font-weight:bold;"></div>
 
                 <h3 class="sectionTitle">Status</h3>
                 <p id="jmStatus"></p>
@@ -63,7 +129,7 @@
                     </button>
                 </form>
 
-                <form id="jmSettingsForm">
+                <form id="jmSettingsForm" novalidate>
                     <h3 class="sectionTitle">Settings</h3>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
@@ -124,6 +190,11 @@
                         <span>Save</span>
                     </button>
                 </form>
+
+                <div id="jmOutcome" class="jmOutcome">
+                    <div id="jmMessage" role="status"></div>
+                    <button id="jmDismiss" type="button" hidden>Dismiss</button>
+                </div>
             </div>
         </div>
         <script type="text/javascript">
@@ -154,6 +225,8 @@
                 var syncPollMilliseconds = 2000;
                 var suspended = false;
                 var syncTimer = null;
+                var fieldNotes = 0;
+                var noAnswer = 'No answer from this server. Check the network connection and try again.';
 
                 function el(selector) {
                     return page.querySelector(selector);
@@ -169,10 +242,63 @@
                     return node;
                 }
 
-                function showMessage(text) {
+                // Puts the outcome of an action in the status region, or empties the region when there is no text.
+                function showOutcome(kind, text) {
                     var message = el('#jmMessage');
-                    message.textContent = text || '';
-                    message.hidden = !text;
+                    var outcome = el('#jmOutcome');
+                    outcome.classList.remove('jmOutcomeDone', 'jmOutcomeError');
+                    el('#jmDismiss').hidden = !text;
+                    message.textContent = '';
+                    if (text) {
+                        var label = create('span', kind + ': ');
+                        label.className = 'jmOutcomeKind';
+                        message.appendChild(label);
+                        message.appendChild(document.createTextNode(text));
+                        outcome.classList.add('jmOutcome' + kind);
+                    }
+                }
+
+                function showMessage(text) {
+                    showOutcome('Done', text);
+                }
+
+                function showError(text) {
+                    showOutcome('Error', text);
+                }
+
+                // Marks a field as wrong and says why right under it.
+                function markField(input, text) {
+                    var note = create('div', text);
+                    fieldNotes += 1;
+                    note.id = 'jmFieldError' + fieldNotes;
+                    note.className = 'jmFieldError';
+                    (input.closest('label') || input).after(note);
+                    input.setAttribute('aria-invalid', 'true');
+                    input.setAttribute('aria-describedby', note.id);
+                }
+
+                function clearField(input) {
+                    var note = document.getElementById(input.getAttribute('aria-describedby'));
+                    if (note) {
+                        note.remove();
+                    }
+
+                    input.removeAttribute('aria-invalid');
+                    input.removeAttribute('aria-describedby');
+                }
+
+                // Brings a wrong field to the middle of the screen, clear of the outcome, and focuses it.
+                function focusField(input) {
+                    input.scrollIntoView({ block: 'center' });
+                    input.focus({ preventScroll: true });
+                }
+
+                function refusedText(fieldName, rule) {
+                    return fieldName + ' was refused, so nothing was saved. ' + rule;
+                }
+
+                function numberRule(input) {
+                    return 'Enter a whole number ' + (input.max ? 'from ' + input.min + ' to ' + input.max : 'of at least ' + input.min) + '.';
                 }
 
                 function api(method, path, body) {
@@ -186,7 +312,9 @@
                         options.body = JSON.stringify(body);
                     }
 
-                    return fetch(ApiClient.getUrl('JellyMesh/Admin/' + path), options).then(function (response) {
+                    return fetch(ApiClient.getUrl('JellyMesh/Admin/' + path), options).catch(function () {
+                        throw new Error(noAnswer);
+                    }).then(function (response) {
                         if (response.status === 204) {
                             return null;
                         }
@@ -195,7 +323,7 @@
                             return {};
                         }).then(function (data) {
                             if (!response.ok) {
-                                throw new Error(data.Message || 'The request failed.');
+                                throw new Error(data.Message || 'The server answered with error ' + response.status + ' and gave no reason.');
                             }
 
                             return data;
@@ -204,9 +332,10 @@
                 }
 
                 function act(promise) {
+                    showMessage('');
                     Dashboard.showLoadingMsg();
                     return promise.catch(function (error) {
-                        showMessage(error.message);
+                        showError(error.message);
                     }).then(function () {
                         Dashboard.hideLoadingMsg();
                     });
@@ -281,7 +410,10 @@
                             return;
                         }
 
-                        act(api('DELETE', 'Servers/' + server.Id).then(load));
+                        act(api('DELETE', 'Servers/' + server.Id).then(function () {
+                            showMessage('Removed ' + server.Name + '.');
+                            return load();
+                        }));
                     }));
                     row.appendChild(libraries);
                     return row;
@@ -408,7 +540,7 @@
 
                 function loadSync() {
                     return api('GET', 'Sync').then(renderSync).catch(function (error) {
-                        showMessage(error.message);
+                        showError(error.message);
                     });
                 }
 
@@ -431,11 +563,19 @@
                     var limit = create('input');
                     limit.type = 'number';
                     limit.min = '1';
+                    limit.required = true;
                     limit.value = maxStreams;
                     limitLabel.appendChild(limit);
                     container.appendChild(limitLabel);
 
                     return function () {
+                        clearField(limit);
+                        if (!limit.validity.valid) {
+                            markField(limit, numberRule(limit));
+                            focusField(limit);
+                            return Promise.reject(new Error(refusedText('Stream limit', numberRule(limit))));
+                        }
+
                         var ids = boxes.filter(function (box) {
                             return box.checked;
                         }).map(function (box) {
@@ -464,7 +604,10 @@
                             return;
                         }
 
-                        act(api('DELETE', 'Peers/' + peer.UserId).then(loadPeers));
+                        act(api('DELETE', 'Peers/' + peer.UserId).then(function () {
+                            showMessage('Disconnected ' + peer.UserName + '.');
+                            return loadPeers();
+                        }));
                     }));
                     return row;
                 }
@@ -576,7 +719,6 @@
                         }).map(function (box) {
                             return box.value;
                         });
-                        showMessage('');
                         act(api('POST', 'Merges', { WorkKeys: keys }).then(function () {
                             showMessage('Merged. The film list changes after the library scan that was queued.');
                             return loadMerges();
@@ -645,7 +787,61 @@
                     return api('GET', 'Status').then(render).then(loadSync).then(loadPeers).then(loadMerges);
                 }
 
+                function settingFields() {
+                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input:not([type=checkbox])'));
+                }
+
+                // Follows the check the server makes, as far as the page can know the paths of the server.
+                function isUsableFolder(path) {
+                    var bare = path.replace(/[\\/]+$/, '');
+                    return !path || (/^(\/|\\\\|[a-z]:[\\/])/i.test(path) && bare !== '' && !/^[a-z]:$/i.test(bare) && path.split(/[\\/]/).indexOf('..') < 0);
+                }
+
+                // Returns the rule a Settings field breaks, or an empty text.
+                function settingRule(input) {
+                    if (input.id === 'jmFederatedFolder') {
+                        return isUsableFolder(input.value.trim()) ? '' : 'Enter an absolute path other than the filesystem root, without "..".';
+                    }
+
+                    if (input.validity.valid) {
+                        return '';
+                    }
+
+                    return input.type === 'time' ? 'Enter a time as hours and minutes.' : numberRule(input);
+                }
+
+                // Marks every wrong field, focuses the first and reports it. Returns whether all are right.
+                function checkSettings() {
+                    var wrong = settingFields().filter(function (input) {
+                        clearField(input);
+                        return settingRule(input) !== '';
+                    });
+                    if (wrong.length === 0) {
+                        return true;
+                    }
+
+                    wrong.forEach(function (input) {
+                        markField(input, settingRule(input));
+                    });
+                    var others = wrong.length - 1;
+                    showError(refusedText(el('label[for="' + wrong[0].id + '"]').textContent, settingRule(wrong[0]))
+                        + (others > 0 ? ' Also marked: ' + others + (others === 1 ? ' more field.' : ' more fields.') : ''));
+                    focusField(wrong[0]);
+                    return false;
+                }
+
+                function settingsFailure(error) {
+                    if (!error || !error.status) {
+                        return 'Settings not saved. ' + noAnswer;
+                    }
+
+                    return error.status === 400
+                        ? 'The server refused the settings and gave no reason, so nothing was saved.'
+                        : 'Settings not saved: the server answered with error ' + error.status + '.';
+                }
+
                 function loadSettings() {
+                    settingFields().forEach(clearField);
                     return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                         el('#jmSyncInterval').value = config.SyncIntervalSeconds;
                         el('#jmReconciliationTime').value = config.ReconciliationTime;
@@ -670,6 +866,10 @@
                     syncTimer = null;
                 });
 
+                el('#jmDismiss').addEventListener('click', function () {
+                    showMessage('');
+                });
+
                 el('#jmSyncNow').addEventListener('click', function () {
                     showMessage('');
                     act(api('POST', 'Sync').then(renderSync));
@@ -685,7 +885,6 @@
                         Password: password.value
                     };
                     password.value = '';
-                    showMessage('');
                     act(api('POST', 'Servers', request).then(function (server) {
                         el('#jmAddServerForm').reset();
                         showMessage('Added ' + server.Name + '.');
@@ -695,7 +894,10 @@
 
                 el('#jmSettingsForm').addEventListener('submit', function (e) {
                     e.preventDefault();
-                    showMessage('');
+                    if (!checkSettings()) {
+                        return;
+                    }
+
                     act(ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                         config.SyncIntervalSeconds = parseInt(el('#jmSyncInterval').value, 10);
                         config.ReconciliationTime = el('#jmReconciliationTime').value;
@@ -711,8 +913,8 @@
                     }).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                         return load();
-                    }, function () {
-                        throw new Error('The settings were refused: check that the sync interval is at least 300 seconds, the playback times are in range, the time format, and that the folder is an absolute path.');
+                    }, function (error) {
+                        throw new Error(settingsFailure(error));
                     }));
                 });
             })();
