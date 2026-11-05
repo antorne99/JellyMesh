@@ -154,6 +154,7 @@ for waited in $(seq 10 10 120); do
 done
 echo "slot of the client that left freed after: $freed s"
 check "free again" true "$([ "$freed" != never ] && echo true || echo false)"
+sleep 1
 check "b gave it back, a did not have to expire it" 1 "$(grep -c 'DELETE /JellyMesh/Provider/Streams/.* 204' "$WORK/gate-a.log")"
 close_stream c7
 
@@ -482,15 +483,17 @@ peer_open() {
   peer_get "$variant" "$WORK/hls-variant" >/dev/null
   segment=$(folder_of "$variant")$(grep -v '^#' "$WORK/hls-variant" | head -1)
 }
-# slow_segment: reads the segment slowly, in the background, so that a is writing it. The pid goes to $WORK/reader.
-slow_segment() {
-  curl -sS -o /dev/null --limit-rate 20k -H "Authorization: $peer_auth" "http://127.0.0.1:18410$segment" &
+# hold_session: a request of the play session that stays running, in the background. The pid goes to $WORK/reader. It reads the
+# file itself: a segment is about the size of the buffers of the host, so whether a is still writing one when the client drops is
+# luck, and a stream a has finished sending shows no dropped connection. To the provider it is a request of that session.
+hold_session() {
+  curl -sS -o /dev/null --limit-rate 20k -H "Authorization: $peer_auth" \
+    "http://127.0.0.1:18410/Videos/$long_on_a/stream?static=true&MediaSourceId=$long_on_a&PlaySessionId=$session" &
   echo $! >"$WORK/reader"
 }
 
 # What ends a transcode is on the provider, so the peer talks to it with nothing in between: through a gate and b the drop reaches
-# a late or not at all, and the drop through b is the case of the direct play above. A segment takes a minute of video, about 8 MB:
-# with less, the buffers of the host hold all of it, a has finished writing, and there is no dropped connection to see.
+# a late or not at all, and the drop through b is the case of the direct play above.
 long_on_a=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | contains("JM Lungo"))][0].Id')
 
 echo "--- a stream that drops its connection: its ffmpeg goes when the grace ends, and no two overlap at limit 1"
@@ -499,7 +502,7 @@ check "open" 200 "$opened"
 check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
 first_ffmpeg=$(ffmpeg_pids)
 check "its ffmpeg is running" true "$([ -n "$first_ffmpeg" ] && echo true || echo false)"
-slow_segment
+hold_session
 sleep 2
 rm -f "$WORK/stop-sampling" "$WORK/ffmpeg-samples"
 (
@@ -530,12 +533,12 @@ check "never two ffmpeg at once" 1 "$(sort -n "$WORK/ffmpeg-samples" | tail -1)"
 check "the first ffmpeg is gone" false "$(ffmpeg_running "$first_ffmpeg")"
 
 echo "--- a seek within the grace does not touch the transcode"
-slow_segment
+hold_session
 sleep 2
 before=$(ffmpeg_pids)
 check "the second ffmpeg is running" true "$([ -n "$before" ] && echo true || echo false)"
 kill_reader
-slow_segment
+hold_session
 sleep 8
 check "the same ffmpeg goes on past the grace" "$before" "$(ffmpeg_pids)"
 check "and the slot stayed" 1 "$(active_streams)"
