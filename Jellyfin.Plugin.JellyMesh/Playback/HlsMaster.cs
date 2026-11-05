@@ -45,19 +45,18 @@ public static partial class HlsMaster
         ArgumentNullException.ThrowIfNull(master);
 
         var variants = new List<HlsVariant>();
-        var lines = master.Split('\n').Select(line => line.Trim()).ToList();
-        for (var index = 0; index < lines.Count - 1; index++)
+        string[]? pending = null;
+        foreach (var line in master.Split('\n').Select(line => line.Trim()))
         {
-            if (!lines[index].StartsWith("#EXT-X-STREAM-INF", StringComparison.Ordinal))
+            if (line.StartsWith("#EXT-X-STREAM-INF", StringComparison.Ordinal))
             {
-                continue;
+                var codecs = CodecsAttribute().Match(line);
+                pending = codecs.Success ? codecs.Groups[1].Value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) : [];
             }
-
-            var codecs = CodecsAttribute().Match(lines[index]);
-            var uri = lines.Skip(index + 1).FirstOrDefault(line => line.Length > 0 && !line.StartsWith('#'));
-            if (uri is not null)
+            else if (pending is not null && line.Length > 0 && !line.StartsWith('#'))
             {
-                variants.Add(new HlsVariant(uri, codecs.Success ? codecs.Groups[1].Value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) : []));
+                variants.Add(new HlsVariant(line, pending));
+                pending = null;
             }
         }
 

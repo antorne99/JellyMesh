@@ -41,6 +41,9 @@ public static partial class HlsPlaylistRewriter
             if (line.StartsWith('#'))
             {
                 result.Append(UriAttribute().Replace(line, match => "URI=\"" + Replace(match.Groups[1].Value) + "\""));
+
+                // Whatever is left of the line reaches the client as it came. A URI in any other form would not be mapped.
+                failed |= HoldsUri(UriAttribute().Replace(line, string.Empty));
             }
             else if (line.Length > 0)
             {
@@ -52,6 +55,11 @@ public static partial class HlsPlaylistRewriter
 
         var text = result.ToString().TrimEnd('\n') + "\n";
         return failed || secrets.Any(secret => secret.Length > 0 && text.Contains(secret, StringComparison.Ordinal)) ? null : text;
+    }
+
+    private static bool HoldsUri(string text)
+    {
+        return text.Contains("://", StringComparison.Ordinal) || text.Contains("URI=", StringComparison.OrdinalIgnoreCase);
     }
 
     [GeneratedRegex("URI=\"([^\"]+)\"")]

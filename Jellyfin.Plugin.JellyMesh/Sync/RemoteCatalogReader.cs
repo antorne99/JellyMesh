@@ -26,6 +26,19 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     /// </summary>
     public const int MaxItemsPerQuery = 1_000_000;
 
+    /// <summary>
+    /// Most bytes of answers one read of one server may bring into memory, where they stay until it ends. Each page has its
+    /// own limit, and only this stops many pages. An item takes around 10 kB and tens at most, so this holds a library of
+    /// well over 100,000 items: a refused read leaves that server out of the federation, so this errs on the high side.
+    /// </summary>
+    public const long MaxBytesPerRead = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Most pages of the change feed in one read. A provider keeps 100,000 changes and sends 1,000 at a time, so a feed
+    /// that goes on past this will never end.
+    /// </summary>
+    public const int MaxFeedPages = 1000;
+
     private const int MaxReadAttempts = 3;
     private const string MoviesCollection = "movies";
 
@@ -83,7 +96,9 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         ArgumentNullException.ThrowIfNull(server);
 
         var changes = new Dictionary<string, RemoteChange>(StringComparer.Ordinal);
+        var budget = new ReadBudget();
         var position = cursor;
+        var pages = 0;
         RemoteChangePage page;
         do
         {
@@ -99,8 +114,14 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return RemoteResult.Success(new FeedRead(true, page.Cursor, []));
             }
 
-            // A cursor that stands still would never end, and neither would a feed that never stops growing.
-            if ((page.HasMore && page.Cursor == position) || changes.Count + page.Changes.Count > MaxItemsPerQuery)
+            if (!budget.TrySpend(page.ByteCount))
+            {
+                return RemoteResult.Fail<FeedRead>(RemoteFailure.ResponseTooLarge);
+            }
+
+            // A cursor that stands still would never end, and neither would a feed that never stops growing, or one that
+            // keeps moving over the same few items.
+            if ((page.HasMore && page.Cursor == position) || ++pages > MaxFeedPages || changes.Count + page.Changes.Count > MaxItemsPerQuery)
             {
                 return RemoteResult.Fail<FeedRead>(RemoteFailure.InvalidResponse);
             }
@@ -114,7 +135,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         while (page.HasMore);
 
         var entries = new Dictionary<string, IndexedItem>(StringComparer.Ordinal);
-        var failure = await ReadChangedItemsAsync(server, changes.Values, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false);
+        var failure = await ReadChangedItemsAsync(server, changes.Values, knownItemIds, entries, budget, seenUtc, cancellationToken).ConfigureAwait(false);
         return failure == RemoteFailure.None
             ? RemoteResult.Success(new FeedRead(false, position, entries.Values.ToList()))
             : RemoteResult.Fail<FeedRead>(failure);
@@ -154,6 +175,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         IEnumerable<RemoteChange> changes,
         IReadOnlySet<string> knownItemIds,
         Dictionary<string, IndexedItem> entries,
+        ReadBudget budget,
         DateTimeOffset seenUtc,
         CancellationToken cancellationToken)
     {
@@ -176,13 +198,18 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                     return page.Failure;
                 }
 
-                Add(entries, page.Value!.Items, group.Key.Type, group.Key.Library!, seenUtc);
+                if (!budget.TrySpend(page.Value!.ByteCount))
+                {
+                    return RemoteFailure.ResponseTooLarge;
+                }
+
+                Add(entries, page.Value.Items, group.Key.Type, group.Key.Library!, seenUtc);
             }
         }
 
         foreach (var library in wanted.Select(change => change.Library!).Distinct(StringComparer.Ordinal))
         {
-            var failure = await AddMissingSeriesAsync(server, library, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false);
+            var failure = await AddMissingSeriesAsync(server, library, knownItemIds, entries, budget, seenUtc, cancellationToken).ConfigureAwait(false);
             if (failure != RemoteFailure.None)
             {
                 return failure;
@@ -219,9 +246,10 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         }
 
         var entries = new Dictionary<string, IndexedItem>(StringComparer.Ordinal);
+        var budget = new ReadBudget();
         foreach (var library in chosen)
         {
-            var failure = await ReadLibraryAsync(server, library, sinceUtc, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false);
+            var failure = await ReadLibraryAsync(server, library, sinceUtc, knownItemIds, entries, budget, seenUtc, cancellationToken).ConfigureAwait(false);
             if (failure != RemoteFailure.None)
             {
                 return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(failure);
@@ -237,6 +265,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         DateTimeOffset? sinceUtc,
         IReadOnlySet<string> knownItemIds,
         Dictionary<string, IndexedItem> entries,
+        ReadBudget budget,
         DateTimeOffset seenUtc,
         CancellationToken cancellationToken)
     {
@@ -246,7 +275,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
         foreach (var type in types)
         {
-            var read = await ReadAllAsync(server, library.Id, type, sinceUtc, cancellationToken).ConfigureAwait(false);
+            var read = await ReadAllAsync(server, library.Id, type, sinceUtc, budget, cancellationToken).ConfigureAwait(false);
             if (!read.IsSuccess)
             {
                 return read.Failure;
@@ -256,7 +285,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         }
 
         return types.Contains(RemoteItemType.Episode)
-            ? await AddMissingSeriesAsync(server, library.Id, knownItemIds, entries, seenUtc, cancellationToken).ConfigureAwait(false)
+            ? await AddMissingSeriesAsync(server, library.Id, knownItemIds, entries, budget, seenUtc, cancellationToken).ConfigureAwait(false)
             : RemoteFailure.None;
     }
 
@@ -267,6 +296,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         string libraryId,
         IReadOnlySet<string> knownItemIds,
         Dictionary<string, IndexedItem> entries,
+        ReadBudget budget,
         DateTimeOffset seenUtc,
         CancellationToken cancellationToken)
     {
@@ -292,7 +322,12 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return page.Failure;
             }
 
-            Add(entries, page.Value!.Items.Take(1).Select(item => item with { Id = id }), RemoteItemType.Series, libraryId, seenUtc);
+            if (!budget.TrySpend(page.Value!.ByteCount))
+            {
+                return RemoteFailure.ResponseTooLarge;
+            }
+
+            Add(entries, page.Value.Items.Take(1).Select(item => item with { Id = id }), RemoteItemType.Series, libraryId, seenUtc);
         }
 
         var unresolved = missing.Count(id => !entries.ContainsKey(id));
@@ -304,12 +339,15 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return RemoteFailure.None;
     }
 
-    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadAllAsync(RemoteServerInfo server, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, CancellationToken cancellationToken)
+    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadAllAsync(RemoteServerInfo server, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, ReadBudget budget, CancellationToken cancellationToken)
     {
+        // A second attempt replaces what the first one read, so it spends the same bytes again.
+        var spent = budget.Spent;
         var read = RemoteResult.Fail<IReadOnlyCollection<RemoteItem>>(RemoteFailure.CatalogChanged);
         for (var attempt = 0; attempt < MaxReadAttempts && read.Failure == RemoteFailure.CatalogChanged; attempt++)
         {
-            read = await ReadPagesAsync(server, libraryId, type, sinceUtc, cancellationToken).ConfigureAwait(false);
+            budget.Spent = spent;
+            read = await ReadPagesAsync(server, libraryId, type, sinceUtc, budget, cancellationToken).ConfigureAwait(false);
         }
 
         return read;
@@ -317,7 +355,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
     // Pages are offsets: an item removed during the read shifts the next ones past the point reached, and one of them
     // would be skipped without a trace. So the read only counts if the total held still and every item was seen.
-    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadPagesAsync(RemoteServerInfo server, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, CancellationToken cancellationToken)
+    private async Task<RemoteResult<IReadOnlyCollection<RemoteItem>>> ReadPagesAsync(RemoteServerInfo server, string libraryId, RemoteItemType type, DateTimeOffset? sinceUtc, ReadBudget budget, CancellationToken cancellationToken)
     {
         var items = new Dictionary<string, RemoteItem>(StringComparer.Ordinal);
         int? total = null;
@@ -342,7 +380,12 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return RemoteResult.Fail<IReadOnlyCollection<RemoteItem>>(page.Failure);
             }
 
-            if (page.Value!.TotalRecordCount > MaxItemsPerQuery)
+            if (!budget.TrySpend(page.Value!.ByteCount))
+            {
+                return RemoteResult.Fail<IReadOnlyCollection<RemoteItem>>(RemoteFailure.ResponseTooLarge);
+            }
+
+            if (page.Value.TotalRecordCount > MaxItemsPerQuery)
             {
                 return RemoteResult.Fail<IReadOnlyCollection<RemoteItem>>(RemoteFailure.InvalidResponse);
             }
@@ -365,5 +408,16 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return items.Count == total
             ? RemoteResult.Success<IReadOnlyCollection<RemoteItem>>(items.Values)
             : RemoteResult.Fail<IReadOnlyCollection<RemoteItem>>(RemoteFailure.CatalogChanged);
+    }
+
+    private sealed class ReadBudget
+    {
+        public long Spent { get; set; }
+
+        public bool TrySpend(long bytes)
+        {
+            Spent += bytes;
+            return Spent <= MaxBytesPerRead;
+        }
     }
 }

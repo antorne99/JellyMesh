@@ -25,6 +25,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// </summary>
     public static readonly TimeSpan ChangeOverlap = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// The longest one server may take in a sync. Servers are read one at a time and a request can last its whole timeout,
+    /// so a remote that answers as slowly as it can would otherwise hold back the others for days. Well over a first read
+    /// of a very large library on a slow server.
+    /// </summary>
+    public static readonly TimeSpan MaxServerRead = TimeSpan.FromHours(4);
+
     private readonly IRemoteServerRegistry _registry;
     private readonly IRemoteCatalogReader _reader;
     private readonly IFederationIndex _index;
@@ -35,6 +42,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
 
+    private TimeSpan _serverReadLimit = MaxServerRead;
     private int _busy;
     private volatile RunState _run = new(false, false, null, null);
 
@@ -64,6 +72,14 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _timeProvider = timeProvider;
         _logger = logger;
         _materializer = materializer;
+    }
+
+    /// <summary>
+    /// Sets the longest one server may take in a sync.
+    /// </summary>
+    internal TimeSpan ServerReadLimit
+    {
+        set => _serverReadLimit = value;
     }
 
     /// <inheritdoc />
@@ -183,11 +199,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             foreach (var server in _registry.GetServers())
             {
-                // With nothing chosen there is nothing to read, and no reason to call the remote at all.
-                var current = server.ImportedLibraryIds.Count == 0
-                    ? server
-                    : await _registry.RefreshCapabilitiesAsync(server.Id, cancellationToken).ConfigureAwait(false) ?? server;
-                await syncServer(current, cancellationToken).ConfigureAwait(false);
+                await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
             }
 
             await MaterializeAsync(cancellationToken).ConfigureAwait(false);
@@ -196,6 +208,31 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
             Interlocked.Exchange(ref _busy, 0);
+        }
+    }
+
+    // What goes wrong with one server stays with it: the others are read, and the materialization still runs.
+    private async Task SyncWithinLimitAsync(RemoteServerInfo server, Func<RemoteServerInfo, CancellationToken, Task> syncServer, CancellationToken cancellationToken)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(_serverReadLimit);
+        try
+        {
+            // With nothing chosen there is nothing to read, and no reason to call the remote at all.
+            var current = server.ImportedLibraryIds.Count == 0
+                ? server
+                : await _registry.RefreshCapabilitiesAsync(server.Id, limit.Token).ConfigureAwait(false) ?? server;
+            await syncServer(current, limit.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            await MarkFailedAsync(server, RemoteFailure.Timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}", server.Name, exception.GetType().Name);
+            await MarkFailedAsync(server, RemoteFailure.InvalidResponse, cancellationToken).ConfigureAwait(false);
         }
     }
 

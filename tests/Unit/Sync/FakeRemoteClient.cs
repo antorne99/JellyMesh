@@ -100,10 +100,14 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         return Task.FromResult(Feed(cursor));
     }
 
-    public Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    /// <summary>Runs before each read of the clock, to make the remote slow.</summary>
+    public Func<int, CancellationToken, Task> BeforeClock { get; set; } = (_, _) => Task.CompletedTask;
+
+    public async Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         ClockReads++;
-        return Task.FromResult(ClockFailure == RemoteFailure.None ? RemoteResult.Success(ServerTime) : RemoteResult.Fail<DateTimeOffset?>(ClockFailure));
+        await BeforeClock(ClockReads, cancellationToken);
+        return ClockFailure == RemoteFailure.None ? RemoteResult.Success(ServerTime) : RemoteResult.Fail<DateTimeOffset?>(ClockFailure);
     }
 
     /// <summary>The images requested, as item/type/index.</summary>

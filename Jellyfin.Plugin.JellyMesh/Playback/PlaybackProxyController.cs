@@ -64,6 +64,7 @@ public class PlaybackProxyController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult> GetMaster([FromRoute] string sessionId, CancellationToken cancellationToken)
     {
         var access = await AuthorizeAsync(sessionId).ConfigureAwait(false);
@@ -72,7 +73,12 @@ public class PlaybackProxyController : ControllerBase
             return NotFound();
         }
 
-        using var request = session.BeginRequest(_clock);
+        using var request = session.TryBeginRequest(_clock);
+        if (request is null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
         return await RelayPlaylistAsync(session, session.UpstreamPath, session.UpstreamFolder(), MasterToFolder, access.Token, cancellationToken).ConfigureAwait(false);
     }
 
@@ -88,6 +94,7 @@ public class PlaybackProxyController : ControllerBase
     [ProducesResponseType(StatusCodes.Status206PartialContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult> GetStream([FromRoute] string sessionId, CancellationToken cancellationToken)
     {
         var access = await AuthorizeAsync(sessionId).ConfigureAwait(false);
@@ -96,7 +103,12 @@ public class PlaybackProxyController : ControllerBase
             return NotFound();
         }
 
-        using var request = session.BeginRequest(_clock);
+        using var request = session.TryBeginRequest(_clock);
+        if (request is null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
         return await RelayStreamAsync(session, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
     }
 
@@ -113,6 +125,7 @@ public class PlaybackProxyController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult> GetFile([FromRoute] string sessionId, [FromRoute] int folder, [FromRoute] string file, CancellationToken cancellationToken)
     {
         var access = await AuthorizeAsync(sessionId).ConfigureAwait(false);
@@ -129,7 +142,12 @@ public class PlaybackProxyController : ControllerBase
             return NotFound();
         }
 
-        using var request = session.BeginRequest(_clock);
+        using var request = session.TryBeginRequest(_clock);
+        if (request is null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
         if (file.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
         {
             return await RelayPlaylistAsync(session, upstream, FolderOf(upstream), FolderToFolder, access.Token, cancellationToken).ConfigureAwait(false);
@@ -182,7 +200,7 @@ public class PlaybackProxyController : ControllerBase
         }
 
         using var stream = opened.Value!;
-        await StreamRelay.CopyAsync(stream, HttpContext, cancellationToken).ConfigureAwait(false);
+        await StreamRelay.CopyAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false);
         return new EmptyResult();
     }
 

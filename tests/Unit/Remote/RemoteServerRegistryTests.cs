@@ -208,6 +208,39 @@ public class RemoteServerRegistryTests
     }
 
     [Fact]
+    public async Task AClosedRouteCostsNoLogin()
+    {
+        var handler = new StubHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/AuthenticateByName" => StubHandler.Json(TestValues.LoginJson),
+            "/UserViews" or "/JellyMesh/Provider/Libraries" => StubHandler.Status(HttpStatusCode.Forbidden),
+            _ when request.RequestUri.AbsolutePath.EndsWith("/PlaybackInfo", StringComparison.Ordinal) => StubHandler.Status(HttpStatusCode.Forbidden),
+            _ when request.RequestUri.AbsolutePath.EndsWith(".m3u8", StringComparison.Ordinal) => StubHandler.Status(HttpStatusCode.Forbidden),
+            _ => StubHandler.Status(HttpStatusCode.NotFound)
+        });
+        using var fixture = new RegistryFixture(handler);
+        var server = await fixture.AddServerAsync();
+        handler.Requests.Clear();
+        var playback = new RemotePlaybackClient(new StubHttpClientFactory(handler));
+
+        var libraries = await fixture.Registry.GetLibrariesAsync(server.Id, CancellationToken.None);
+        var playlist = await fixture.Registry.RunWithSessionAsync(
+            server.Id,
+            (endpoint, session, token) => playback.ReadPlaylistAsync(endpoint, session, "/x.m3u8", token),
+            CancellationToken.None);
+        var info = await fixture.Registry.RunWithSessionAsync(
+            server.Id,
+            (endpoint, session, token) => playback.GetPlaybackInfoAsync(endpoint, session, new RemotePlaybackRequest { ItemId = "i", MediaSourceId = "m" }, token),
+            CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.Forbidden, libraries.Failure);
+        Assert.Equal(RemoteFailure.Forbidden, playlist.Failure);
+        Assert.Equal(RemoteFailure.Forbidden, info.Failure);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.DoesNotContain(handler.Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+    }
+
+    [Fact]
     public async Task ATokenRefusedTwiceStopsThere()
     {
         using var fixture = new RegistryFixture();
