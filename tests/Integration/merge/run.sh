@@ -115,6 +115,7 @@ check "the survivor keeps all the watch state" '{"Played":true,"PlayCount":1,"Fa
 due2=$(film_by_path fresh "JM Catena Due (2026)")
 tre2=$(film_by_path fresh "JM Catena Tre (2026)")
 echo "separated copies: Due $due -> $due2 $(state fresh "$due2"), Tre $tre -> $tre2 $(state fresh "$tre2")"
+# Jellyfin's doing: the stub is back on its old path, so it is the same item and the rows left under the placeholder return.
 check "the separated copies keep their state from before the merge" '{"Played":true,"PlayCount":1,"Favorite":false} {"Played":false,"PlayCount":0,"Favorite":true}' "$(state fresh "$due2") $(state fresh "$tre2")"
 check "the chain is listed again" 3 "$(list fresh | jq '[.Cases[].Titles[].Copies[] | select(.Copy.Title | startswith("JM Catena"))] | length')"
 
