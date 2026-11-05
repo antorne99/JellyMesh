@@ -35,6 +35,12 @@ ADD_SUBMIT = "#jmAddServer"
 SETTINGS_FORM = "#jmSettingsForm"
 FOLDER_INFO = "#jmFolderInfo"
 LOADING = ".docspinner.mdlSpinnerActive"
+CONFIRM = ".dialogContainer .dialog"
+CONFIRM_TITLE = CONFIRM + " .formDialogHeaderTitle"
+CONFIRM_TEXT = CONFIRM + " .text"
+CONFIRM_MARKUP = CONFIRM_TEXT + " b, " + CONFIRM_TEXT + " i"
+CONFIRM_OK = CONFIRM + " [data-id=ok]"
+CONFIRM_CANCEL = CONFIRM + " [data-id=cancel]"
 CHECKBOX = "input[type=checkbox]"
 NUMBER = "input[type=number]"
 SAVE_SETTINGS = "#jmSettingsForm button[type=submit]"
@@ -56,6 +62,7 @@ BUTTON = {
     "test": "Test connection",
     "libraries": "Libraries",
     "remove": "Remove",
+    "disconnect": "Disconnect",
     "save_libraries": "Save libraries",
     "merge": "Merge selected",
     "undo": "Undo merge",
@@ -149,7 +156,7 @@ class Session:
         page = context.new_page()
         page.errors = []
         page.on("pageerror", lambda error: page.errors.append(str(error)))
-        page.on("dialog", lambda dialog: dialog.accept())
+        page.on("dialog", lambda dialog: (page.errors.append("browser dialog: " + dialog.message), dialog.dismiss()))
         page.goto(f"{target['base']}/web/index.html#/configurationpage?name=JellyMesh")
         if wait:
             wait_loaded(page)
@@ -232,6 +239,25 @@ def focused(page):
     return page.evaluate("document.activeElement.id")
 
 
-def shot(page, name):
-    """Captures the whole page."""
-    page.screenshot(path=os.path.join(SHOTS, name + ".png"), full_page=True)
+def wait_confirm(page):
+    """Waits for the confirmation dialog of Jellyfin to take the focus, and returns its title and its text as shown."""
+    page.wait_for_selector(CONFIRM + " :focus", state="attached", timeout=15000)
+    return page.locator(CONFIRM_TITLE).inner_text(), page.locator(CONFIRM_TEXT).inner_text()
+
+
+def confirm_starts_on_cancel(page):
+    """Tells whether the confirmation dialog has its focus on Cancel."""
+    return page.evaluate("s => document.activeElement === document.querySelector(s)", CONFIRM_CANCEL)
+
+
+def answer_confirm(page, accept):
+    """Answers the confirmation dialog and waits until it has gone and the page has finished reacting."""
+    page.wait_for_selector(CONFIRM_OK, state="visible", timeout=15000)
+    page.locator(CONFIRM_OK if accept else CONFIRM_CANCEL).click()
+    page.wait_for_selector(CONFIRM, state="detached", timeout=15000)
+    wait_idle(page)
+
+
+def shot(page, name, full_page=True):
+    """Captures the whole page, or only what the screen shows."""
+    page.screenshot(path=os.path.join(SHOTS, name + ".png"), full_page=full_page)

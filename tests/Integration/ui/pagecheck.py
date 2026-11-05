@@ -12,6 +12,8 @@ WIDTHS = list(u.VIEWPORTS)
 UNREACHABLE = "http://127.0.0.1:1"
 PAIR = "JM Sonda Mobile"
 CHAIN = "JM Catena Uno"
+HOSTILE = "<b>x</b>"
+HOSTILE_PEER = "<i>y</i>"
 
 
 def check(name, passed, detail=""):
@@ -303,6 +305,7 @@ def actions(s, width):
     u.shot(page, f"merged-{width}")
     u.clear_message(page)
     u.button(page.locator(u.MERGE), "undo").click()
+    u.answer_confirm(page, True)
     page.wait_for_selector(u.MERGE_CASE + f":has-text('{PAIR}')", state="attached", timeout=30000)
     check(name + " an undo brings the case back", u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]["Merges"] == [])
 
@@ -556,6 +559,115 @@ def outcome_themes(s, width):
     u.set_theme("fresh", "dark")
 
 
+def confirm_shows(page, name, title, says, viewport):
+    """Checks what a confirmation dialog says, that Cancel is the safe default, and that it fits the screen."""
+    shown_title, shown_text = u.wait_confirm(page)
+    check(name + " has the title", shown_title == title, shown_title)
+    for words in says:
+        check(f"{name} says: {words}", words in shown_text, shown_text)
+    check(name + " renders no markup from a name", page.locator(u.CONFIRM_MARKUP).count() == 0)
+    check(name + " starts on Cancel", u.confirm_starts_on_cancel(page))
+    box = page.locator(u.CONFIRM).bounding_box()
+    check(name + " fits the screen", box["x"] >= 0 and box["x"] + box["width"] <= viewport["width"]
+          and box["y"] >= 0 and box["y"] + box["height"] <= viewport["height"], box)
+
+
+def confirm_keeps(page, name, stays):
+    """Cancels a confirmation dialog and checks that nothing happened."""
+    u.answer_confirm(page, False)
+    check(name + " Cancel changes nothing", stays())
+
+
+def hostile_peer(context):
+    """Gives the connected servers a name that would be markup if it were not escaped."""
+    def rename(route):
+        answer = route.fetch()
+        route.fulfill(response=answer, json=[dict(peer, UserName=HOSTILE_PEER) for peer in answer.json()])
+
+    context.route("**/JellyMesh/Admin/Peers", rename)
+
+
+def confirms(s, width):
+    """The destructive actions ask first, say what happens, and do it only when confirmed."""
+    name = width + " confirm"
+    viewport = u.VIEWPORTS[width]
+    status = lambda: u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]["Servers"]
+    peers = lambda: u.api("fresh", "GET", "/JellyMesh/Admin/Peers")[1]
+    merges = lambda: u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
+    stock = next(server for server in status() if server["Name"] == "stock")
+    added = u.api("fresh", "POST", "/JellyMesh/Admin/Servers", {
+        "Name": HOSTILE, "Url": stock["Url"], "Username": "jellymesh", "Password": "jellymesh-test"})
+    check(name + " has a remote to remove", added[0] == 200, added)
+    friend = next(user for user in u.api("fresh", "GET", "/Users")[1] if user["Name"] == "friend")
+    library = u.api("fresh", "GET", "/JellyMesh/Admin/Peers/Options")[1]["Libraries"][0]["Id"]
+    u.api("fresh", "PUT", "/JellyMesh/Admin/Peers/" + friend["Id"], {"SharedLibraryIds": [library], "MaxStreams": 1})
+    case = next(group for group in merges()["Cases"] if PAIR in str(group))
+    u.api("fresh", "POST", "/JellyMesh/Admin/Merges", {"WorkKeys": [title["WorkKey"] for title in case["Titles"]]})
+    page = s.open("fresh", width)
+    count = len(status())
+
+    remove = u.button(u.server_row(page, HOSTILE), "remove")
+    remove.click()
+    confirm_shows(page, name + " remove", "Remove this server?", [
+        HOSTILE + " and its stored login leave JellyMesh now", "login is not revoked", "do not play", "next sync",
+        "does not start a sync", "without this backup", "Doubtful films", "may not stop right away", "same titles and watch state"], viewport)
+    u.shot(page, f"confirm-remove-{width}", full_page=False)
+    confirm_keeps(page, name + " remove", lambda: len(status()) == count and u.server_row(page, HOSTILE).count() == 1)
+    remove.click()
+    u.answer_confirm(page, True)
+    check(name + " remove acts", until(page, lambda: len(status()) == count - 1 and u.server_row(page, HOSTILE).count() == 0))
+    check(name + " remove leaves the others", u.server_row(page, "stock").count() == 1 and u.server_row(page, "peer").count() == 1)
+
+    row = u.peer_row(page, "friend")
+    check(name + " one word for a connected server", u.button(row, "disconnect").count() == 1 and u.button(row, "remove").count() == 0)
+    u.button(row, "disconnect").click()
+    confirm_shows(page, name + " disconnect", "Disconnect this server?", [
+        "friend stops being a connected server now", "streams here are closed", "can still log in", "standard mode", "no stream limit",
+        "Dashboard > Users"], viewport)
+    u.shot(page, f"confirm-disconnect-{width}", full_page=False)
+    held = len(peers())
+    confirm_keeps(page, name + " disconnect", lambda: len(peers()) == held)
+    u.button(u.peer_row(page, "friend"), "disconnect").click()
+    u.answer_confirm(page, True)
+    check(name + " disconnect acts", until(page, lambda: len(peers()) == held - 1 and u.peer_row(page, "friend").count() == 0))
+    check(name + " disconnect keeps the user", any(user["Name"] == "friend" for user in u.api("fresh", "GET", "/Users")[1]))
+
+    u.button(page.locator(u.MERGE), "undo").click()
+    confirm_shows(page, name + " undo", "Undo this merge?", ["separate titles again", "keeps its watch state", "Local files are not changed"], viewport)
+    u.shot(page, f"confirm-undo-{width}", full_page=False)
+    confirm_keeps(page, name + " undo", lambda: len(merges()["Merges"]) == 1)
+    u.button(page.locator(u.MERGE), "undo").click()
+    u.answer_confirm(page, True)
+    check(name + " undo acts", until(page, lambda: merges()["Merges"] == [] and page.locator(u.MERGE).count() == 0))
+    healthy(page, name)
+    page.context.close()
+
+    page = s.open("fresh", width, route=hostile_peer)
+    u.button(u.peer_row(page, HOSTILE_PEER), "disconnect").click()
+    shown = u.wait_confirm(page)[1]
+    check(name + " a user name shows as text", HOSTILE_PEER + " stops being" in shown, shown)
+    check(name + " a user name renders no markup", page.locator(u.CONFIRM_MARKUP).count() == 0)
+    confirm_keeps(page, name + " a hostile name", lambda: len(peers()) == held - 1)
+    healthy(page, name)
+    page.context.close()
+
+
+def confirm_keyboard(s, width):
+    """A confirmation can be opened and refused from the keyboard alone."""
+    name = width + " confirm keyboard"
+    page = s.open("fresh", width)
+    remove = u.button(u.server_row(page, "stock"), "remove")
+    remove.focus()
+    page.keyboard.press("Enter")
+    u.wait_confirm(page)
+    page.keyboard.press("Enter")
+    page.wait_for_selector(u.CONFIRM, state="detached", timeout=15000)
+    servers = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]["Servers"]
+    check(name + " Enter on the first focus cancels", u.server_row(page, "stock").count() == 1 and len(servers) == 2, servers)
+    healthy(page, name)
+    page.context.close()
+
+
 SCENARIOS = {
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
@@ -565,6 +677,8 @@ SCENARIOS = {
     "keyboard": (keyboard, WIDTHS),
     "themes": (themes, WIDTHS),
     "actions": (actions, ["1280"]),
+    "confirms": (confirms, WIDTHS),
+    "confirm-keyboard": (confirm_keyboard, WIDTHS),
     "offline": (offline, WIDTHS),
     "nokey": (nokey, WIDTHS),
     "outcomes": (outcomes, WIDTHS),
