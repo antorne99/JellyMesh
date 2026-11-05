@@ -165,12 +165,15 @@ public class ProviderCatalogTests
     public void No_file_path_reaches_a_peer()
     {
         var dto = ProviderFixture.DtoWith("ms", new MediaStream { Type = MediaStreamType.Subtitle, Path = "/media/secret.srt" });
+        dto.Chapters = [new ChapterInfo { Name = "Intro", ImagePath = "/config/metadata/secret.jpg" }];
         _fixture.WithDtos(dto);
 
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
 
         Assert.Null(dto.MediaSources[0].Path);
         Assert.Null(dto.MediaSources[0].MediaStreams[0].Path);
+        Assert.Null(dto.Chapters[0].ImagePath);
+        Assert.Equal("Intro", dto.Chapters[0].Name);
     }
 }
 

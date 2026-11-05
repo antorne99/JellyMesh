@@ -140,4 +140,93 @@ public class HlsRewritingTests
     {
         Assert.True(HlsMaster.IsPlayable(new HlsVariant("main.m3u8", ["hvc1.2.4.L153.B0"]), null));
     }
+
+    [Theory]
+    [InlineData("#EXT-X-MAP:URI=http://evil.example/init.mp4")]
+    [InlineData("#EXT-X-MAP:URI='http://evil.example/init.mp4'")]
+    [InlineData("#EXT-X-KEY:METHOD=AES-128,uri=\"http://evil.example/key\"")]
+    [InlineData("#EXT-X-KEY:METHOD=AES-128,URI=\"http://evil.example/key\"")]
+    [InlineData("#EXT-X-MEDIA:TYPE=SUBTITLES,URI=\"//evil.example/subs.m3u8\"")]
+    [InlineData("#EXT-X-SESSION-DATA:DATA-ID=\"x\",VALUE=\"https://evil.example\"")]
+    [InlineData("#EXT-X-I-FRAME-STREAM-INF:URI=\"/rooted/iframes.m3u8\"")]
+    [InlineData("http://evil.example/0.ts")]
+    [InlineData("//evil.example/0.ts")]
+    [InlineData("../../0.ts")]
+    public void A_playlist_that_points_anywhere_else_is_refused_whole(string poison)
+    {
+        var text = HlsPlaylistRewriter.Rewrite("#EXTM3U\n" + poison + "\n", PlaybackValues.Session(), Folder, "f/", PlaybackValues.LocalToken, _secrets);
+
+        Assert.Null(text);
+    }
+
+    [Fact]
+    public void A_value_a_client_would_see_must_be_a_plain_one()
+    {
+        var text = Rewrite(PlaybackValues.Session(), "#EXTM3U\n0.ts?runtimeTicks=http%3A%2F%2Fevil.example&SegmentLength=3\n");
+
+        Assert.DoesNotContain("evil", text, StringComparison.Ordinal);
+        Assert.Contains("SegmentLength=3&ApiKey=", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_remote_that_makes_up_new_folders_cannot_grow_a_session_without_end()
+    {
+        var session = PlaybackValues.Session();
+        var refused = 0;
+        for (var folder = 0; folder < PlaybackLimits.FoldersPerSession + 10; folder++)
+        {
+            refused += session.MapRelativeUri("a" + folder + "/0.ts", Folder, "f/", PlaybackValues.LocalToken) is null ? 1 : 0;
+        }
+
+        Assert.Equal(10, refused);
+        Assert.NotNull(session.MapRelativeUri("a0/1.ts", Folder, "f/", PlaybackValues.LocalToken));
+    }
+
+    [Fact]
+    public void A_remote_that_makes_up_new_file_names_cannot_grow_a_session_without_end()
+    {
+        var session = PlaybackValues.Session();
+        var refused = 0;
+        for (var file = 0; file < PlaybackLimits.FileShapesPerSession + 10; file++)
+        {
+            refused += session.MapRelativeUri("name" + file + ".ts", Folder, "f/", PlaybackValues.LocalToken) is null ? 1 : 0;
+        }
+
+        Assert.Equal(10, refused);
+    }
+
+    [Fact]
+    public void Numbered_segments_of_a_long_film_stay_one_entry()
+    {
+        var session = PlaybackValues.Session();
+
+        for (var segment = 0; segment < PlaybackLimits.FileShapesPerSession * 2; segment++)
+        {
+            Assert.NotNull(session.MapRelativeUri("hls1/main/" + segment + ".ts?runtimeTicks=0", Folder, "f/", PlaybackValues.LocalToken));
+        }
+    }
+
+    [Fact]
+    public void A_master_full_of_empty_variants_is_read_in_linear_time()
+    {
+        var master = string.Concat(Enumerable.Repeat("#EXT-X-STREAM-INF:BANDWIDTH=1\n", 200_000));
+
+        var variants = HlsMaster.ReadVariants(master);
+
+        Assert.Empty(variants);
+    }
+
+    [Fact]
+    public void A_session_refuses_requests_over_its_limit_and_takes_them_again_after()
+    {
+        var session = PlaybackValues.Session();
+        var running = Enumerable.Range(0, PlaybackLimits.RequestsPerSession).Select(_ => session.TryBeginRequest(TimeProvider.System)).ToList();
+
+        Assert.All(running, Assert.NotNull);
+        Assert.Null(session.TryBeginRequest(TimeProvider.System));
+
+        running[0]!.Dispose();
+
+        Assert.NotNull(session.TryBeginRequest(TimeProvider.System));
+    }
 }

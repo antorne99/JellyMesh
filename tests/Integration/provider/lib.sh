@@ -15,6 +15,7 @@ INCREMENTAL_TASK="JellyMesh incremental sync"
 RECONCILE_TASK="JellyMesh reconciliation"
 LIMIT_TEXT="Limite di stream raggiunto sul server di origine. Riprova più tardi."
 OFFLINE_TEXT="Server non raggiungibile"
+FAILED_TEXT="Riproduzione non disponibile al momento. Riprova più tardi."
 PROFILE_DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 PROFILE_HLS='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 mkdir -p "$WORK"

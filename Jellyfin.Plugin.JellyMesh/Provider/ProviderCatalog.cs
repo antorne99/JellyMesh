@@ -228,6 +228,12 @@ public sealed class ProviderCatalog
             }
         }
 
+        // The file of a chapter image is a path of this server too.
+        foreach (var chapter in dtos.SelectMany(dto => dto.Chapters ?? []))
+        {
+            chapter.ImagePath = null;
+        }
+
         return new ProviderItemsResponse(dtos, total, quality);
     }
 

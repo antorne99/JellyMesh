@@ -80,12 +80,12 @@ check "one source at its limit" 503 "$(cat "$WORK/during-c3")"
 check "the limit message" "$LIMIT_TEXT" "$message"
 check "the file was not tried: it would count too" 0 "$(grep -c '/stream' "$WORK/gate-a.log")"
 
-echo "--- one source at its limit, the other offline: the real cause is the offline one"
+echo "--- one source at its limit, the other offline: a server answered, so not the offline text (decision 17)"
 gate_mode stock down
 mixed_open() { open_stream c4 "$tears" "$PROFILE_DIRECT"; }
 message=$(message_during c4 8 mixed_open)
 check "nothing can serve it" 503 "$(cat "$WORK/during-c4")"
-check "the offline message" "$OFFLINE_TEXT" "$message"
+check "the message of a server that answered" "$FAILED_TEXT" "$message"
 gate_mode stock up
 
 echo "--- one source at its limit, the other cannot transcode: the local fallback"

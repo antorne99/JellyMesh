@@ -177,6 +177,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.Unreachable => "The server cannot be reached.",
             RemoteFailure.Timeout => "The server did not answer in time.",
             RemoteFailure.AuthenticationFailed => "The server refused the login.",
+            RemoteFailure.Forbidden => "The server does not allow this for the dedicated user.",
             RemoteFailure.AdministratorAccount => "This account is an administrator. Use a dedicated non-admin user.",
             RemoteFailure.RedirectRefused => "The server redirected somewhere that is not followed. Check the URL.",
             RemoteFailure.ServerError => "The server answered with an error.",

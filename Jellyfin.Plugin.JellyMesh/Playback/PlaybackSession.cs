@@ -109,6 +109,27 @@ public sealed partial class PlaybackSession
     }
 
     /// <summary>
+    /// Records a request, unless this session already has <see cref="PlaybackLimits.RequestsPerSession"/> running. Dispose
+    /// the result when it ends.
+    /// </summary>
+    /// <param name="clock">The clock.</param>
+    /// <returns>The end of the request, null if there are too many.</returns>
+    public IDisposable? TryBeginRequest(TimeProvider clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+
+        if (Interlocked.Increment(ref _activeRequests) > PlaybackLimits.RequestsPerSession)
+        {
+            Interlocked.Decrement(ref _activeRequests);
+            return null;
+        }
+
+        Interlocked.Exchange(ref _lastRequestTicks, clock.GetUtcNow().UtcTicks);
+        Interlocked.Exchange(ref _parked, 0);
+        return new RequestScope(this, clock);
+    }
+
+    /// <summary>
     /// Marks the transcode as closed by the sweeper. The session stays: a later request restarts ffmpeg on the remote.
     /// </summary>
     /// <returns>Whether this call parked it.</returns>
@@ -199,11 +220,25 @@ public sealed partial class PlaybackSession
         return file.Length > 0 && file != "." && file != ".." && file.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_');
     }
 
+    // The timing parameters are numbers and flags, and this is what a remote can get into a URL a client receives.
+    private static bool IsPlainValue(string pair)
+    {
+        return pair.All(character => char.IsAsciiLetterOrDigit(character) || character is '=' or '.' or '-');
+    }
+
     private static string ShapeOf(int folder, string file)
     {
         // jellyfin-web asks for an external subtitle in its own format: Stream.js for a Stream.vtt it was given.
         var shape = file.StartsWith("Stream.", StringComparison.OrdinalIgnoreCase) ? "Stream" : NumberedFile().Replace(file, "N.");
         return string.Create(CultureInfo.InvariantCulture, $"{folder}/{shape}");
+    }
+
+    // What a remote playlist can make this session remember. Numbered segments share one entry, so a film needs a handful
+    // of them, and a remote that makes up new names at every read would otherwise grow this without end.
+    private bool HasRoomFor(string folder, string file)
+    {
+        return (_folderIndexes.ContainsKey(folder) || _folderIndexes.Count < PlaybackLimits.FoldersPerSession)
+            && _queries.Count < PlaybackLimits.FileShapesPerSession;
     }
 
     private string? Map(string uri, string remoteFolder, string prefix, string localToken)
@@ -226,7 +261,7 @@ public sealed partial class PlaybackSession
 
         var folder = full[..(slash + 1)];
         var file = full[(slash + 1)..];
-        if (!IsSafeFileName(file))
+        if (!IsSafeFileName(file) || !HasRoomFor(folder, file))
         {
             return null;
         }
@@ -252,7 +287,7 @@ public sealed partial class PlaybackSession
                 continue;
             }
 
-            if (_clientParameters.Contains(name))
+            if (_clientParameters.Contains(name) && IsPlainValue(pair))
             {
                 client.Append(pair).Append('&');
             }

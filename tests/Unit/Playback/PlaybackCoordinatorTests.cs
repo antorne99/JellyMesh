@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Dlna;
@@ -479,5 +480,252 @@ public class PlaybackCoordinatorTests
         var content = await fixture.Coordinator.OpenFileAsync(PlaybackValues.Stub(source), System.Net.Http.HttpMethod.Get, null, CancellationToken.None);
 
         Assert.Null(content);
+    }
+
+    private static PlaybackIdentity OtherDevice(int device) => new(PlaybackValues.Identity().UserId, "device-" + device, Guid.NewGuid(), "stub");
+
+    private static PlaybackOpenRequest OpenRequest(PlaybackIdentity identity, StubEntry stub) => new()
+    {
+        Identity = identity,
+        Stub = stub,
+        LocalToken = PlaybackValues.LocalToken
+    };
+
+    [Theory]
+    [InlineData("http://evil.example/master.m3u8")]
+    [InlineData("//evil.example/master.m3u8")]
+    public async Task A_transcoding_url_of_another_host_is_a_source_that_cannot_serve(string url)
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            answer.Value!.MediaSources[0].TranscodingUrl = url;
+            return Task.FromResult(answer);
+        };
+        fixture.Client.Playlists = path => RemoteUrl.TryCombine(new Uri("http://friend/"), path, out _) ? RemoteFailure.None : RemoteFailure.InvalidResponse;
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        Assert.NotEqual(PlaybackOutcomeKind.Remote, outcome.Kind);
+        Assert.Empty(fixture.Sessions.All);
+    }
+
+    [Fact]
+    public async Task A_container_name_of_a_remote_never_reaches_a_client_url_as_it_is()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Direct(request);
+            answer.Value!.MediaSources[0].TranscodingContainer = "mp4?x=http://evil.example/";
+            return Task.FromResult(answer);
+        };
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+
+        Assert.DoesNotContain("evil", outcome.Response!.MediaSources[0].TranscodingUrl, StringComparison.Ordinal);
+        Assert.DoesNotContain("evil", outcome.Response.MediaSources[0].TranscodingContainer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Calls_over_the_limit_of_a_server_wait_and_then_count_as_busy_not_offline()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        var held = new TaskCompletionSource();
+        var arrived = 0;
+        fixture.Client.Open = async (_, token) =>
+        {
+            Interlocked.Increment(ref arrived);
+            await held.Task.WaitAsync(token);
+            return FakePlaybackClient.Bytes();
+        };
+        var request = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+
+        var calls = Enumerable.Range(0, PlaybackLimits.CallsPerServer)
+            .Select(_ => Task.Run(() => fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None)))
+            .ToList();
+        while (Volatile.Read(ref arrived) < PlaybackLimits.CallsPerServer)
+        {
+            await Task.Delay(10);
+        }
+
+        var busy = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None)));
+
+        Assert.Equal(PlaybackLimits.CallsPerServer, Volatile.Read(ref arrived));
+        Assert.All(busy, result => Assert.Equal(RemoteFailure.Busy, result.Failure));
+
+        held.SetResult();
+        foreach (var result in await Task.WhenAll(calls))
+        {
+            result.Value?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Stops_and_renewals_do_not_queue_behind_what_clients_opened()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(fixture.Sessions.All);
+        var held = new TaskCompletionSource();
+        fixture.Client.Open = async (_, token) =>
+        {
+            await held.Task.WaitAsync(token);
+            return FakePlaybackClient.Bytes();
+        };
+        var request = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+        var calls = Enumerable.Range(0, PlaybackLimits.CallsPerServer)
+            .Select(_ => Task.Run(() => fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None)))
+            .ToList();
+
+        await fixture.Coordinator.CloseAsync(session.Id).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.NotEmpty(fixture.Client.Stopped);
+        held.SetResult();
+        await Task.WhenAll(calls);
+    }
+
+    [Fact]
+    public async Task Streams_over_the_limit_of_a_server_are_refused_until_one_ends()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        var request = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+        var open = new System.Collections.Generic.List<RemoteContent>();
+        for (var stream = 0; stream < PlaybackLimits.StreamsPerServer; stream++)
+        {
+            var opened = await fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None);
+            open.Add(opened.Value!);
+        }
+
+        var refused = await fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None);
+        Assert.Equal(RemoteFailure.Busy, refused.Failure);
+
+        open[0].Dispose();
+        open[0].Dispose();
+
+        var next = await fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None);
+        Assert.True(next.IsSuccess);
+        var again = await fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None);
+        Assert.Equal(RemoteFailure.Busy, again.Failure);
+    }
+
+    [Fact]
+    public async Task A_stream_that_fails_to_open_gives_its_place_back()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.ServerError));
+        var request = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+
+        for (var attempt = 0; attempt < PlaybackLimits.StreamsPerServer * 2; attempt++)
+        {
+            var result = await fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None);
+            Assert.Equal(RemoteFailure.ServerError, result.Failure);
+        }
+    }
+
+    [Fact]
+    public async Task A_busy_server_is_not_called_offline()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        var request = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+        fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError));
+        for (var stream = 0; stream < PlaybackLimits.StreamsPerServer; stream++)
+        {
+            await fixture.Coordinator.OpenAsync(source.ServerId, request, CancellationToken.None);
+        }
+
+        var outcome = await fixture.OpenAsync(PlaybackValues.Stub(source));
+
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+        Assert.True(outcome.AnyReachable);
+        Assert.Equal(PlaybackRefusal.FailedText, PlaybackRefusal.TextOf(outcome));
+    }
+
+    [Fact]
+    public async Task A_client_inventing_devices_cannot_open_sessions_without_end()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+
+        for (var device = 0; device < PlaybackLimits.SessionsPerUser + 5; device++)
+        {
+            fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+            await fixture.Coordinator.OpenAsync(OpenRequest(OtherDevice(device), stub), CancellationToken.None);
+        }
+
+        Assert.Equal(PlaybackLimits.SessionsPerUser, fixture.Sessions.All.Count);
+        Assert.Equal(5, fixture.Client.Stopped.Count);
+        Assert.DoesNotContain(fixture.Sessions.All, session => session.Identity.DeviceId == "device-0");
+        Assert.Contains(fixture.Sessions.All, session => session.Identity.DeviceId == "device-" + (PlaybackLimits.SessionsPerUser + 4));
+    }
+
+    [Fact]
+    public async Task With_every_session_in_use_a_new_playback_is_refused_and_none_is_cut()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        var running = new System.Collections.Generic.List<IDisposable>();
+        for (var device = 0; device < PlaybackLimits.SessionsPerUser; device++)
+        {
+            await fixture.Coordinator.OpenAsync(OpenRequest(OtherDevice(device), stub), CancellationToken.None);
+        }
+
+        running.AddRange(fixture.Sessions.All.Select(session => session.BeginRequest(fixture.Clock)));
+
+        var outcome = await fixture.Coordinator.OpenAsync(OpenRequest(OtherDevice(99), stub), CancellationToken.None);
+
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+        Assert.Equal(PlaybackRefusal.FailedText, PlaybackRefusal.TextOf(outcome));
+        Assert.Equal(PlaybackLimits.SessionsPerUser, fixture.Sessions.All.Count);
+        Assert.Empty(fixture.Client.Stopped);
+        running.ForEach(request => request.Dispose());
+    }
+
+    [Fact]
+    public async Task Sessions_of_other_users_are_not_touched()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        var other = new PlaybackIdentity(Guid.NewGuid(), "their-device", Guid.NewGuid(), "stub");
+        await fixture.Coordinator.OpenAsync(OpenRequest(other, stub), CancellationToken.None);
+
+        for (var device = 0; device < PlaybackLimits.SessionsPerUser + 1; device++)
+        {
+            fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+            await fixture.Coordinator.OpenAsync(OpenRequest(OtherDevice(device), stub), CancellationToken.None);
+        }
+
+        Assert.Contains(fixture.Sessions.All, session => session.Identity == other);
+    }
+
+    [Fact]
+    public async Task The_stall_limit_is_the_idle_time_of_decision_17()
+    {
+        var fixture = new CoordinatorFixture();
+        fixture.Store.Configuration.PlaybackIdleSeconds = 42;
+
+        Assert.Equal(TimeSpan.FromSeconds(42), fixture.Coordinator.StallLimit);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task What_a_remote_says_about_its_hardware_is_no_line_of_the_log()
+    {
+        var logger = new CapturingLogger<PlaybackCoordinator>();
+        var fixture = new CoordinatorFixture();
+        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, fixture.Store, fixture.Clock, logger);
+        fixture.Client.Policy = new RemoteTranscodePolicy("qsv\r\nforged line", true, true, true);
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+
+        await coordinator.OpenAsync(OpenRequest(PlaybackValues.Identity(), stub), CancellationToken.None);
+
+        Assert.Contains(logger.Lines, line => line.Contains("hardware", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("forged", StringComparison.Ordinal));
     }
 }

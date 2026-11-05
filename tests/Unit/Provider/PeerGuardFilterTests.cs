@@ -255,6 +255,63 @@ public class PeerGuardFilterTests
 
         Assert.True(ran);
     }
+
+    [Fact]
+    public async Task A_peer_cannot_run_more_reads_than_the_limit_at_a_time()
+    {
+        var action = ProviderFixture.Plugin<ProviderController>(nameof(ProviderController.GetItems));
+        var hold = new TaskCompletionSource();
+        var running = new List<Task>();
+        var http = new DefaultHttpContext();
+        http.Request.Method = "GET";
+
+        for (var read = 0; read < ProviderProtocol.MaxReadsPerPeer; read++)
+        {
+            var context = new ResourceExecutingContext(new ActionContext(http, new RouteData(), action), new List<IFilterMetadata>(), new List<IValueProviderFactory>());
+            running.Add(_filter.OnResourceExecutionAsync(context, async () =>
+            {
+                await hold.Task;
+                return new ResourceExecutedContext(context, new List<IFilterMetadata>());
+            }));
+        }
+
+        var (refused, ran) = await RunAsync(action, "GET", null);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(refused));
+        Assert.False(refused.HttpContext.Response.Headers.ContainsKey(ProviderProtocol.RefusalHeader));
+
+        hold.SetResult();
+        await Task.WhenAll(running);
+
+        var (_, ranAfter) = await RunAsync(action, "GET", null);
+        Assert.True(ranAfter);
+    }
+
+    [Fact]
+    public async Task Renewing_a_slot_is_not_a_read_and_is_never_held_back()
+    {
+        var action = ProviderFixture.Plugin<ProviderController>(nameof(ProviderController.GetItems));
+        var hold = new TaskCompletionSource();
+        var running = new List<Task>();
+        var http = new DefaultHttpContext();
+        http.Request.Method = "GET";
+        for (var read = 0; read < ProviderProtocol.MaxReadsPerPeer; read++)
+        {
+            var context = new ResourceExecutingContext(new ActionContext(http, new RouteData(), action), new List<IFilterMetadata>(), new List<IValueProviderFactory>());
+            running.Add(_filter.OnResourceExecutionAsync(context, async () =>
+            {
+                await hold.Task;
+                return new ResourceExecutedContext(context, new List<IFilterMetadata>());
+            }));
+        }
+
+        var (_, ran) = await RunAsync(ProviderFixture.Plugin<ProviderController>(nameof(ProviderController.RenewStream)), "PUT", null);
+
+        Assert.True(ran);
+        hold.SetResult();
+        await Task.WhenAll(running);
+    }
 }
 
 public class PeerPlaybackInfoFilterTests
