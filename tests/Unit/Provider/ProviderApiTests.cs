@@ -469,6 +469,50 @@ public class PeerAdminControllerTests
     }
 
     [Fact]
+    public void Removing_a_peer_frees_its_slots_at_once()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        using var running = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play");
+
+        _controller.RemovePeer(_fixture.Peer.Id);
+
+        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void Changing_the_limit_of_a_peer_frees_its_slots_at_once()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play")!.Dispose();
+
+        _controller.SetPeer(_fixture.Peer.Id, Request(3));
+
+        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void Changing_the_libraries_of_a_peer_frees_its_slots_at_once()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play")!.Dispose();
+
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest([], 2));
+
+        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void Saving_the_same_grant_again_leaves_the_slots()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play")!.Dispose();
+
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
     public void Removing_an_unknown_peer_says_so()
     {
         Assert.IsType<NotFoundResult>(_controller.RemovePeer(Guid.NewGuid()));

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
@@ -27,6 +28,219 @@ public class PlaybackCoordinatorTests
         Assert.Equal(session.Id, outcome.Response!.PlaySessionId);
         Assert.Contains(fixture.Client.Opened, path => path.Contains("hls1/main/0.mp4", StringComparison.Ordinal));
         Assert.Empty(fixture.Client.Stopped);
+    }
+
+    private static PlaybackOpenRequest Request(StubEntry stub) => new()
+    {
+        Identity = PlaybackValues.Identity(),
+        Stub = stub,
+        LocalToken = PlaybackValues.LocalToken
+    };
+
+    [Fact]
+    public async Task A_failed_first_segment_gives_the_slot_back_before_the_next_source()
+    {
+        var fixture = new CoordinatorFixture();
+        var winner = PlaybackValues.Source("winner");
+        var backup = PlaybackValues.Source("backup");
+        fixture.Registry.AddJellyMesh(winner.ServerId);
+        var releasedBeforeBackup = false;
+        fixture.Client.Answer = (request, _) =>
+        {
+            releasedBeforeBackup = fixture.Client.Released.Count == 1;
+            return Task.FromResult(FakePlaybackClient.Hls(request));
+        };
+        fixture.Client.Open = (request, _) => Task.FromResult(
+            request.Path.Contains("hls1", StringComparison.Ordinal) && fixture.Client.Requests.Count == 1
+                ? RemoteResult.Fail<RemoteContent>(RemoteFailure.ServerError)
+                : FakePlaybackClient.Bytes());
+
+        await fixture.OpenAsync(PlaybackValues.Stub(winner, backup));
+
+        Assert.True(releasedBeforeBackup);
+        Assert.Equal(PlaybackValues.RemotePlaySession + "winner", Assert.Single(fixture.Client.Released));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_client_that_leaves_during_the_probe_gives_the_slot_back(bool hls)
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        using var leaving = new CancellationTokenSource();
+        fixture.Client.Answer = (request, _) => Task.FromResult(hls ? FakePlaybackClient.Hls(request) : FakePlaybackClient.Direct(request));
+        fixture.Client.Open = async (_, token) =>
+        {
+            await leaving.CancelAsync();
+            token.ThrowIfCancellationRequested();
+            return FakePlaybackClient.Bytes();
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Coordinator.OpenAsync(Request(PlaybackValues.Stub(source)), leaving.Token));
+
+        Assert.Single(fixture.Client.Released);
+        Assert.Empty(fixture.Sessions.All);
+    }
+
+    [Fact]
+    public async Task A_client_that_leaves_right_after_a_session_opened_closes_it()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        using var leaving = new CancellationTokenSource();
+        var opened = 0;
+        fixture.Client.Open = async (_, _) =>
+        {
+            // The last probe of the session: it succeeds, and the client goes before the answer.
+            if (++opened == 1)
+            {
+                await leaving.CancelAsync();
+            }
+
+            return FakePlaybackClient.Bytes();
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Coordinator.OpenAsync(Request(PlaybackValues.Stub(source)), leaving.Token));
+
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Single(fixture.Client.Stopped);
+        Assert.Single(fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task An_answer_with_no_usable_source_gives_the_slot_back()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Success(new PlaybackInfoResponse { PlaySessionId = "held", MediaSources = [] }));
+
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+
+        Assert.Equal("held", Assert.Single(fixture.Client.Released));
+    }
+
+    [Fact]
+    public async Task A_policy_that_rules_out_a_remote_gives_the_slot_back()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        fixture.Client.Policy = new RemoteTranscodePolicy("none", false, true, true);
+        fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            answer.Value!.MediaSources[0].TranscodingUrl += ",VideoCodecNotSupported";
+            return Task.FromResult(answer);
+        };
+
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+
+        Assert.Single(fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task The_sweeper_gives_the_slot_of_an_idle_session_back()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+
+        fixture.Clock.Advance(PlaybackTimeouts.Idle);
+        await fixture.Coordinator.SweepAsync();
+
+        Assert.Single(fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_probe_says_so_to_a_jellymesh_remote_only()
+    {
+        var fixture = new CoordinatorFixture();
+        var meshed = PlaybackValues.Source("meshed");
+        var stock = PlaybackValues.Source("stock");
+        fixture.Registry.AddJellyMesh(meshed.ServerId);
+        var seen = new System.Collections.Generic.List<RemoteStreamRequest>();
+        fixture.Client.Open = (request, _) =>
+        {
+            seen.Add(request);
+            return Task.FromResult(FakePlaybackClient.Bytes());
+        };
+
+        await fixture.OpenAsync(PlaybackValues.Stub(meshed));
+        var probes = seen.Count;
+        await fixture.OpenAsync(PlaybackValues.Stub(stock));
+
+        Assert.All(seen.Take(probes), request => Assert.True(request.IsProbe));
+        Assert.All(seen.Skip(probes), request => Assert.False(request.IsProbe));
+    }
+
+    [Fact]
+    public async Task A_stopped_report_closes_the_session_of_its_user()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(fixture.Sessions.All);
+
+        await fixture.Coordinator.CloseReportedAsync(session.Id, [session.Identity.UserId]);
+
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Single(fixture.Client.Stopped);
+    }
+
+    [Fact]
+    public async Task A_stopped_report_of_another_user_leaves_the_session()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(fixture.Sessions.All);
+
+        await fixture.Coordinator.CloseReportedAsync(session.Id, [Guid.NewGuid()]);
+
+        Assert.NotNull(fixture.Sessions.Find(session.Id));
+        Assert.Empty(fixture.Client.Stopped);
+    }
+
+    [Fact]
+    public async Task A_file_refused_by_every_source_at_the_limit_explains_a_failure_once()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source("one"), PlaybackValues.Source("two"));
+        fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.StreamLimitReached));
+
+        Assert.Null(await fixture.Coordinator.OpenFileAsync(stub, HttpMethod.Get, null, CancellationToken.None));
+
+        Assert.True(fixture.Coordinator.TakeFileRefusal(stub.Id));
+        Assert.False(fixture.Coordinator.TakeFileRefusal(stub.Id));
+    }
+
+    [Fact]
+    public async Task A_file_with_any_other_failure_says_nothing_of_the_limit()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source("one"), PlaybackValues.Source("two"));
+        var failures = new Queue<RemoteFailure>([RemoteFailure.StreamLimitReached, RemoteFailure.ServerError]);
+        fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(failures.Dequeue()));
+
+        await fixture.Coordinator.OpenFileAsync(stub, HttpMethod.Get, null, CancellationToken.None);
+
+        Assert.False(fixture.Coordinator.TakeFileRefusal(stub.Id));
+    }
+
+    [Fact]
+    public async Task An_old_refusal_of_a_file_explains_nothing()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.StreamLimitReached));
+        await fixture.Coordinator.OpenFileAsync(stub, HttpMethod.Get, null, CancellationToken.None);
+
+        fixture.Clock.Advance(PlaybackTimeouts.FileRefusalMemory);
+
+        Assert.False(fixture.Coordinator.TakeFileRefusal(stub.Id));
     }
 
     [Fact]
