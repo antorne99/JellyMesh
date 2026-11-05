@@ -250,6 +250,8 @@ bash ui/down.sh                   # removes containers, volumes, network and scr
 
 `check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), and `nokey` and `key` for the secret key (on `fresh` by default). Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
 
+The browser runs on the private network of these servers and reaches them by container name. Through `host.docker.internal` a few new connections stayed in `SYN_SENT` for 7 to 45 seconds on Docker Desktop while the server answered others in milliseconds, which failed about one run in three with `urlopen timed out`.
+
 Selectors, button texts and the way to read an outcome live only in `uipage.py`, so a page that changes shape needs changes there. Confirmations are the Jellyfin dialog, read with `wait_confirm` and answered with `answer_confirm`, and a browser dialog counts as a script error. To look at the page some other way, write a script that imports `uipage` and run it with `pw` from `lib.sh`:
 
 ```sh

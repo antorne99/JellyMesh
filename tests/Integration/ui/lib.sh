@@ -46,7 +46,7 @@ write_targets() {
   local s out="{}" info
   for s in fresh first; do
     info=$(curl -fsS "http://127.0.0.1:$(port_of "$s")/System/Info/Public")
-    out=$(jq -c --arg s "$s" --arg base "http://host.docker.internal:$(port_of "$s")" --arg token "$(token_of "$s")" \
+    out=$(jq -c --arg s "$s" --arg base "http://$(container_of "$s"):8096" --arg token "$(token_of "$s")" \
       --arg user "$(admin_id "$s")" --arg id "$(jq -r .Id <<<"$info")" \
       '.[$s] = {base: $base, token: $token, user: $user, server: $id}' <<<"$out")
   done
@@ -60,7 +60,7 @@ pw() {
   mkdir -p "$WORK/web"
   write_targets
   cp "$script" "$WORK/web/"
-  docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -v "$UI:/ui:ro" -v "$UI_PREFIX-pw:/pw" \
+  docker run --rm --network "$NETWORK" -v "$WORK/web:/w" -v "$UI:/ui:ro" -v "$UI_PREFIX-pw:/pw" \
     -e PYTHONPATH=/pw:/ui -e PYTHONDONTWRITEBYTECODE=1 "$PW_IMAGE" \
     bash -c 'test -d /pw/playwright || pip install -q --target /pw --no-warn-script-location playwright==1.48.0 2>/dev/null; exec python3 "$@"' _ \
     "/w/$(basename "$script")" "$@"
