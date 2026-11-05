@@ -69,6 +69,15 @@ internal sealed class ProviderFixture
 
     public PeerCaller PeerCaller => new(Directory.Find(Peer.Id)!, Peer);
 
+    /// <summary>Makes a play session the peer's, as its own <c>PlaybackInfo</c> does, with no slot left behind.</summary>
+    public void Own(string playSession, Guid? peer = null)
+    {
+        var id = peer ?? Peer.Id;
+        var reservation = Slots.TryReserve(id, int.MaxValue, null)!;
+        Slots.Confirm(id, reservation, playSession);
+        Slots.Release(id, playSession);
+    }
+
     public void Connect(int maxStreams = 1)
     {
         Store.Configuration.Peers.Clear();

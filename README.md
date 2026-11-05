@@ -156,6 +156,8 @@ This works for films only, not series. Two local films can't be merged, so such 
 
 The stream limit exists only between JellyMesh servers, because a stock remote can't report one. It counts the streams a connected server holds on the provider, including a local transcode of that provider's file, since that reads the file from the provider too.
 
+A stream gives its slot back as soon as it ends, fails or is closed. If its connection drops, or the provider fails it with a server error, and nothing else of that stream is running, the slot stays for 5 seconds, so that a seek or a retry keeps it, and then it's free. A paused HLS stream frees it in under 2 minutes. A server that vanishes with its connection left open is released after 2 minutes without activity. Disconnecting a server, or changing what it may do, frees all its slots at once, but a request already running isn't cut.
+
 When a title is played, JellyMesh tries in this order:
 
 1. Each remote source, best quality first. A source at its limit, offline or unable to serve is skipped.
@@ -173,6 +175,8 @@ If nothing works, the title stays visible and playback is refused with HTTP 503 
 ## Trust between servers
 
 > **Trust between servers.** Stream limits and library sharing hold for honest peers. They are not a security boundary against a hostile one. `/Videos/{id}/stream` is anonymous in Jellyfin, so a modified server that drops its token bypasses both. Connect only servers you trust, and use each dedicated user for one server only.
+
+A connected server can stop only the transcodes it opened, and its requests can name only those play sessions. Between ordinary users of one server, on titles that are really on it, Jellyfin's own behaviour applies: anyone who knows a play session can stop it. JellyMesh keeps that away from the titles it federates, including their local transcodes.
 
 Remote tokens stay on your server: they never appear in `.strm` files, in logs or in anything sent to clients, and players never see a remote's address.
 

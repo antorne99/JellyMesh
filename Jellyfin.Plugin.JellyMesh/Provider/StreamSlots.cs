@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using Jellyfin.Plugin.JellyMesh.Security;
 
 namespace Jellyfin.Plugin.JellyMesh.Provider;
 
@@ -9,7 +10,8 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// The concurrent streams of each peer, counted here because the consumer goes through stock routes and nothing it
 /// claims can be trusted. A slot lives as long as this server sees it used: a request in progress holds it, a renewal
 /// from the consumer extends it, and after <see cref="IdleTimeout"/> without either it is gone, so a consumer that
-/// vanishes leaves nothing behind. In memory on purpose: a restart ends the streams too.
+/// vanishes leaves nothing behind. A request that ends badly with nothing else running leaves it only
+/// <see cref="AbandonGrace"/>. In memory on purpose: a restart ends the streams too.
 /// </summary>
 public sealed class StreamSlots
 {
@@ -19,8 +21,17 @@ public sealed class StreamSlots
     /// </summary>
     public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(120);
 
+    /// <summary>
+    /// Time a slot outlives a request that lost its connection or failed, with nothing else running on it. A seek also
+    /// drops a connection, and the next one comes milliseconds later: this is what keeps the slot of that stream from
+    /// going to another, and what leaves a retry its place. Long enough for a slow client to come back, short enough that
+    /// a limit of one feels free at once.
+    /// </summary>
+    public static readonly TimeSpan AbandonGrace = TimeSpan.FromSeconds(5);
+
     private readonly Lock _lock = new();
     private readonly Dictionary<Guid, Dictionary<string, Slot>> _peers = [];
+    private readonly PlaySessionOwners _owners = new();
     private readonly TimeProvider _clock;
 
     /// <summary>
@@ -62,7 +73,7 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Turns a reservation into the slot of a play session.
+    /// Turns a reservation into the slot of a play session, and makes the play session the peer's.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="reservation">The reservation.</param>
@@ -77,17 +88,31 @@ public sealed class StreamSlots
                 slots[playSessionId] = new Slot(_clock.GetUtcNow(), 0, false);
             }
         }
+
+        _owners.Add(peerId, playSessionId);
     }
 
     /// <summary>
-    /// Records a stream request. A play session without a slot takes one: that is a paused stream resuming, or a stream
-    /// that outlived a restart. A request with no play session holds a slot only while it runs.
+    /// Tells whether a play session is one a peer opened through its own <c>PlaybackInfo</c>. This outlives the slot: an
+    /// expired stream can resume, and its transcode still has to be closed.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>Whether it is the peer's.</returns>
+    public bool Owns(Guid peerId, string? playSessionId)
+    {
+        return _owners.Owns(peerId, playSessionId);
+    }
+
+    /// <summary>
+    /// Records a stream request. A play session without a slot takes one: that is a paused stream resuming. A request with
+    /// no play session holds a slot only while it runs.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="limit">The most slots of the peer.</param>
     /// <param name="playSessionId">The play session, null if the request has none.</param>
     /// <returns>The end of the request, to dispose. Null if the peer is at its limit.</returns>
-    public IDisposable? TryEnter(Guid peerId, int limit, string? playSessionId)
+    public StreamRequest? TryEnter(Guid peerId, int limit, string? playSessionId)
     {
         lock (_lock)
         {
@@ -107,7 +132,7 @@ public sealed class StreamSlots
                 slots[key] = slot;
             }
 
-            return new Scope(this, peerId, key, slot);
+            return new StreamRequest(abandoned => Exit(peerId, key, slot, abandoned));
         }
     }
 
@@ -124,6 +149,8 @@ public sealed class StreamSlots
             if (SlotsOf(peerId).TryGetValue(key, out var slot))
             {
                 slot.LastUsed = _clock.GetUtcNow();
+                slot.Abandoned = false;
+                _owners.Owns(peerId, key);
             }
         }
     }
@@ -138,6 +165,20 @@ public sealed class StreamSlots
         lock (_lock)
         {
             SlotsOf(peerId).Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// Frees every slot of a peer, for when what it may do has changed. What is running keeps running without one, and the
+    /// next request of a stream that goes on takes a slot like any other. Its play sessions stay its own: they still have
+    /// transcodes to close.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    public void ReleaseAll(Guid peerId)
+    {
+        lock (_lock)
+        {
+            SlotsOf(peerId).Clear();
         }
     }
 
@@ -164,7 +205,7 @@ public sealed class StreamSlots
         }
 
         var now = _clock.GetUtcNow();
-        foreach (var expired in slots.Where(pair => pair.Value.InFlight == 0 && now - pair.Value.LastUsed >= IdleTimeout).Select(pair => pair.Key).ToList())
+        foreach (var expired in slots.Where(pair => pair.Value.IsExpired(now)).Select(pair => pair.Key).ToList())
         {
             slots.Remove(expired);
         }
@@ -172,12 +213,15 @@ public sealed class StreamSlots
         return slots;
     }
 
-    private void Exit(Guid peerId, string key, Slot slot)
+    private void Exit(Guid peerId, string key, Slot slot, bool abandoned)
     {
         lock (_lock)
         {
             slot.InFlight--;
             slot.LastUsed = _clock.GetUtcNow();
+
+            // The last request to end decides: until then the stream is alive.
+            slot.Abandoned = abandoned;
             if (slot.EndsWithRequest)
             {
                 SlotsOf(peerId).Remove(key);
@@ -199,30 +243,12 @@ public sealed class StreamSlots
         public int InFlight { get; set; }
 
         public bool EndsWithRequest { get; }
-    }
 
-    private sealed class Scope : IDisposable
-    {
-        private readonly StreamSlots _owner;
-        private readonly Guid _peerId;
-        private readonly string _key;
-        private readonly Slot _slot;
-        private int _ended;
+        public bool Abandoned { get; set; }
 
-        public Scope(StreamSlots owner, Guid peerId, string key, Slot slot)
+        public bool IsExpired(DateTimeOffset now)
         {
-            _owner = owner;
-            _peerId = peerId;
-            _key = key;
-            _slot = slot;
-        }
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _ended, 1) == 0)
-            {
-                _owner.Exit(_peerId, _key, _slot);
-            }
+            return InFlight == 0 && now - LastUsed >= (Abandoned ? AbandonGrace : IdleTimeout);
         }
     }
 }

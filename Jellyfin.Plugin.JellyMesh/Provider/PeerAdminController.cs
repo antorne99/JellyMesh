@@ -95,6 +95,7 @@ public class PeerAdminController : ControllerBase
             return BadRequest();
         }
 
+        var changed = false;
         _store.Update(config =>
         {
             var peer = config.Peers.FirstOrDefault(candidate => candidate.UserId == userId);
@@ -104,6 +105,8 @@ public class PeerAdminController : ControllerBase
                 config.Peers.Add(peer);
             }
 
+            changed = peer.MaxStreams != request.MaxStreams
+                || !peer.SharedLibraryIds.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(request.SharedLibraryIds);
             peer.MaxStreams = request.MaxStreams;
             peer.SharedLibraryIds.Clear();
             foreach (var id in request.SharedLibraryIds.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -111,6 +114,12 @@ public class PeerAdminController : ControllerBase
                 peer.SharedLibraryIds.Add(id);
             }
         });
+
+        if (changed)
+        {
+            _slots.ReleaseAll(userId);
+        }
+
         return NoContent();
     }
 
@@ -132,7 +141,13 @@ public class PeerAdminController : ControllerBase
                 removed = config.Peers.Remove(peer);
             }
         });
-        return removed ? NoContent() : NotFound();
+        if (!removed)
+        {
+            return NotFound();
+        }
+
+        _slots.ReleaseAll(userId);
+        return NoContent();
     }
 
     private static bool IsAdministrator(User user) => user.HasPermission(PermissionKind.IsAdministrator);

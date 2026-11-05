@@ -33,6 +33,12 @@ public static class ProviderProtocol
     public const string ReplacesHeader = "X-JellyMesh-Replaces";
 
     /// <summary>
+    /// The request header marking a stream request as a probe of the first bytes. The consumer drops the connection of a
+    /// probe on purpose, and that must not read as a client that left.
+    /// </summary>
+    public const string ProbeHeader = "X-JellyMesh-Probe";
+
+    /// <summary>
     /// The most items in a page of the catalog, and the most identifiers in one lookup.
     /// </summary>
     public const int MaxItemsPerPage = 500;

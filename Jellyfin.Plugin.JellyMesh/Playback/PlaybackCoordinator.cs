@@ -34,6 +34,7 @@ public sealed class PlaybackCoordinator
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ConcurrentDictionary<string, StubSource> _workingSources = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
@@ -100,6 +101,7 @@ public sealed class PlaybackCoordinator
             {
                 _workingSources[request.Stub.Id] = source;
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
+                await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
                 return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response);
             }
 
@@ -173,6 +175,7 @@ public sealed class PlaybackCoordinator
         ArgumentNullException.ThrowIfNull(stub);
 
         _workingSources.TryGetValue(stub.Id, out var working);
+        var refused = 0;
         foreach (var source in Ordered(stub.Sources, working))
         {
             var request = new RemoteStreamRequest(method, FilePath(source), range);
@@ -182,9 +185,28 @@ public sealed class PlaybackCoordinator
                 _workingSources[stub.Id] = source;
                 return stream.Value;
             }
+
+            refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
+        }
+
+        if (refused == stub.Sources.Count)
+        {
+            _filesAtLimit[stub.Id] = _clock.GetUtcNow();
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Tells whether the file of a stub was just refused by every source for its stream limit. Nothing holds a slot between
+    /// the probe of the local transcode and the read of ffmpeg, so another stream can take it, and all that comes back from
+    /// ffmpeg is that it failed. Asked once: the answer is used up.
+    /// </summary>
+    /// <param name="stubId">The stub.</param>
+    /// <returns>Whether the limit explains a failure now.</returns>
+    public bool TakeFileRefusal(string stubId)
+    {
+        return _filesAtLimit.TryRemove(stubId, out var at) && _clock.GetUtcNow() - at < PlaybackTimeouts.FileRefusalMemory;
     }
 
     /// <summary>
@@ -260,6 +282,36 @@ public sealed class PlaybackCoordinator
         if (_sessions.Remove(sessionId) is { } session)
         {
             await CloseRemoteAsync(session).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Records the stock play session of a stub played on this server, so that only its user can stop it.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <param name="playSessionId">The play session.</param>
+    public void RecordLocalPlaySession(Guid userId, string? playSessionId)
+    {
+        if (!string.IsNullOrEmpty(playSessionId))
+        {
+            _sessions.RecordLocal(userId, playSessionId);
+        }
+    }
+
+    /// <summary>
+    /// Ends a session reported as stopped, if the report comes from whoever opened it. Stock takes any play session from any
+    /// user, and the session of someone else is left alone.
+    /// </summary>
+    /// <param name="sessionId">The session.</param>
+    /// <param name="users">The users behind the report.</param>
+    /// <returns>A task.</returns>
+    public async Task CloseReportedAsync(string sessionId, IEnumerable<Guid> users)
+    {
+        ArgumentNullException.ThrowIfNull(users);
+
+        if (_sessions.Find(sessionId) is { } session && users.Contains(session.Identity.UserId))
+        {
+            await CloseAsync(session.Id).ConfigureAwait(false);
         }
     }
 
@@ -358,6 +410,16 @@ public sealed class PlaybackCoordinator
         return value is { Length: > 0 and <= 16 } && value.All(char.IsAsciiLetterOrDigit) ? value : "unknown";
     }
 
+    // A client that left took the play session with it. The slot it holds on a remote would otherwise wait for the sweep.
+    private async Task CloseIfClientLeftAsync(PlaybackInfoResponse response, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            await CloseAsync(response.PlaySessionId!).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
     private async Task ClosePreviousAsync(PlaybackSession? previous)
     {
         if (previous is not null)
@@ -416,15 +478,33 @@ public sealed class PlaybackCoordinator
 
         var info = answer.Value!;
         var remote = info.MediaSources.FirstOrDefault(candidate => candidate.Id == source.MediaSourceId) ?? (info.MediaSources.Count > 0 ? info.MediaSources[0] : null);
-        if (info.ErrorCode is not null || info.PlaySessionId is null || remote is null)
+        if (info.PlaySessionId is null)
         {
             return new Attempt(null, true);
         }
 
-        var session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, cancellationToken).ConfigureAwait(false);
-        if (session is null)
+        if (info.ErrorCode is not null || remote is null)
         {
             await ReleaseSlotAsync(source.ServerId, info.PlaySessionId).ConfigureAwait(false);
+            return new Attempt(null, true);
+        }
+
+        PlaybackSession? session = null;
+        try
+        {
+            session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Also for a client that left during the probe: nothing else knows of this slot.
+            if (session is null)
+            {
+                await ReleaseSlotAsync(source.ServerId, info.PlaySessionId).ConfigureAwait(false);
+            }
+        }
+
+        if (session is null)
+        {
             return new Attempt(null, true);
         }
 
@@ -521,7 +601,7 @@ public sealed class PlaybackCoordinator
 
     private async Task<bool> CanOpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
-        var stream = await OpenAsync(serverId, request, cancellationToken).ConfigureAwait(false);
+        var stream = await OpenAsync(serverId, request with { IsProbe = IsJellyMesh(serverId) }, cancellationToken).ConfigureAwait(false);
         stream.Value?.Dispose();
         return stream.IsSuccess;
     }

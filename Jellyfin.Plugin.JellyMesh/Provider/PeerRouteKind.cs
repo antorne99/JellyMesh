@@ -28,5 +28,10 @@ public enum PeerRouteKind
     /// <summary>
     /// A stream, which needs a slot.
     /// </summary>
-    Stream
+    Stream,
+
+    /// <summary>
+    /// The close of a transcode, allowed on a play session the peer opened.
+    /// </summary>
+    StopEncoding
 }

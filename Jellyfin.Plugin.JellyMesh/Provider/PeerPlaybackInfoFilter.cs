@@ -55,9 +55,13 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
         try
         {
             var executed = await next().ConfigureAwait(false);
-            if (executed.Result is ObjectResult { Value: PlaybackInfoResponse { ErrorCode: null, PlaySessionId: { } playSessionId } })
+
+            // A consumer that left never learns the play session: the slot would sit there under a name nobody knows.
+            if (!http.RequestAborted.IsCancellationRequested
+                && executed.Result is ObjectResult { Value: PlaybackInfoResponse { ErrorCode: null, PlaySessionId: { } playSessionId } })
             {
                 _slots.Confirm(peerId, reservation, playSessionId);
+                PeerGuardFilter.NotePlaybackInfo(http, playSessionId);
                 confirmed = true;
             }
         }

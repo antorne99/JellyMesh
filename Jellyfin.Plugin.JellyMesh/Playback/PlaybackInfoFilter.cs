@@ -181,7 +181,10 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             executed.Exception = null;
             executed.ExceptionHandled = true;
             executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
+            return;
         }
+
+        _coordinator.RecordLocalPlaySession(request.Identity.UserId, response.PlaySessionId);
     }
 
     private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome)
@@ -206,7 +209,10 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             executed.Exception = null;
             executed.ExceptionHandled = true;
             executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
+            return;
         }
+
+        _coordinator.RecordLocalPlaySession(request.Identity.UserId, response.PlaySessionId);
     }
 
     private bool CleanLocalResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, PlaybackOutcome outcome)
