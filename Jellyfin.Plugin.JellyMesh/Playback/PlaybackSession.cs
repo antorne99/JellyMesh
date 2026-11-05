@@ -212,6 +212,14 @@ public sealed partial class PlaybackSession
         return string.Create(CultureInfo.InvariantCulture, $"{folder}/{shape}");
     }
 
+    // What a remote playlist can make this session remember. Numbered segments share one entry, so a film needs a handful
+    // of them, and a remote that makes up new names at every read would otherwise grow this without end.
+    private bool HasRoomFor(string folder, string file)
+    {
+        return (_folderIndexes.ContainsKey(folder) || _folderIndexes.Count < PlaybackLimits.FoldersPerSession)
+            && _queries.Count < PlaybackLimits.FileShapesPerSession;
+    }
+
     private string? Map(string uri, string remoteFolder, string prefix, string localToken)
     {
         var mark = uri.IndexOf('?', StringComparison.Ordinal);
@@ -232,7 +240,7 @@ public sealed partial class PlaybackSession
 
         var folder = full[..(slash + 1)];
         var file = full[(slash + 1)..];
-        if (!IsSafeFileName(file))
+        if (!IsSafeFileName(file) || !HasRoomFor(folder, file))
         {
             return null;
         }

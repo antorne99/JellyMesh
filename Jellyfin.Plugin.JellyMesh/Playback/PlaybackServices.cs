@@ -1,5 +1,4 @@
 using System;
-using System.Net.Http;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,19 +33,5 @@ public static class PlaybackServices
             options.Filters.AddService<PlaybackInfoFilter>();
             options.Filters.AddService<StockRouteGuardFilter>();
         });
-
-        // A second client: a stream has no overall timeout, and the first one has a 30 s limit. No redirects, and the
-        // default logging is removed because it records full request URLs, hence remote addresses.
-        services.AddHttpClient(RemotePlaybackClient.HttpClientName)
-            .ConfigureHttpClient(client => client.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                ConnectTimeout = JellyfinRemoteClient.ConnectTimeout,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-                UseCookies = false,
-                UseProxy = false
-            })
-            .RemoveAllLoggers();
     }
 }

@@ -32,7 +32,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
     public const string HttpClientName = "JellyMesh.Stream";
 
     /// <summary>
-    /// Largest document accepted, in bytes.
+    /// Largest document accepted, in bytes. A variant playlist is the largest: each segment line of a stock server takes
+    /// close to a kilobyte, so a film of many hours needs several megabytes.
     /// </summary>
     public const int MaxDocumentBytes = 16 * 1024 * 1024;
 
@@ -106,14 +107,15 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             return RemoteResult.Fail<PlaybackInfoResponse>(document.Failure);
         }
 
+        // Besides invalid JSON, the converters of the server throw what they like on a value of the wrong shape.
         try
         {
             var info = JsonSerializer.Deserialize<PlaybackInfoResponse>(document.Value!, JsonDefaults.PascalCaseOptions);
-            return info is null
-                ? RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.InvalidResponse)
-                : RemoteResult.Success(info);
+            return RemoteAnswers.IsWellFormed(info)
+                ? RemoteResult.Success(info!)
+                : RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.InvalidResponse);
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or FormatException or InvalidOperationException or NotSupportedException or ArgumentException or OverflowException)
         {
             return RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.InvalidResponse);
         }
@@ -210,6 +212,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             response.Dispose();
             return RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable);
         }
+        catch (OperationCanceledException)
+        {
+            response.Dispose();
+            throw;
+        }
     }
 
     /// <inheritdoc />
@@ -303,28 +310,6 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         }
     }
 
-    private static async Task<byte[]?> ReadLimitedAsync(HttpContent content, CancellationToken cancellationToken)
-    {
-        var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        await using (stream.ConfigureAwait(false))
-        {
-            using var buffer = new MemoryStream();
-            var chunk = new byte[64 * 1024];
-            int read;
-            while ((read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
-            {
-                if (buffer.Length + read > MaxDocumentBytes)
-                {
-                    return null;
-                }
-
-                await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-            }
-
-            return buffer.ToArray();
-        }
-    }
-
     private async Task<string?> ReadHardwareAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/System/Configuration/encoding");
@@ -348,7 +333,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
                 return RemoteResult.Fail<byte[]>(FailureOf(response));
             }
 
-            var body = await ReadLimitedAsync(response.Content, cancellationToken).ConfigureAwait(false);
+            var body = await RemoteBody.ReadLimitedAsync(response.Content, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
             return body is null
                 ? RemoteResult.Fail<byte[]>(RemoteFailure.ResponseTooLarge)
                 : RemoteResult.Success(body);

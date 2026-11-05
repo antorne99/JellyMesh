@@ -1,5 +1,4 @@
 using System;
-using System.Net.Http;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -55,24 +54,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 
-        // Redirects are handled by JellyfinRemoteClient, which refuses other hosts. The default
-        // client logging is removed because it records full request URLs, hence remote addresses.
-        serviceCollection.AddHttpClient(JellyfinRemoteClient.HttpClientName)
-            .ConfigureHttpClient(client =>
-            {
-                client.Timeout = JellyfinRemoteClient.RequestTimeout;
-                client.MaxResponseContentBufferSize = JellyfinRemoteClient.MaxResponseBytes;
-            })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                ConnectTimeout = JellyfinRemoteClient.ConnectTimeout,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-                UseCookies = false,
-                UseProxy = false
-            })
-            .RemoveAllLoggers();
-
+        serviceCollection.AddRemoteHttpClients();
         serviceCollection.AddPlayback();
         serviceCollection.AddProvider();
     }

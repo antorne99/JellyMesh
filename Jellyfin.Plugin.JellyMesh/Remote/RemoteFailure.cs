@@ -67,7 +67,7 @@ public enum RemoteFailure
     InvalidResponse,
 
     /// <summary>
-    /// The answer exceeds <see cref="JellyfinRemoteClient.MaxResponseBytes"/>.
+    /// The answer exceeds what is accepted from a remote.
     /// </summary>
     ResponseTooLarge,
 
