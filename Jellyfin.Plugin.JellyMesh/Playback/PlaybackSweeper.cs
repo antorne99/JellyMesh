@@ -88,7 +88,8 @@ public sealed class PlaybackSweeper : BackgroundService
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _logger.LogError(exception, "Could not close a playback session");
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Could not close a playback session: {Error}", exception.GetType().Name);
         }
     }
 }

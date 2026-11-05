@@ -95,7 +95,7 @@ public sealed class PlaybackRefusal
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _logger.LogWarning(exception, "Could not send the refusal message");
+            _logger.LogWarning("Could not send the refusal message: {Error}", exception.GetType().Name);
         }
     }
 }

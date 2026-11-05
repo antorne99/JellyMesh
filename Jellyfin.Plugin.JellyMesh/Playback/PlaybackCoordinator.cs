@@ -317,6 +317,12 @@ public sealed class PlaybackCoordinator
                 || (!policy.EnableAudioTranscoding && reasons.Contains("Audio", StringComparison.Ordinal)));
     }
 
+    // The value comes from the remote: a line of log must not be something it can write.
+    private static string LoggableWord(string? value)
+    {
+        return value is { Length: > 0 and <= 16 } && value.All(char.IsAsciiLetterOrDigit) ? value : "unknown";
+    }
+
     private async Task ClosePreviousAsync(PlaybackSession? previous)
     {
         if (previous is not null)
@@ -486,7 +492,7 @@ public sealed class PlaybackCoordinator
         }
 
         _policies[serverId] = new CachedPolicy(policy.Value!, now);
-        _logger.LogInformation("Remote hardware acceleration: {HardwareAcceleration}", policy.Value!.HardwareAccelerationType);
+        _logger.LogInformation("Remote hardware acceleration: {HardwareAcceleration}", LoggableWord(policy.Value!.HardwareAccelerationType));
         return policy.Value;
     }
 
