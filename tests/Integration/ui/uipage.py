@@ -11,10 +11,14 @@ WEB = "/w"
 SHOTS = os.path.join(WEB, "shots")
 VIEWPORTS = {"1280": {"width": 1280, "height": 900}, "390": {"width": 390, "height": 844}}
 PLUGIN = "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
+PLUGIN_CONFIG = "**/Plugins/" + PLUGIN + "/Configuration"
 
 PAGE = "#JellyMeshConfigPage"
 WARNING = "#jmWarning"
 MESSAGE = "#jmMessage"
+OUTCOME = "#jmOutcome"
+DISMISS = "#jmDismiss"
+FIELD_ERROR = ".jmFieldError"
 STATUS = "#jmStatus"
 SERVERS = "#jmServers"
 SERVER = ".jmServer"
@@ -31,6 +35,12 @@ ADD_SUBMIT = "#jmAddServer"
 SETTINGS_FORM = "#jmSettingsForm"
 FOLDER_INFO = "#jmFolderInfo"
 LOADING = ".docspinner.mdlSpinnerActive"
+CONFIRM = ".dialogContainer .dialog"
+CONFIRM_TITLE = CONFIRM + " .formDialogHeaderTitle"
+CONFIRM_TEXT = CONFIRM + " .text"
+CONFIRM_MARKUP = CONFIRM_TEXT + " b, " + CONFIRM_TEXT + " i"
+CONFIRM_OK = CONFIRM + " [data-id=ok]"
+CONFIRM_CANCEL = CONFIRM + " [data-id=cancel]"
 CHECKBOX = "input[type=checkbox]"
 NUMBER = "input[type=number]"
 SAVE_SETTINGS = "#jmSettingsForm button[type=submit]"
@@ -52,6 +62,7 @@ BUTTON = {
     "test": "Test connection",
     "libraries": "Libraries",
     "remove": "Remove",
+    "disconnect": "Disconnect",
     "save_libraries": "Save libraries",
     "merge": "Merge selected",
     "undo": "Undo merge",
@@ -153,7 +164,7 @@ class Session:
         page = context.new_page()
         page.errors = []
         page.on("pageerror", lambda error: page.errors.append(str(error)))
-        page.on("dialog", lambda dialog: dialog.accept())
+        page.on("dialog", lambda dialog: (page.errors.append("browser dialog: " + dialog.message), dialog.dismiss()))
         page.goto(f"{target['base']}/web/index.html#/configurationpage?name=JellyMesh")
         if wait:
             wait_loaded(page)
@@ -208,8 +219,9 @@ def wait_message(page, timeout=30000):
 
 
 def clear_message(page):
-    """Empties the outcome of the action before."""
-    page.evaluate("s => { const node = document.querySelector(s); node.textContent = ''; node.hidden = true; }", MESSAGE)
+    """Dismisses the outcome of the action before."""
+    if page.locator(DISMISS).is_visible():
+        page.locator(DISMISS).click()
 
 
 def has_focus(node):
@@ -227,6 +239,48 @@ def is_marked(node):
     return node.evaluate("node => node.dataset.jmKept === 'yes'")
 
 
-def shot(page, name):
-    """Captures the whole page."""
-    page.screenshot(path=os.path.join(SHOTS, name + ".png"), full_page=True)
+def in_view(page, selector):
+    """Returns whether an element is whole inside the viewport, with nothing of the Dashboard on top of it."""
+    return page.locator(selector).evaluate("""node => {
+      const box = node.getBoundingClientRect();
+      const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return box.height > 0 && box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth
+        && top !== null && node.contains(top);
+    }""")
+
+
+def field_error(page, selector):
+    """Returns the error shown under a field, or an empty text."""
+    return page.locator(selector).evaluate("""input => {
+      const note = document.getElementById(input.getAttribute('aria-describedby'));
+      return note && input.getAttribute('aria-invalid') === 'true' ? note.textContent : '';
+    }""")
+
+
+def focused(page):
+    """Returns the id of the focused element."""
+    return page.evaluate("document.activeElement.id")
+
+
+def wait_confirm(page):
+    """Waits for the confirmation dialog of Jellyfin to take the focus, and returns its title and its text as shown."""
+    page.wait_for_selector(CONFIRM + " :focus", state="attached", timeout=15000)
+    return page.locator(CONFIRM_TITLE).inner_text(), page.locator(CONFIRM_TEXT).inner_text()
+
+
+def confirm_starts_on_cancel(page):
+    """Tells whether the confirmation dialog has its focus on Cancel."""
+    return page.evaluate("s => document.activeElement === document.querySelector(s)", CONFIRM_CANCEL)
+
+
+def answer_confirm(page, accept):
+    """Answers the confirmation dialog and waits until it has gone and the page has finished reacting."""
+    page.wait_for_selector(CONFIRM_OK, state="visible", timeout=15000)
+    page.locator(CONFIRM_OK if accept else CONFIRM_CANCEL).click()
+    page.wait_for_selector(CONFIRM, state="detached", timeout=15000)
+    wait_idle(page)
+
+
+def shot(page, name, full_page=True):
+    """Captures the whole page, or only what the screen shows."""
+    page.screenshot(path=os.path.join(SHOTS, name + ".png"), full_page=full_page)

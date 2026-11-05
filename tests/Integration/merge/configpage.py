@@ -19,7 +19,6 @@ with sync_playwright() as p:
     context = browser.new_context(viewport={"width": 1000, "height": 1800})
     context.add_init_script("localStorage.setItem('jellyfin_credentials', " + json.dumps(json.dumps(CRED)) + ");localStorage.setItem('enableAutoLogin','true');")
     page = context.new_page()
-    page.on("dialog", lambda dialog: dialog.accept())
     page.goto(f"{BASE}/web/index.html#/configurationpage?name=JellyMesh")
     page.wait_for_selector(".jmMergeCase", state="attached", timeout=30000)
 
@@ -45,6 +44,7 @@ with sync_playwright() as p:
     page.screenshot(path=CAP + "-merged.png", full_page=True)
 
     merged.get_by_text("Undo merge").click()
+    page.locator(".dialogContainer .dialog [data-id=ok]").click()
     page.wait_for_selector(".jmMergeCase:has-text('" + TITLE + "')", state="attached", timeout=30000)
     print("UNDONE", json.dumps(page.locator("#jmMessage").inner_text()), flush=True)
     browser.close()

@@ -32,6 +32,8 @@ if [ $# -gt 0 ]; then
 else
   run first normal loading errors keyboard themes actions
   run edits polling sections
+  run outcomes outcome-themes
+  run confirms confirm-keyboard
 
   set_key first
   run first-nokey
