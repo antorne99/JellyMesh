@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -12,8 +13,12 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// </summary>
 public sealed class RemoteContent : IDisposable
 {
+    private const int CopyBufferBytes = 80 * 1024;
+
     private readonly HttpResponseMessage? _response;
     private readonly Stream? _body;
+    private IDisposable? _release;
+    private int _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RemoteContent"/> class.
@@ -37,20 +42,74 @@ public sealed class RemoteContent : IDisposable
     public RemoteContentHeaders Headers { get; }
 
     /// <summary>
-    /// Copies the body.
+    /// Ties something to the life of this stream, such as the place it holds among the streams of a server.
+    /// </summary>
+    /// <param name="release">Disposed with the stream.</param>
+    /// <returns>This stream.</returns>
+    public RemoteContent HoldUntilDisposed(IDisposable release)
+    {
+        _release = release;
+        return this;
+    }
+
+    /// <summary>
+    /// Copies the body with nothing held in between, and gives up on a remote that stops sending. Only the wait for the
+    /// remote counts: a client that reads slowly or not at all leaves no read waiting.
     /// </summary>
     /// <param name="target">The target.</param>
+    /// <param name="stallLimit">The longest wait for the remote.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The copy.</returns>
-    public Task CopyToAsync(Stream target, CancellationToken cancellationToken)
+    /// <exception cref="TimeoutException">The remote sent nothing for <paramref name="stallLimit"/>.</exception>
+    public async Task CopyToAsync(Stream target, TimeSpan stallLimit, CancellationToken cancellationToken)
     {
-        return _body is null ? Task.CompletedTask : _body.CopyToAsync(target, cancellationToken);
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (_body is null)
+        {
+            return;
+        }
+
+        using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferBytes);
+        try
+        {
+            while (true)
+            {
+                stall.CancelAfter(stallLimit);
+                int read;
+                try
+                {
+                    read = await _body.ReadAsync(buffer, stall.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException("The remote stopped sending.");
+                }
+
+                stall.CancelAfter(Timeout.InfiniteTimeSpan);
+                if (read == 0)
+                {
+                    return;
+                }
+
+                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     /// <inheritdoc />
     public void Dispose()
     {
-        _body?.Dispose();
-        _response?.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            _body?.Dispose();
+            _response?.Dispose();
+            _release?.Dispose();
+        }
     }
 }

@@ -73,7 +73,7 @@ public class StrmController : ControllerBase
 
         using (opened)
         {
-            await StreamRelay.CopyAsync(opened, HttpContext, cancellationToken).ConfigureAwait(false);
+            await StreamRelay.CopyAsync(opened, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false);
         }
 
         return new EmptyResult();

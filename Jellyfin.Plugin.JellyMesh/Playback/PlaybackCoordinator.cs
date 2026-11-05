@@ -60,6 +60,13 @@ public sealed class PlaybackCoordinator
         _logger = logger;
     }
 
+    /// <summary>
+    /// Gets the longest a remote may send nothing in the middle of a stream. The idle time of decision 17: a stream with no
+    /// bytes is as idle as a session with no requests, and the shorter opening time would cut a healthy film on a remote
+    /// whose disks are waking up.
+    /// </summary>
+    public TimeSpan StallLimit => Times.Idle;
+
     private PlaybackTimes Times => _store.Read(PlaybackTimes.From);
 
     /// <summary>
