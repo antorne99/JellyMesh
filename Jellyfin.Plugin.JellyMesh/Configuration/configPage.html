@@ -221,6 +221,20 @@
                     return node;
                 }
 
+                // Makes a value safe inside a Dashboard.confirm message, which Jellyfin renders as HTML.
+                function escapeHtml(value) {
+                    return create('div', value).innerHTML;
+                }
+
+                // Runs an action once the admin confirms it. Paragraphs must already be escaped.
+                function confirmAction(title, paragraphs, action) {
+                    Dashboard.confirm(paragraphs.join('<br/><br/>'), title, function (confirmed) {
+                        if (confirmed) {
+                            action();
+                        }
+                    });
+                }
+
                 function renderLibraries(container, server, libraries) {
                     container.textContent = '';
                     if (libraries.length === 0) {
@@ -277,11 +291,14 @@
                         }));
                     }));
                     row.appendChild(button('Remove', function () {
-                        if (!window.confirm('Remove ' + server.Name + '?')) {
-                            return;
-                        }
-
-                        act(api('DELETE', 'Servers/' + server.Id).then(load));
+                        confirmAction('Remove this server?', [
+                            escapeHtml(server.Name) + ' and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.',
+                            'Titles found only there stay in the library, but do not play, until the next sync removes them. Removing does not start a sync. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now.',
+                            'Playback already running may not stop right away.',
+                            'Adding the server back brings the same titles and watch state.'
+                        ], function () {
+                            act(api('DELETE', 'Servers/' + server.Id).then(load));
+                        });
                     }));
                     row.appendChild(libraries);
                     return row;
@@ -459,12 +476,13 @@
                             return loadPeers();
                         }));
                     }));
-                    row.appendChild(button('Remove', function () {
-                        if (!window.confirm('Disconnect ' + peer.UserName + '?')) {
-                            return;
-                        }
-
-                        act(api('DELETE', 'Peers/' + peer.UserId).then(loadPeers));
+                    row.appendChild(button('Disconnect', function () {
+                        confirmAction('Disconnect this server?', [
+                            escapeHtml(peer.UserName) + ' stops being a connected server now. Its streams here are closed, and its shared libraries and stream limit no longer apply.',
+                            'The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.'
+                        ], function () {
+                            act(api('DELETE', 'Peers/' + peer.UserId).then(loadPeers));
+                        });
                     }));
                     return row;
                 }
@@ -598,15 +616,16 @@
                     }
 
                     row.appendChild(button('Undo merge', function () {
-                        if (!window.confirm('Separate these copies again? The title that stays keeps its watch state.')) {
-                            return;
-                        }
-
-                        showMessage('');
-                        act(api('DELETE', 'Merges/' + merge.Id).then(function () {
-                            showMessage('Merge undone. The film list changes after the library scan that was queued.');
-                            return loadMerges();
-                        }));
+                        confirmAction('Undo this merge?', [
+                            'These copies become separate titles again after the library scan that follows.',
+                            'The title that stays keeps its watch state. The others usually get theirs back, but can start again without it. Local files are not changed.'
+                        ], function () {
+                            showMessage('');
+                            act(api('DELETE', 'Merges/' + merge.Id).then(function () {
+                                showMessage('Merge undone. The film list changes after the library scan that was queued.');
+                                return loadMerges();
+                            }));
+                        });
                     }));
                     return row;
                 }
