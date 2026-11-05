@@ -154,6 +154,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
 | `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
+| `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
 
@@ -225,6 +226,34 @@ Proves decision 20 on private containers named `jm-merge-*`, on ports 18441-1844
 bash merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
 bash merge/run.sh                 # list, merge, restart, sync, a copy that changes or goes, undo, the page, a local copy
 bash merge/down.sh                # removes containers, volumes, network and scratch files
+```
+
+### `ui/`
+
+Checks the configuration page in real jellyfin-web, on private servers built from the checkout it runs in. `UI_PREFIX` and `UI_PORT` are required and name everything it makes, so several checkouts can run it at once if each has its own values. The ports are `UI_PORT` to `UI_PORT+3`. `MEDIA` defaults to the main checkout, and `WORK` to `$TMPDIR/$UI_PREFIX-work`. It takes about 2 minutes to start and 2 to check, and holds about 1.5 GB of memory while up, so stagger runs on a small Docker.
+
+```sh
+export UI_PREFIX=jm-ui-811 UI_PORT=18811
+bash ui/up.sh                     # four servers, built from this checkout
+bash ui/check.sh                  # every check in every state, non-zero on any failure
+bash ui/check.sh errors keyboard  # only these scenarios, from the names at the end of pagecheck.py
+bash ui/reinstall.sh              # after changing the page or the plugin: a new build, the state stays
+bash ui/down.sh                   # removes containers, volumes, network and scratch files
+```
+
+| Server | Port | Media | What it shows |
+|---|---|---|---|
+| `fresh` | `UI_PORT` | `locale` | Plugin, consumer of the two below, a synced catalog, doubtful films, the connected server `jellymesh`, the free user `friend` |
+| `stock` | `UI_PORT+1` | `remoto-standard` | No plugin |
+| `peer` | `UI_PORT+2` | `remoto-jellymesh` | Plugin, shares its libraries |
+| `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured |
+
+`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), and `nokey` and `key` for the secret key (on `fresh` by default). Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
+
+Selectors, button texts and the way to read an outcome live only in `uipage.py`, so a page that changes shape needs changes there. `Session.open` accepts browser confirmations. To look at the page some other way, write a script that imports `uipage` and run it with `pw` from `lib.sh`:
+
+```sh
+source ui/lib.sh && pw /path/to/script.py
 ```
 
 ## Not covered here
