@@ -464,6 +464,37 @@ def fake(page, path, change):
     page.route("**/JellyMesh/Admin/" + path, answer)
 
 
+def quiet(s, width):
+    """A page left open stays cheap, and a hidden tab reads nothing."""
+    name = width + " quiet"
+    page = s.open("fresh", width)
+    reads = []
+    page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
+    page.wait_for_timeout(31000)
+    counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges"]}
+    check(name + " reads the sync every 5 seconds", 5 <= counts["Sync"] <= 7, counts)
+    check(name + " reads status and streams every 15 seconds", 1 <= counts["Status"] <= 3 and 1 <= counts["Peers"] <= 3, counts)
+    check(name + " reads the peer options at most once a minute", counts["Peers/Options"] <= 1, counts)
+    check(name + " leaves the merges alone", counts["Merges"] == 0, counts)
+    check(name + " reads nothing else", len(reads) == sum(counts.values()), reads)
+
+    page.evaluate("""() => {
+      Object.defineProperty(document, 'hidden', {value: true, configurable: true});
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    page.wait_for_timeout(500)
+    reads.clear()
+    page.wait_for_timeout(7000)
+    check(name + " a hidden tab reads nothing", not reads, reads)
+    page.evaluate("""() => {
+      delete document.hidden;
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    check(name + " a shown tab catches up at once", until(page, lambda: "Status" in reads and "Peers" in reads and "Sync" in reads, 2), reads)
+    healthy(page, name)
+    page.context.close()
+
+
 def polling(s, width):
     """The page follows what happens elsewhere, without touching what the admin is editing."""
     name = width + " polling"
@@ -515,8 +546,8 @@ def polling(s, width):
 
     fake(page, "Peers", lambda peers: peers[0].update(ActiveStreams=1))
     fake(page, "Status", lambda status: [server.update(Connection="Offline") for server in status["Servers"] if server["Name"] == "stock"])
-    check(name + " stream use stays current", until(page, lambda: "Streams in use: 1 of" in connected.inner_text(), 8), connected.inner_text())
-    check(name + " server state stays current", until(page, lambda: "offline" in stock.inner_text(), 8), stock.inner_text())
+    check(name + " stream use stays current", until(page, lambda: "Streams in use: 1 of" in connected.inner_text(), 18), connected.inner_text())
+    check(name + " server state stays current", until(page, lambda: "offline" in stock.inner_text(), 18), stock.inner_text())
     check(name + " the rows were not rebuilt", u.is_marked(stock) and u.is_marked(connected))
     check(name + " the row being edited keeps its value", limit.input_value() == "6", limit.input_value())
     check(name + " the row being edited keeps the focus", u.has_focus(limit))
@@ -934,6 +965,7 @@ SCENARIOS = {
     "offline": (offline, WIDTHS),
     "nokey": (nokey, WIDTHS),
     "edits": (edits, ["1280"]),
+    "quiet": (quiet, ["1280"]),
     "polling": (polling, ["1280"]),
     "sections": (sections, ["1280"]),
     "outcomes": (outcomes, WIDTHS),

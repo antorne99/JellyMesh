@@ -228,7 +228,9 @@
                 };
                 var ticksPerMinute = 600000000;
                 var syncPollMilliseconds = 2000;
-                var statusPollMilliseconds = 5000;
+                var idlePollMilliseconds = 5000;
+                var statusPollMilliseconds = 15000;
+                var optionsPollMilliseconds = 60000;
                 var readTimeoutMilliseconds = 15000;
                 var keepsTrying = 'What is shown here may be out of date, and the page keeps trying.';
                 var suspended = false;
@@ -239,6 +241,8 @@
                 var polling = false;
                 var pollTimer = null;
                 var nextStatusPoll = 0;
+                var peerOptions = null;
+                var nextOptionsRead = 0;
                 var fieldNotes = 0;
                 var noAnswer = 'No answer from this server. Check the network connection and try again.';
 
@@ -672,6 +676,7 @@
 
                     if (lastFinished !== undefined && lastFinished !== status.LastFinishedUtc) {
                         mergesSection.stale = true;
+                        statusSection.stale = true;
                     }
 
                     lastFinished = status.LastFinishedUtc;
@@ -1017,8 +1022,21 @@
                     return read('Sync');
                 }, renderSync, syncFailed);
 
+                // Reads the users and libraries to choose from, which rarely change, only once in a while.
+                function readPeerOptions() {
+                    if (Date.now() < nextOptionsRead) {
+                        return Promise.resolve(peerOptions);
+                    }
+
+                    return read('Peers/Options').then(function (options) {
+                        peerOptions = options;
+                        nextOptionsRead = Date.now() + optionsPollMilliseconds;
+                        return options;
+                    });
+                }
+
                 var peersSection = section(function () {
-                    return Promise.all([read('Peers'), read('Peers/Options')]);
+                    return Promise.all([read('Peers'), readPeerOptions()]);
                 }, renderPeers, function (reason) {
                     showFailure('#jmPeersFailure', 'the connected servers', keepsTrying, reason);
                 });
@@ -1058,37 +1076,43 @@
                     return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges()]);
                 }
 
-                // Plans the next read while the page is open, sooner while a sync runs.
+                // Plans the next read while the page is open and its tab is shown, sooner while a sync runs.
                 function schedule() {
                     window.clearTimeout(pollTimer);
-                    pollTimer = visible
-                        ? window.setTimeout(poll, syncRunning ? syncPollMilliseconds : statusPollMilliseconds)
+                    pollTimer = visible && !document.hidden
+                        ? window.setTimeout(poll, syncRunning ? syncPollMilliseconds : idlePollMilliseconds)
                         : null;
                 }
 
-                // Reads what changes by itself, skipping what is already on its way, then plans the next read.
+                // Reads the sync, and what else is due or needs reading again, then plans the next read.
                 function poll() {
-                    if (polling) {
+                    if (polling || !visible || document.hidden) {
                         return;
                     }
 
-                    var parts = [syncSection];
-                    if (!syncRunning || Date.now() >= nextStatusPoll) {
-                        parts.push(statusSection, peersSection);
+                    var due = Date.now() >= nextStatusPoll;
+                    if (due) {
                         nextStatusPoll = Date.now() + statusPollMilliseconds;
                     }
 
-                    if (mergesSection.stale) {
-                        parts.push(mergesSection);
-                    }
-
+                    var parts = [syncSection, statusSection, peersSection, mergesSection].filter(function (part) {
+                        return part.pending === 0 && (part === syncSection || part.stale || (due && part !== mergesSection));
+                    });
                     polling = true;
-                    Promise.all(parts.filter(function (part) {
-                        return part.pending === 0;
-                    }).map(refresh)).then(function () {
+                    Promise.all(parts.map(refresh)).then(function () {
                         polling = false;
                         schedule();
                     });
+                }
+
+                // Stops reading while the tab is hidden, and catches up as soon as it is shown again.
+                function tabChanged() {
+                    if (document.hidden) {
+                        schedule();
+                    } else {
+                        nextStatusPoll = 0;
+                        poll();
+                    }
                 }
 
                 function settingFields() {
@@ -1146,18 +1170,22 @@
 
                 page.addEventListener('pageshow', function () {
                     visible = true;
+                    nextOptionsRead = 0;
+                    document.addEventListener('visibilitychange', tabChanged);
                     act(Promise.all([refresh(settingsSection), load()]).then(function (results) {
                         var failure = [results[0]].concat(results[1]).filter(Boolean)[0];
                         if (failure) {
                             showError('Part of this page could not be loaded, and each part says so. ' + failure.message);
                         }
 
+                        nextStatusPoll = Date.now() + statusPollMilliseconds;
                         schedule();
                     }));
                 });
 
                 page.addEventListener('pagehide', function () {
                     visible = false;
+                    document.removeEventListener('visibilitychange', tabChanged);
                     schedule();
                 });
 
