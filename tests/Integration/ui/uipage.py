@@ -1,0 +1,209 @@
+"""The configuration page as the checks see it: every selector and button text lives here, and nowhere else."""
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+
+from playwright.sync_api import sync_playwright
+
+WEB = "/w"
+SHOTS = os.path.join(WEB, "shots")
+VIEWPORTS = {"1280": {"width": 1280, "height": 900}, "390": {"width": 390, "height": 844}}
+PLUGIN = "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
+
+PAGE = "#JellyMeshConfigPage"
+WARNING = "#jmWarning"
+MESSAGE = "#jmMessage"
+STATUS = "#jmStatus"
+SERVERS = "#jmServers"
+SERVER = ".jmServer"
+SYNC_STATUS = "#jmSyncStatus"
+SYNC_SERVERS = "#jmSyncServers"
+SYNC_NOW = "#jmSyncNow"
+MERGE_CASES = "#jmMergeCases"
+MERGE_CASE = ".jmMergeCase"
+MERGES = "#jmMerges"
+MERGE = ".jmMerge"
+PEERS = "#jmPeers"
+ADD_FORM = "#jmAddServerForm"
+ADD_SUBMIT = "#jmAddServer"
+SETTINGS_FORM = "#jmSettingsForm"
+FOLDER_INFO = "#jmFolderInfo"
+LOADING = ".docspinner.mdlSpinnerActive"
+CHECKBOX = "input[type=checkbox]"
+NUMBER = "input[type=number]"
+SAVE_SETTINGS = "#jmSettingsForm button[type=submit]"
+SYNC_INTERVAL = "#jmSyncInterval"
+FEDERATED_FOLDER = "#jmFederatedFolder"
+METADATA_PROTECTION = "#jmMetadataProtection"
+ADD_FIELDS = {"name": "#jmServerName", "url": "#jmServerUrl", "user": "#jmServerUser", "password": "#jmServerPassword"}
+SETTINGS = {
+    SYNC_INTERVAL: "SyncIntervalSeconds",
+    "#jmReconciliationTime": "ReconciliationTime",
+    FEDERATED_FOLDER: "FederatedFolderPath",
+    "#jmRemotePlaybackInfoTimeout": "RemotePlaybackInfoTimeoutSeconds",
+    "#jmStreamOpenTimeout": "StreamOpenTimeoutSeconds",
+    "#jmPlaybackIdle": "PlaybackIdleSeconds",
+    "#jmSessionRetention": "SessionRetentionHours",
+    "#jmPolicyCache": "PolicyCacheMinutes",
+}
+BUTTON = {
+    "test": "Test connection",
+    "libraries": "Libraries",
+    "remove": "Remove",
+    "save_libraries": "Save libraries",
+    "merge": "Merge selected",
+    "undo": "Undo merge",
+    "save": "Save",
+    "connect": "Connect",
+}
+READABLE = "h2, h3, h4, p, label, .fieldDescription, " + MERGE_CASE + ", " + WARNING
+
+
+def targets():
+    """Reads what up.sh wrote about the servers."""
+    with open(os.path.join(WEB, "targets.json"), encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def api(server, method, path, body=None):
+    """Calls a server as its administrator and returns the status and the decoded answer."""
+    target = targets()[server]
+    headers = {
+        "Authorization": 'MediaBrowser Client="JellyMeshUi", Device="ui", DeviceId="ui-check", Version="0.1", Token="%s"' % target["token"],
+        "Accept": 'application/json; profile="PascalCase"',
+        "Content-Type": "application/json",
+    }
+    data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(target["base"] + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            text = response.read().decode()
+            return response.status, json.loads(text) if text else None
+    except urllib.error.HTTPError as error:
+        return error.code, None
+
+
+def config(server):
+    """Returns the plugin configuration of a server."""
+    return api(server, "GET", "/Plugins/%s/Configuration" % PLUGIN)[1]
+
+
+def settings(server, change):
+    """Saves the plugin configuration after a change, and returns the status."""
+    current = config(server)
+    change(current)
+    return api(server, "POST", "/Plugins/%s/Configuration" % PLUGIN, current)[0]
+
+
+def set_theme(server, theme):
+    """Chooses the Dashboard theme of the administrator, where the Jellyfin display settings keep it."""
+    path = "/DisplayPreferences/usersettings?userId=%s&client=emby" % targets()[server]["user"]
+    prefs = api(server, "GET", path)[1]
+    prefs["CustomPrefs"]["dashboardTheme"] = theme
+    api(server, "POST", path, prefs)
+
+
+def theme_of(page):
+    """Returns the name of the Jellyfin theme the page has loaded."""
+    return page.evaluate("""() => {
+      const link = [...document.querySelectorAll('link[rel=stylesheet]')].map(l => l.href).reverse()
+        .find(href => /themes\\/[^/]+\\/theme/.test(href));
+      return link ? link.match(/themes\\/([^/]+)\\//)[1] : null;
+    }""")
+
+
+class Session:
+    """One browser that opens the page as the administrator of a server, at a viewport and in a theme."""
+
+    def __enter__(self):
+        self._playwright = sync_playwright().start()
+        self._browser = self._playwright.chromium.launch()
+        os.makedirs(SHOTS, exist_ok=True)
+        return self
+
+    def __exit__(self, *_):
+        self._browser.close()
+        self._playwright.stop()
+
+    def open(self, server, viewport="1280", theme="dark", route=None, wait=True):
+        """Opens the page. route gets the Playwright context before the page loads, to fake or delay answers."""
+        set_theme(server, theme)
+        target = targets()[server]
+        credentials = {"Servers": [{
+            "Id": target["server"], "Name": server, "AccessToken": target["token"], "UserId": target["user"],
+            "ManualAddress": target["base"], "LocalAddress": target["base"], "LastConnectionMode": 2,
+            "manualAddressOnly": True, "DateLastAccessed": int(time.time() * 1000)}]}
+        context = self._browser.new_context(viewport=VIEWPORTS[viewport])
+        context.add_init_script(
+            "localStorage.setItem('jellyfin_credentials', " + json.dumps(json.dumps(credentials)) + ");"
+            "localStorage.setItem('enableAutoLogin', 'true');")
+        if route:
+            route(context)
+
+        page = context.new_page()
+        page.errors = []
+        page.on("pageerror", lambda error: page.errors.append(str(error)))
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.goto(f"{target['base']}/web/index.html#/configurationpage?name=JellyMesh")
+        if wait:
+            wait_loaded(page)
+        return page
+
+
+def wait_loaded(page):
+    """Waits until every part of the page has its data."""
+    page.wait_for_selector(PAGE + ":not(.hide)", state="attached", timeout=30000)
+    page.wait_for_function(
+        "s => document.querySelector(s.settings).value !== '' && document.querySelector(s.merges).textContent !== ''",
+        arg={"settings": SYNC_INTERVAL, "merges": MERGES}, timeout=30000)
+    wait_idle(page)
+
+
+def wait_idle(page):
+    """Waits until the page has finished what it was doing."""
+    page.wait_for_selector(LOADING, state="detached", timeout=30000)
+
+
+def server_row(page, name):
+    """Finds the row of a remote server."""
+    return page.locator(SERVER).filter(has=page.get_by_role("heading", name=name, exact=True))
+
+
+def peer_row(page, name):
+    """Finds the row of a connected server."""
+    return page.locator(PEERS + " > div").filter(has=page.get_by_role("heading", name=name, exact=True))
+
+
+def merge_case(page, title):
+    """Finds the group of doubtful films that holds a title."""
+    return page.locator(MERGE_CASE, has_text=title)
+
+
+def button(scope, name):
+    """Finds an action by its role in a part of the page."""
+    return scope.get_by_role("button", name=BUTTON[name], exact=True)
+
+
+def message(page):
+    """Returns the outcome the page shows for the last action, or an empty text."""
+    node = page.locator(MESSAGE)
+    return node.inner_text() if node.is_visible() else ""
+
+
+def wait_message(page, timeout=30000):
+    """Waits for the outcome of an action and returns it, once the page has finished reacting to it."""
+    page.wait_for_function("s => { const node = document.querySelector(s); return node && node.textContent !== ''; }", arg=MESSAGE, timeout=timeout)
+    wait_idle(page)
+    return message(page)
+
+
+def clear_message(page):
+    """Empties the outcome of the action before."""
+    page.evaluate("s => { const node = document.querySelector(s); node.textContent = ''; node.hidden = true; }", MESSAGE)
+
+
+def shot(page, name):
+    """Captures the whole page."""
+    page.screenshot(path=os.path.join(SHOTS, name + ".png"), full_page=True)
