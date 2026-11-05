@@ -74,7 +74,7 @@ public sealed class PlaybackRefusal
     /// <param name="deviceId">The device of the caller.</param>
     /// <param name="text">The text to show, one of the fixed ones of this class.</param>
     /// <returns>The result.</returns>
-    public IActionResult Refuse(HttpContext context, string deviceId, string text = Text)
+    public ActionResult Refuse(HttpContext context, string deviceId, string text = Text)
     {
         ArgumentNullException.ThrowIfNull(context);
 

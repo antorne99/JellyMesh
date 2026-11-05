@@ -394,6 +394,33 @@ public class PeerGuardFilterTests
     }
 
     [Fact]
+    public async Task With_the_setting_off_an_expired_slot_leaves_the_job_to_stock()
+    {
+        _fixture.Store.Configuration.CloseTranscodeAtSlotExpiry = false;
+        _fixture.Own("play");
+        await StreamAsync();
+
+        Elapse(StreamSlots.IdleTimeout);
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        Assert.Equal(0, Slots);
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task With_the_setting_off_a_real_drop_still_closes_the_job()
+    {
+        _fixture.Store.Configuration.CloseTranscodeAtSlotExpiry = false;
+        _fixture.Own("play");
+        await StreamAsync(ends: ConnectionLost);
+
+        Elapse(StreamSlots.AbandonGrace);
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        VerifyClosed("play", Times.Once());
+    }
+
+    [Fact]
     public async Task The_transcode_stays_until_the_idle_time()
     {
         _fixture.Own("play");

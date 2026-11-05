@@ -71,7 +71,8 @@ public class PeerAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Connects a server, or changes what is shared with it. Taking a library away cuts what is playing from it.
+    /// Connects a server, or changes what is shared with it. Taking a library away cuts what is playing from it, and a lower
+    /// limit what no longer fits.
     /// </summary>
     /// <param name="userId">The dedicated user.</param>
     /// <param name="request">What to share.</param>
@@ -123,9 +124,10 @@ public class PeerAdminController : ControllerBase
             _slots.Revoke(userId, item => _catalog.FindVisible(caller, item) is not null);
         }
 
+        // After what was lost: only what is still over the limit has to go.
         if (lowerLimit)
         {
-            _slots.ReleaseAll(userId);
+            _slots.CutToLimit(userId, request.MaxStreams);
         }
 
         return NoContent();

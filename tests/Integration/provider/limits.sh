@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The stream limit: b plays from a, with a limit of 1 for it. Over the limit b passes to the next source, to the local
-# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 20 minutes because it waits for
+# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 25 minutes because it waits for
 # real timeouts. usage: MEDIA=... WORK=... limits.sh
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -326,7 +326,7 @@ check "a higher limit frees nothing" 1 "$(active_streams)"
 share a 2 Film Serie
 check "saving the same grant frees nothing" 1 "$(active_streams)"
 share a 1 Film Serie
-check "a lower limit frees its slots" 0 "$(active_streams)"
+check "a lower limit that still fits frees nothing" 1 "$(active_streams)"
 kill_reader
 close_stream c18
 check "open" 200 "$(open_stream c19 "$tears" "$PROFILE_DIRECT")"
@@ -652,7 +652,7 @@ echo "slot of the client that left freed after: $freed s"
 check "the slot goes with the grace, not with the sweep" true "$([ "$freed" != never ] && echo true || echo false)"
 check "b gave it back once" 1 "$(give_backs)"
 check "another stream gets the slot" 200 "$(take_slot)"
-check "the client that comes back meanwhile is refused" 502 "$(read_start c26)"
+check "the client that comes back meanwhile is refused" 503 "$(read_start c26)"
 give_slot
 check "with the slot free the same URL plays" 206 "$(read_start c26)"
 check "and holds it" 1 "$(active_streams)"
@@ -778,6 +778,148 @@ check "the same URL plays, with a slot free" 200 "$(peer_get "$quiet_segment" /d
 check "and holds it" 2 "$(active_streams)"
 kill_reader
 for ended_session in "$stock_session" "$quiet_session" "$session"; do
+  as_peer a "$token" DELETE "/Videos/ActiveEncodings?deviceId=x&playSessionId=$ended_session" >/dev/null
+  as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$ended_session" >/dev/null
+done
+share a 1 Film Serie
+check "no ffmpeg left" true "$(g=$(no_ffmpeg 15); [ "$g" != never ] && echo true || echo false)"
+check "free again" 0 "$(wait_free 15)"
+
+# peer_stream <name> <item>: as peer_read, for several at a time. What it opened is in $WORK/peer-open-<name>, its bytes in
+# $WORK/read-<name> and its pid in $WORK/pid-<name>.
+peer_stream() {
+  curl -sS -o "$WORK/peer-open-$1" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$2/PlaybackInfo"
+  curl -sS -o "$WORK/read-$1" --limit-rate "$READ_RATE" -H "Authorization: $peer_auth" \
+    "http://127.0.0.1:18410/Videos/$2/stream?static=true&MediaSourceId=$2&PlaySessionId=$(jq -r .PlaySessionId "$WORK/peer-open-$1")" &
+  echo $! >"$WORK/pid-$1"
+}
+end_peer_stream() {
+  kill -9 "$(cat "$WORK/pid-$1")" 2>/dev/null
+  wait "$(cat "$WORK/pid-$1")" 2>/dev/null
+  as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$WORK/peer-open-$1")" >/dev/null
+}
+
+echo "--- a lower limit ends what no longer fits, the newest first, and the oldest keep playing"
+share a 3 Film Altra
+peer_stream oldest "$long_on_a"
+sleep 1
+peer_stream middle "$other"
+sleep 1
+peer_open
+check "open the newest" 200 "$opened"
+hold_transcode
+sleep 4
+check "three streams" 3 "$(active_streams)"
+check "the newest is a transcode" 1 "$(ffmpeg_count)"
+share a 1 Film Altra
+check "the limit holds at once" 1 "$(active_streams)"
+check "the next stream is refused" 429 "$(take_other)"
+check "the middle one is cut" true "$(ended "$(cat "$WORK/pid-middle")" 30)"
+check "the transcode of the newest closes" true "$(g=$(no_ffmpeg 10); [ "$g" != never ] && echo true || echo false)"
+check "the oldest keeps playing" true "$(grows "$WORK/read-oldest")"
+kill_reader
+end_peer_stream middle
+end_peer_stream oldest
+as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$session" >/dev/null
+check "free again" 0 "$(wait_free 15)"
+
+echo "--- a save that lowers the limit and takes a library away: what was lost goes first, then what is still over"
+share a 3 Film Altra
+peer_stream lost "$long_on_a"
+sleep 1
+peer_stream older "$other"
+sleep 1
+peer_stream newer "$other"
+sleep 3
+check "three streams" 3 "$(active_streams)"
+share a 1 Altra
+check "the limit holds at once" 1 "$(active_streams)"
+check "the stream of the library taken away is cut" true "$(ended "$(cat "$WORK/pid-lost")" 30)"
+check "the newest of the rest is cut" true "$(ended "$(cat "$WORK/pid-newer")" 30)"
+check "the oldest of the rest keeps playing" true "$(grows "$WORK/read-older")"
+end_peer_stream lost
+end_peer_stream newer
+end_peer_stream older
+check "free again" 0 "$(wait_free 15)"
+
+echo "--- a limit lowered to what is running ends nothing"
+share a 3 Film Altra
+peer_stream one "$long_on_a"
+peer_stream two "$other"
+sleep 3
+share a 2 Film Altra
+check "both stay counted" 2 "$(active_streams)"
+check "the first keeps playing" true "$(grows "$WORK/read-one")"
+check "the second keeps playing" true "$(grows "$WORK/read-two")"
+end_peer_stream one
+end_peer_stream two
+share a 1 Film Serie
+check "free again" 0 "$(wait_free 15)"
+
+echo "--- a client back on the same URL at the limit: the 503 and its message, on a direct stream and on HLS"
+check "open direct" 200 "$(open_stream c31 "$tears" "$PROFILE_DIRECT")"
+give_up a "$(stream_url c31)"
+check "b gave the slot back" true "$(f=$(wait_free 12); [ "$f" != never ] && echo true || echo false)"
+check "another stream has the slot" 200 "$(take_slot)"
+direct_back() { read_start c31; }
+message=$(message_during c31 8 direct_back)
+check "the direct stream is refused" 503 "$(cat "$WORK/during-c31")"
+check "with the message of the limit" "$LIMIT_TEXT" "$message"
+give_slot
+gate_mode a down
+check "a server that does not answer stays a bad gateway" 502 "$(read_start c31)"
+gate_mode a up
+check "with the slot free the same URL plays" 206 "$(read_start c31)"
+close_stream c31
+check "free again" 0 "$(wait_free 15)"
+check "open HLS" 200 "$(open_stream c32 "$tears" "$PROFILE_HLS")"
+check "a segment" 200 "$(hls_segments c32 1)"
+segment=$(nth_segment c32 1)
+give_up a "$segment"
+check "b gave the slot back" true "$(f=$(wait_free 12); [ "$f" != never ] && echo true || echo false)"
+check "another stream has the slot" 200 "$(take_slot)"
+hls_back() { curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$segment"; }
+message=$(message_during c32 8 hls_back)
+check "the segment is refused" 503 "$(cat "$WORK/during-c32")"
+check "with the message of the limit" "$LIMIT_TEXT" "$message"
+check "a playlist is refused too" 503 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$(stream_url c32)")"
+check "nothing of the remote in the answer" 0 "$(curl -sS --max-time 30 "$segment" | grep -c -E 'host\.docker\.internal|18412')"
+give_slot
+check "with the slot free the same URL plays" 200 "$(hls_back)"
+close_stream c32
+check "free again" 0 "$(wait_free 15)"
+
+# close_at_expiry <true|false>: the setting of a, saved as the page does, with the server running.
+close_at_expiry() {
+  post a "/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration" "$(get a /Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration | jq --argjson on "$1" '.CloseTranscodeAtSlotExpiry = $on')" >/dev/null
+}
+
+echo "--- the close at the expiry turned off: the slot goes and its ffmpeg stays, and a real drop still closes"
+share a 2 Film Serie
+close_at_expiry false
+peer_open
+check "open a stream that goes quiet" 200 "$opened"
+check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
+quiet_ffmpeg=$(ffmpeg_pids)
+quiet_session=$session
+rm -f "$WORK/stop-pinging"
+ping_job "$quiet_session"
+peer_open
+check "open a stream that drops" 200 "$opened"
+check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
+drop_ffmpeg=$(new_ffmpeg "$quiet_ffmpeg")
+hold_session
+sleep 2
+kill_reader
+sleep 10
+check "the drop closed its ffmpeg" false "$(ffmpeg_running "$drop_ffmpeg")"
+sleep 113
+check "the quiet slot expired" 0 "$(active_streams)"
+check "and its ffmpeg was left alone" true "$(ffmpeg_running "$quiet_ffmpeg")"
+touch "$WORK/stop-pinging"
+wait "$(cat "$WORK/pinger")" 2>/dev/null
+close_at_expiry true
+for ended_session in "$quiet_session" "$session"; do
   as_peer a "$token" DELETE "/Videos/ActiveEncodings?deviceId=x&playSessionId=$ended_session" >/dev/null
   as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$ended_session" >/dev/null
 done

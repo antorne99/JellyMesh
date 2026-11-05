@@ -15,7 +15,8 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
 /// What clients play: playlists, segments, subtitles and streams of a session. Each request is checked again against the
-/// user and the library of the title, and a remote failure ends in a bare status: remote bodies never pass.
+/// user and the library of the title, and a remote failure ends in a bare status: remote bodies never pass. A refusal for
+/// the stream limit also tells the device why.
 /// </summary>
 [ApiController]
 [Route(PlaybackUrls.SessionRoute + "/{sessionId}")]
@@ -31,6 +32,7 @@ public class PlaybackProxyController : ControllerBase
     private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorization;
     private readonly TimeProvider _clock;
+    private readonly PlaybackRefusal _refusal;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackProxyController"/> class.
@@ -40,18 +42,21 @@ public class PlaybackProxyController : ControllerBase
     /// <param name="libraryManager">The library manager.</param>
     /// <param name="authorization">The authorization context.</param>
     /// <param name="clock">The clock.</param>
+    /// <param name="refusal">The refusal of a playback.</param>
     public PlaybackProxyController(
         PlaybackSessionStore sessions,
         PlaybackCoordinator coordinator,
         ILibraryManager libraryManager,
         IAuthorizationContext authorization,
-        TimeProvider clock)
+        TimeProvider clock,
+        PlaybackRefusal refusal)
     {
         _sessions = sessions;
         _coordinator = coordinator;
         _libraryManager = libraryManager;
         _authorization = authorization;
         _clock = clock;
+        _refusal = refusal;
     }
 
     /// <summary>
@@ -180,9 +185,12 @@ public class PlaybackProxyController : ControllerBase
     private async Task<ActionResult> RelayPlaylistAsync(PlaybackSession session, string path, string remoteFolder, string prefix, string token, CancellationToken cancellationToken)
     {
         var playlist = await _coordinator.ReadPlaylistAsync(session.Source.ServerId, path, cancellationToken).ConfigureAwait(false);
-        var text = playlist.IsSuccess
-            ? HlsPlaylistRewriter.Rewrite(playlist.Value!, session, remoteFolder, prefix, token, PlaybackCoordinator.SecretsOf(session))
-            : null;
+        if (!playlist.IsSuccess)
+        {
+            return RelayFailed(session, playlist.Failure);
+        }
+
+        var text = HlsPlaylistRewriter.Rewrite(playlist.Value!, session, remoteFolder, prefix, token, PlaybackCoordinator.SecretsOf(session));
         return text is null
             ? StatusCode(StatusCodes.Status502BadGateway)
             : Content(text, PlaylistType);
@@ -196,12 +204,20 @@ public class PlaybackProxyController : ControllerBase
         var opened = await _coordinator.OpenAsync(session.Source.ServerId, request, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {
-            return StatusCode(StatusCodes.Status502BadGateway);
+            return RelayFailed(session, opened.Failure);
         }
 
         using var stream = opened.Value!;
         await StreamRelay.CopyAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false);
         return new EmptyResult();
+    }
+
+    // A stream that lost its slot and came back to a full server: the same refusal as a new PlaybackInfo gets.
+    private ActionResult RelayFailed(PlaybackSession session, RemoteFailure failure)
+    {
+        return failure == RemoteFailure.StreamLimitReached
+            ? _refusal.Refuse(HttpContext, session.Identity.DeviceId, PlaybackRefusal.LimitText)
+            : StatusCode(StatusCodes.Status502BadGateway);
     }
 
     private sealed record SessionAccess(PlaybackSession? Session, string Token);

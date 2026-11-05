@@ -69,6 +69,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool MetadataProtection { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether a stream slot that expires without a lost connection closes its transcode.
+    /// When off that is left to the timer of stock. A lost connection closes the transcode either way.
+    /// </summary>
+    public bool CloseTranscodeAtSlotExpiry { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the limit in seconds on the <c>PlaybackInfo</c> call to a remote.
     /// </summary>
     public int RemotePlaybackInfoTimeoutSeconds { get; set; } = (int)PlaybackTimeouts.RemotePlaybackInfo.TotalSeconds;

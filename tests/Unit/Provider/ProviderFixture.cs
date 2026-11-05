@@ -34,7 +34,7 @@ internal sealed class ProviderFixture
     {
         Store.Configuration.FederatedFolderPath = "/federata";
         Peer = new User("peer", "auth", "reset");
-        Slots = new StreamSlots(Clock);
+        Slots = new StreamSlots(Clock, Store);
         Closer = new AbandonedStreamCloser(Slots, Transcodes.Object, Clock, NullLogger<AbandonedStreamCloser>.Instance);
 
         Authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
