@@ -18,7 +18,7 @@ public sealed class FederationResolverTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private FederationResolver Resolver() => new(_fixture.Index, _local, _fixture.Registry);
+    private FederationResolver Resolver() => new(_fixture.Index, _local, _fixture.Registry, new InMemoryMergeStore());
 
     private async Task SyncAsync() => await _fixture.Sync.RunAsync(CancellationToken.None);
 

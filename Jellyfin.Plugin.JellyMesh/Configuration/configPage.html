@@ -27,6 +27,13 @@
                     <span>Sync now</span>
                 </button>
 
+                <h3 class="sectionTitle">Duplicate films</h3>
+                <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
+                <div id="jmMergeWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmMergeCases"></div>
+                <h4>Merged films</h4>
+                <div id="jmMerges"></div>
+
                 <h3 class="sectionTitle">Connected JellyMesh servers</h3>
                 <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
                 <div id="jmPeers"></div>
@@ -131,6 +138,11 @@
                     Suspended: 'suspended'
                 };
                 var modeLabels = { Unknown: 'mode unknown', Standard: 'standard', JellyMesh: 'JellyMesh' };
+                var mergeReasons = {
+                    ConflictingProviderIds: 'These titles are linked by shared provider IDs, but some of those IDs contradict each other.',
+                    PossibleDuplicate: 'These titles have the same name and year, but nothing confirms they are one film.'
+                };
+                var ticksPerMinute = 600000000;
                 var syncPollMilliseconds = 2000;
                 var suspended = false;
                 var syncTimer = null;
@@ -494,8 +506,135 @@
                     });
                 }
 
+                function describeCopy(copy) {
+                    var parts = [copy.Copy.Title || 'Untitled'];
+                    if (copy.Copy.Year) {
+                        parts[0] += ' (' + copy.Copy.Year + ')';
+                    }
+
+                    if (copy.RunTimeTicks) {
+                        parts.push(Math.round(copy.RunTimeTicks / ticksPerMinute) + ' min');
+                    }
+
+                    parts.push(copy.Copy.IsLocal ? 'this server' : (copy.ServerName || 'a server no longer configured'));
+                    if (copy.Copy.Tmdb) {
+                        parts.push('TMDb ' + copy.Copy.Tmdb);
+                    }
+
+                    if (copy.Copy.Imdb) {
+                        parts.push('IMDb ' + copy.Copy.Imdb);
+                    }
+
+                    if (!copy.IsFound) {
+                        parts.push('not in the catalog now');
+                    }
+
+                    return parts.join(' - ');
+                }
+
+                function renderMergeTitle(title, boxes) {
+                    var label = create('label');
+                    label.style.display = 'block';
+                    label.style.marginBottom = '0.5em';
+                    var box = create('input');
+                    box.type = 'checkbox';
+                    box.value = title.WorkKey;
+                    boxes.push(box);
+                    label.appendChild(box);
+                    label.appendChild(document.createTextNode(title.MergeIds.length > 0 ? ' Already merged:' : ''));
+                    title.Copies.forEach(function (copy) {
+                        var line = create('div', describeCopy(copy));
+                        line.style.marginLeft = '1.5em';
+                        label.appendChild(line);
+                    });
+
+                    return label;
+                }
+
+                function renderMergeCase(group) {
+                    var row = create('div');
+                    row.className = 'jmMergeCase';
+                    row.style.marginBottom = '1.5em';
+                    row.appendChild(create('p', mergeReasons[group.Kind] || group.Kind));
+
+                    var boxes = [];
+                    group.Titles.forEach(function (title) {
+                        row.appendChild(renderMergeTitle(title, boxes));
+                    });
+
+                    row.appendChild(button('Merge selected', function () {
+                        var keys = boxes.filter(function (box) {
+                            return box.checked;
+                        }).map(function (box) {
+                            return box.value;
+                        });
+                        showMessage('');
+                        act(api('POST', 'Merges', { WorkKeys: keys }).then(function () {
+                            showMessage('Merged. The film list changes after the library scan that was queued.');
+                            return loadMerges();
+                        }));
+                    }));
+                    return row;
+                }
+
+                function renderMerge(merge) {
+                    var row = create('div');
+                    row.className = 'jmMerge';
+                    row.style.marginBottom = '1em';
+                    merge.Copies.forEach(function (copy) {
+                        row.appendChild(create('div', describeCopy(copy)));
+                    });
+
+                    if (!merge.IsInEffect) {
+                        row.appendChild(create('div', 'Not in effect: a copy is missing, or the IDs already make these one film.'));
+                    }
+
+                    row.appendChild(button('Undo merge', function () {
+                        if (!window.confirm('Separate these copies again? The title that stays keeps its watch state.')) {
+                            return;
+                        }
+
+                        showMessage('');
+                        act(api('DELETE', 'Merges/' + merge.Id).then(function () {
+                            showMessage('Merge undone. The film list changes after the library scan that was queued.');
+                            return loadMerges();
+                        }));
+                    }));
+                    return row;
+                }
+
+                function renderMerges(list) {
+                    var warning = el('#jmMergeWarning');
+                    warning.textContent = list.IsStoreDamaged ? 'The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.' : '';
+                    warning.hidden = !list.IsStoreDamaged;
+
+                    var cases = el('#jmMergeCases');
+                    cases.textContent = '';
+                    if (list.Cases.length === 0) {
+                        cases.appendChild(create('p', 'No doubtful films.'));
+                    }
+
+                    list.Cases.forEach(function (group) {
+                        cases.appendChild(renderMergeCase(group));
+                    });
+
+                    var merges = el('#jmMerges');
+                    merges.textContent = '';
+                    if (list.Merges.length === 0) {
+                        merges.appendChild(create('p', 'Nothing merged.'));
+                    }
+
+                    list.Merges.forEach(function (merge) {
+                        merges.appendChild(renderMerge(merge));
+                    });
+                }
+
+                function loadMerges() {
+                    return api('GET', 'Merges').then(renderMerges);
+                }
+
                 function load() {
-                    return api('GET', 'Status').then(render).then(loadSync).then(loadPeers);
+                    return api('GET', 'Status').then(render).then(loadSync).then(loadPeers).then(loadMerges);
                 }
 
                 function loadSettings() {

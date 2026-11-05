@@ -22,4 +22,9 @@ public enum MatchKind
     /// The item stands alone and is imported, so that it is not hidden.
     /// </summary>
     ItemOnly,
+
+    /// <summary>
+    /// The administrator merged copies shown apart (decision 20). They keep the lowest of their keys.
+    /// </summary>
+    Manual,
 }

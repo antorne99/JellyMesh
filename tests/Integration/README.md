@@ -154,6 +154,14 @@ OLD=<old checkout> dedup/upgrade.sh   # an index and stubs from the old build, t
 dedup/down.sh                # removes containers, volumes and network
 ```
 
+`merge/` proves decision 20 the same way, on private containers named `jm-merge-*`, on ports 18441-18443:
+
+```sh
+merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
+merge/run.sh                 # list, merge, restart, sync, a copy that changes or goes, undo, the page, a local copy
+merge/down.sh                # removes containers, volumes, network and scratch files
+```
+
 ## Not covered here
 
 - **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so the test needs the OPS pc.
