@@ -15,11 +15,12 @@ public class StreamSlotsTests
     private static readonly Guid _other = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 
     private readonly ManualClock _clock = new();
+    private readonly InMemoryConfigurationStore _store = new();
     private readonly StreamSlots _slots;
 
     public StreamSlotsTests()
     {
-        _slots = new StreamSlots(_clock);
+        _slots = new StreamSlots(_clock, _store);
     }
 
     private void Hold(string playSession, int limit = 1)
@@ -468,6 +469,44 @@ public class StreamSlotsTests
 
         Assert.Equal(["one"], _slots.TakeClosing());
         Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void With_the_setting_off_an_idle_slot_goes_and_leaves_its_transcode()
+    {
+        Hold("one");
+        _store.Configuration.CloseTranscodeAtSlotExpiry = false;
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void The_setting_counts_as_it_is_when_the_slot_expires()
+    {
+        _store.Configuration.CloseTranscodeAtSlotExpiry = false;
+        Hold("one");
+
+        _store.Configuration.CloseTranscodeAtSlotExpiry = true;
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void With_the_setting_off_a_lost_connection_still_closes_the_transcode()
+    {
+        Hold("one");
+        _store.Configuration.CloseTranscodeAtSlotExpiry = false;
+        var request = _slots.TryEnter(_peer, 1, "one")!;
+        request.Abandon();
+        request.Dispose();
+
+        _clock.Advance(StreamSlots.AbandonGrace);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
     }
 
     [Fact]

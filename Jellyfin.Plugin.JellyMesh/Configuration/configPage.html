@@ -87,6 +87,13 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="jmCloseAtExpiry" type="checkbox" is="emby-checkbox" />
+                            <span>Close the transcode of an expired stream</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
+                    </div>
                     <h3 class="sectionTitle">Playback times</h3>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
@@ -644,6 +651,7 @@
                         el('#jmReconciliationTime').value = config.ReconciliationTime;
                         el('#jmFederatedFolder').value = config.FederatedFolderPath;
                         el('#jmMetadataProtection').checked = config.MetadataProtection;
+                        el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
                         el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
                         el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
                         el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
@@ -693,6 +701,7 @@
                         config.ReconciliationTime = el('#jmReconciliationTime').value;
                         config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
                         config.MetadataProtection = el('#jmMetadataProtection').checked;
+                        config.CloseTranscodeAtSlotExpiry = el('#jmCloseAtExpiry').checked;
                         config.RemotePlaybackInfoTimeoutSeconds = parseInt(el('#jmRemotePlaybackInfoTimeout').value, 10);
                         config.StreamOpenTimeoutSeconds = parseInt(el('#jmStreamOpenTimeout').value, 10);
                         config.PlaybackIdleSeconds = parseInt(el('#jmPlaybackIdle').value, 10);

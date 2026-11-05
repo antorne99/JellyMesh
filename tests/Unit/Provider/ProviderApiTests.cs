@@ -700,6 +700,12 @@ public class PeerAdminControllerTests
 public class ProviderConfigurationTests
 {
     [Fact]
+    public void A_transcode_closes_at_the_expiry_of_its_slot_by_default()
+    {
+        Assert.True(new PluginConfiguration().CloseTranscodeAtSlotExpiry);
+    }
+
+    [Fact]
     public void A_save_from_the_stock_endpoint_keeps_the_peers()
     {
         var current = new PluginConfiguration();
