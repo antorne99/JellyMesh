@@ -71,7 +71,7 @@ public class PeerAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Connects a server, or changes what is shared with it.
+    /// Connects a server, or changes what is shared with it. Taking a library away cuts what is playing from it.
     /// </summary>
     /// <param name="userId">The dedicated user.</param>
     /// <param name="request">What to share.</param>
@@ -96,6 +96,7 @@ public class PeerAdminController : ControllerBase
         }
 
         var changed = false;
+        var lostLibrary = false;
         _store.Update(config =>
         {
             var peer = config.Peers.FirstOrDefault(candidate => candidate.UserId == userId);
@@ -107,6 +108,7 @@ public class PeerAdminController : ControllerBase
 
             changed = peer.MaxStreams != request.MaxStreams
                 || !peer.SharedLibraryIds.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(request.SharedLibraryIds);
+            lostLibrary = peer.SharedLibraryIds.Except(request.SharedLibraryIds, StringComparer.OrdinalIgnoreCase).Any();
             peer.MaxStreams = request.MaxStreams;
             peer.SharedLibraryIds.Clear();
             foreach (var id in request.SharedLibraryIds.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -114,6 +116,13 @@ public class PeerAdminController : ControllerBase
                 peer.SharedLibraryIds.Add(id);
             }
         });
+
+        // What a library took away goes now. Anything else leaves running streams alone.
+        if (lostLibrary)
+        {
+            var caller = new PeerCaller(new PeerGrant(userId, request.SharedLibraryIds.ToHashSet(StringComparer.OrdinalIgnoreCase), request.MaxStreams), user);
+            _slots.Revoke(userId, item => _catalog.FindVisible(caller, item) is not null);
+        }
 
         if (changed)
         {
@@ -124,7 +133,7 @@ public class PeerAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Disconnects a server. Its user stays, as an ordinary user.
+    /// Disconnects a server and cuts what it is playing. Its user stays, as an ordinary user.
     /// </summary>
     /// <param name="userId">The dedicated user.</param>
     /// <returns>Nothing.</returns>
@@ -146,6 +155,7 @@ public class PeerAdminController : ControllerBase
             return NotFound();
         }
 
+        _slots.Revoke(userId, _ => false);
         _slots.ReleaseAll(userId);
         return NoContent();
     }

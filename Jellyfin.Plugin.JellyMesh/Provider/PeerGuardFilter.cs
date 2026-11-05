@@ -135,7 +135,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        using var request = _slots.TryEnter(caller.Grant.UserId, caller.Grant.MaxStreams, hasSession ? playSession : null);
+        using var request = _slots.TryEnter(caller.Grant.UserId, caller.Grant.MaxStreams, hasSession ? playSession : null, itemId, http.Abort);
         if (request is null)
         {
             context.Result = RefuseOverLimit(http);

@@ -8,14 +8,25 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public sealed class StreamRequest : IDisposable
 {
-    private readonly Action<bool> _end;
+    private readonly Action<StreamRequest> _end;
     private int _ended;
     private volatile bool _abandoned;
 
-    internal StreamRequest(Action<bool> end)
+    internal StreamRequest(string? playSessionId, Guid itemId, Action? cut, Action<StreamRequest> end)
     {
+        PlaySessionId = playSessionId;
+        ItemId = itemId;
+        Cut = cut;
         _end = end;
     }
+
+    internal string? PlaySessionId { get; }
+
+    internal Guid ItemId { get; }
+
+    internal Action? Cut { get; }
+
+    internal bool IsAbandoned => _abandoned;
 
     /// <summary>
     /// Marks the request as one that did not end well: the connection went, or the stream failed.
@@ -30,7 +41,7 @@ public sealed class StreamRequest : IDisposable
     {
         if (Interlocked.Exchange(ref _ended, 1) == 0)
         {
-            _end(_abandoned);
+            _end(this);
         }
     }
 }

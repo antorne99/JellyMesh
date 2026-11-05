@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -60,7 +61,7 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
             if (!http.RequestAborted.IsCancellationRequested
                 && executed.Result is ObjectResult { Value: PlaybackInfoResponse { ErrorCode: null, PlaySessionId: { } playSessionId } })
             {
-                _slots.Confirm(peerId, reservation, playSessionId);
+                _slots.Confirm(peerId, reservation, playSessionId, StubLookup.ItemIdOf(context) ?? Guid.Empty);
                 PeerGuardFilter.NotePlaybackInfo(http, playSessionId);
                 confirmed = true;
             }
