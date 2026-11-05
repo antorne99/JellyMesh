@@ -14,6 +14,7 @@
                 <div id="jmMessage" role="status" hidden style="padding:0.5em 0;font-weight:bold;"></div>
 
                 <h3 class="sectionTitle">Status</h3>
+                <div id="jmStatusFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
                 <p id="jmStatus"></p>
 
                 <h3 class="sectionTitle">Remote servers</h3>
@@ -21,6 +22,7 @@
 
                 <h3 class="sectionTitle">Catalog</h3>
                 <div id="jmIndexWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmSyncFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
                 <p id="jmSyncStatus"></p>
                 <div id="jmSyncServers"></div>
                 <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
@@ -30,12 +32,14 @@
                 <h3 class="sectionTitle">Duplicate films</h3>
                 <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
                 <div id="jmMergeWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmMergesFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
                 <div id="jmMergeCases"></div>
                 <h4>Merged films</h4>
                 <div id="jmMerges"></div>
 
                 <h3 class="sectionTitle">Connected JellyMesh servers</h3>
                 <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
+                <div id="jmPeersFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
                 <div id="jmPeers"></div>
 
                 <form id="jmAddServerForm" autocomplete="off">
@@ -65,6 +69,7 @@
 
                 <form id="jmSettingsForm">
                     <h3 class="sectionTitle">Settings</h3>
+                    <div id="jmSettingsFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
                         <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
@@ -152,8 +157,17 @@
                 };
                 var ticksPerMinute = 600000000;
                 var syncPollMilliseconds = 2000;
+                var statusPollMilliseconds = 5000;
+                var readTimeoutMilliseconds = 15000;
+                var keepsTrying = 'What is shown here may be out of date, and the page keeps trying.';
                 var suspended = false;
-                var syncTimer = null;
+                var syncRunning = false;
+                var lastFinished;
+                var folderShown = '';
+                var visible = false;
+                var polling = false;
+                var pollTimer = null;
+                var nextStatusPoll = 0;
 
                 function el(selector) {
                     return page.querySelector(selector);
@@ -175,12 +189,19 @@
                     message.hidden = !text;
                 }
 
-                function api(method, path, body) {
+                // Writes a text only when it differs, so that polling keeps selections and does not repeat alerts.
+                function setText(node, text) {
+                    if (node.textContent !== text) {
+                        node.textContent = text;
+                    }
+                }
+
+                function api(method, path, body, signal) {
                     var headers = {
                         Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         Accept: 'application/json; profile="PascalCase"'
                     };
-                    var options = { method: method, headers: headers };
+                    var options = { method: method, headers: headers, signal: signal };
                     if (body !== undefined) {
                         headers['Content-Type'] = 'application/json';
                         options.body = JSON.stringify(body);
@@ -203,6 +224,13 @@
                     });
                 }
 
+                // Reads the data of a section, and gives up on a stalled answer so that polling goes on.
+                function read(path) {
+                    return api('GET', path, undefined, AbortSignal.timeout(readTimeoutMilliseconds)).catch(function (error) {
+                        throw error.name === 'TimeoutError' ? new Error('The server did not answer in time.') : error;
+                    });
+                }
+
                 function act(promise) {
                     Dashboard.showLoadingMsg();
                     return promise.catch(function (error) {
@@ -210,6 +238,83 @@
                     }).then(function () {
                         Dashboard.hideLoadingMsg();
                     });
+                }
+
+                // Makes a part of the page that loads on its own and reports its failure through failed.
+                function section(request, show, failed) {
+                    return { request: request, show: show, failed: failed, ticket: 0, pending: 0, stale: false };
+                }
+
+                // Loads a section and shows the answer unless a newer read took over. Resolves to the failure, if any.
+                function refresh(part) {
+                    var ticket = ++part.ticket;
+                    part.pending++;
+                    return part.request().then(function (data) {
+                        if (ticket === part.ticket) {
+                            part.show(data);
+                            part.stale = false;
+                            part.failed('');
+                        }
+                    }).catch(function (error) {
+                        if (ticket === part.ticket) {
+                            part.stale = true;
+                            part.failed(error.message);
+                        }
+
+                        return error;
+                    }).then(function (failure) {
+                        part.pending--;
+                        return failure;
+                    });
+                }
+
+                // Shows the answer an action already has, and drops any older read still on its way.
+                function adopt(part, data) {
+                    part.ticket++;
+                    part.show(data);
+                    part.stale = false;
+                    part.failed('');
+                }
+
+                function showFailure(selector, what, next, reason) {
+                    var note = el(selector);
+                    setText(note, reason ? 'Could not read ' + what + '. ' + next + ' Reason: ' + reason : '');
+                    note.hidden = !reason;
+                }
+
+                // Brings a list up to date, leaving rows that stay in place with their focus, panels and edits.
+                // Each item has a key, a build function and its args; a kept row gets the args through jmUpdate.
+                function updateRows(container, items) {
+                    var rows = container.jmRows || {};
+                    var next = {};
+                    items.forEach(function (item) {
+                        var row = rows[item.key];
+                        if (!row) {
+                            row = item.build.apply(null, item.args);
+                        } else if (row.jmUpdate) {
+                            row.jmUpdate.apply(null, item.args);
+                        }
+
+                        next[item.key] = row;
+                    });
+                    Object.keys(rows).forEach(function (key) {
+                        if (next[key]) {
+                            return;
+                        }
+
+                        if (rows[key].contains(document.activeElement)) {
+                            container.tabIndex = -1;
+                            container.focus();
+                        }
+
+                        container.removeChild(rows[key]);
+                    });
+                    items.forEach(function (item, index) {
+                        if (container.children[index] !== next[item.key]) {
+                            container.insertBefore(next[item.key], container.children[index] || null);
+                        }
+                    });
+                    container.jmRows = next;
                 }
 
                 function button(text, onClick) {
@@ -249,7 +354,7 @@
                         });
                         act(api('POST', 'Servers/' + server.Id + '/Libraries', { LibraryIds: ids }).then(function () {
                             showMessage('Libraries saved for ' + server.Name + '.');
-                            return load();
+                            return loadStatus();
                         }));
                     }));
                 }
@@ -259,16 +364,22 @@
                     row.className = 'jmServer';
                     row.style.marginBottom = '1.5em';
                     row.appendChild(create('h4', server.Name));
-                    row.appendChild(create('p', server.Url + ' - ' + (modeLabels[server.Mode] || server.Mode) + ' - '
-                        + (connectionLabels[server.Connection] || server.Connection) + ' - '
-                        + 'libraries to import: ' + server.ImportedLibraryIds.length));
+                    var state = create('p');
+                    row.appendChild(state);
+                    row.jmUpdate = function (current) {
+                        server = current;
+                        setText(state, server.Url + ' - ' + (modeLabels[server.Mode] || server.Mode) + ' - '
+                            + (connectionLabels[server.Connection] || server.Connection) + ' - '
+                            + 'libraries to import: ' + server.ImportedLibraryIds.length);
+                    };
+                    row.jmUpdate(server);
 
                     var libraries = create('div');
                     row.appendChild(button('Test connection', function () {
                         act(api('POST', 'Servers/' + server.Id + '/Test').then(function (report) {
                             showMessage(server.Name + ': connected, ' + (modeLabels[report.Capabilities.Mode] || report.Capabilities.Mode)
                                 + ', importable libraries: ' + report.LibraryCount + '.');
-                            return load();
+                            return loadStatus();
                         }));
                     }));
                     row.appendChild(button('Libraries', function () {
@@ -288,6 +399,12 @@
                 }
 
                 function renderFolder(folder) {
+                    var shown = JSON.stringify(folder);
+                    if (shown === folderShown) {
+                        return;
+                    }
+
+                    folderShown = shown;
                     var info = el('#jmFolderInfo');
                     info.textContent = '';
                     if (!folder.Path) {
@@ -339,17 +456,22 @@
                 function render(status) {
                     suspended = status.Suspended;
                     var warning = el('#jmWarning');
-                    warning.textContent = status.Warning || '';
+                    setText(warning, status.Warning || '');
                     warning.hidden = !status.Warning;
-                    el('#jmStatus').textContent = (status.Suspended ? 'Suspended' : 'Active') + '. Servers configured: ' + status.Servers.length + '.';
+                    setText(el('#jmStatus'), (status.Suspended ? 'Suspended' : 'Active') + '. Servers configured: ' + status.Servers.length + '.');
                     el('#jmAddServer').disabled = suspended;
-
-                    var servers = el('#jmServers');
-                    servers.textContent = '';
-                    status.Servers.forEach(function (server) {
-                        servers.appendChild(renderServer(server));
-                    });
+                    updateSyncButton();
+                    updateRows(el('#jmServers'), status.Servers.map(function (server) {
+                        return { key: server.Id, build: renderServer, args: [server] };
+                    }));
                     renderFolder(status.FederatedFolder);
+                }
+
+                function statusFailed(reason) {
+                    showFailure('#jmStatusFailure', 'the status', keepsTrying, reason);
+                    if (reason) {
+                        setText(el('#jmStatus'), 'Status unknown.');
+                    }
                 }
 
                 function formatDate(value) {
@@ -389,59 +511,112 @@
 
                 function renderSync(status) {
                     var warning = el('#jmIndexWarning');
-                    warning.textContent = indexWarning(status);
+                    setText(warning, indexWarning(status));
                     warning.hidden = !warning.textContent;
-                    el('#jmSyncStatus').textContent = status.IsRunning
+                    setText(el('#jmSyncStatus'), status.IsRunning
                         ? 'Sync running...'
-                        : 'Last sync: ' + formatDate(status.LastFinishedUtc) + '.';
-                    el('#jmSyncNow').disabled = suspended || status.IsRunning;
+                        : 'Last sync: ' + formatDate(status.LastFinishedUtc) + '.');
+                    syncRunning = status.IsRunning;
+                    updateSyncButton();
+                    updateRows(el('#jmSyncServers'), status.Servers.map(function (server, index) {
+                        var line = syncLine(server);
+                        return { key: index + line, build: create, args: ['p', line] };
+                    }));
 
-                    var servers = el('#jmSyncServers');
-                    servers.textContent = '';
-                    status.Servers.forEach(function (server) {
-                        servers.appendChild(create('p', syncLine(server)));
-                    });
+                    if (lastFinished !== undefined && lastFinished !== status.LastFinishedUtc) {
+                        mergesSection.stale = true;
+                    }
 
-                    window.clearTimeout(syncTimer);
-                    syncTimer = status.IsRunning ? window.setTimeout(loadSync, syncPollMilliseconds) : null;
+                    lastFinished = status.LastFinishedUtc;
                 }
 
-                function loadSync() {
-                    return api('GET', 'Sync').then(renderSync).catch(function (error) {
-                        showMessage(error.message);
-                    });
+                function updateSyncButton() {
+                    el('#jmSyncNow').disabled = suspended || syncRunning;
+                }
+
+                function syncFailed(reason) {
+                    showFailure('#jmSyncFailure', 'the state of the sync', keepsTrying, reason);
+                    if (reason) {
+                        syncRunning = false;
+                        setText(el('#jmSyncStatus'), 'Sync state unknown.');
+                        updateSyncButton();
+                    }
                 }
 
                 function renderPeerEditor(container, userId, libraries, shared, maxStreams) {
-                    var boxes = libraries.map(function (library) {
-                        var label = create('label');
-                        label.style.display = 'block';
-                        var box = create('input');
-                        box.type = 'checkbox';
-                        box.value = library.Id;
-                        box.checked = shared.indexOf(library.Id) >= 0;
-                        label.appendChild(box);
-                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                        container.appendChild(label);
-                        return box;
-                    });
+                    var list = create('div');
+                    container.appendChild(list);
+                    var boxes = [];
+                    var saved = { shared: shared, limit: String(maxStreams) };
+                    var librariesShown = '';
+
+                    function isShared(box) {
+                        return saved.shared.indexOf(box.value) >= 0;
+                    }
+
+                    function showLibraries(current) {
+                        var shown = JSON.stringify(current);
+                        if (shown === librariesShown) {
+                            return;
+                        }
+
+                        librariesShown = shown;
+                        list.textContent = '';
+                        boxes = current.map(function (library) {
+                            var label = create('label');
+                            label.style.display = 'block';
+                            var box = create('input');
+                            box.type = 'checkbox';
+                            box.value = library.Id;
+                            label.appendChild(box);
+                            label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
+                            list.appendChild(label);
+                            return box;
+                        });
+                    }
+
+                    // Puts the saved values on the form.
+                    function reset() {
+                        boxes.forEach(function (box) {
+                            box.checked = isShared(box);
+                        });
+                        if (limit.value !== saved.limit) {
+                            limit.value = saved.limit;
+                        }
+                    }
 
                     var limitLabel = create('label', 'Stream limit ');
                     limitLabel.style.display = 'block';
                     var limit = create('input');
                     limit.type = 'number';
                     limit.min = '1';
-                    limit.value = maxStreams;
                     limitLabel.appendChild(limit);
                     container.appendChild(limitLabel);
+                    showLibraries(libraries);
+                    reset();
 
-                    return function () {
-                        var ids = boxes.filter(function (box) {
-                            return box.checked;
-                        }).map(function (box) {
-                            return box.value;
-                        });
-                        return api('PUT', 'Peers/' + userId(), { SharedLibraryIds: ids, MaxStreams: parseInt(limit.value, 10) || 0 });
+                    return {
+                        save: function () {
+                            var ids = boxes.filter(function (box) {
+                                return box.checked;
+                            }).map(function (box) {
+                                return box.value;
+                            });
+                            return api('PUT', 'Peers/' + userId(), { SharedLibraryIds: ids, MaxStreams: parseInt(limit.value, 10) || 0 });
+                        },
+                        reset: reset,
+
+                        // Takes the saved values, and shows them unless the admin has changed the form.
+                        update: function (currentLibraries, currentShared, currentLimit) {
+                            var edited = limit.value !== saved.limit || boxes.some(function (box) {
+                                return box.checked !== isShared(box);
+                            });
+                            saved = { shared: currentShared, limit: String(currentLimit) };
+                            if (!edited) {
+                                showLibraries(currentLibraries);
+                                reset();
+                            }
+                        }
                     };
                 }
 
@@ -449,12 +624,18 @@
                     var row = create('div');
                     row.style.marginBottom = '1.5em';
                     row.appendChild(create('h4', peer.UserName));
-                    row.appendChild(create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams));
-                    var save = renderPeerEditor(row, function () {
+                    var streams = create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams);
+                    row.appendChild(streams);
+                    var editor = renderPeerEditor(row, function () {
                         return peer.UserId;
                     }, libraries, peer.SharedLibraryIds, peer.MaxStreams);
+                    row.jmUpdate = function (current, currentLibraries) {
+                        peer = current;
+                        setText(streams, 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams);
+                        editor.update(currentLibraries, peer.SharedLibraryIds, peer.MaxStreams);
+                    };
                     row.appendChild(button('Save', function () {
-                        act(save().then(function () {
+                        act(editor.save().then(function () {
                             showMessage('Saved ' + peer.UserName + '.');
                             return loadPeers();
                         }));
@@ -473,45 +654,67 @@
                     var row = create('div');
                     row.appendChild(create('h4', 'Connect a server'));
                     var select = create('select');
-                    users.forEach(function (user) {
-                        var option = create('option', user.Name);
-                        option.value = user.Id;
-                        select.appendChild(option);
-                    });
+                    var usersShown = '';
+
+                    // Lists the free users and keeps the one chosen while it is still free.
+                    function showUsers(current) {
+                        var shown = JSON.stringify(current);
+                        if (shown === usersShown) {
+                            return;
+                        }
+
+                        usersShown = shown;
+                        var chosen = select.value;
+                        select.textContent = '';
+                        current.forEach(function (user) {
+                            var option = create('option', user.Name);
+                            option.value = user.Id;
+                            select.appendChild(option);
+                        });
+                        select.value = chosen;
+                        if (select.selectedIndex < 0) {
+                            select.selectedIndex = 0;
+                        }
+                    }
+
+                    showUsers(users);
                     row.appendChild(select);
-                    var save = renderPeerEditor(row, function () {
+                    var editor = renderPeerEditor(row, function () {
                         return select.value;
                     }, libraries, [], 2);
+                    row.jmUpdate = function (currentUsers, currentLibraries) {
+                        showUsers(currentUsers);
+                        editor.update(currentLibraries, [], 2);
+                    };
                     row.appendChild(button('Connect', function () {
-                        act(save().then(function () {
+                        act(editor.save().then(function () {
                             showMessage('Connected.');
+                            editor.reset();
                             return loadPeers();
                         }));
                     }));
                     return row;
                 }
 
-                function loadPeers() {
-                    return Promise.all([api('GET', 'Peers'), api('GET', 'Peers/Options')]).then(function (results) {
-                        var peers = results[0];
-                        var options = results[1];
-                        var container = el('#jmPeers');
-                        container.textContent = '';
-                        peers.forEach(function (peer) {
-                            container.appendChild(renderPeer(peer, options.Libraries));
-                        });
-
-                        var free = options.Users.filter(function (user) {
-                            return !peers.some(function (peer) {
-                                return peer.UserId === user.Id;
-                            });
-                        });
-                        if (free.length > 0) {
-                            container.appendChild(renderNewPeer(free, options.Libraries));
-                        } else if (peers.length === 0) {
-                            container.appendChild(create('p', 'Create a non-admin user for the other server first.'));
-                        }
+                function renderPeers(results) {
+                    var peers = results[0];
+                    var options = results[1];
+                    var rows = peers.map(function (peer) {
+                        return { key: peer.UserId, build: renderPeer, args: [peer, options.Libraries] };
                     });
+
+                    var free = options.Users.filter(function (user) {
+                        return !peers.some(function (peer) {
+                            return peer.UserId === user.Id;
+                        });
+                    });
+                    if (free.length > 0) {
+                        rows.push({ key: 'new', build: renderNewPeer, args: [free, options.Libraries] });
+                    } else if (peers.length === 0) {
+                        rows.push({ key: 'none', build: create, args: ['p', 'Create a non-admin user for the other server first.'] });
+                    }
+
+                    updateRows(el('#jmPeers'), rows);
                 }
 
                 function describeCopy(copy) {
@@ -616,63 +819,142 @@
                     warning.textContent = list.IsStoreDamaged ? 'The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.' : '';
                     warning.hidden = !list.IsStoreDamaged;
 
-                    var cases = el('#jmMergeCases');
-                    cases.textContent = '';
+                    var cases = list.Cases.map(function (group) {
+                        return { key: JSON.stringify(group), build: renderMergeCase, args: [group] };
+                    });
                     if (list.Cases.length === 0) {
-                        cases.appendChild(create('p', 'No doubtful films.'));
+                        cases.push({ key: 'none', build: create, args: ['p', 'No doubtful films.'] });
                     }
 
-                    list.Cases.forEach(function (group) {
-                        cases.appendChild(renderMergeCase(group));
-                    });
+                    updateRows(el('#jmMergeCases'), cases);
 
-                    var merges = el('#jmMerges');
-                    merges.textContent = '';
+                    var merges = list.Merges.map(function (merge) {
+                        return { key: JSON.stringify(merge), build: renderMerge, args: [merge] };
+                    });
                     if (list.Merges.length === 0) {
-                        merges.appendChild(create('p', 'Nothing merged.'));
+                        merges.push({ key: 'none', build: create, args: ['p', 'Nothing merged.'] });
                     }
 
-                    list.Merges.forEach(function (merge) {
-                        merges.appendChild(renderMerge(merge));
+                    updateRows(el('#jmMerges'), merges);
+                }
+
+                function renderSettings(config) {
+                    el('#jmSyncInterval').value = config.SyncIntervalSeconds;
+                    el('#jmReconciliationTime').value = config.ReconciliationTime;
+                    el('#jmFederatedFolder').value = config.FederatedFolderPath;
+                    el('#jmMetadataProtection').checked = config.MetadataProtection;
+                    el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
+                    el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
+                    el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
+                    el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
+                    el('#jmSessionRetention').value = config.SessionRetentionHours;
+                    el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                }
+
+                var statusSection = section(function () {
+                    return read('Status');
+                }, render, statusFailed);
+
+                var syncSection = section(function () {
+                    return read('Sync');
+                }, renderSync, syncFailed);
+
+                var peersSection = section(function () {
+                    return Promise.all([read('Peers'), read('Peers/Options')]);
+                }, renderPeers, function (reason) {
+                    showFailure('#jmPeersFailure', 'the connected servers', keepsTrying, reason);
+                });
+
+                var mergesSection = section(function () {
+                    return read('Merges');
+                }, renderMerges, function (reason) {
+                    showFailure('#jmMergesFailure', 'the duplicate and merged films', keepsTrying, reason);
+                });
+
+                var settingsSection = section(function () {
+                    return ApiClient.getPluginConfiguration(pluginId).catch(function () {
+                        throw new Error('The request failed.');
                     });
+                }, renderSettings, function (reason) {
+                    showFailure('#jmSettingsFailure', 'the settings', 'Reload the page before saving.', reason);
+                });
+
+                function loadStatus() {
+                    return refresh(statusSection);
+                }
+
+                function loadSync() {
+                    return refresh(syncSection);
+                }
+
+                function loadPeers() {
+                    return refresh(peersSection);
                 }
 
                 function loadMerges() {
-                    return api('GET', 'Merges').then(renderMerges);
+                    return refresh(mergesSection);
                 }
 
                 function load() {
-                    return api('GET', 'Status').then(render).then(loadSync).then(loadPeers).then(loadMerges);
+                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges()]);
                 }
 
-                function loadSettings() {
-                    return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                        el('#jmSyncInterval').value = config.SyncIntervalSeconds;
-                        el('#jmReconciliationTime').value = config.ReconciliationTime;
-                        el('#jmFederatedFolder').value = config.FederatedFolderPath;
-                        el('#jmMetadataProtection').checked = config.MetadataProtection;
-                        el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
-                        el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
-                        el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
-                        el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
-                        el('#jmSessionRetention').value = config.SessionRetentionHours;
-                        el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                // Plans the next read while the page is open, sooner while a sync runs.
+                function schedule() {
+                    window.clearTimeout(pollTimer);
+                    pollTimer = visible
+                        ? window.setTimeout(poll, syncRunning ? syncPollMilliseconds : statusPollMilliseconds)
+                        : null;
+                }
+
+                // Reads what changes by itself, skipping what is already on its way, then plans the next read.
+                function poll() {
+                    if (polling) {
+                        return;
+                    }
+
+                    var parts = [syncSection];
+                    if (!syncRunning || Date.now() >= nextStatusPoll) {
+                        parts.push(statusSection, peersSection);
+                        nextStatusPoll = Date.now() + statusPollMilliseconds;
+                    }
+
+                    if (mergesSection.stale) {
+                        parts.push(mergesSection);
+                    }
+
+                    polling = true;
+                    Promise.all(parts.filter(function (part) {
+                        return part.pending === 0;
+                    }).map(refresh)).then(function () {
+                        polling = false;
+                        schedule();
                     });
                 }
 
                 page.addEventListener('pageshow', function () {
                     showMessage('');
-                    act(Promise.all([loadSettings(), load()]));
+                    visible = true;
+                    act(Promise.all([refresh(settingsSection), load()]).then(function (results) {
+                        if (results[0] || results[1].some(Boolean)) {
+                            showMessage('Part of this page could not be loaded. Each part says why.');
+                        }
+
+                        schedule();
+                    }));
                 });
 
                 page.addEventListener('pagehide', function () {
-                    window.clearTimeout(syncTimer);
-                    syncTimer = null;
+                    visible = false;
+                    schedule();
                 });
 
                 el('#jmSyncNow').addEventListener('click', function () {
                     showMessage('');
-                    act(api('POST', 'Sync').then(renderSync));
+                    act(api('POST', 'Sync').then(function (status) {
+                        adopt(syncSection, status);
+                        schedule();
+                    }));
                 });
 
                 el('#jmAddServerForm').addEventListener('submit', function (e) {
@@ -689,7 +971,7 @@
                     act(api('POST', 'Servers', request).then(function (server) {
                         el('#jmAddServerForm').reset();
                         showMessage('Added ' + server.Name + '.');
-                        return load();
+                        return Promise.all([loadStatus(), loadSync()]);
                     }));
                 });
 
@@ -710,7 +992,7 @@
                         return ApiClient.updatePluginConfiguration(pluginId, config);
                     }).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
-                        return load();
+                        return loadStatus();
                     }, function () {
                         throw new Error('The settings were refused: check that the sync interval is at least 300 seconds, the playback times are in range, the time format, and that the folder is an absolute path.');
                     }));
