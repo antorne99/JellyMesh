@@ -377,9 +377,12 @@ scan b
 long=$(movie_on_b "JM Lungo")
 other=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | contains("JM Altro"))][0].Id')
 echo "long film on b: $long, in the other library of a: $other"
-# Segments of a minute: the buffers on the way hold a short one, and a would have nothing in flight when the client drops.
-PROFILE_ENCODE=$(jq -c '. + {AllowVideoStreamCopy: false} | .DeviceProfile.TranscodingProfiles[0].SegmentLength = 60' <<<"$PROFILE_HLS")
+# Segments of two minutes: the buffers on the way hold about 8 MB, and with a shorter one a has sent everything and sees no
+# connection drop. That is the sweep of b, not the grace.
+PROFILE_ENCODE=$(jq -c '. + {AllowVideoStreamCopy: false} | .DeviceProfile.TranscodingProfiles[0].SegmentLength = 120' <<<"$PROFILE_HLS")
 
+# A client reads what the buffers on the way hold before it notices a cut. At this rate that takes seconds, and the film minutes.
+READ_RATE=1m
 # ended <pid> <seconds>: whether it stopped within that time.
 ended() {
   local i
@@ -399,7 +402,7 @@ grows() {
 # peer_read <item>: a peer playing an item by itself, slowly. The pid goes to $WORK/peer-reader.
 peer_read() {
   curl -sS -o "$WORK/taken" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$1/PlaybackInfo"
-  curl -sS -o "$WORK/read-peer" --limit-rate 100k -H "Authorization: $peer_auth" \
+  curl -sS -o "$WORK/read-peer" --limit-rate "$READ_RATE" -H "Authorization: $peer_auth" \
     "http://127.0.0.1:18410/Videos/$1/stream?static=true&MediaSourceId=$1&PlaySessionId=$(jq -r .PlaySessionId "$WORK/taken")" &
   echo $! >"$WORK/peer-reader"
 }
@@ -432,15 +435,21 @@ slow_segment() {
   echo $! >"$WORK/reader"
 }
 
+# steady_read <device>: reads a stream of b at $READ_RATE, in the background. The pid goes to $WORK/reader.
+steady_read() {
+  curl -sS -o "$WORK/read-$1" --limit-rate "$READ_RATE" "$(stream_url "$1")" &
+  echo $! >"$WORK/reader"
+}
+
 echo "--- removing a connected server cuts what it is playing, at once"
 check "open" 200 "$(open_stream c21 "$long" "$PROFILE_DIRECT")"
-slow_read c21
+steady_read c21
 reader=$(cat "$WORK/reader")
 sleep 3
 check "a long direct play is running" true "$(grows "$WORK/read-c21")"
 req a DELETE "/JellyMesh/Admin/Peers/$peer_user" >/dev/null
 check "removed" 204 "$(status)"
-check "it was cut" true "$(ended "$reader" 3)"
+check "it was cut, the client saw it when the buffers ran out" true "$(ended "$reader" 30)"
 kill -9 "$reader" 2>/dev/null
 wait "$reader" 2>/dev/null
 share a 1 Film Serie
@@ -449,7 +458,7 @@ close_stream c21
 echo "--- taking a library away cuts only what plays from it"
 share a 2 Film Altra
 check "open from the library that goes" 200 "$(open_stream c22 "$long" "$PROFILE_DIRECT")"
-slow_read c22
+steady_read c22
 reader=$(cat "$WORK/reader")
 peer_read "$other"
 kept=$(cat "$WORK/peer-reader")
@@ -457,7 +466,7 @@ sleep 3
 check "both are playing" true "$(grows "$WORK/read-c22")"
 check "both are playing" true "$(grows "$WORK/read-peer")"
 share a 2 Altra
-check "the stream of the library taken away is cut" true "$(ended "$reader" 3)"
+check "the stream of the library taken away is cut" true "$(ended "$reader" 30)"
 kill -9 "$reader" 2>/dev/null
 wait "$reader" 2>/dev/null
 close_stream c22
