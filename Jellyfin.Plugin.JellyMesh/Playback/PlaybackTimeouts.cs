@@ -47,6 +47,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan SlotRenewal = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// How long a refusal of the file of a stub at the stream limit explains a failure of the local transcode reading it.
+    /// ffmpeg dies at once when its input is refused, so this only has to cover the way back to the client.
+    /// </summary>
+    public static readonly TimeSpan FileRefusalMemory = TimeSpan.FromSeconds(15);
+
+    /// <summary>
     /// Default time without requests after which a session is forgotten. Until then a paused player can resume with its
     /// URLs: the remote restarts ffmpeg at the requested segment.
     /// </summary>

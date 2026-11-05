@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Security;
+using MediaBrowser.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -17,12 +18,14 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 public sealed class PeerGuardFilter : IAsyncResourceFilter
 {
     private const string PlaySessionParameter = "PlaySessionId";
+    private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
 
     private static readonly string[] _itemRouteValues = ["itemId", "routeItemId"];
 
     private readonly PeerDirectory _peers;
     private readonly ProviderCatalog _catalog;
     private readonly StreamSlots _slots;
+    private readonly AbandonedStreamCloser _closer;
     private readonly ConcurrencyLimit<Guid> _reads = new(ProviderProtocol.MaxReadsPerPeer);
 
     /// <summary>
@@ -31,11 +34,13 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     /// <param name="peers">The peers.</param>
     /// <param name="catalog">The catalog.</param>
     /// <param name="slots">The stream slots.</param>
-    public PeerGuardFilter(PeerDirectory peers, ProviderCatalog catalog, StreamSlots slots)
+    /// <param name="closer">What closes the transcodes of abandoned streams.</param>
+    public PeerGuardFilter(PeerDirectory peers, ProviderCatalog catalog, StreamSlots slots, AbandonedStreamCloser closer)
     {
         _peers = peers;
         _catalog = catalog;
         _slots = slots;
+        _closer = closer;
     }
 
     /// <summary>
@@ -50,6 +55,18 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
 
         context.Response.Headers[ProviderProtocol.RefusalHeader] = ProviderProtocol.StreamLimitRefusal;
         return new StatusCodeResult(StatusCodes.Status429TooManyRequests);
+    }
+
+    /// <summary>
+    /// Notes the play session a <c>PlaybackInfo</c> confirmed, for when its answer turns out not to have left.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <param name="playSessionId">The play session.</param>
+    public static void NotePlaybackInfo(HttpContext context, string playSessionId)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        context.Items[ConfirmedPlaySession] = playSessionId;
     }
 
     /// <inheritdoc />
@@ -78,6 +95,12 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             case PeerRouteKind.Closed:
                 context.Result = new StatusCodeResult(StatusCodes.Status403Forbidden);
                 return;
+            case PeerRouteKind.StopEncoding when !_slots.Owns(caller.Grant.UserId, PlaySessionOf(http)):
+                context.Result = RefusePlaySession();
+                return;
+            case PeerRouteKind.StopEncoding:
+                await next().ConfigureAwait(false);
+                return;
         }
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
@@ -93,13 +116,13 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        if (kind != PeerRouteKind.Stream)
+        if (kind == PeerRouteKind.PlaybackInfo)
         {
-            await next().ConfigureAwait(false);
+            await PlaybackInfoAsync(caller, context, next).ConfigureAwait(false);
             return;
         }
 
-        var playSession = http.Request.Query[PlaySessionParameter].ToString();
+        var playSession = PlaySessionOf(http);
         var hasSession = !string.IsNullOrEmpty(playSession);
 
         // HLS without a play session would also kill every job of the device on this server.
@@ -109,14 +132,65 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        using var request = _slots.TryEnter(caller.Grant.UserId, caller.Grant.MaxStreams, hasSession ? playSession : null);
+        // A segment request kills the job of the play session it names when it restarts ffmpeg, as the stop route does.
+        if (hasSession && !_slots.Owns(caller.Grant.UserId, playSession))
+        {
+            context.Result = RefusePlaySession();
+            return;
+        }
+
+        using var request = _slots.TryEnter(caller.Grant.UserId, caller.Grant.MaxStreams, hasSession ? playSession : null, itemId, http.Abort);
         if (request is null)
         {
             context.Result = RefuseOverLimit(http);
             return;
         }
 
-        await next().ConfigureAwait(false);
+        // Before this stream starts, so that two ffmpeg of one peer never overlap on its limit.
+        await _closer.CloseAbandonedAsync().ConfigureAwait(false);
+
+        var executed = await next().ConfigureAwait(false);
+        if (WasAbandoned(http, executed))
+        {
+            request.Abandon();
+        }
+
+        // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
+        if (hasSession && executed.Exception is FfmpegException)
+        {
+            await _closer.CloseAsync(playSession).ConfigureAwait(false);
+        }
+    }
+
+    // One answer for all of them, the same for a play session that exists and one that does not. The joined values of a
+    // repeated parameter and an empty one are never owned, so stock never gets to "every job of the device".
+    private static StatusCodeResult RefusePlaySession() => new(StatusCodes.Status403Forbidden);
+
+    private static string PlaySessionOf(HttpContext http) => http.Request.Query[PlaySessionParameter].ToString();
+
+    private static bool Failed(ResourceExecutedContext executed)
+    {
+        return executed.HttpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError
+            || (executed.Exception is not null && !executed.ExceptionHandled);
+    }
+
+    // A probe of the consumer drops its connection on purpose, after the first byte: the stream it proved is about to start.
+    private static bool WasAbandoned(HttpContext http, ResourceExecutedContext executed)
+    {
+        return !http.Request.Headers.ContainsKey(ProviderProtocol.ProbeHeader)
+            && (http.RequestAborted.IsCancellationRequested || Failed(executed));
+    }
+
+    private async Task PlaybackInfoAsync(PeerCaller caller, ResourceExecutingContext context, ResourceExecutionDelegate next)
+    {
+        var http = context.HttpContext;
+        var executed = await next().ConfigureAwait(false);
+
+        // The consumer never learned this play session, so nobody will ever release it.
+        if ((http.RequestAborted.IsCancellationRequested || Failed(executed)) && http.Items[ConfirmedPlaySession] is string playSessionId)
+        {
+            _slots.Release(caller.Grant.UserId, playSessionId);
+        }
     }
 
     private static bool IsProviderRead(ControllerActionDescriptor? action, string method)

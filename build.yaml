@@ -11,7 +11,8 @@ description: >
   title: a local copy always wins, otherwise the best quality does, and the
   other copies stay as backups. Remote servers can be stock Jellyfin or run
   JellyMesh, which adds shared libraries, stream limits and a change feed
-  between servers you trust.
+  between servers you trust. An admin can merge films that can't be matched
+  safely.
 category: "General"
 owner: "antoniotornesello"
 artifacts:
@@ -21,5 +22,6 @@ changelog: >
   remotes, with dedup and per-episode completion, written to a federated folder
   you link to your libraries. Remote playback through the local server, with
   backup sources and a local transcode as fallback. Shared libraries and stream
-  limits between JellyMesh servers. Tested on Jellyfin 12.4 with jellyfin-web
-  only: real Android and TV clients and QSV are not yet tested.
+  limits between JellyMesh servers, and manual film merges. Tested on Jellyfin
+  12.4 with jellyfin-web only: real Android and TV clients and QSV are not yet
+  tested.

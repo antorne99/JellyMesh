@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Dedup;
@@ -7,9 +9,11 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
@@ -39,6 +43,7 @@ public class PlaybackFiltersTests
     private readonly Mock<IStubRegistry> _stubs = new();
     private readonly Mock<IAuthorizationContext> _authorization = new();
     private readonly Mock<ISessionManager> _sessionManager = new();
+    private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly Mock<IFederationResolver> _resolver = new();
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StubEntry _stub;
@@ -88,7 +93,9 @@ public class PlaybackFiltersTests
             _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
-            _fixture.Sessions);
+            _fixture.Sessions,
+            new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
+            _transcodes.Object);
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
@@ -423,6 +430,152 @@ public class PlaybackFiltersTests
         Assert.True(passed);
         Assert.Null(_fixture.Sessions.Find(session.Id));
         Assert.Equal("remote-ps", Assert.Single(_fixture.Client.Stopped));
+    }
+
+    [Theory]
+    [InlineData("HlsSegment", "StopEncodingProcess")]
+    [InlineData("Playstate", "OnPlaybackStopped")]
+    [InlineData("Playstate", "OnPlaybackStoppedLegacy")]
+    public async Task Another_user_cannot_stop_a_stub_played_on_this_server(string controller, string action)
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play");
+        var context = Context(controller, action, ("playSessionId", "local-play"));
+
+        var passed = await RunAsync(GuardFilter(), context);
+
+        Assert.False(passed);
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task Another_user_cannot_report_a_stub_played_on_this_server_as_stopped()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play");
+        var context = Context("Playstate", "ReportPlaybackStopped", ("playbackStopInfo", new MediaBrowser.Model.Session.PlaybackStopInfo { PlaySessionId = "LOCAL-PLAY" }));
+
+        var passed = await RunAsync(GuardFilter(), context);
+
+        Assert.False(passed);
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Theory]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("DynamicHls", "GetVariantHlsVideoPlaylist")]
+    [InlineData("Videos", "GetVideoStream")]
+    public async Task A_stream_cannot_name_the_local_play_session_of_another_user(string controller, string action)
+    {
+        CanSeeItem();
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play");
+        var context = Context(controller, action, ("itemId", _itemId), ("playSessionId", "LOCAL-PLAY"));
+
+        var passed = await RunAsync(GuardFilter(), context);
+
+        Assert.False(passed);
+        Assert.Equal(StatusCodes.Status404NotFound, (context.Result as StatusCodeResult)?.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stream_of_its_own_local_play_session_passes()
+    {
+        CanSeeItem();
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play");
+
+        Assert.True(await RunAsync(GuardFilter(), Context("DynamicHls", "GetHlsVideoSegment", ("itemId", _itemId), ("playSessionId", "local-play"))));
+    }
+
+    [Fact]
+    public async Task Its_user_can_stop_a_stub_played_on_this_server()
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play");
+
+        Assert.True(await RunAsync(GuardFilter(), Context("HlsSegment", "StopEncodingProcess", ("playSessionId", "local-play"))));
+        Assert.True(await RunAsync(GuardFilter(), Context("Playstate", "ReportPlaybackStopped", ("playbackStopInfo", new MediaBrowser.Model.Session.PlaybackStopInfo { PlaySessionId = "local-play" }))));
+    }
+
+    [Fact]
+    public async Task A_play_session_nobody_recorded_stays_with_stock()
+    {
+        Assert.True(await RunAsync(GuardFilter(), Context("HlsSegment", "StopEncodingProcess", ("playSessionId", "real-title"))));
+        Assert.True(await RunAsync(GuardFilter(), Context("Playstate", "OnPlaybackStopped", ("playSessionId", "real-title"))));
+    }
+
+    private ActionExecutingContext SegmentOfStub(string? playSessionId = null)
+    {
+        CanSeeItem();
+        return Context("DynamicHls", "GetHlsVideoSegment", ("itemId", _itemId), ("playSessionId", playSessionId));
+    }
+
+    private async Task FileAtLimitAsync()
+    {
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.StreamLimitReached));
+        await _fixture.Coordinator.OpenFileAsync(_stub, HttpMethod.Get, null, CancellationToken.None);
+    }
+
+    private async Task<ActionExecutedContext> FailStockAsync(ActionExecutingContext context, Exception failure)
+    {
+        ActionExecutedContext? executed = null;
+        await GuardFilter().OnActionExecutionAsync(context, () =>
+        {
+            executed = new ActionExecutedContext(context, [], new object()) { Exception = failure };
+            return Task.FromResult(executed);
+        });
+        return executed!;
+    }
+
+    [Fact]
+    public async Task A_local_transcode_that_lost_the_slot_gets_the_refusal_of_the_limit()
+    {
+        await FileAtLimitAsync();
+
+        var executed = await FailStockAsync(SegmentOfStub(), new InvalidOperationException());
+
+        Assert.Null(executed.Exception);
+        Assert.True(executed.ExceptionHandled);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, (executed.Result as StatusCodeResult)?.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_refusal_clears_the_failed_job_a_retry_would_wait_for()
+    {
+        await FileAtLimitAsync();
+
+        await FailStockAsync(SegmentOfStub("local-play"), new FfmpegException("exited"));
+
+        _transcodes.Verify(manager => manager.KillTranscodingJobs("device", "local-play", It.IsAny<Func<string, bool>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_failed_start_of_ffmpeg_for_any_reason_is_cleared_and_stays_a_failure()
+    {
+        var failure = new FfmpegException("exited");
+
+        var executed = await FailStockAsync(SegmentOfStub("local-play"), failure);
+
+        Assert.Same(failure, executed.Exception);
+        _transcodes.Verify(manager => manager.KillTranscodingJobs("device", "local-play", It.IsAny<Func<string, bool>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_refusal_without_a_play_session_stops_nothing_of_the_device()
+    {
+        await FileAtLimitAsync();
+
+        await FailStockAsync(SegmentOfStub(), new FfmpegException("exited"));
+
+        _transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_local_transcode_that_fails_for_any_other_reason_stays_a_failure()
+    {
+        var failure = new InvalidOperationException();
+
+        var executed = await FailStockAsync(SegmentOfStub("local-play"), failure);
+
+        Assert.Same(failure, executed.Exception);
+        Assert.False(executed.ExceptionHandled);
+        _transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()), Times.Never);
     }
 
     [Fact]

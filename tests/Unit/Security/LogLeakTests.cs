@@ -96,7 +96,7 @@ public class LogLeakTests
         // The service subscribes on a thread of its own, so the event is raised until somebody hears it.
         for (var waited = 0; waited < 500 && logger.Lines.Count == 0; waited++)
         {
-            sessions.Raise(manager => manager.PlaybackStopped += null, new PlaybackStopEventArgs { PlaySessionId = session.Id });
+            sessions.Raise(manager => manager.PlaybackStopped += null, new PlaybackStopEventArgs { PlaySessionId = session.Id, Users = [new Jellyfin.Database.Implementations.Entities.User("viewer", "auth", "reset") { Id = session.Identity.UserId }] });
             await Task.Delay(10);
         }
 

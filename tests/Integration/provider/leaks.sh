@@ -16,7 +16,7 @@ gateway=$(docker exec jm-prov-b getent hosts "$HOST_GATE" | awk '{print $1; exit
 check "the address of the gate is known" true "$([ -n "$gateway" ] && echo true || echo false)"
 addresses="$HOST_GATE|:1841[234]|${gateway//./\\.}"
 
-no_token() { check "no remote token in $1" 0 "$(cat "${@:2}" 2>/dev/null | grep -c -F -f "$LOOK.tokens")"; }
+no_token() { check "no remote token in $1" 0 "$(cat "${@:2}" 2>/dev/null | grep -c -F -f "${TOKENS:-$LOOK.tokens}")"; }
 no_address() { check "no remote address in $1" 0 "$(cat "${@:2}" 2>/dev/null | grep -c -E "$addresses")"; }
 clean() { # <what> <file>...: both checks, and there has to be something to check
   check "$1 were kept" true "$([ "$(cat "${@:2}" 2>/dev/null | wc -c)" -gt 0 ] && echo true || echo false)"
@@ -47,11 +47,15 @@ for s in a b; do
   docker exec "$name" sh -c 'cat /config/log/* 2>/dev/null' >"$LOOK/$s-log-files"
   docker exec "$name" sh -c 'find /federata -type f \( -name "*.strm" -o -name "*.nfo" \) -exec cat {} +' >"$LOOK/$s-federata"
   docker exec "$name" sh -c 'cat /config/plugins/configurations/*JellyMesh*.xml 2>/dev/null' >"$LOOK/$s-config"
+  # The tokens of the other servers. Its own are not remote here: stock logs one it issued when a login replaces it.
+  find "$WORK" -maxdepth 1 -name 'gate-*.tokens' ! -name "gate-$s.tokens" -exec cat {} + | sort -u >"$LOOK.$s.tokens"
+  TOKENS=$LOOK.$s.tokens
   check "$s logged something" true "$([ -s "$LOOK/$s-stdout" ] && echo true || echo false)"
   clean "the output of $s" "$LOOK/$s-stdout"
   clean "the log files of $s" "$LOOK/$s-log-files"
   clean "the .strm and .nfo of $s" "$LOOK/$s-federata"
   no_token "the plugin configuration of $s" "$LOOK/$s-config"
+  TOKENS=
 done
 
 no_token "the gate logs" "$WORK"/gate-*.log
