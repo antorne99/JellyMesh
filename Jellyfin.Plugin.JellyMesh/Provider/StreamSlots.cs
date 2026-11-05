@@ -35,6 +35,7 @@ public sealed class StreamSlots
     private readonly List<(Guid PeerId, string PlaySessionId)> _closing = [];
     private readonly PlaySessionOwners _owners = new();
     private readonly TimeProvider _clock;
+    private long _opened;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StreamSlots"/> class.
@@ -69,7 +70,7 @@ public sealed class StreamSlots
             }
 
             var reservation = Guid.NewGuid().ToString("N");
-            slots[reservation] = new Slot(_clock.GetUtcNow(), 1, false);
+            slots[reservation] = new Slot(_clock.GetUtcNow(), 1, false) { IsReservation = true, Opened = ++_opened };
             return reservation;
         }
     }
@@ -88,7 +89,7 @@ public sealed class StreamSlots
             var slots = SlotsOf(peerId);
             if (slots.Remove(reservation))
             {
-                slots[playSessionId] = new Slot(_clock.GetUtcNow(), 0, false, itemId);
+                slots[playSessionId] = new Slot(_clock.GetUtcNow(), 0, false, itemId) { Opened = ++_opened };
             }
         }
 
@@ -133,11 +134,11 @@ public sealed class StreamSlots
             }
             else
             {
-                slot = new Slot(_clock.GetUtcNow(), 1, playSessionId is null, itemId);
+                slot = new Slot(_clock.GetUtcNow(), 1, playSessionId is null, itemId) { Opened = ++_opened };
                 slots[key] = slot;
             }
 
-            var request = new StreamRequest(playSessionId, itemId, cut, ended => Exit(peerId, key, slot, ended));
+            var request = new StreamRequest(key, playSessionId, itemId, cut, ended => Exit(peerId, key, slot, ended));
             RunningOf(peerId).Add(request);
             return request;
         }
@@ -176,9 +177,8 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Frees every slot of a peer, for when it is removed or its limit goes down. What is running keeps running without one,
-    /// and the next request of a stream that goes on takes a slot like any other. Its play sessions stay its own: they still
-    /// have transcodes to close.
+    /// Frees every slot of a peer that was removed. What is running has been cut by then, and a request of a stream that
+    /// goes on takes a slot like any other. Its play sessions stay its own: they still have transcodes to close.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     public void ReleaseAll(Guid peerId)
@@ -231,6 +231,38 @@ public sealed class StreamSlots
     }
 
     /// <summary>
+    /// Brings a peer down to a lower limit at once. What no longer fits ends as in <see cref="Revoke"/>: its requests are
+    /// cut, its slot goes and its transcode is closed. The rest stays counted.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    /// <param name="limit">The new limit.</param>
+    public void CutToLimit(Guid peerId, int limit)
+    {
+        List<StreamRequest> cut;
+        lock (_lock)
+        {
+            var slots = SlotsOf(peerId);
+            var excess = InCuttingOrder(slots).Take(slots.Count - limit).ToList();
+            foreach (var (key, slot) in excess)
+            {
+                slots.Remove(key);
+                if (!slot.EndsWithRequest && !slot.IsReservation)
+                {
+                    _closing.Add((peerId, key));
+                }
+            }
+
+            var keys = excess.Select(pair => pair.Key).ToHashSet();
+            cut = RunningOf(peerId).Where(request => keys.Contains(request.SlotKey)).ToList();
+        }
+
+        foreach (var request in cut)
+        {
+            request.Cut?.Invoke();
+        }
+    }
+
+    /// <summary>
     /// Takes the play sessions whose transcode has to be closed: those whose slot expired or was revoked. One that came
     /// back has a slot again, and its transcode is in use.
     /// </summary>
@@ -265,6 +297,13 @@ public sealed class StreamSlots
         {
             return SlotsOf(peerId).Count;
         }
+    }
+
+    // Who goes first when a limit comes down, so that the oldest keep playing: what has not started, then the newest. This
+    // order is a choice of ours, and this is the only place that holds it.
+    private static IEnumerable<KeyValuePair<string, Slot>> InCuttingOrder(Dictionary<string, Slot> slots)
+    {
+        return slots.OrderByDescending(pair => pair.Value.IsReservation).ThenByDescending(pair => pair.Value.Opened);
     }
 
     // Expired slots go whenever the peer is looked at, so that no timer is needed. Their transcodes go too, after the grace
@@ -338,6 +377,10 @@ public sealed class StreamSlots
         public Guid ItemId { get; }
 
         public bool Abandoned { get; set; }
+
+        public bool IsReservation { get; init; }
+
+        public long Opened { get; init; }
 
         public bool IsExpired(DateTimeOffset now)
         {

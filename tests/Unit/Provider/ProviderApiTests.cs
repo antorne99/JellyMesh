@@ -491,16 +491,65 @@ public class PeerAdminControllerTests
     }
 
     [Fact]
-    public void A_lower_limit_frees_the_slots_and_cuts_nothing()
+    public void A_lower_limit_ends_what_no_longer_fits_and_keeps_the_rest_counted()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request(3));
+        var cut = new List<string>();
+        using var oldest = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "oldest", ProviderFixture.SharedItem, () => cut.Add("oldest"));
+        using var middle = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "middle", ProviderFixture.SharedItem, () => cut.Add("middle"));
+        using var newest = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "newest", ProviderFixture.SharedItem, () => cut.Add("newest"));
+
+        _controller.SetPeer(_fixture.Peer.Id, Request(1));
+
+        Assert.Equal(["middle", "newest"], cut.Order(StringComparer.Ordinal));
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+        Assert.Equal(["middle", "newest"], _fixture.Slots.TakeClosing().Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void A_limit_lowered_to_what_is_running_ends_nothing()
     {
         _controller.SetPeer(_fixture.Peer.Id, Request(3));
         var cut = false;
-        using var running = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "play", ProviderFixture.SharedItem, () => cut = true);
+        using var one = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "one", ProviderFixture.SharedItem, () => cut = true);
+        using var two = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "two", ProviderFixture.SharedItem, () => cut = true);
 
         _controller.SetPeer(_fixture.Peer.Id, Request(2));
 
-        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
         Assert.False(cut);
+        Assert.Equal(2, _fixture.Slots.Count(_fixture.Peer.Id));
+        Assert.Empty(_fixture.Slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_save_that_lowers_the_limit_and_takes_a_library_away_counts_what_was_lost_first()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(Both().SharedLibraryIds, 3));
+        var cut = new List<string>();
+        using var lost = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "lost", ProviderFixture.SharedItem, () => cut.Add("lost"));
+        using var older = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "older", ProviderFixture.PrivateItem, () => cut.Add("older"));
+        using var newer = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "newer", ProviderFixture.PrivateItem, () => cut.Add("newer"));
+
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(OnlyPrivate().SharedLibraryIds, 1));
+
+        Assert.Equal(["lost", "newer"], cut.Order(StringComparer.Ordinal));
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public void A_save_that_takes_a_library_away_can_leave_nothing_more_to_cut_for_the_lower_limit()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(Both().SharedLibraryIds, 3));
+        var cut = new List<string>();
+        using var lost = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "lost", ProviderFixture.SharedItem, () => cut.Add("lost"));
+        using var kept = _fixture.Slots.TryEnter(_fixture.Peer.Id, 3, "kept", ProviderFixture.PrivateItem, () => cut.Add("kept"));
+
+        _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(OnlyPrivate().SharedLibraryIds, 1));
+
+        Assert.Equal(["lost"], cut);
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]

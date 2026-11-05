@@ -12,13 +12,16 @@ public sealed class StreamRequest : IDisposable
     private int _ended;
     private volatile bool _abandoned;
 
-    internal StreamRequest(string? playSessionId, Guid itemId, Action? cut, Action<StreamRequest> end)
+    internal StreamRequest(string slotKey, string? playSessionId, Guid itemId, Action? cut, Action<StreamRequest> end)
     {
+        SlotKey = slotKey;
         PlaySessionId = playSessionId;
         ItemId = itemId;
         Cut = cut;
         _end = end;
     }
+
+    internal string SlotKey { get; }
 
     internal string? PlaySessionId { get; }
 
