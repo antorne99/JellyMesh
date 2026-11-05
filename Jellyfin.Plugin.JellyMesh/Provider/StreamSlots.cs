@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// claims can be trusted. A slot lives as long as this server sees it used: a request in progress holds it, a renewal
 /// from the consumer extends it, and after <see cref="IdleTimeout"/> without either it is gone, so a consumer that
 /// vanishes leaves nothing behind. A request that ends badly with nothing else running leaves it only
-/// <see cref="AbandonGrace"/>. In memory on purpose: a restart ends the streams too.
+/// <see cref="AbandonGrace"/>, and then its transcode goes too. In memory on purpose: a restart ends the streams too.
 /// </summary>
 public sealed class StreamSlots
 {
@@ -280,6 +280,10 @@ public sealed class StreamSlots
         foreach (var (key, slot) in slots.Where(pair => pair.Value.IsExpired(now)).ToList())
         {
             slots.Remove(key);
+            if (slot.Abandoned && !slot.EndsWithRequest)
+            {
+                _closing.Add((peerId, key));
+            }
         }
 
         return slots;
