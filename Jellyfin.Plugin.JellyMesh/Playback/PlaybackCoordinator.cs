@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Model.Dlna;
@@ -359,6 +360,20 @@ public sealed class PlaybackCoordinator
                 await CloseRemoteAsync(session).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Tells a JellyMesh remote that a client went, which it cannot see once what it sent is in the buffers on the way. The
+    /// same as the sweep does for an idle session, sooner: the session stays, and a client that returns asks the remote
+    /// again. A failure only leaves the remote to its own idle time.
+    /// </summary>
+    /// <returns>A task.</returns>
+    public Task ReleaseAbandonedAsync()
+    {
+        var now = _clock.GetUtcNow();
+        return Task.WhenAll(_sessions.All
+            .Where(session => session.IsAbandoned(now, StreamSlots.AbandonGrace) && session.RemotePlaySessionId is not null && IsJellyMesh(session.Source.ServerId) && session.TryPark())
+            .Select(CloseRemoteAsync));
     }
 
     private static IEnumerable<StubSource> Ordered(IReadOnlyList<StubSource> sources, StubSource? first)

@@ -364,6 +364,64 @@ public class StreamSlotsTests
     }
 
     [Fact]
+    public void An_idle_slot_that_expires_has_its_transcode_closed()
+    {
+        Hold("one");
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_request_running_at_the_idle_time_keeps_its_transcode()
+    {
+        Hold("one");
+        using var request = _slots.TryEnter(_peer, 1, "one");
+
+        _clock.Advance(TimeSpan.FromHours(3));
+
+        Assert.Empty(_slots.TakeClosing());
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_request_that_outlived_its_slot_keeps_the_transcode_when_the_next_slot_expires()
+    {
+        using var running = _slots.TryEnter(_peer, 2, "one");
+        _slots.Release(_peer, "one");
+        _slots.TryEnter(_peer, 2, "one")!.Dispose();
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_stream_back_after_the_idle_time_keeps_its_transcode()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Assert.Equal(0, _slots.Count(_peer));
+
+        using var back = _slots.TryEnter(_peer, 1, "one");
+
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_read_with_no_play_session_has_no_transcode_to_close()
+    {
+        _slots.TryEnter(_peer, 1, null)!.Dispose();
+
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
     public void A_request_in_progress_never_expires()
     {
         Hold("one");

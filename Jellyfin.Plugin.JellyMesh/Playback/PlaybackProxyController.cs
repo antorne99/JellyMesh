@@ -73,7 +73,7 @@ public class PlaybackProxyController : ControllerBase
             return NotFound();
         }
 
-        using var request = session.TryBeginRequest(_clock);
+        using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable);
@@ -103,7 +103,7 @@ public class PlaybackProxyController : ControllerBase
             return NotFound();
         }
 
-        using var request = session.TryBeginRequest(_clock);
+        using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable);
@@ -142,7 +142,7 @@ public class PlaybackProxyController : ControllerBase
             return NotFound();
         }
 
-        using var request = session.TryBeginRequest(_clock);
+        using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable);

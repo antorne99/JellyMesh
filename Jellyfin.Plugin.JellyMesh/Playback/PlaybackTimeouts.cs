@@ -41,6 +41,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// How often the sessions are checked for a client that went, so that a JellyMesh remote hears of it right after the
+    /// grace.
+    /// </summary>
+    public static readonly TimeSpan AbandonCheck = TimeSpan.FromSeconds(1);
+
+    /// <summary>
     /// How often a stream slot is renewed on a JellyMesh remote while a client reads. Well under the idle time of a slot
     /// there, so that a lost renewal costs nothing.
     /// </summary>
