@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -37,6 +38,20 @@ public sealed class IndexFileTests : IDisposable
         Assert.Null(snapshot.Find(_serverId)!.Mark);
     }
 
+    [Fact]
+    public void AnEntryWrittenBeforeTheLastEpisodeNumberExistedStillLoads()
+    {
+        var item = "{\"ItemId\":\"e\",\"Kind\":\"Episode\",\"LibraryId\":\"l\",\"LastSeenUtc\":\"2026-11-04T03:00:00+00:00\",\"IndexNumber\":1}";
+        File.WriteAllText(MainPath, "{\"Version\":1,\"Health\":\"Ok\",\"Servers\":[{\"ServerId\":\"" + _serverId + "\",\"State\":\"Complete\",\"Items\":[" + item + "]}]}");
+
+        var snapshot = NewFile().Load();
+
+        Assert.Equal(IndexHealth.Ok, snapshot.Health);
+        var loaded = Assert.Single(snapshot.Find(_serverId)!.Items);
+        Assert.Equal(1, loaded.IndexNumber);
+        Assert.Null(loaded.IndexNumberEnd);
+    }
+
     private static IndexedItem FullItem() => new()
     {
         ItemId = "item",
@@ -44,6 +59,7 @@ public sealed class IndexFileTests : IDisposable
         LibraryId = "library",
         LastSeenUtc = _now,
         Name = "Episode",
+        IndexNumberEnd = 4,
         OriginalTitle = "Original",
         Overview = "Plot",
         Taglines = ["Tagline"],
@@ -119,6 +135,23 @@ public sealed class IndexFileTests : IDisposable
     }
 
     [Fact]
+    public async Task StreamsAndChaptersSurviveARoundTrip()
+    {
+        var track = new IndexedTrack { Type = "Audio", Index = 3, Language = "ita", Channels = 6, Level = 40, AverageFrameRate = 23.976f };
+        var item = FullItem() with
+        {
+            Chapters = [new IndexedChapter("Uno", 5)],
+            Versions = [new IndexedVersion { MediaSourceId = "source", Streams = [track] }]
+        };
+        await WriteGoodFileAsync(Server() with { Items = [item] });
+
+        var loaded = Assert.Single(Assert.Single(NewFile().Load().Servers).Items);
+
+        Assert.Equal(track, Assert.Single(Assert.Single(loaded.Versions).Streams));
+        Assert.Equal(new IndexedChapter("Uno", 5), Assert.Single(loaded.Chapters));
+    }
+
+    [Fact]
     public async Task EverythingSurvivesARoundTrip()
     {
         await WriteGoodFileAsync(Server());
@@ -140,9 +173,10 @@ public sealed class IndexFileTests : IDisposable
         Assert.Equal(expected.ProviderIds, item.ProviderIds);
         Assert.Equal(expected.ImageTags, item.ImageTags);
         Assert.Equal(expected.BackdropImageTags, item.BackdropImageTags);
-        Assert.Equal(expected.Versions, item.Versions);
+        Assert.Equal(expected.Versions, item.Versions.Select(version => version with { Streams = expected.Versions[0].Streams }));
         Assert.Equal(expected with
         {
+            Chapters = item.Chapters,
             Taglines = item.Taglines,
             Genres = item.Genres,
             Studios = item.Studios,

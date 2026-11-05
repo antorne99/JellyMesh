@@ -46,7 +46,16 @@ public interface IRemoteServerRegistry
     Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Lists the importable libraries of a server.
+    /// Detects the capabilities of a server again and records them. A sync does this first: what a remote offers changes
+    /// without notice, and a JellyMesh remote closes the stock catalog to a server once it is connected there.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The server as it stands. A failed detection leaves it as it was.</returns>
+    Task<RemoteServerInfo?> RefreshCapabilitiesAsync(Guid serverId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lists the importable libraries of a server: what a JellyMesh remote shares, or what the dedicated user sees.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

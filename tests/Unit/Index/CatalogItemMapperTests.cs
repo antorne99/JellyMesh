@@ -39,6 +39,38 @@ public class CatalogItemMapperTests
     }
 
     [Fact]
+    public void AFilmCarriesTheMetadataThatConfirmsAMatch()
+    {
+        var film = Map(TestItems.Movie("m", "Film", 2020, "1"), RemoteItemType.Movie) with
+        {
+            OriginalTitle = "Original",
+            RunTimeTicks = 600,
+            Overview = "Plot",
+            Genres = ["Drama"],
+            Studios = ["Studio"],
+            People = [new IndexedPerson("Anna", "Role", "Actor"), new IndexedPerson(null, null, null)]
+        };
+
+        var metadata = Assert.Single(CatalogItemMapper.ToCatalogItems(Catalog(film))).Metadata;
+
+        Assert.Equal("Original", metadata.OriginalTitle);
+        Assert.Equal(600, metadata.RunTimeTicks);
+        Assert.Equal("Plot", metadata.Overview);
+        Assert.Equal(["Drama"], metadata.Genres);
+        Assert.Equal(["Studio"], metadata.Studios);
+        Assert.Equal(["Anna"], metadata.People.Value);
+    }
+
+    [Fact]
+    public void AFileWithSeveralEpisodesKeepsItsLastNumber()
+    {
+        var episode = Map(TestItems.Episode("e", "s", 1, 2) with { IndexNumberEnd = 3 }, RemoteItemType.Episode);
+
+        Assert.Equal(3, episode.IndexNumberEnd);
+        Assert.Equal(3, Assert.Single(CatalogItemMapper.ToCatalogItems(Catalog(episode))).EpisodeNumberEnd);
+    }
+
+    [Fact]
     public void AnEpisodeWithoutItsSeriesKeepsTheSeriesNameAndNoYear()
     {
         var episode = Map(TestItems.Episode("e", "gone", 1, 1), RemoteItemType.Episode);

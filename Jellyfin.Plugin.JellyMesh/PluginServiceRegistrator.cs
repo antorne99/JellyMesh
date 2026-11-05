@@ -1,8 +1,9 @@
 using System;
-using System.Net.Http;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
@@ -35,27 +36,30 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             provider.GetRequiredService<ILogger<IndexFile>>()));
         serviceCollection.AddSingleton<IFederationIndex, FederationIndex>();
         serviceCollection.AddSingleton<ILocalCatalogReader, LocalCatalogReader>();
+        serviceCollection.AddSingleton<IManualMergeStore>(provider => new ManualMergeStore(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<ManualMergeStore>>()));
+        serviceCollection.AddSingleton<ManualMergeService>();
         serviceCollection.AddSingleton<IFederationResolver, FederationResolver>();
         serviceCollection.AddSingleton<IRemoteCatalogReader, RemoteCatalogReader>();
+        serviceCollection.AddSingleton(provider => new StubRegistry(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<IPluginConfigurationStore>(),
+            provider.GetRequiredService<ILogger<StubRegistry>>()));
+        serviceCollection.AddSingleton<IStubRegistry>(provider => provider.GetRequiredService<StubRegistry>());
+        serviceCollection.AddSingleton(provider => new StrmSigner(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<StrmSigner>>()));
+        serviceCollection.AddSingleton<StubUrlBuilder>();
+        serviceCollection.AddSingleton<StubTechnicalData>();
+        serviceCollection.AddSingleton<StubItemUpdater>();
+        serviceCollection.AddSingleton<StubRemover>();
+        serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 
-        // Redirects are handled by JellyfinRemoteClient, which refuses other hosts. The default
-        // client logging is removed because it records full request URLs, hence remote addresses.
-        serviceCollection.AddHttpClient(JellyfinRemoteClient.HttpClientName)
-            .ConfigureHttpClient(client =>
-            {
-                client.Timeout = JellyfinRemoteClient.RequestTimeout;
-                client.MaxResponseContentBufferSize = JellyfinRemoteClient.MaxResponseBytes;
-            })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                ConnectTimeout = JellyfinRemoteClient.ConnectTimeout,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-                UseCookies = false,
-                UseProxy = false
-            })
-            .RemoveAllLoggers();
+        serviceCollection.AddRemoteHttpClients();
+        serviceCollection.AddPlayback();
+        serviceCollection.AddProvider();
     }
 }

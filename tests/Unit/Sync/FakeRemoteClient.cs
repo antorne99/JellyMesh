@@ -23,6 +23,9 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
     /// <summary>Items only found by ID, such as the rows of a series that <c>/Items</c> collapses.</summary>
     public List<RemoteItem> ItemsById { get; } = [];
 
+    /// <summary>A hidden row and the row a lookup of its ID answers with, as Jellyfin does for a split series.</summary>
+    public Dictionary<string, string> RepresentedBy { get; } = [];
+
     public List<RemoteItemQuery> Queries { get; } = [];
 
     public int Logins { get; private set; }
@@ -61,16 +64,64 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         return Task.FromResult(RemoteResult.Success(new RemoteSession(TestValues.Token, "abc")));
     }
 
+    /// <summary>What the capability endpoint answers.</summary>
+    public RemoteCapabilities Capabilities { get; set; } = new(RemoteMode.Standard, 0);
+
+    /// <summary>Fails the capability detection.</summary>
+    public RemoteFailure CapabilityFailure { get; set; }
+
+    /// <summary>The libraries a JellyMesh remote shares. Null lists <see cref="Libraries"/>.</summary>
+    public List<RemoteLibrary>? SharedLibraries { get; set; }
+
+    public int SharedLibraryReads { get; private set; }
+
+    /// <summary>The cursors the feed was read with.</summary>
+    public List<string?> FeedReads { get; } = [];
+
+    /// <summary>Answers the feed. Without a cursor the default says where it stands.</summary>
+    public Func<string?, RemoteResult<RemoteChangePage>> Feed { get; set; } =
+        cursor => RemoteResult.Success(new RemoteChangePage(cursor is null, "cursor-0", false, []));
+
     public Task<RemoteResult<RemoteCapabilities>> DetectCapabilitiesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
-        => Task.FromResult(RemoteResult.Success(new RemoteCapabilities(RemoteMode.Standard, 0)));
+        => Task.FromResult(CapabilityFailure == RemoteFailure.None ? RemoteResult.Success(Capabilities) : RemoteResult.Fail<RemoteCapabilities>(CapabilityFailure));
 
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
         => Task.FromResult(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(Libraries.ToList()));
 
-    public Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetSharedLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        SharedLibraryReads++;
+        return Task.FromResult(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>((SharedLibraries ?? Libraries).ToList()));
+    }
+
+    public Task<RemoteResult<RemoteChangePage>> GetChangesAsync(RemoteEndpoint endpoint, RemoteSession session, string? cursor, CancellationToken cancellationToken)
+    {
+        FeedReads.Add(cursor);
+        return Task.FromResult(Feed(cursor));
+    }
+
+    /// <summary>Runs before each read of the clock, to make the remote slow.</summary>
+    public Func<int, CancellationToken, Task> BeforeClock { get; set; } = (_, _) => Task.CompletedTask;
+
+    public async Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         ClockReads++;
-        return Task.FromResult(ClockFailure == RemoteFailure.None ? RemoteResult.Success(ServerTime) : RemoteResult.Fail<DateTimeOffset?>(ClockFailure));
+        await BeforeClock(ClockReads, cancellationToken);
+        return ClockFailure == RemoteFailure.None ? RemoteResult.Success(ServerTime) : RemoteResult.Fail<DateTimeOffset?>(ClockFailure);
+    }
+
+    /// <summary>The images requested, as item/type/index.</summary>
+    public List<string> ImageReads { get; } = [];
+
+    /// <summary>Fails the image reads.</summary>
+    public RemoteFailure ImageFailure { get; set; }
+
+    public Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken)
+    {
+        ImageReads.Add(itemId + "/" + imageType + "/" + imageIndex);
+        return Task.FromResult(ImageFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteImage(new byte[] { 0xFF, 0xD8, 0xFF }, "image/jpeg"))
+            : RemoteResult.Fail<RemoteImage>(ImageFailure));
     }
 
     public Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken)
@@ -84,7 +135,8 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
 
         if (query.Ids is { } ids)
         {
-            var found = ItemsById.Where(item => ids.Contains(item.Id)).ToList();
+            var wanted = ids.Select(id => RepresentedBy.GetValueOrDefault(id, id)).ToList();
+            var found = ItemsById.Where(item => wanted.Contains(item.Id)).ToList();
             return Task.FromResult(RemoteResult.Success(new RemoteItemPage(found, found.Count)));
         }
 

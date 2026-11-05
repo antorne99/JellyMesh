@@ -90,6 +90,12 @@ public sealed record IndexedItem
     /// <summary>Gets the number of a season, or of an episode within its season.</summary>
     public int? IndexNumber { get; init; }
 
+    /// <summary>
+    /// Gets the last episode of a file that holds several. Files written before this existed have none, and the next
+    /// complete read fills it in.
+    /// </summary>
+    public int? IndexNumberEnd { get; init; }
+
     /// <summary>Gets the season number of an episode.</summary>
     public int? ParentIndexNumber { get; init; }
 
@@ -110,6 +116,9 @@ public sealed record IndexedItem
 
     /// <summary>Gets the backdrop image tags.</summary>
     public IReadOnlyList<string> BackdropImageTags { get; init; } = [];
+
+    /// <summary>Gets the chapters of a film or an episode.</summary>
+    public IReadOnlyList<IndexedChapter> Chapters { get; init; } = [];
 
     /// <summary>Gets the playable versions of a film or an episode.</summary>
     public IReadOnlyList<IndexedVersion> Versions { get; init; } = [];

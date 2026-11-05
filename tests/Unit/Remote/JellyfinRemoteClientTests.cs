@@ -40,6 +40,37 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task AnImageIsReadWithTheSessionInTheHeaderOnly()
+    {
+        var bytes = new byte[] { 1, 2, 3 };
+        var handler = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            return response;
+        });
+
+        var result = await ClientFor(handler).GetImageAsync(_endpoint, _session, "item", "Primary", 0, CancellationToken.None);
+
+        Assert.Equal(bytes, result.Value!.Content.ToArray());
+        Assert.Equal("image/png", result.Value.ContentType);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items/item/Images/Primary/0", request.Uri.AbsolutePath);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAnswerThatIsNotAnImageIsRefused()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{}"));
+
+        var result = await ClientFor(handler).GetImageAsync(_endpoint, _session, "item", "Primary", 0, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Fact]
     public async Task LoginAcceptsCamelCaseAnswers()
     {
         var handler = new StubHandler(_ => StubHandler.Json(
@@ -218,6 +249,7 @@ public class JellyfinRemoteClientTests
     [Theory]
     [InlineData(HttpStatusCode.InternalServerError, RemoteFailure.ServerError)]
     [InlineData(HttpStatusCode.Unauthorized, RemoteFailure.AuthenticationFailed)]
+    [InlineData(HttpStatusCode.Forbidden, RemoteFailure.Forbidden)]
     public async Task OnlyA404MeansStandard(HttpStatusCode status, RemoteFailure expected)
     {
         var handler = new StubHandler(_ => StubHandler.Status(status));
@@ -361,30 +393,77 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
-    public async Task AnAnswerOverTheBufferLimitIsTooLargeAndNotUnreachable()
+    public async Task ACallRefusedWithAValidTokenIsNotAProblemOfTheLogin()
     {
-        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0,\"Padding\":\"" + new string('x', 4096) + "\"}"));
-        var client = new JellyfinRemoteClient(new LimitedClientFactory(handler, 1024));
+        var handler = new StubHandler(_ => StubHandler.Status(HttpStatusCode.Forbidden));
+        var client = ClientFor(handler);
 
-        var result = await client.GetItemsAsync(_endpoint, _session, new RemoteItemQuery("lib", RemoteItemType.Movie, 0, 1), CancellationToken.None);
+        Assert.Equal(RemoteFailure.Forbidden, (await client.GetSharedLibrariesAsync(_endpoint, _session, CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.Forbidden, (await client.GetChangesAsync(_endpoint, _session, null, CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.Forbidden, (await client.GetImageAsync(_endpoint, _session, "item", "Primary", 0, CancellationToken.None)).Failure);
+    }
+
+    [Fact]
+    public async Task AnAnswerOverTheLimitIsTooLargeAndNotUnreachable()
+    {
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[JellyfinRemoteClient.MaxResponseBytes + 1]) });
+
+        var result = await ClientFor(handler).GetItemsAsync(_endpoint, _session, new RemoteItemQuery("lib", RemoteItemType.Movie, 0, 1), CancellationToken.None);
 
         Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
     }
 
-    private sealed class LimitedClientFactory : IHttpClientFactory
+    [Theory]
+    [InlineData("{\"Items\":[null],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":null}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"\"}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"Genres\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"People\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"Studios\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"Chapters\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"ImageTags\":{\"Primary\":null}}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"MediaSources\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"MediaSources\":[{\"Id\":null}]}],\"TotalRecordCount\":1,\"Quality\":{}}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"MediaSources\":[{\"Id\":\"m\",\"MediaStreams\":[null]}]}],\"TotalRecordCount\":1}")]
+    public async Task ANullInsideAPageIsARefusedAnswerAndNotACrash(string json)
     {
-        private readonly StubHandler _handler;
-        private readonly int _limit;
+        var result = await ItemsAsync(new StubHandler(_ => StubHandler.Json(json)));
 
-        public LimitedClientFactory(StubHandler handler, int limit)
-        {
-            _handler = handler;
-            _limit = limit;
-        }
-
-        public HttpClient CreateClient(string name)
-            => new(_handler, disposeHandler: false) { MaxResponseContentBufferSize = _limit };
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
     }
+
+    [Theory]
+    [InlineData("{\"Cursor\":\"c\",\"Changes\":[null]}")]
+    [InlineData("{\"Cursor\":\"c\",\"Changes\":[{\"Id\":null,\"Type\":\"Movie\",\"LibraryIds\":[]}]}")]
+    [InlineData("{\"Cursor\":\"c\",\"Changes\":[{\"Id\":\"a\",\"Type\":\"Movie\",\"LibraryIds\":null}]}")]
+    [InlineData("{\"Cursor\":\"c\",\"Changes\":[{\"Id\":\"a\",\"Type\":\"Movie\",\"LibraryIds\":[null]}]}")]
+    public async Task ANullInsideTheFeedIsARefusedAnswerAndNotACrash(string json)
+    {
+        var result = await ClientFor(new StubHandler(_ => StubHandler.Json(json))).GetChangesAsync(_endpoint, _session, null, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("{\"AccessToken\":\"t\\r\\nX-Injected: 1\",\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":false}}}")]
+    [InlineData("{\"AccessToken\":\"with space\",\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":false}}}")]
+    public async Task ATokenThatCouldNotGoInAHeaderIsRefused(string json)
+    {
+        var result = await LoginAsync(new StubHandler(_ => StubHandler.Json(json)));
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Fact]
+    public async Task APageSaysHowMuchItWeighed()
+    {
+        const string Json = "{\"Items\":[],\"TotalRecordCount\":0}";
+
+        var result = await ItemsAsync(new StubHandler(_ => StubHandler.Json(Json)));
+
+        Assert.Equal(Json.Length, result.Value!.ByteCount);
+    }
+
 
     [Fact]
     public async Task AReadOfChangesAsksForThemByLastSavedDateInUtc()

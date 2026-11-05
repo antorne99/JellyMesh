@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Extensions.Logging;
@@ -23,14 +25,24 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// </summary>
     public static readonly TimeSpan ChangeOverlap = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// The longest one server may take in a sync. Servers are read one at a time and a request can last its whole timeout,
+    /// so a remote that answers as slowly as it can would otherwise hold back the others for days. Well over a first read
+    /// of a very large library on a slow server.
+    /// </summary>
+    public static readonly TimeSpan MaxServerRead = TimeSpan.FromHours(4);
+
     private readonly IRemoteServerRegistry _registry;
     private readonly IRemoteCatalogReader _reader;
     private readonly IFederationIndex _index;
     private readonly ICredentialVault _vault;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CatalogSyncService> _logger;
+    private readonly ILibraryMaterializer? _materializer;
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
 
+    private TimeSpan _serverReadLimit = MaxServerRead;
     private int _busy;
     private volatile RunState _run = new(false, false, null, null);
 
@@ -43,13 +55,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="vault">The credential vault.</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="materializer">What brings the federated folder in step after a sync.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
         IFederationIndex index,
         ICredentialVault vault,
         TimeProvider timeProvider,
-        ILogger<CatalogSyncService> logger)
+        ILogger<CatalogSyncService> logger,
+        ILibraryMaterializer? materializer = null)
     {
         _registry = registry;
         _reader = reader;
@@ -57,6 +71,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _vault = vault;
         _timeProvider = timeProvider;
         _logger = logger;
+        _materializer = materializer;
+    }
+
+    /// <summary>
+    /// Sets the longest one server may take in a sync.
+    /// </summary>
+    internal TimeSpan ServerReadLimit
+    {
+        set => _serverReadLimit = value;
     }
 
     /// <inheritdoc />
@@ -102,7 +125,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var snapshot = _index.Snapshot;
         var run = _run;
         var servers = _registry.GetServers().Select(server => ToReport(server, snapshot.Find(server.Id))).ToList();
-        return new SyncStatus(run.IsRunning, snapshot.Health, run.IndexSaveFailed, run.StartedUtc, run.FinishedUtc, servers);
+        return new SyncStatus(run.IsRunning, snapshot.Health, run.IndexSaveFailed, run.StartedUtc, run.FinishedUtc, servers)
+        {
+            HeldLibraries = _materializer?.LastReport?.Held ?? []
+        };
     }
 
     /// <inheritdoc />
@@ -173,13 +199,59 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             foreach (var server in _registry.GetServers())
             {
-                await syncServer(server, cancellationToken).ConfigureAwait(false);
+                await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
             }
+
+            await MaterializeAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
             Interlocked.Exchange(ref _busy, 0);
+        }
+    }
+
+    // What goes wrong with one server stays with it: the others are read, and the materialization still runs.
+    private async Task SyncWithinLimitAsync(RemoteServerInfo server, Func<RemoteServerInfo, CancellationToken, Task> syncServer, CancellationToken cancellationToken)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(_serverReadLimit);
+        try
+        {
+            // With nothing chosen there is nothing to read, and no reason to call the remote at all.
+            var current = server.ImportedLibraryIds.Count == 0
+                ? server
+                : await _registry.RefreshCapabilitiesAsync(server.Id, limit.Token).ConfigureAwait(false) ?? server;
+            await syncServer(current, limit.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            await MarkFailedAsync(server, RemoteFailure.Timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}", server.Name, exception.GetType().Name);
+            await MarkFailedAsync(server, RemoteFailure.InvalidResponse, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // After every sync, also a failed one: what one server sent is still good, and removals check each server by itself.
+    private async Task MaterializeAsync(CancellationToken cancellationToken)
+    {
+        if (_materializer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _materializer.MaterializeAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Could not materialize the federated folder: {Error}", exception.GetType().Name);
         }
     }
 
@@ -192,6 +264,20 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             return;
         }
 
+        // Before the read, so that what changes during it comes up in the next one.
+        string? cursor = null;
+        if (server.Mode == RemoteMode.JellyMesh)
+        {
+            var position = await _reader.GetFeedPositionAsync(server, cancellationToken).ConfigureAwait(false);
+            if (!position.IsSuccess)
+            {
+                await MarkFailedAsync(server, position.Failure, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            cursor = position.Value;
+        }
+
         var read = await _reader.ReadAsync(server, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
@@ -201,7 +287,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         _logger.LogInformation("Read {Count} catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
         var mark = new SyncMark(started.Value, server.ImportedLibraryIds);
-        TrackSave(await _index.ReplaceServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false));
+        var saved = await _index.ReplaceServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false);
+        TrackSave(saved);
+        RememberCursor(server.Id, saved ? cursor : null);
     }
 
     private async Task SyncChangesAsync(RemoteServerInfo server, CancellationToken cancellationToken)
@@ -210,6 +298,12 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         if (catalog is not { State: ServerSyncState.Complete, Mark: { } mark } || !CoversSameLibraries(mark, server))
         {
             await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (server.Mode == RemoteMode.JellyMesh)
+        {
+            await SyncFeedAsync(server, catalog, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -231,6 +325,62 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger.LogInformation("Read {Count} changed catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
         TrackSave(await _index.MergeServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false));
+    }
+
+    // The change feed instead of polling. The mark still moves: if the remote stops being a JellyMesh one, polling goes on
+    // from here. Without a cursor, as after a restart of this server, only a full read can tell where things stand.
+    private async Task SyncFeedAsync(RemoteServerInfo server, ServerCatalog catalog, CancellationToken cancellationToken)
+    {
+        if (!_feedCursors.TryGetValue(server.Id, out var cursor))
+        {
+            await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var started = await ReadClockAsync(server, cancellationToken).ConfigureAwait(false);
+        if (!started.IsSuccess)
+        {
+            await MarkFailedAsync(server, started.Failure, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var known = catalog.Items.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
+        var read = await _reader.ReadFeedAsync(server, cursor, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        if (!read.IsSuccess)
+        {
+            await MarkFailedAsync(server, read.Failure, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (read.Value!.Reset)
+        {
+            _logger.LogInformation("The change feed of remote server {ServerName} cannot be continued, reading it all", server.Name);
+            await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        _logger.LogInformation("Read {Count} entries from the change feed of remote server {ServerName}", read.Value.Items.Count, server.Name);
+        var next = new SyncMark(started.Value, server.ImportedLibraryIds);
+        var saved = await _index.MergeServerAsync(server.Id, read.Value.Items, _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false);
+        TrackSave(saved);
+
+        // Not saved means not applied, so the old cursor reads the same changes again.
+        if (saved)
+        {
+            RememberCursor(server.Id, read.Value.Cursor);
+        }
+    }
+
+    private void RememberCursor(Guid serverId, string? cursor)
+    {
+        if (cursor is null)
+        {
+            _feedCursors.TryRemove(serverId, out _);
+        }
+        else
+        {
+            _feedCursors[serverId] = cursor;
+        }
     }
 
     private async Task<RemoteResult<DateTimeOffset>> ReadClockAsync(RemoteServerInfo server, CancellationToken cancellationToken)

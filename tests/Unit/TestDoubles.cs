@@ -7,6 +7,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Extensions.Logging;
@@ -33,6 +35,19 @@ internal static class TestValues
         "{\"Items\":[{\"Id\":\"1\",\"Name\":\"Film\",\"CollectionType\":\"movies\"},"
         + "{\"Id\":\"2\",\"Name\":\"Serie\",\"CollectionType\":\"tvshows\"},"
         + "{\"Id\":\"3\",\"Name\":\"Musica\",\"CollectionType\":\"music\"}],\"TotalRecordCount\":3}";
+}
+
+internal sealed class InMemoryMergeStore : IManualMergeStore
+{
+    public IReadOnlyList<ManualMerge> Merges { get; private set; } = [];
+
+    public bool IsDamaged { get; set; }
+
+    public Task UpdateAsync(Func<IReadOnlyList<ManualMerge>, IReadOnlyList<ManualMerge>> change, CancellationToken cancellationToken)
+    {
+        Merges = change(Merges);
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore

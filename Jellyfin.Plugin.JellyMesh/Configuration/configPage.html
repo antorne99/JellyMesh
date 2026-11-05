@@ -27,6 +27,17 @@
                     <span>Sync now</span>
                 </button>
 
+                <h3 class="sectionTitle">Duplicate films</h3>
+                <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
+                <div id="jmMergeWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmMergeCases"></div>
+                <h4>Merged films</h4>
+                <div id="jmMerges"></div>
+
+                <h3 class="sectionTitle">Connected JellyMesh servers</h3>
+                <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
+                <div id="jmPeers"></div>
+
                 <form id="jmAddServerForm" autocomplete="off">
                     <h3 class="sectionTitle">Add a server</h3>
                     <div class="inputContainer">
@@ -56,7 +67,8 @@
                     <h3 class="sectionTitle">Settings</h3>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
-                        <input id="jmSyncInterval" type="number" is="emby-input" min="1" step="1" required />
+                        <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
+                        <div class="fieldDescription">At least 300 seconds.</div>
                     </div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmReconciliationTime">Nightly reconciliation time</label>
@@ -75,6 +87,39 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="jmCloseAtExpiry" type="checkbox" is="emby-checkbox" />
+                            <span>Close the transcode of an expired stream</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
+                    </div>
+                    <h3 class="sectionTitle">Playback times</h3>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
+                        <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
+                        <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A client waits this long on each source before the next one is tried.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
+                        <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
+                        <div class="fieldDescription">From 5 to 60. Opening takes up to three steps per source. Raise it if a remote is slow to start a transcode.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
+                        <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
+                        <div class="fieldDescription">From 30 to 109: a JellyMesh remote frees an unused stream after 120 seconds, and this must end first. A paused player resumes by itself.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
+                        <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
+                        <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
+                        <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
+                        <div class="fieldDescription">From 1 to 60.</div>
+                    </div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                         <span>Save</span>
                     </button>
@@ -90,6 +135,7 @@
                     Online: 'online',
                     Offline: 'offline',
                     AuthenticationFailed: 'login refused',
+                    Forbidden: 'not allowed for the dedicated user',
                     AdministratorAccount: 'administrator account refused',
                     RedirectRefused: 'redirect refused',
                     ServerError: 'server error',
@@ -100,6 +146,11 @@
                     Suspended: 'suspended'
                 };
                 var modeLabels = { Unknown: 'mode unknown', Standard: 'standard', JellyMesh: 'JellyMesh' };
+                var mergeReasons = {
+                    ConflictingProviderIds: 'These titles are linked by shared provider IDs, but some of those IDs contradict each other.',
+                    PossibleDuplicate: 'These titles have the same name and year, but nothing confirms they are one film.'
+                };
+                var ticksPerMinute = 600000000;
                 var syncPollMilliseconds = 2000;
                 var suspended = false;
                 var syncTimer = null;
@@ -326,7 +377,14 @@
                         return 'The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.';
                     }
 
-                    return status.IndexSaveFailed ? 'The last sync could not save the federation index. Check the disk.' : '';
+                    if (status.IndexSaveFailed) {
+                        return 'The last sync could not save the federation index. Check the disk.';
+                    }
+
+                    return status.HeldLibraries.map(function (held) {
+                        return 'A complete read of a library of ' + held.ServerName + ' came back empty. Its ' + held.Stubs
+                            + ' titles are kept until it has items again. If it is really empty, deselect it.';
+                    }).join(' ');
                 }
 
                 function renderSync(status) {
@@ -354,8 +412,237 @@
                     });
                 }
 
+                function renderPeerEditor(container, userId, libraries, shared, maxStreams) {
+                    var boxes = libraries.map(function (library) {
+                        var label = create('label');
+                        label.style.display = 'block';
+                        var box = create('input');
+                        box.type = 'checkbox';
+                        box.value = library.Id;
+                        box.checked = shared.indexOf(library.Id) >= 0;
+                        label.appendChild(box);
+                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
+                        container.appendChild(label);
+                        return box;
+                    });
+
+                    var limitLabel = create('label', 'Stream limit ');
+                    limitLabel.style.display = 'block';
+                    var limit = create('input');
+                    limit.type = 'number';
+                    limit.min = '1';
+                    limit.value = maxStreams;
+                    limitLabel.appendChild(limit);
+                    container.appendChild(limitLabel);
+
+                    return function () {
+                        var ids = boxes.filter(function (box) {
+                            return box.checked;
+                        }).map(function (box) {
+                            return box.value;
+                        });
+                        return api('PUT', 'Peers/' + userId(), { SharedLibraryIds: ids, MaxStreams: parseInt(limit.value, 10) || 0 });
+                    };
+                }
+
+                function renderPeer(peer, libraries) {
+                    var row = create('div');
+                    row.style.marginBottom = '1.5em';
+                    row.appendChild(create('h4', peer.UserName));
+                    row.appendChild(create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams));
+                    var save = renderPeerEditor(row, function () {
+                        return peer.UserId;
+                    }, libraries, peer.SharedLibraryIds, peer.MaxStreams);
+                    row.appendChild(button('Save', function () {
+                        act(save().then(function () {
+                            showMessage('Saved ' + peer.UserName + '.');
+                            return loadPeers();
+                        }));
+                    }));
+                    row.appendChild(button('Remove', function () {
+                        if (!window.confirm('Disconnect ' + peer.UserName + '?')) {
+                            return;
+                        }
+
+                        act(api('DELETE', 'Peers/' + peer.UserId).then(loadPeers));
+                    }));
+                    return row;
+                }
+
+                function renderNewPeer(users, libraries) {
+                    var row = create('div');
+                    row.appendChild(create('h4', 'Connect a server'));
+                    var select = create('select');
+                    users.forEach(function (user) {
+                        var option = create('option', user.Name);
+                        option.value = user.Id;
+                        select.appendChild(option);
+                    });
+                    row.appendChild(select);
+                    var save = renderPeerEditor(row, function () {
+                        return select.value;
+                    }, libraries, [], 2);
+                    row.appendChild(button('Connect', function () {
+                        act(save().then(function () {
+                            showMessage('Connected.');
+                            return loadPeers();
+                        }));
+                    }));
+                    return row;
+                }
+
+                function loadPeers() {
+                    return Promise.all([api('GET', 'Peers'), api('GET', 'Peers/Options')]).then(function (results) {
+                        var peers = results[0];
+                        var options = results[1];
+                        var container = el('#jmPeers');
+                        container.textContent = '';
+                        peers.forEach(function (peer) {
+                            container.appendChild(renderPeer(peer, options.Libraries));
+                        });
+
+                        var free = options.Users.filter(function (user) {
+                            return !peers.some(function (peer) {
+                                return peer.UserId === user.Id;
+                            });
+                        });
+                        if (free.length > 0) {
+                            container.appendChild(renderNewPeer(free, options.Libraries));
+                        } else if (peers.length === 0) {
+                            container.appendChild(create('p', 'Create a non-admin user for the other server first.'));
+                        }
+                    });
+                }
+
+                function describeCopy(copy) {
+                    var parts = [copy.Copy.Title || 'Untitled'];
+                    if (copy.Copy.Year) {
+                        parts[0] += ' (' + copy.Copy.Year + ')';
+                    }
+
+                    if (copy.RunTimeTicks) {
+                        parts.push(Math.round(copy.RunTimeTicks / ticksPerMinute) + ' min');
+                    }
+
+                    parts.push(copy.Copy.IsLocal ? 'this server' : (copy.ServerName || 'a server no longer configured'));
+                    if (copy.Copy.Tmdb) {
+                        parts.push('TMDb ' + copy.Copy.Tmdb);
+                    }
+
+                    if (copy.Copy.Imdb) {
+                        parts.push('IMDb ' + copy.Copy.Imdb);
+                    }
+
+                    if (!copy.IsFound) {
+                        parts.push('not in the catalog now');
+                    }
+
+                    return parts.join(' - ');
+                }
+
+                function renderMergeTitle(title, boxes) {
+                    var label = create('label');
+                    label.style.display = 'block';
+                    label.style.marginBottom = '0.5em';
+                    var box = create('input');
+                    box.type = 'checkbox';
+                    box.value = title.WorkKey;
+                    boxes.push(box);
+                    label.appendChild(box);
+                    label.appendChild(document.createTextNode(title.MergeIds.length > 0 ? ' Already merged:' : ''));
+                    title.Copies.forEach(function (copy) {
+                        var line = create('div', describeCopy(copy));
+                        line.style.marginLeft = '1.5em';
+                        label.appendChild(line);
+                    });
+
+                    return label;
+                }
+
+                function renderMergeCase(group) {
+                    var row = create('div');
+                    row.className = 'jmMergeCase';
+                    row.style.marginBottom = '1.5em';
+                    row.appendChild(create('p', mergeReasons[group.Kind] || group.Kind));
+
+                    var boxes = [];
+                    group.Titles.forEach(function (title) {
+                        row.appendChild(renderMergeTitle(title, boxes));
+                    });
+
+                    row.appendChild(button('Merge selected', function () {
+                        var keys = boxes.filter(function (box) {
+                            return box.checked;
+                        }).map(function (box) {
+                            return box.value;
+                        });
+                        showMessage('');
+                        act(api('POST', 'Merges', { WorkKeys: keys }).then(function () {
+                            showMessage('Merged. The film list changes after the library scan that was queued.');
+                            return loadMerges();
+                        }));
+                    }));
+                    return row;
+                }
+
+                function renderMerge(merge) {
+                    var row = create('div');
+                    row.className = 'jmMerge';
+                    row.style.marginBottom = '1em';
+                    merge.Copies.forEach(function (copy) {
+                        row.appendChild(create('div', describeCopy(copy)));
+                    });
+
+                    if (!merge.IsInEffect) {
+                        row.appendChild(create('div', 'Not in effect: a copy is missing, or the IDs already make these one film.'));
+                    }
+
+                    row.appendChild(button('Undo merge', function () {
+                        if (!window.confirm('Separate these copies again? The title that stays keeps its watch state.')) {
+                            return;
+                        }
+
+                        showMessage('');
+                        act(api('DELETE', 'Merges/' + merge.Id).then(function () {
+                            showMessage('Merge undone. The film list changes after the library scan that was queued.');
+                            return loadMerges();
+                        }));
+                    }));
+                    return row;
+                }
+
+                function renderMerges(list) {
+                    var warning = el('#jmMergeWarning');
+                    warning.textContent = list.IsStoreDamaged ? 'The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.' : '';
+                    warning.hidden = !list.IsStoreDamaged;
+
+                    var cases = el('#jmMergeCases');
+                    cases.textContent = '';
+                    if (list.Cases.length === 0) {
+                        cases.appendChild(create('p', 'No doubtful films.'));
+                    }
+
+                    list.Cases.forEach(function (group) {
+                        cases.appendChild(renderMergeCase(group));
+                    });
+
+                    var merges = el('#jmMerges');
+                    merges.textContent = '';
+                    if (list.Merges.length === 0) {
+                        merges.appendChild(create('p', 'Nothing merged.'));
+                    }
+
+                    list.Merges.forEach(function (merge) {
+                        merges.appendChild(renderMerge(merge));
+                    });
+                }
+
+                function loadMerges() {
+                    return api('GET', 'Merges').then(renderMerges);
+                }
+
                 function load() {
-                    return api('GET', 'Status').then(render).then(loadSync);
+                    return api('GET', 'Status').then(render).then(loadSync).then(loadPeers).then(loadMerges);
                 }
 
                 function loadSettings() {
@@ -364,6 +651,12 @@
                         el('#jmReconciliationTime').value = config.ReconciliationTime;
                         el('#jmFederatedFolder').value = config.FederatedFolderPath;
                         el('#jmMetadataProtection').checked = config.MetadataProtection;
+                        el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
+                        el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
+                        el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
+                        el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
+                        el('#jmSessionRetention').value = config.SessionRetentionHours;
+                        el('#jmPolicyCache').value = config.PolicyCacheMinutes;
                     });
                 }
 
@@ -408,12 +701,18 @@
                         config.ReconciliationTime = el('#jmReconciliationTime').value;
                         config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
                         config.MetadataProtection = el('#jmMetadataProtection').checked;
+                        config.CloseTranscodeAtSlotExpiry = el('#jmCloseAtExpiry').checked;
+                        config.RemotePlaybackInfoTimeoutSeconds = parseInt(el('#jmRemotePlaybackInfoTimeout').value, 10);
+                        config.StreamOpenTimeoutSeconds = parseInt(el('#jmStreamOpenTimeout').value, 10);
+                        config.PlaybackIdleSeconds = parseInt(el('#jmPlaybackIdle').value, 10);
+                        config.SessionRetentionHours = parseInt(el('#jmSessionRetention').value, 10);
+                        config.PolicyCacheMinutes = parseInt(el('#jmPolicyCache').value, 10);
                         return ApiClient.updatePluginConfiguration(pluginId, config);
                     }).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                         return load();
                     }, function () {
-                        throw new Error('The settings were refused: check the time format and that the folder is an absolute path.');
+                        throw new Error('The settings were refused: check that the sync interval is at least 300 seconds, the playback times are in range, the time format, and that the folder is an absolute path.');
                     }));
                 });
             })();

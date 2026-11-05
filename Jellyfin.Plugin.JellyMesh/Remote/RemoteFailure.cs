@@ -36,9 +36,15 @@ public enum RemoteFailure
     Timeout,
 
     /// <summary>
-    /// The server refused the credentials or the token.
+    /// The server refused the credentials or the token. The only failure that calls for a new login.
     /// </summary>
     AuthenticationFailed,
+
+    /// <summary>
+    /// The server knows the user and does not allow this call, as with a route closed to peers. A new login would change
+    /// nothing, and it would cost the session in use: a login on the same device invalidates the previous token.
+    /// </summary>
+    Forbidden,
 
     /// <summary>
     /// The account is an administrator. Only a dedicated non-admin user is allowed.
@@ -61,7 +67,7 @@ public enum RemoteFailure
     InvalidResponse,
 
     /// <summary>
-    /// The answer exceeds <see cref="JellyfinRemoteClient.MaxResponseBytes"/>.
+    /// The answer exceeds what is accepted from a remote.
     /// </summary>
     ResponseTooLarge,
 
@@ -73,5 +79,17 @@ public enum RemoteFailure
     /// <summary>
     /// The catalog kept changing while it was being read, so no complete copy of it was obtained.
     /// </summary>
-    CatalogChanged
+    CatalogChanged,
+
+    /// <summary>
+    /// A JellyMesh remote refused a stream because this server is at its limit there. It says nothing about the health
+    /// of the remote, and a stock server never answers this.
+    /// </summary>
+    StreamLimitReached,
+
+    /// <summary>
+    /// This server already has as many playback calls or streams open on that remote as it allows itself. Says nothing
+    /// about the health of the remote, and no request was sent.
+    /// </summary>
+    Busy
 }

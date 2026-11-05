@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Jellyfin.Plugin.JellyMesh.Index;
 
 /// <summary>
@@ -49,4 +51,13 @@ public sealed record IndexedVersion
 
     /// <summary>Gets the precise range of the video stream, such as <c>HDR10</c>.</summary>
     public string? VideoRangeType { get; init; }
+
+    /// <summary>Gets the transport stream timestamp type.</summary>
+    public string? Timestamp { get; init; }
+
+    /// <summary>Gets the 3D format.</summary>
+    public string? Video3DFormat { get; init; }
+
+    /// <summary>Gets every stream, in the layout of the remote. A stub item stores them as they are.</summary>
+    public IReadOnlyList<IndexedTrack> Streams { get; init; } = [];
 }

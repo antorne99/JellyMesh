@@ -8,7 +8,8 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// </summary>
 /// <remarks>
 /// This is a whitelist: only what is listed here is read from the answer. File paths and stream URLs, which can hold a
-/// remote address or a token, are left out on purpose.
+/// remote address or a token, are left out on purpose. <see cref="RemoteMediaSource.Path"/> is the one exception, and it
+/// goes no further than the mapper.
 /// </remarks>
 public sealed record RemoteItem
 {
@@ -75,6 +76,9 @@ public sealed record RemoteItem
     /// <summary>Gets the season or episode number.</summary>
     public int? IndexNumber { get; init; }
 
+    /// <summary>Gets the last episode of a file that holds several.</summary>
+    public int? IndexNumberEnd { get; init; }
+
     /// <summary>Gets the season number of an episode.</summary>
     public int? ParentIndexNumber { get; init; }
 
@@ -95,6 +99,9 @@ public sealed record RemoteItem
 
     /// <summary>Gets the backdrop image tags.</summary>
     public IReadOnlyList<string>? BackdropImageTags { get; init; }
+
+    /// <summary>Gets the chapters.</summary>
+    public IReadOnlyList<RemoteChapter>? Chapters { get; init; }
 
     /// <summary>Gets the playable versions.</summary>
     public IReadOnlyList<RemoteMediaSource>? MediaSources { get; init; }

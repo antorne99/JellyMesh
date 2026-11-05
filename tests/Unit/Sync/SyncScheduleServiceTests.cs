@@ -64,11 +64,11 @@ public sealed class SyncScheduleServiceTests : IDisposable
     {
         var (incremental, reconciliation) = WithTasks(_lastRun);
         await StartAndSettleAsync();
-        _store.Configuration.SyncIntervalSeconds = 60;
+        _store.Configuration.SyncIntervalSeconds = 600;
 
         _store.RaiseSettingsChanged();
 
-        Assert.Equal(TimeSpan.FromMinutes(1).Ticks, incremental.Object.Triggers.Single().IntervalTicks);
+        Assert.Equal(TimeSpan.FromMinutes(10).Ticks, incremental.Object.Triggers.Single().IntervalTicks);
         AssertSets(reconciliation, Times.Never());
     }
 
@@ -122,19 +122,31 @@ public sealed class SyncScheduleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ATriggerSavedBelowTheMinimumIsBroughtUpToIt()
+    {
+        var (incremental, _) = WithTasks(_lastRun);
+        incremental.Object.Triggers = [new TaskTriggerInfo { Type = TaskTriggerInfoType.IntervalTrigger, IntervalTicks = TimeSpan.FromSeconds(60).Ticks }];
+        _store.Configuration.SyncIntervalSeconds = 60;
+
+        await StartAndSettleAsync();
+
+        Assert.Equal(TimeSpan.FromSeconds(300).Ticks, incremental.Object.Triggers.Single().IntervalTicks);
+    }
+
+    [Fact]
     public async Task TheServiceWaitsForTheTasksJellyfinAddsAfterItStarts()
     {
         IReadOnlyList<IScheduledTaskWorker> tasks = [];
         _taskManager.SetupGet(m => m.ScheduledTasks).Returns(() => Volatile.Read(ref tasks));
         await _service.StartAsync(CancellationToken.None);
         Assert.False(_service.ExecuteTask!.IsCompleted);
-        _store.Configuration.SyncIntervalSeconds = 60;
+        _store.Configuration.SyncIntervalSeconds = 600;
 
         var incremental = Worker(IncrementalTask(), [new TaskTriggerInfo { Type = TaskTriggerInfoType.IntervalTrigger, IntervalTicks = 1 }], _lastRun);
         Volatile.Write(ref tasks, [incremental.Object]);
         await _service.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(10));
 
-        Assert.Equal(TimeSpan.FromMinutes(1).Ticks, incremental.Object.Triggers.Single().IntervalTicks);
+        Assert.Equal(TimeSpan.FromMinutes(10).Ticks, incremental.Object.Triggers.Single().IntervalTicks);
     }
 
     [Fact]
@@ -163,7 +175,7 @@ public sealed class SyncScheduleServiceTests : IDisposable
         var (incremental, _) = WithTasks(_lastRun);
         incremental.SetupSet(w => w.Triggers = It.IsAny<IReadOnlyList<TaskTriggerInfo>>()).Throws(new IOException("/config/secret"));
         await StartAndSettleAsync();
-        _store.Configuration.SyncIntervalSeconds = 60;
+        _store.Configuration.SyncIntervalSeconds = 600;
 
         _store.RaiseSettingsChanged();
 
@@ -188,7 +200,7 @@ public sealed class SyncScheduleServiceTests : IDisposable
         var (incremental, _) = WithTasks(_lastRun);
         await StartAndSettleAsync();
         await _service.StopAsync(CancellationToken.None);
-        _store.Configuration.SyncIntervalSeconds = 60;
+        _store.Configuration.SyncIntervalSeconds = 600;
 
         _store.RaiseSettingsChanged();
 

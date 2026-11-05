@@ -15,6 +15,7 @@ using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
@@ -30,7 +31,35 @@ public class FederationAdminControllerTests
     };
 
     private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null)
-        => new(fixture.Registry, fixture.Vault, fixture.Store, checker ?? new RecordingChecker(FederatedFolderLinkState.NotChecked));
+        => new(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            checker ?? new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator);
+
+    [Fact]
+    public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
+    {
+        var playback = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        playback.Registry.AddJellyMesh(source.ServerId);
+        await playback.OpenAsync(PlaybackValues.Stub(source));
+        var releasedBeforeRemoval = -1;
+        playback.Registry.OnRemove = () => releasedBeforeRemoval = playback.Client.Released.Count;
+        var controller = new FederationAdminController(
+            playback.Registry,
+            new RegistryFixture().Vault,
+            playback.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            playback.Coordinator);
+
+        var result = await controller.RemoveServer(source.ServerId);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(1, releasedBeforeRemoval);
+        Assert.Empty(playback.Sessions.All);
+    }
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
 

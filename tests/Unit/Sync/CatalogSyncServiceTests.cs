@@ -221,4 +221,52 @@ public sealed class CatalogSyncServiceTests : IDisposable
             Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
         });
     }
+
+    [Fact]
+    public async Task AServerThatBreaksTheReadStopsOnlyItself()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(2));
+        var first = await _fixture.AddServerAsync("A", "films");
+        var second = await _fixture.AddServerAsync("B", "films");
+        _fixture.Client.OnPage = (_, call) => call == 1 ? throw new InvalidOperationException("at http://friend.tailnet.ts.net:8096/x") : RemoteFailure.None;
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(ServerSyncState.Stale, CatalogOf(first).State);
+        Assert.Equal(RemoteFailure.InvalidResponse, CatalogOf(first).LastFailure);
+        Assert.Equal(ServerSyncState.Complete, CatalogOf(second).State);
+        Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AServerThatTakesForeverStopsAtItsLimitAndTheNextIsRead()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(2));
+        var first = await _fixture.AddServerAsync("A", "films");
+        var second = await _fixture.AddServerAsync("B", "films");
+        _fixture.Client.BeforeClock = (read, token) => read == 1 ? Task.Delay(Timeout.Infinite, token) : Task.CompletedTask;
+        _fixture.Sync.ServerReadLimit = TimeSpan.FromMilliseconds(200);
+
+        await _fixture.Sync.RunAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Equal(RemoteFailure.Timeout, CatalogOf(first).LastFailure);
+        Assert.Equal(ServerSyncState.Complete, CatalogOf(second).State);
+    }
+
+    [Fact]
+    public async Task ASyncCancelledFromOutsideIsNotCountedAsATimeout()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        var server = await _fixture.AddServerAsync("A", "films");
+        using var cancelled = new CancellationTokenSource();
+        _fixture.Client.BeforeClock = async (_, token) =>
+        {
+            await cancelled.CancelAsync();
+            token.ThrowIfCancellationRequested();
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _fixture.Sync.RunAsync(cancelled.Token));
+
+        Assert.Null(_fixture.Index.Snapshot.Find(server.Id)?.LastFailure);
+    }
 }

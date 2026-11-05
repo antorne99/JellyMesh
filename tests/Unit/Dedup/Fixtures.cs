@@ -62,6 +62,20 @@ internal static class Fixtures
     }
 
     /// <summary>
+    /// Gives a film a runtime, the one piece of metadata a file no fetcher recognised still has.
+    /// </summary>
+    public static CatalogItem Lasting(this CatalogItem item, int minutes) =>
+        item with { Metadata = item.Metadata with { RunTimeTicks = minutes * TimeSpan.TicksPerMinute } };
+
+    /// <summary>
+    /// Gives a film a plot.
+    /// </summary>
+    public static CatalogItem Telling(this CatalogItem item, string plot) =>
+        item with { Metadata = item.Metadata with { Overview = plot } };
+
+    public static Lazy<IReadOnlyList<string>> People(params string[] names) => new(names);
+
+    /// <summary>
     /// Gets a text form of a result covering everything in it, for comparing two results.
     /// </summary>
     public static string Fingerprint(DedupResult result)

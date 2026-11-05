@@ -5,6 +5,7 @@ using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Common.Api;
@@ -27,6 +28,7 @@ public class FederationAdminController : ControllerBase
     private readonly ICredentialVault _vault;
     private readonly IPluginConfigurationStore _store;
     private readonly IFederatedFolderLinkChecker _linkChecker;
+    private readonly PlaybackCoordinator _playback;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -35,16 +37,19 @@ public class FederationAdminController : ControllerBase
     /// <param name="vault">The credential vault.</param>
     /// <param name="store">The configuration store.</param>
     /// <param name="linkChecker">The federated folder link checker.</param>
+    /// <param name="playback">The playback coordinator.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
         IPluginConfigurationStore store,
-        IFederatedFolderLinkChecker linkChecker)
+        IFederatedFolderLinkChecker linkChecker,
+        PlaybackCoordinator playback)
     {
         _registry = registry;
         _vault = vault;
         _store = store;
         _linkChecker = linkChecker;
+        _playback = playback;
     }
 
     /// <summary>
@@ -92,8 +97,9 @@ public class FederationAdminController : ControllerBase
     [HttpDelete("Servers/{serverId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult RemoveServer([FromRoute] Guid serverId)
+    public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId)
     {
+        await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
         return _registry.Remove(serverId) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
 
@@ -177,6 +183,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.Unreachable => "The server cannot be reached.",
             RemoteFailure.Timeout => "The server did not answer in time.",
             RemoteFailure.AuthenticationFailed => "The server refused the login.",
+            RemoteFailure.Forbidden => "The server does not allow this for the dedicated user.",
             RemoteFailure.AdministratorAccount => "This account is an administrator. Use a dedicated non-admin user.",
             RemoteFailure.RedirectRefused => "The server redirected somewhere that is not followed. Check the URL.",
             RemoteFailure.ServerError => "The server answered with an error.",
@@ -184,6 +191,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.ResponseTooLarge => "The server sent an answer too large to accept.",
             RemoteFailure.LibraryUnavailable => "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.",
             RemoteFailure.CatalogChanged => "The catalog kept changing while it was read. Try again.",
+            RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
             _ => "The operation failed."
         };
     }
@@ -193,7 +201,7 @@ public class FederationAdminController : ControllerBase
         return failure switch
         {
             null => "NotChecked",
-            RemoteFailure.None => "Online",
+            RemoteFailure.None or RemoteFailure.StreamLimitReached => "Online",
             RemoteFailure.Unreachable or RemoteFailure.Timeout => "Offline",
             _ => failure.Value.ToString()
         };
