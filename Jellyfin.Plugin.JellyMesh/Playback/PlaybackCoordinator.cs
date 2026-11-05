@@ -34,6 +34,7 @@ public sealed class PlaybackCoordinator
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ConcurrentDictionary<string, StubSource> _workingSources = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
@@ -174,6 +175,7 @@ public sealed class PlaybackCoordinator
         ArgumentNullException.ThrowIfNull(stub);
 
         _workingSources.TryGetValue(stub.Id, out var working);
+        var refused = 0;
         foreach (var source in Ordered(stub.Sources, working))
         {
             var request = new RemoteStreamRequest(method, FilePath(source), range);
@@ -183,9 +185,28 @@ public sealed class PlaybackCoordinator
                 _workingSources[stub.Id] = source;
                 return stream.Value;
             }
+
+            refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
+        }
+
+        if (refused == stub.Sources.Count)
+        {
+            _filesAtLimit[stub.Id] = _clock.GetUtcNow();
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Tells whether the file of a stub was just refused by every source for its stream limit. Nothing holds a slot between
+    /// the probe of the local transcode and the read of ffmpeg, so another stream can take it, and all that comes back from
+    /// ffmpeg is that it failed. Asked once: the answer is used up.
+    /// </summary>
+    /// <param name="stubId">The stub.</param>
+    /// <returns>Whether the limit explains a failure now.</returns>
+    public bool TakeFileRefusal(string stubId)
+    {
+        return _filesAtLimit.TryRemove(stubId, out var at) && _clock.GetUtcNow() - at < PlaybackTimeouts.FileRefusalMemory;
     }
 
     /// <summary>

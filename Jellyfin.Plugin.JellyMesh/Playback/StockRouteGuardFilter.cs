@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
@@ -36,6 +37,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
     private readonly PlaybackSessionStore _sessions;
+    private readonly PlaybackRefusal _refusal;
+    private readonly ITranscodeManager _transcodes;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
@@ -45,18 +48,24 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="authorization">The authorization context.</param>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="sessions">The sessions.</param>
+    /// <param name="refusal">The refusal.</param>
+    /// <param name="transcodes">The transcode manager.</param>
     public StockRouteGuardFilter(
         StubLookup stubs,
         ILibraryManager libraryManager,
         IAuthorizationContext authorization,
         PlaybackCoordinator coordinator,
-        PlaybackSessionStore sessions)
+        PlaybackSessionStore sessions,
+        PlaybackRefusal refusal,
+        ITranscodeManager transcodes)
     {
         _stubs = stubs;
         _libraryManager = libraryManager;
         _authorization = authorization;
         _coordinator = coordinator;
         _sessions = sessions;
+        _refusal = refusal;
+        _transcodes = transcodes;
     }
 
     /// <inheritdoc />
@@ -84,7 +93,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
         else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
             && StubLookup.ItemIdOf(context) is { } itemId
-            && _stubs.Find(itemId) is not null)
+            && _stubs.Find(itemId) is { } stub)
         {
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
             if (authorization.User is not { } user)
@@ -98,6 +107,22 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
             }
+
+            var executed = await next().ConfigureAwait(false);
+            if (executed.Exception is not null && !executed.ExceptionHandled && _coordinator.TakeFileRefusal(stub.Id))
+            {
+                executed.Exception = null;
+                executed.ExceptionHandled = true;
+                executed.Result = _refusal.Refuse(context.HttpContext, authorization.DeviceId ?? string.Empty, PlaybackRefusal.LimitText);
+
+                // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
+                if (!string.IsNullOrWhiteSpace(PlaySessionOf(context)))
+                {
+                    await _transcodes.KillTranscodingJobs(authorization.DeviceId ?? string.Empty, PlaySessionOf(context), _ => true).ConfigureAwait(false);
+                }
+            }
+
+            return;
         }
 
         await next().ConfigureAwait(false);
