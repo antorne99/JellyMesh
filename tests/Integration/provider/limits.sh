@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The stream limit: b plays from a, with a limit of 1 for it. Over the limit b passes to the next source, to the local
-# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 16 minutes because it waits for
+# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 15 minutes because it waits for
 # real timeouts. usage: MEDIA=... WORK=... limits.sh
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -94,7 +94,7 @@ gate_mode stock notranscode
 : >"$WORK/gate-stock.log"
 check "still served" 200 "$(open_stream c5 "$tears" "$PROFILE_HLS")"
 url=$(stream_url c5)
-case "$url" in *JellyMesh/Session*) fallback=no ;; *) fallback=yes ;; esac
+case "$url" in *JellyMesh/Playback*) fallback=no ;; *) fallback=yes ;; esac
 check "by the local server" yes "$fallback"
 check "reading the file of the source with a free slot" true "$(grep -q 'GET /Videos/.*/stream 20' "$WORK/gate-stock.log" && echo true || echo false)"
 check "and not the one at its limit" 0 "$(grep -c '/stream' "$WORK/gate-a.log")"
@@ -346,7 +346,7 @@ echo "--- the slot goes between the probe of the local transcode and the read of
 gate_mode a notranscode
 check "served" 200 "$(open_stream c20 "$solo" "$PROFILE_HLS")"
 url=$(stream_url c20)
-case "$url" in *JellyMesh/Session*) fallback=no ;; *) fallback=yes ;; esac
+case "$url" in *JellyMesh/Playback*) fallback=no ;; *) fallback=yes ;; esac
 check "by the local server" yes "$fallback"
 gate_mode a up
 check "another stream takes the slot first" 200 "$(take_slot)"
@@ -377,9 +377,7 @@ scan b
 long=$(movie_on_b "JM Lungo")
 other=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | contains("JM Altro"))][0].Id')
 echo "long film on b: $long, in the other library of a: $other"
-# Segments of two minutes: the buffers on the way hold about 8 MB, and with a shorter one a has sent everything and sees no
-# connection drop. That is the sweep of b, not the grace.
-PROFILE_ENCODE=$(jq -c '. + {AllowVideoStreamCopy: false} | .DeviceProfile.TranscodingProfiles[0].SegmentLength = 120' <<<"$PROFILE_HLS")
+PROFILE_ENCODE=$(jq -c '. + {AllowVideoStreamCopy: false} | .DeviceProfile.TranscodingProfiles[0].SegmentLength = 60' <<<"$PROFILE_HLS")
 
 # A client reads what the buffers on the way hold before it notices a cut. At this rate that takes seconds, and the film minutes.
 READ_RATE=1m
@@ -420,21 +418,6 @@ no_ffmpeg() {
   done
   echo never
 }
-# first_segment <device>: the URL of the first segment of an HLS stream of b.
-first_segment() {
-  local url variant
-  url=$(stream_url "$1")
-  curl -sS "$url" >"$WORK/seen-$1-master"
-  variant=$(folder_of "$url")$(grep -v '^#' "$WORK/seen-$1-master" | head -1)
-  curl -sS "$variant" >"$WORK/seen-$1-variant"
-  echo "$(folder_of "$variant")$(grep -v '^#' "$WORK/seen-$1-variant" | head -1)"
-}
-# slow_segment <url>: reads a segment slowly, in the background, so that the request is running. The pid goes to $WORK/reader.
-slow_segment() {
-  curl -sS -o /dev/null --limit-rate 20k "$1" &
-  echo $! >"$WORK/reader"
-}
-
 # steady_read <device>: reads a stream of b at $READ_RATE, in the background. The pid goes to $WORK/reader.
 steady_read() {
   curl -sS -o "$WORK/read-$1" --limit-rate "$READ_RATE" "$(stream_url "$1")" &
@@ -485,14 +468,40 @@ as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$
 share a 1 Film Serie
 check "free again" 0 "$(wait_free 15)"
 
+# peer_open: a peer opening an HLS stream of the long film by itself. Sets opened, session and segment, its first segment.
+peer_get() { curl -sS -o "$2" -w '%{http_code}' --max-time 60 -H "Authorization: $peer_auth" "http://127.0.0.1:18410$1"; }
+peer_open() {
+  local url variant
+  opened=$(curl -sS -o "$WORK/hls-open" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' \
+    -d "$PROFILE_ENCODE" "http://127.0.0.1:18410/Items/$long_on_a/PlaybackInfo")
+  [ "$opened" = 200 ] || return 0
+  session=$(jq -r .PlaySessionId "$WORK/hls-open")
+  url=$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/hls-open")
+  peer_get "$url" "$WORK/hls-master" >/dev/null
+  variant=$(folder_of "$url")$(grep -v '^#' "$WORK/hls-master" | head -1)
+  peer_get "$variant" "$WORK/hls-variant" >/dev/null
+  segment=$(folder_of "$variant")$(grep -v '^#' "$WORK/hls-variant" | head -1)
+}
+# slow_segment: reads the segment slowly, in the background, so that a is writing it. The pid goes to $WORK/reader.
+slow_segment() {
+  curl -sS -o /dev/null --limit-rate 20k -H "Authorization: $peer_auth" "http://127.0.0.1:18410$segment" &
+  echo $! >"$WORK/reader"
+}
+
+# What ends a transcode is on the provider, so the peer talks to it with nothing in between: through a gate and b the drop reaches
+# a late or not at all, and the drop through b is the case of the direct play above. A segment takes a minute of video, about 8 MB:
+# with less, the buffers of the host hold all of it, a has finished writing, and there is no dropped connection to see.
+long_on_a=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | contains("JM Lungo"))][0].Id')
+
 echo "--- a stream that drops its connection: its ffmpeg goes when the grace ends, and no two overlap at limit 1"
-gate_mode a throttle:100
-check "open" 200 "$(open_stream c23 "$long" "$PROFILE_ENCODE")"
-segment=$(first_segment c23)
-slow_segment "$segment"
-sleep 2
+peer_open
+check "open" 200 "$opened"
+check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
 first_ffmpeg=$(ffmpeg_pids)
 check "its ffmpeg is running" true "$([ -n "$first_ffmpeg" ] && echo true || echo false)"
+slow_segment
+sleep 2
+rm -f "$WORK/stop-sampling" "$WORK/ffmpeg-samples"
 (
   while [ ! -e "$WORK/stop-sampling" ]; do
     ffmpeg_count >>"$WORK/ffmpeg-samples"
@@ -500,15 +509,16 @@ check "its ffmpeg is running" true "$([ -n "$first_ffmpeg" ] && echo true || ech
   done
 ) &
 sampler=$!
-rm -f "$WORK/stop-sampling" "$WORK/ffmpeg-samples"
 kill_reader
-opened=refused
-for i in $(seq 1 15); do
-  [ "$(open_stream c24 "$long" "$PROFILE_ENCODE")" = 200 ] && { opened=$i; break; }
-  sleep 1
+got_in=refused
+for i in $(seq 1 40); do
+  peer_open
+  [ "$opened" = 200 ] && { got_in=$i; break; }
+  sleep 0.5
 done
-echo "the next stream got in after $opened attempts"
-check "the next stream gets in" true "$([ "$opened" != refused ] && echo true || echo false)"
+echo "the next stream got in after $got_in attempts"
+check "the next stream gets in" true "$([ "$got_in" != refused ] && echo true || echo false)"
+check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
 second_ffmpeg=$(ffmpeg_pids)
 sleep 3
 touch "$WORK/stop-sampling"
@@ -520,12 +530,12 @@ check "never two ffmpeg at once" 1 "$(sort -n "$WORK/ffmpeg-samples" | tail -1)"
 check "the first ffmpeg is gone" false "$(ffmpeg_running "$first_ffmpeg")"
 
 echo "--- a seek within the grace does not touch the transcode"
-segment=$(first_segment c24)
-slow_segment "$segment"
+slow_segment
 sleep 2
 before=$(ffmpeg_pids)
+check "the second ffmpeg is running" true "$([ -n "$before" ] && echo true || echo false)"
 kill_reader
-slow_segment "$segment"
+slow_segment
 sleep 8
 check "the same ffmpeg goes on past the grace" "$before" "$(ffmpeg_pids)"
 check "and the slot stayed" 1 "$(active_streams)"
@@ -538,16 +548,13 @@ check "gone with the grace" true "$([ "$gone" != never ] && [ "$gone" -le 8 ] &&
 check "and the slot" 0 "$(wait_free 3)"
 
 echo "--- the consumer that comes back: over the limit it is told so, with a slot free it plays from there"
-gate_mode a up
-: >"$WORK/gate-a.log"
 check "another stream has the slot" 200 "$(take_slot)"
-check "the client gets no stream" 502 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$segment")"
-check "because a refused it for the limit" true "$(grep -q -E 'GET /Videos/.*/hls1/.* 429' "$WORK/gate-a.log" && echo true || echo false)"
+check "it is refused for the limit" 429 "$(peer_get "$segment" /dev/null)"
 give_slot
-check "with the slot free the same URL plays" 200 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$segment")"
+check "with the slot free the same URL plays" 200 "$(peer_get "$segment" /dev/null)"
 check "and holds it" 1 "$(active_streams)"
-close_stream c24
-close_stream c23
+as_peer a "$token" DELETE "/Videos/ActiveEncodings?deviceId=x&playSessionId=$session" >/dev/null
+as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$session" >/dev/null
 check "no ffmpeg left" true "$(g=$(no_ffmpeg 10); [ "$g" != never ] && echo true || echo false)"
 check "free again" 0 "$(wait_free 15)"
 
@@ -555,7 +562,7 @@ echo "--- a failed start of a local transcode for any reason: a retry plays, it 
 gate_mode a notranscode
 check "served" 200 "$(open_stream c25 "$solo" "$PROFILE_HLS")"
 url=$(stream_url c25)
-case "$url" in *JellyMesh/Session*) fallback=no ;; *) fallback=yes ;; esac
+case "$url" in *JellyMesh/Playback*) fallback=no ;; *) fallback=yes ;; esac
 check "by the local server" yes "$fallback"
 gate_mode a up
 curl -sS "$url" >"$WORK/retry-master"
@@ -571,7 +578,6 @@ check "free again" 0 "$(wait_free 15)"
 
 echo "--- a failed start of a transcode for a peer: a retry plays, it does not hang"
 solo_on_a=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$SOLO" '[.Items[] | select(.Path | contains($t))][0].Id')
-peer_get() { curl -sS -o "$2" -w '%{http_code}' --max-time 30 -H "Authorization: $peer_auth" "http://127.0.0.1:18410$1"; }
 curl -sS -o "$WORK/retry-open" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' -d "$PROFILE_ENCODE" "http://127.0.0.1:18410/Items/$solo_on_a/PlaybackInfo"
 url=$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/retry-open")
 check "the master playlist" 200 "$(peer_get "$url" "$WORK/retry-master")"
