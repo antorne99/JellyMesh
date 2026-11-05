@@ -67,7 +67,7 @@ public static class PlaybackResponseBuilder
             SupportsTranscoding = true,
             TranscodingUrl = isHls ? PlaybackUrls.Master(session.Id, localToken) : PlaybackUrls.Stream(session.Id, container, localToken),
             TranscodingSubProtocol = isHls ? MediaStreamProtocol.hls : MediaStreamProtocol.http,
-            TranscodingContainer = isHls ? remote.TranscodingContainer : container
+            TranscodingContainer = isHls ? (IsPlainName(remote.TranscodingContainer) ? remote.TranscodingContainer : null) : container
         };
     }
 
@@ -80,13 +80,16 @@ public static class PlaybackResponseBuilder
     {
         ArgumentNullException.ThrowIfNull(remote);
 
-        if (!string.IsNullOrEmpty(remote.TranscodingContainer))
+        if (IsPlainName(remote.TranscodingContainer))
         {
-            return remote.TranscodingContainer.ToLowerInvariant();
+            return remote.TranscodingContainer!.ToLowerInvariant();
         }
 
         var extension = Path.GetExtension(remote.Path)?.TrimStart('.');
         var name = !string.IsNullOrEmpty(extension) ? extension : remote.Container?.Split(',')[0];
-        return name is { Length: > 0 } && name.All(char.IsAsciiLetterOrDigit) ? name.ToLowerInvariant() : "mp4";
+        return IsPlainName(name) ? name!.ToLowerInvariant() : "mp4";
     }
+
+    // It goes into a URL of the client, so a word and nothing that could change where that URL leads.
+    private static bool IsPlainName(string? name) => name is { Length: > 0 } && name.All(char.IsAsciiLetterOrDigit);
 }

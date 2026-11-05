@@ -88,6 +88,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             request.AlwaysBurnInSubtitleWhenTranscoding);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Post, "/Items/" + Uri.EscapeDataString(request.ItemId) + "/PlaybackInfo");
+        if (message is null)
+        {
+            return RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.InvalidResponse);
+        }
+
         message.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, _requestOptions));
         message.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         if (request.ReplacesPlaySessionId is { } replaces)
@@ -160,6 +165,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         ArgumentNullException.ThrowIfNull(request);
 
         using var message = BuildRequest(endpoint, session, request.Method, request.Path);
+        if (message is null)
+        {
+            return RemoteResult.Fail<RemoteContent>(RemoteFailure.InvalidResponse);
+        }
+
         if (!string.IsNullOrEmpty(request.Range))
         {
             message.Headers.TryAddWithoutValidation("Range", request.Range);
@@ -238,9 +248,15 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
 
     private static string StreamPath(string playSessionId) => "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
 
-    private static HttpRequestMessage BuildRequest(RemoteEndpoint endpoint, RemoteSession session, HttpMethod method, string path)
+    // Null when the path cannot be accepted: paths come from the answers of the remote.
+    private static HttpRequestMessage? BuildRequest(RemoteEndpoint endpoint, RemoteSession session, HttpMethod method, string path)
     {
-        var request = new HttpRequestMessage(method, new Uri(endpoint.BaseUrl + path.TrimStart('/')));
+        if (!RemoteUrl.TryCombine(endpoint.BaseUrl, path, out var uri))
+        {
+            return null;
+        }
+
+        var request = new HttpRequestMessage(method, uri);
         request.Headers.TryAddWithoutValidation("Accept", AcceptJson);
         request.Headers.TryAddWithoutValidation("Authorization", JellyfinRemoteClient.AuthorizationHeader(endpoint, session));
         request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
@@ -316,8 +332,13 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         return encoding.IsSuccess ? Parse<EncodingResponse>(encoding.Value!)?.HardwareAccelerationType : null;
     }
 
-    private async Task<RemoteResult<byte[]>> ReadDocumentAsync(HttpRequestMessage message, CancellationToken cancellationToken)
+    private async Task<RemoteResult<byte[]>> ReadDocumentAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
     {
+        if (message is null)
+        {
+            return RemoteResult.Fail<byte[]>(RemoteFailure.InvalidResponse);
+        }
+
         var client = _httpClientFactory.CreateClient(HttpClientName);
         try
         {

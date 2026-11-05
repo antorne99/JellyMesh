@@ -199,6 +199,12 @@ public sealed partial class PlaybackSession
         return file.Length > 0 && file != "." && file != ".." && file.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_');
     }
 
+    // The timing parameters are numbers and flags, and this is what a remote can get into a URL a client receives.
+    private static bool IsPlainValue(string pair)
+    {
+        return pair.All(character => char.IsAsciiLetterOrDigit(character) || character is '=' or '.' or '-');
+    }
+
     private static string ShapeOf(int folder, string file)
     {
         // jellyfin-web asks for an external subtitle in its own format: Stream.js for a Stream.vtt it was given.
@@ -252,7 +258,7 @@ public sealed partial class PlaybackSession
                 continue;
             }
 
-            if (_clientParameters.Contains(name))
+            if (_clientParameters.Contains(name) && IsPlainValue(pair))
             {
                 client.Append(pair).Append('&');
             }
