@@ -266,4 +266,73 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         Assert.Equal(RemoteFailure.Suspended, result.Failure);
         Assert.Empty(_fixture.Client.Queries);
     }
+
+    [Fact]
+    public async Task ACatalogHeavierThanTheBudgetIsRefusedHoweverSmallItsPages()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize * 3));
+        _fixture.Client.Rewrite = (_, page) => page with { ByteCount = (RemoteCatalogReader.MaxBytesPerRead / 2) + 1 };
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
+        Assert.Equal(2, _fixture.Client.Queries.Count);
+    }
+
+    [Fact]
+    public async Task ACatalogUnderTheBudgetReadsNormally()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize * 2));
+        _fixture.Client.Rewrite = (_, page) => page with { ByteCount = RemoteCatalogReader.MaxBytesPerRead / 2 };
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(RemoteCatalogReader.PageSize * 2, result.Value!.Count);
+    }
+
+    [Fact]
+    public async Task ASecondAttemptDoesNotPayForTheFirst()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(3));
+        var reads = 0;
+        _fixture.Client.Rewrite = (_, page) =>
+        {
+            var weighed = page with { ByteCount = (RemoteCatalogReader.MaxBytesPerRead * 3) / 4 };
+            return ++reads == 1 ? weighed with { Items = [] } : weighed;
+        };
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadAsync(server);
+
+        Assert.Equal(3, result.Value!.Count);
+    }
+
+    [Fact]
+    public async Task AFeedThatNeverEndsIsRefusedAndHasNoMoreThanItsPages()
+    {
+        var change = new RemoteChange("item", "Movie", ["films"]);
+        var cursor = 0;
+        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-" + ++cursor, true, [change]));
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await _fixture.Reader.ReadFeedAsync(server, "start", new System.Collections.Generic.HashSet<string>(), SyncFixture.Start, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+        Assert.Equal(RemoteCatalogReader.MaxFeedPages + 1, _fixture.Client.FeedReads.Count);
+    }
+
+    [Fact]
+    public async Task AFeedHeavierThanTheBudgetIsRefused()
+    {
+        var cursor = 0;
+        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-" + ++cursor, true, []) { ByteCount = RemoteCatalogReader.MaxBytesPerRead / 2 });
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await _fixture.Reader.ReadFeedAsync(server, "start", new System.Collections.Generic.HashSet<string>(), SyncFixture.Start, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
+        Assert.Equal(3, _fixture.Client.FeedReads.Count);
+    }
 }

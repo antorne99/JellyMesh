@@ -200,6 +200,24 @@ public class RemotePlaybackClientTests
         Assert.Equal(new RemoteTranscodePolicy(null, true, true, true), result.Value);
     }
 
+    [Theory]
+    [InlineData("{\"MediaSources\":null}")]
+    [InlineData("{\"MediaSources\":[null]}")]
+    [InlineData("{\"MediaSources\":[{\"Id\":\"ms\",\"MediaStreams\":[null]}]}")]
+    [InlineData("{\"MediaSources\":[{\"Id\":\"ms\",\"Protocol\":\"NotAProtocol\"}]}")]
+    [InlineData("{\"MediaSources\":[{\"Id\":\"ms\",\"Size\":\"huge\"}]}")]
+    [InlineData("{\"MediaSources\":{}}")]
+    [InlineData("{\"MediaSources\":[],\"PlaySessionId\":\"a\\r\\nX-Injected: 1\"}")]
+    [InlineData("not json")]
+    public async Task A_playback_answer_of_the_wrong_shape_is_refused_and_is_no_crash(string json)
+    {
+        var (client, _) = Build(_ => StubHandler.Json(json));
+
+        var result = await client.GetPlaybackInfoAsync(_endpoint, _session, Request(), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
     [Fact]
     public async Task An_oversized_document_is_refused()
     {
