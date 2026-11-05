@@ -380,16 +380,70 @@ public class PeerGuardFilterTests
     }
 
     [Fact]
-    public async Task A_slot_that_expires_at_the_idle_time_closes_no_transcode()
+    public async Task A_slot_that_expires_at_the_idle_time_closes_its_transcode_with_nobody_asking()
     {
         _fixture.Own("play");
         await StreamAsync();
 
         Elapse(StreamSlots.IdleTimeout);
         await _fixture.Closer.CloseAbandonedAsync();
+        await _fixture.Closer.CloseAbandonedAsync();
 
         Assert.Equal(0, Slots);
+        VerifyClosed("play", Times.Once());
+    }
+
+    [Fact]
+    public async Task The_transcode_stays_until_the_idle_time()
+    {
+        _fixture.Own("play");
+        await StreamAsync();
+
+        Elapse(StreamSlots.IdleTimeout - TimeSpan.FromSeconds(1));
+        await _fixture.Closer.CloseAbandonedAsync();
+
         VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task A_stream_being_read_at_the_idle_time_keeps_its_transcode()
+    {
+        _fixture.Own("play");
+
+        await StreamAsync(during: () =>
+        {
+            Elapse(StreamSlots.IdleTimeout * 2);
+            _fixture.Closer.CloseAbandonedAsync().GetAwaiter().GetResult();
+            VerifyNothingClosed();
+        });
+    }
+
+    [Fact]
+    public async Task A_consumer_back_after_the_idle_time_gets_a_slot_and_goes_on()
+    {
+        _fixture.Own("play");
+        await StreamAsync();
+        Elapse(StreamSlots.IdleTimeout);
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        var during = -1;
+        var (_, ran) = await StreamAsync(during: () => during = Slots);
+
+        Assert.True(ran);
+        Assert.Equal(1, during);
+    }
+
+    [Fact]
+    public async Task The_next_stream_starts_only_after_an_expired_transcode_closed()
+    {
+        _fixture.Own("gone");
+        _fixture.Own("next");
+        await StreamAsync("gone");
+        Elapse(StreamSlots.IdleTimeout);
+
+        var (_, ran) = await StreamAsync("next", during: () => VerifyClosed("gone", Times.Once()));
+
+        Assert.True(ran);
     }
 
     [Fact]
