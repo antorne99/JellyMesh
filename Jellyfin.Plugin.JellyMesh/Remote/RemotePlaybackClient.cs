@@ -177,6 +177,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             message.Headers.TryAddWithoutValidation("Range", request.Range);
         }
 
+        if (request.IsProbe)
+        {
+            message.Headers.TryAddWithoutValidation(ProviderProtocol.ProbeHeader, "1");
+        }
+
         var client = _httpClientFactory.CreateClient(HttpClientName);
         HttpResponseMessage response;
         try

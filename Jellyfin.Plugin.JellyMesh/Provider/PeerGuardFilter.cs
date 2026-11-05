@@ -17,6 +17,7 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 public sealed class PeerGuardFilter : IAsyncResourceFilter
 {
     private const string PlaySessionParameter = "PlaySessionId";
+    private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
 
     private static readonly string[] _itemRouteValues = ["itemId", "routeItemId"];
 
@@ -50,6 +51,18 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
 
         context.Response.Headers[ProviderProtocol.RefusalHeader] = ProviderProtocol.StreamLimitRefusal;
         return new StatusCodeResult(StatusCodes.Status429TooManyRequests);
+    }
+
+    /// <summary>
+    /// Notes the play session a <c>PlaybackInfo</c> confirmed, for when its answer turns out not to have left.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <param name="playSessionId">The play session.</param>
+    public static void NotePlaybackInfo(HttpContext context, string playSessionId)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        context.Items[ConfirmedPlaySession] = playSessionId;
     }
 
     /// <inheritdoc />
@@ -99,9 +112,9 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        if (kind != PeerRouteKind.Stream)
+        if (kind == PeerRouteKind.PlaybackInfo)
         {
-            await next().ConfigureAwait(false);
+            await PlaybackInfoAsync(caller, context, next).ConfigureAwait(false);
             return;
         }
 
@@ -129,7 +142,11 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        await next().ConfigureAwait(false);
+        var executed = await next().ConfigureAwait(false);
+        if (WasAbandoned(http, executed))
+        {
+            request.Abandon();
+        }
     }
 
     // One answer for all of them, the same for a play session that exists and one that does not. The joined values of a
@@ -137,6 +154,31 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private static StatusCodeResult RefusePlaySession() => new(StatusCodes.Status403Forbidden);
 
     private static string PlaySessionOf(HttpContext http) => http.Request.Query[PlaySessionParameter].ToString();
+
+    private static bool Failed(ResourceExecutedContext executed)
+    {
+        return executed.HttpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError
+            || (executed.Exception is not null && !executed.ExceptionHandled);
+    }
+
+    // A probe of the consumer drops its connection on purpose, after the first byte: the stream it proved is about to start.
+    private static bool WasAbandoned(HttpContext http, ResourceExecutedContext executed)
+    {
+        return !http.Request.Headers.ContainsKey(ProviderProtocol.ProbeHeader)
+            && (http.RequestAborted.IsCancellationRequested || Failed(executed));
+    }
+
+    private async Task PlaybackInfoAsync(PeerCaller caller, ResourceExecutingContext context, ResourceExecutionDelegate next)
+    {
+        var http = context.HttpContext;
+        var executed = await next().ConfigureAwait(false);
+
+        // The consumer never learned this play session, so nobody will ever release it.
+        if ((http.RequestAborted.IsCancellationRequested || Failed(executed)) && http.Items[ConfirmedPlaySession] is string playSessionId)
+        {
+            _slots.Release(caller.Grant.UserId, playSessionId);
+        }
+    }
 
     private static bool IsProviderRead(ControllerActionDescriptor? action, string method)
     {

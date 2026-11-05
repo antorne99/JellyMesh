@@ -521,7 +521,7 @@ public sealed class PlaybackCoordinator
 
     private async Task<bool> CanOpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
-        var stream = await OpenAsync(serverId, request, cancellationToken).ConfigureAwait(false);
+        var stream = await OpenAsync(serverId, request with { IsProbe = IsJellyMesh(serverId) }, cancellationToken).ConfigureAwait(false);
         stream.Value?.Dispose();
         return stream.IsSuccess;
     }
