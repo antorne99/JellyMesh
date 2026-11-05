@@ -655,6 +655,7 @@ def outcomes_shown(page, name):
     hold = []
     page.route("**/JellyMesh/Admin/Servers/*", lambda route: hold.append(route) if route.request.method == "DELETE" else route.continue_())
     u.button(u.server_row(page, "stock"), "remove").click()
+    page.locator(u.CONFIRM_OK).click()
     until(page, lambda: hold)
     check(name + " a new action clears the old outcome at once", u.message(page) == "", u.message(page))
     hold.pop().fulfill(status=204)
