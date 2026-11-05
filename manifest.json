@@ -1,0 +1,19 @@
+[
+  {
+    "guid": "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653",
+    "name": "JellyMesh",
+    "overview": "Federates multiple Jellyfin servers into one library",
+    "description": "JellyMesh shows films and series from other Jellyfin servers in your existing libraries and streams them through the local server. Duplicates become one title: a local copy always wins, otherwise the best quality does, and the other copies stay as backups. Remote servers can be stock Jellyfin or run JellyMesh, which adds shared libraries, stream limits and a change feed between servers you trust.",
+    "owner": "antoniotornesello",
+    "category": "General",
+    "versions": [
+      {
+        "version": "0.1.0.0",
+        "changelog": "First release, for Jellyfin 12.x. Films and series from stock and JellyMesh remotes, with dedup and per-episode completion, written to a federated folder you link to your libraries. Remote playback through the local server, with backup sources and a local transcode as fallback. Shared libraries and stream limits between JellyMesh servers. Tested on Jellyfin 12.4 with jellyfin-web only: real Android and TV clients and QSV are not yet tested.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://example.invalid/REPLACE_WITH_RELEASE_URL/jellymesh_0.1.0.0.zip",
+        "checksum": "REPLACE_WITH_MD5_OF_THE_ZIP"
+      }
+    ]
+  }
+]

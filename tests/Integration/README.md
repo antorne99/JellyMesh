@@ -145,21 +145,86 @@ The spikes for points 2 to 7 run on private throwaway containers, never on this 
 
 ## Proof scripts
 
-`dedup/` proves decisions 13 and 13a on private containers named `jm-dedup-*`, on ports 18421-18424, from `MEDIA` (by default this folder's `media/`) and with scratch files in `WORK`:
+Each folder proves a phase end to end with real Jellyfin servers, on private containers and with the current build. Run them from this folder. The media comes from `MEDIA`, by default this folder's `media/`, which is gitignored, so in a worktree point it at the main checkout. Logins are fixed test values.
+
+| Folder | Proves | Containers | Ports | Also needs |
+|---|---|---|---|---|
+| `materializer/` | Phase 4: stubs, metadata protection, watch state | `jm-mat` | 18310 | `remoto-standard` and `remoto-jellymesh` of this stack |
+| `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
+| `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
+| `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
+
+### `materializer/`
+
+Every scenario needs a fresh instance. `all.sh` does that for `s1` to `s5`, and writes `up-*.log` and `final-*.out` next to the scripts. Those hold what each scenario printed, so read them: the scripts print state and mostly do not judge it. To run one scenario:
 
 ```sh
-dedup/up.sh                  # the two remotes and a consumer with the current build
-dedup/run.sh                 # what merges, what stays apart, doubles, playback, NextUp, local copies arriving
-OLD=<old checkout> dedup/upgrade.sh   # an index and stubs from the old build, then the current one
-dedup/down.sh                # removes containers, volumes and network
+bash materializer/up.sh           # a fresh jm-mat with the two-path libraries and the plugin
+bash materializer/s1.sh           # s1 to s5, see the comment at the top of each
+bash materializer/check.sh        # after s5: no remote address in the logs, the index or the folder
 ```
 
-`merge/` proves decision 20 the same way, on private containers named `jm-merge-*`, on ports 18441-18443:
+Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`.
+
+### `playback/`
+
+This folder is the record of the Phase 5 proof more than a suite. The gates stand between `jm-play` and the two remotes, so a script can cut one off, and they must be up before `up.sh` adds the servers. Captures go to `run/`, and `extra/` is mounted into the container. Both are gitignored.
 
 ```sh
-merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
-merge/run.sh                 # list, merge, restart, sync, a copy that changes or goes, undo, the page, a local copy
-merge/down.sh                # removes containers, volumes, network and scratch files
+bash playback/gates.sh            # the gates, left running until killed
+bash playback/up.sh               # jm-play with the plugin and the two remotes, then a sync
+bash playback/direct1.sh          # the direct-play fixture, then direct3.sh
+bash playback/final.sh            # the whole proof in order, then final2.sh, final3.sh and final4.sh
+```
+
+`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`.
+
+### `provider/`
+
+`MEDIA` and `WORK` are required. The gates on the host carry all traffic between the servers, so a test can slow one down or cut it off. Scripts print `ok` or `FAIL`, and `leaks.sh` fails if it saw no tokens to look for.
+
+```sh
+export MEDIA=<main checkout>/tests/Integration/media WORK=<scratch folder>
+bash provider/up.sh               # two servers with the plugin, each with the media of one remote
+bash provider/federate.sh         # connects them, and b with the stock remote too
+bash provider/boundaries.sh       # what a peer can reach, no cycles, shared libraries
+bash provider/feed.sh             # the change feed, and polling on a stock remote
+bash provider/limits.sh           # the stream limit, about 11 minutes because it waits for real timeouts
+bash provider/network.sh          # a slow and an offline provider, after limits.sh
+bash provider/leaks.sh            # no remote token or address in a client answer or a log
+bash provider/down.sh             # removes containers and volumes, and the recorded tokens
+```
+
+### `dedup/`
+
+Scratch files go in `WORK`.
+
+```sh
+bash dedup/up.sh                  # the two remotes and a consumer with the current build
+bash dedup/run.sh                 # what merges, what stays apart, doubles, playback, NextUp, local copies arriving
+OLD=<old checkout> bash dedup/upgrade.sh   # an index and stubs from the old build, then the current one
+bash dedup/down.sh                # removes containers, volumes and network
+```
+
+### `play/`
+
+`MEDIA` and `OLD` are required. `OLD` is a checkout of a commit before the signed URLs, made with `git archive` and `tar`. `WORK` defaults to `$TMPDIR/jm-play-run`. `all.sh` runs everything from fresh containers, in the order the steps need: `up`, `upgrade`, `endpoint`, `fallback`, `settings`, `localcopy`, `cycle`, `leaks`. Scripts print `ok` or `FAIL`, and `all.sh` exits non-zero if a step failed.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media OLD=<folder> bash play/all.sh
+```
+
+It leaves the containers up. `down` in `play/lib.sh` removes them and their volumes.
+
+### `merge/`
+
+Proves decision 20 on private containers named `jm-merge-*`, on ports 18441-18443:
+
+```sh
+bash merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
+bash merge/run.sh                 # list, merge, restart, sync, a copy that changes or goes, undo, the page, a local copy
+bash merge/down.sh                # removes containers, volumes, network and scratch files
 ```
 
 ## Not covered here

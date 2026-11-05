@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test
+        run: |
+          docker run --rm -v "$PWD":/src -v jellymesh-nuget:/root/.nuget/packages -w /src \
+            "$SDK_IMAGE" dotnet test
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner creates the folder, so that it can write to it after the container, which runs as root.
+      - name: Build the plugin
+        run: |
+          mkdir -p artifacts
+          docker run --rm -v "$PWD":/src -v jellymesh-nuget:/root/.nuget/packages -w /src \
+            "$SDK_IMAGE" dotnet build Jellyfin.Plugin.JellyMesh/Jellyfin.Plugin.JellyMesh.csproj \
+            -c Release -o artifacts/build --nologo
+
+      - name: Package
+        run: .github/scripts/package.sh "$TAG"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip=$(ls artifacts/jellymesh_*.zip)
+          md5=$(cut -d' ' -f1 "$zip.md5")
+          printf 'MD5 for manifest.json: %s\n\nThe manifest is not updated by this job.\n' "$md5" >artifacts/notes.md
+          gh release create "$TAG" "$zip" "$zip.md5" "$zip.sha256" --title "JellyMesh $TAG" --notes-file artifacts/notes.md
