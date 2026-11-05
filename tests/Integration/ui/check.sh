@@ -31,6 +31,7 @@ if [ $# -gt 0 ]; then
   run "$@"
 else
   run first normal loading errors keyboard themes actions
+  run edits quiet polling sections
   run outcomes outcome-themes
   run confirms confirm-keyboard
 

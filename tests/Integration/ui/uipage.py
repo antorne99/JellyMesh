@@ -36,6 +36,7 @@ SETTINGS_FORM = "#jmSettingsForm"
 FOLDER_INFO = "#jmFolderInfo"
 LOADING = ".docspinner.mdlSpinnerActive"
 CONFIRM = ".dialogContainer .dialog"
+CONFIRM_BACKDROP = ".dialogBackdrop"
 CONFIRM_TITLE = CONFIRM + " .formDialogHeaderTitle"
 CONFIRM_TEXT = CONFIRM + " .text"
 CONFIRM_MARKUP = CONFIRM_TEXT + " b, " + CONFIRM_TEXT + " i"
@@ -70,6 +71,14 @@ BUTTON = {
     "connect": "Connect",
 }
 READABLE = "h2, h3, h4, p, label, .fieldDescription, " + MERGE_CASE + ", " + WARNING
+FAILURE = {
+    "status": "#jmStatusFailure",
+    "sync": "#jmSyncFailure",
+    "peers": "#jmPeersFailure",
+    "merges": "#jmMergesFailure",
+    "settings": "#jmSettingsFailure",
+}
+NEW_PEER = "Connect a server"
 
 
 def targets():
@@ -214,6 +223,21 @@ def clear_message(page):
     """Dismisses the outcome of the action before."""
     if page.locator(DISMISS).is_visible():
         page.locator(DISMISS).click()
+
+
+def has_focus(node):
+    """Tells whether the keyboard is on a part of the page, or inside it."""
+    return node.evaluate("node => node.contains(document.activeElement)")
+
+
+def mark(node):
+    """Tags an element, to tell later whether it is still the same one."""
+    node.evaluate("node => { node.dataset.jmKept = 'yes'; }")
+
+
+def is_marked(node):
+    """Tells whether an element is the one tagged, rather than a rebuilt copy."""
+    return node.evaluate("node => node.dataset.jmKept === 'yes'")
 
 
 def in_view(page, selector):
