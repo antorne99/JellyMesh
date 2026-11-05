@@ -12,7 +12,8 @@
         "changelog": "First release, for Jellyfin 12.x. Films and series from stock and JellyMesh remotes, with dedup and per-episode completion, written to a federated folder you link to your libraries. Remote playback through the local server, with backup sources and a local transcode as fallback. Shared libraries and stream limits between JellyMesh servers, and manual film merges. Tested on Jellyfin 12.4 with jellyfin-web only: real Android and TV clients and QSV are not yet tested.",
         "targetAbi": "12.0.0.0",
         "sourceUrl": "https://github.com/antorne99/JellyMesh/releases/download/v0.1.0.0/jellymesh_0.1.0.0.zip",
-        "checksum": "REPLACE_WITH_MD5_OF_THE_ZIP"
+        "checksum": "25072060267a44801f66311305e2a588",
+        "timestamp": "2026-11-05T21:33:03Z"
       }
     ]
   }
