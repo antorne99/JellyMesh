@@ -222,10 +222,12 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
 
     public List<string> Released { get; } = [];
 
+    public RemoteFailure ReleaseFailure { get; set; } = RemoteFailure.None;
+
     public Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         Released.Add(playSessionId);
-        return Task.FromResult(RemoteResult.Success(true));
+        return Task.FromResult(ReleaseFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(ReleaseFailure));
     }
 }
 
