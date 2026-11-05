@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Security;
+using MediaBrowser.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -152,6 +153,12 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         if (WasAbandoned(http, executed))
         {
             request.Abandon();
+        }
+
+        // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
+        if (hasSession && executed.Exception is FfmpegException)
+        {
+            await _closer.CloseAsync(playSession).ConfigureAwait(false);
         }
     }
 
