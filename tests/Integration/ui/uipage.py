@@ -59,6 +59,14 @@ BUTTON = {
     "connect": "Connect",
 }
 READABLE = "h2, h3, h4, p, label, .fieldDescription, " + MERGE_CASE + ", " + WARNING
+FAILURE = {
+    "status": "#jmStatusFailure",
+    "sync": "#jmSyncFailure",
+    "peers": "#jmPeersFailure",
+    "merges": "#jmMergesFailure",
+    "settings": "#jmSettingsFailure",
+}
+NEW_PEER = "Connect a server"
 
 
 def targets():
@@ -202,6 +210,21 @@ def wait_message(page, timeout=30000):
 def clear_message(page):
     """Empties the outcome of the action before."""
     page.evaluate("s => { const node = document.querySelector(s); node.textContent = ''; node.hidden = true; }", MESSAGE)
+
+
+def has_focus(node):
+    """Tells whether the keyboard is on a part of the page, or inside it."""
+    return node.evaluate("node => node.contains(document.activeElement)")
+
+
+def mark(node):
+    """Tags an element, to tell later whether it is still the same one."""
+    node.evaluate("node => { node.dataset.jmKept = 'yes'; }")
+
+
+def is_marked(node):
+    """Tells whether an element is the one tagged, rather than a rebuilt copy."""
+    return node.evaluate("node => node.dataset.jmKept === 'yes'")
 
 
 def shot(page, name):
