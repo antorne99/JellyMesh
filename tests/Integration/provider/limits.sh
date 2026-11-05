@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The stream limit: b plays from a, with a limit of 1 for it. Over the limit b passes to the next source, to the local
-# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 10 minutes because it waits for
+# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 16 minutes because it waits for
 # real timeouts. usage: MEDIA=... WORK=... limits.sh
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -362,5 +362,225 @@ give_slot
 check "with the slot free again the same URL plays" 200 "$(read_segment)"
 close_stream c20
 check "free again" 0 "$(wait_free 15)"
+
+# The cases that need a stream long enough to catch running. Encoding takes minutes on it, and no buffer on the way holds it.
+LONG="JM Lungo (2026)"
+OTHER="JM Altro (2026)"
+docker exec jm-prov-a sh -c "mkdir -p '/extra/film/$LONG' '/extra/altra/$OTHER' \
+  && /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -loglevel error -nostdin -stream_loop 40 \
+    -i \"\$(find '/media/film/Tears of Steel (2012)' -type f -name '*.m*' | head -1)\" -map 0 -c copy '/extra/film/$LONG/$LONG.mkv' \
+  && ln '/extra/film/$LONG/$LONG.mkv' '/extra/altra/$OTHER/$OTHER.mkv'"
+post a "/Library/VirtualFolders?name=Altra&collectionType=movies&refreshLibrary=false&paths=/extra/altra" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+scan a
+sync_now b
+scan b
+long=$(movie_on_b "JM Lungo")
+other=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | contains("JM Altro"))][0].Id')
+echo "long film on b: $long, in the other library of a: $other"
+# Segments of a minute: the buffers on the way hold a short one, and a would have nothing in flight when the client drops.
+PROFILE_ENCODE=$(jq -c '. + {AllowVideoStreamCopy: false} | .DeviceProfile.TranscodingProfiles[0].SegmentLength = 60' <<<"$PROFILE_HLS")
+
+# ended <pid> <seconds>: whether it stopped within that time.
+ended() {
+  local i
+  for i in $(seq 1 $(( $2 * 2 ))); do
+    kill -0 "$1" 2>/dev/null || { echo true; return 0; }
+    sleep 0.5
+  done
+  echo false
+}
+# grows <file>: whether bytes keep coming in.
+grows() {
+  local before
+  before=$(wc -c <"$1")
+  sleep 3
+  [ "$(wc -c <"$1")" -gt "$before" ] && echo true || echo false
+}
+# peer_read <item>: a peer playing an item by itself, slowly. The pid goes to $WORK/peer-reader.
+peer_read() {
+  curl -sS -o "$WORK/taken" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$1/PlaybackInfo"
+  curl -sS -o "$WORK/read-peer" --limit-rate 100k -H "Authorization: $peer_auth" \
+    "http://127.0.0.1:18410/Videos/$1/stream?static=true&MediaSourceId=$1&PlaySessionId=$(jq -r .PlaySessionId "$WORK/taken")" &
+  echo $! >"$WORK/peer-reader"
+}
+ffmpeg_pids() {
+  docker exec jm-prov-a sh -c 'for p in /proc/[0-9]*; do case "$(readlink "$p/exe" 2>/dev/null)" in *ffmpeg*) echo "${p#/proc/}" ;; esac; done' | sort | tr '\n' ' ' | sed 's/ $//'
+}
+ffmpeg_running() { case " $(ffmpeg_pids) " in *" $1 "*) echo true ;; *) echo false ;; esac; }
+ffmpeg_count() { docker exec jm-prov-a sh -c 'n=0; for p in /proc/[0-9]*; do case "$(readlink "$p/exe" 2>/dev/null)" in *ffmpeg*) n=$((n+1)) ;; esac; done; echo $n'; }
+# no_ffmpeg <seconds>: seconds until a has none left, or never.
+no_ffmpeg() {
+  local i
+  for i in $(seq 0 "$1"); do
+    [ -z "$(ffmpeg_pids)" ] && { echo "$i"; return 0; }
+    sleep 1
+  done
+  echo never
+}
+# first_segment <device>: the URL of the first segment of an HLS stream of b.
+first_segment() {
+  local url variant
+  url=$(stream_url "$1")
+  curl -sS "$url" >"$WORK/seen-$1-master"
+  variant=$(folder_of "$url")$(grep -v '^#' "$WORK/seen-$1-master" | head -1)
+  curl -sS "$variant" >"$WORK/seen-$1-variant"
+  echo "$(folder_of "$variant")$(grep -v '^#' "$WORK/seen-$1-variant" | head -1)"
+}
+# slow_segment <url>: reads a segment slowly, in the background, so that the request is running. The pid goes to $WORK/reader.
+slow_segment() {
+  curl -sS -o /dev/null --limit-rate 20k "$1" &
+  echo $! >"$WORK/reader"
+}
+
+echo "--- removing a connected server cuts what it is playing, at once"
+check "open" 200 "$(open_stream c21 "$long" "$PROFILE_DIRECT")"
+slow_read c21
+reader=$(cat "$WORK/reader")
+sleep 3
+check "a long direct play is running" true "$(grows "$WORK/read-c21")"
+req a DELETE "/JellyMesh/Admin/Peers/$peer_user" >/dev/null
+check "removed" 204 "$(status)"
+check "it was cut" true "$(ended "$reader" 3)"
+kill -9 "$reader" 2>/dev/null
+wait "$reader" 2>/dev/null
+share a 1 Film Serie
+close_stream c21
+
+echo "--- taking a library away cuts only what plays from it"
+share a 2 Film Altra
+check "open from the library that goes" 200 "$(open_stream c22 "$long" "$PROFILE_DIRECT")"
+slow_read c22
+reader=$(cat "$WORK/reader")
+peer_read "$other"
+kept=$(cat "$WORK/peer-reader")
+sleep 3
+check "both are playing" true "$(grows "$WORK/read-c22")"
+check "both are playing" true "$(grows "$WORK/read-peer")"
+share a 2 Altra
+check "the stream of the library taken away is cut" true "$(ended "$reader" 3)"
+kill -9 "$reader" 2>/dev/null
+wait "$reader" 2>/dev/null
+close_stream c22
+check "the stream of the library still shared keeps playing" true "$(grows "$WORK/read-peer")"
+
+echo "--- any other change to what a server may do cuts nothing"
+share a 3 Altra
+check "a higher limit" true "$(grows "$WORK/read-peer")"
+share a 3 Altra
+check "saving the same again" true "$(grows "$WORK/read-peer")"
+share a 3 Altra Film
+check "an added library" true "$(grows "$WORK/read-peer")"
+kill -9 "$kept" 2>/dev/null
+wait "$kept" 2>/dev/null
+as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$WORK/taken")" >/dev/null
+share a 1 Film Serie
+check "free again" 0 "$(wait_free 15)"
+
+echo "--- a stream that drops its connection: its ffmpeg goes when the grace ends, and no two overlap at limit 1"
+gate_mode a throttle:100
+check "open" 200 "$(open_stream c23 "$long" "$PROFILE_ENCODE")"
+segment=$(first_segment c23)
+slow_segment "$segment"
+sleep 2
+first_ffmpeg=$(ffmpeg_pids)
+check "its ffmpeg is running" true "$([ -n "$first_ffmpeg" ] && echo true || echo false)"
+(
+  while [ ! -e "$WORK/stop-sampling" ]; do
+    ffmpeg_count >>"$WORK/ffmpeg-samples"
+    sleep 0.3
+  done
+) &
+sampler=$!
+rm -f "$WORK/stop-sampling" "$WORK/ffmpeg-samples"
+kill_reader
+opened=refused
+for i in $(seq 1 15); do
+  [ "$(open_stream c24 "$long" "$PROFILE_ENCODE")" = 200 ] && { opened=$i; break; }
+  sleep 1
+done
+echo "the next stream got in after $opened attempts"
+check "the next stream gets in" true "$([ "$opened" != refused ] && echo true || echo false)"
+second_ffmpeg=$(ffmpeg_pids)
+sleep 3
+touch "$WORK/stop-sampling"
+wait "$sampler" 2>/dev/null
+rm -f "$WORK/stop-sampling"
+echo "ffmpeg of the first stream: $first_ffmpeg, of the second: $second_ffmpeg, samples: $(wc -l <"$WORK/ffmpeg-samples"), most at once: $(sort -n "$WORK/ffmpeg-samples" | tail -1)"
+check "there were samples" true "$([ "$(wc -l <"$WORK/ffmpeg-samples")" -gt 5 ] && echo true || echo false)"
+check "never two ffmpeg at once" 1 "$(sort -n "$WORK/ffmpeg-samples" | tail -1)"
+check "the first ffmpeg is gone" false "$(ffmpeg_running "$first_ffmpeg")"
+
+echo "--- a seek within the grace does not touch the transcode"
+segment=$(first_segment c24)
+slow_segment "$segment"
+sleep 2
+before=$(ffmpeg_pids)
+kill_reader
+slow_segment "$segment"
+sleep 8
+check "the same ffmpeg goes on past the grace" "$before" "$(ffmpeg_pids)"
+check "and the slot stayed" 1 "$(active_streams)"
+
+echo "--- with nobody asking, the ffmpeg goes all the same"
+kill_reader
+gone=$(no_ffmpeg 15)
+echo "ffmpeg of the dropped stream gone after: $gone s"
+check "gone with the grace" true "$([ "$gone" != never ] && [ "$gone" -le 8 ] && echo true || echo false)"
+check "and the slot" 0 "$(wait_free 3)"
+
+echo "--- the consumer that comes back: over the limit it is told so, with a slot free it plays from there"
+gate_mode a up
+: >"$WORK/gate-a.log"
+check "another stream has the slot" 200 "$(take_slot)"
+check "the client gets no stream" 502 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$segment")"
+check "because a refused it for the limit" true "$(grep -q -E 'GET /Videos/.*/hls1/.* 429' "$WORK/gate-a.log" && echo true || echo false)"
+give_slot
+check "with the slot free the same URL plays" 200 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$segment")"
+check "and holds it" 1 "$(active_streams)"
+close_stream c24
+close_stream c23
+check "no ffmpeg left" true "$(g=$(no_ffmpeg 10); [ "$g" != never ] && echo true || echo false)"
+check "free again" 0 "$(wait_free 15)"
+
+echo "--- a failed start of a local transcode for any reason: a retry plays, it does not hang"
+gate_mode a notranscode
+check "served" 200 "$(open_stream c25 "$solo" "$PROFILE_HLS")"
+url=$(stream_url c25)
+case "$url" in *JellyMesh/Session*) fallback=no ;; *) fallback=yes ;; esac
+check "by the local server" yes "$fallback"
+gate_mode a up
+curl -sS "$url" >"$WORK/retry-master"
+variant=$(folder_of "$url")$(grep -v '^#' "$WORK/retry-master" | head -1)
+curl -sS "$variant" >"$WORK/retry-variant"
+segment=$(folder_of "$variant")$(grep -v '^#' "$WORK/retry-variant" | head -1)
+gate_mode a down
+check "ffmpeg cannot read the file" 500 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$segment")"
+gate_mode a up
+check "the retry plays" 200 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$segment")"
+close_stream c25
+check "free again" 0 "$(wait_free 15)"
+
+echo "--- a failed start of a transcode for a peer: a retry plays, it does not hang"
+solo_on_a=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$SOLO" '[.Items[] | select(.Path | contains($t))][0].Id')
+peer_get() { curl -sS -o "$2" -w '%{http_code}' --max-time 30 -H "Authorization: $peer_auth" "http://127.0.0.1:18410$1"; }
+curl -sS -o "$WORK/retry-open" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' -d "$PROFILE_ENCODE" "http://127.0.0.1:18410/Items/$solo_on_a/PlaybackInfo"
+url=$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/retry-open")
+check "the master playlist" 200 "$(peer_get "$url" "$WORK/retry-master")"
+variant=$(folder_of "$url")$(grep -v '^#' "$WORK/retry-master" | head -1)
+check "the variant" 200 "$(peer_get "$variant" "$WORK/retry-variant")"
+segment=$(folder_of "$variant")$(grep -v '^#' "$WORK/retry-variant" | head -1)
+docker exec jm-prov-a mv "$solo_file" "$solo_file.away"
+status=$(peer_get "$segment" /dev/null)
+docker exec jm-prov-a mv "$solo_file.away" "$solo_file"
+echo "what the peer got from the failed start: $status"
+check "the start failed" true "$([ "$status" -ge 500 ] && echo true || echo false)"
+check "the retry plays" 200 "$(peer_get "$segment" /dev/null)"
+as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$WORK/retry-open")" >/dev/null
+stop=$(jq -r .PlaySessionId "$WORK/retry-open")
+as_peer a "$token" DELETE "/Videos/ActiveEncodings?deviceId=x&playSessionId=$stop" >/dev/null
+
+req a DELETE "/Library/VirtualFolders?name=Altra" >/dev/null
+docker exec jm-prov-a rm -rf "/extra/film/$LONG" /extra/altra
+scan a
 
 exit "$FAILED"

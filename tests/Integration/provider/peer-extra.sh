@@ -190,4 +190,15 @@ for i in $(seq 1 15); do
 done
 check "its own user stops it" 0 "$(local_files)"
 
+echo "--- a remote removed with a playback open gets its slot back at once, not at the end of the idle time"
+from_b=$(cat "$WORK/id-a-from-b")
+streams_on_b() { get b /JellyMesh/Admin/Peers | jq -r '.[0].ActiveStreams'; }
+stub_on_a=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | startswith("/federata/"))][0].Id')
+post a "/Items/$stub_on_a/PlaybackInfo" "$PROFILE_DIRECT" >/dev/null
+check "a plays from b" 200 "$(status)"
+check "b holds a slot" 1 "$(streams_on_b)"
+req a DELETE "/JellyMesh/Admin/Servers/$from_b" >/dev/null
+check "the remote is removed" 204 "$(status)"
+check "b holds nothing" 0 "$(streams_on_b)"
+
 exit "$FAILED"
