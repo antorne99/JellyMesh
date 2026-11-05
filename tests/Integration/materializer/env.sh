@@ -3,8 +3,8 @@ set -euo pipefail
 NAME=jm-mat
 PORT=18310
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
-WT=/Users/antoniotornesello/Documents/Progetti/Personal/JellyMesh/.claude/worktrees/agent-a6b83772c90af3ed4
-MEDIA=/Users/antoniotornesello/Documents/Progetti/Personal/JellyMesh/tests/Integration/media
+WT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+MEDIA=${MEDIA:-$WT/tests/Integration/media}  # gitignored: in a worktree, point it at the main checkout
 BASE=http://127.0.0.1:$PORT
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshMat", Device="mat", DeviceId="jm-mat-e2e", Version="0.1"'
