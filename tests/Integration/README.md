@@ -145,7 +145,7 @@ The spikes for points 2 to 7 run on private throwaway containers, never on this 
 
 ## Proof scripts
 
-Each folder proves a phase end to end with real Jellyfin servers, on private containers and with the current build. Run them from this folder. The media comes from `MEDIA`, by default this folder's `media/`, which is gitignored, so in a worktree point it at the main checkout. Logins are fixed test values.
+Each folder proves a phase end to end with real Jellyfin servers, on private containers and with the current build. Run them from this folder. The media comes from `MEDIA`, by default this folder's `media/`, which is gitignored, so in a worktree point it at the main checkout. `dedup/` and `merge/` need clips that a media folder prepared earlier may lack, so run `prepare-media.sh` first; to keep new clips out of the shared stack's libraries, run it on a copy of the folder and point `MEDIA` there. Logins are fixed test values.
 
 | Folder | Proves | Containers | Ports | Also needs |
 |---|---|---|---|---|
