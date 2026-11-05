@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Security;
+using MediaBrowser.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -24,6 +25,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private readonly PeerDirectory _peers;
     private readonly ProviderCatalog _catalog;
     private readonly StreamSlots _slots;
+    private readonly AbandonedStreamCloser _closer;
     private readonly ConcurrencyLimit<Guid> _reads = new(ProviderProtocol.MaxReadsPerPeer);
 
     /// <summary>
@@ -32,11 +34,13 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     /// <param name="peers">The peers.</param>
     /// <param name="catalog">The catalog.</param>
     /// <param name="slots">The stream slots.</param>
-    public PeerGuardFilter(PeerDirectory peers, ProviderCatalog catalog, StreamSlots slots)
+    /// <param name="closer">What closes the transcodes of abandoned streams.</param>
+    public PeerGuardFilter(PeerDirectory peers, ProviderCatalog catalog, StreamSlots slots, AbandonedStreamCloser closer)
     {
         _peers = peers;
         _catalog = catalog;
         _slots = slots;
+        _closer = closer;
     }
 
     /// <summary>
@@ -135,17 +139,26 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        using var request = _slots.TryEnter(caller.Grant.UserId, caller.Grant.MaxStreams, hasSession ? playSession : null);
+        using var request = _slots.TryEnter(caller.Grant.UserId, caller.Grant.MaxStreams, hasSession ? playSession : null, itemId, http.Abort);
         if (request is null)
         {
             context.Result = RefuseOverLimit(http);
             return;
         }
 
+        // Before this stream starts, so that two ffmpeg of one peer never overlap on its limit.
+        await _closer.CloseAbandonedAsync().ConfigureAwait(false);
+
         var executed = await next().ConfigureAwait(false);
         if (WasAbandoned(http, executed))
         {
             request.Abandon();
+        }
+
+        // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
+        if (hasSession && executed.Exception is FfmpegException)
+        {
+            await _closer.CloseAsync(playSession).ConfigureAwait(false);
         }
     }
 

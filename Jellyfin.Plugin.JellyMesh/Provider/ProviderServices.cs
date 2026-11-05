@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Jellyfin.Plugin.JellyMesh.Provider;
 
@@ -18,6 +19,8 @@ public static class ProviderServices
         services.AddSingleton<ProviderCatalog>();
         services.AddSingleton<ChangeJournal>();
         services.AddSingleton<StreamSlots>();
+        services.AddSingleton<AbandonedStreamCloser>();
+        services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<AbandonedStreamCloser>());
         services.AddSingleton<PeerGuardFilter>();
         services.AddSingleton<PeerPlaybackInfoFilter>();
         services.AddHostedService<ChangeFeedRecorder>();

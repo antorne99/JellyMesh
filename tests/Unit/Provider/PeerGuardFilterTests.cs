@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Provider;
+using MediaBrowser.Common;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -24,7 +26,7 @@ public class PeerGuardFilterTests
 
     public PeerGuardFilterTests()
     {
-        _filter = new PeerGuardFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots);
+        _filter = new PeerGuardFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots, _fixture.Closer);
     }
 
     private static string Route(Guid id) => id.ToString("N");
@@ -65,6 +67,16 @@ public class PeerGuardFilterTests
     private void Elapse(TimeSpan time) => _fixture.Clock.Advance(time);
 
     private int Slots => _fixture.Slots.Count(_fixture.Peer.Id);
+
+    private void VerifyClosed(string playSession, Times times)
+    {
+        _fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), playSession, It.IsAny<Func<string, bool>>()), times);
+    }
+
+    private void VerifyNothingClosed()
+    {
+        _fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()), Times.Never);
+    }
 
     private static int? StatusOf(ResourceExecutingContext context) => (context.Result as StatusCodeResult)?.StatusCode;
 
@@ -256,6 +268,192 @@ public class PeerGuardFilterTests
 
         Assert.True(ran);
         Assert.Equal(1, Slots);
+    }
+
+    [Fact]
+    public async Task The_end_of_the_grace_closes_the_transcode_with_nobody_asking()
+    {
+        _fixture.Own("play");
+        await StreamAsync(ends: ConnectionLost);
+
+        Elapse(StreamSlots.AbandonGrace);
+        await _fixture.Closer.CloseAbandonedAsync();
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        VerifyClosed("play", Times.Once());
+    }
+
+    [Fact]
+    public async Task The_transcode_stays_during_the_grace()
+    {
+        _fixture.Own("play");
+        await StreamAsync(ends: ConnectionLost);
+
+        Elapse(StreamSlots.AbandonGrace - TimeSpan.FromSeconds(1));
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task A_seek_within_the_grace_keeps_its_transcode()
+    {
+        _fixture.Own("play");
+        await StreamAsync(ends: ConnectionLost);
+
+        await StreamAsync();
+        Elapse(StreamSlots.AbandonGrace);
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task The_next_stream_starts_only_after_the_last_transcode_closed()
+    {
+        _fixture.Own("gone");
+        _fixture.Own("next");
+        await StreamAsync("gone", ends: ConnectionLost);
+        Elapse(StreamSlots.AbandonGrace);
+
+        var (_, ran) = await StreamAsync("next", during: () => VerifyClosed("gone", Times.Once()));
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task A_refused_stream_closes_nothing_during_the_grace()
+    {
+        _fixture.Own("gone");
+        _fixture.Own("next");
+        await StreamAsync("gone", ends: ConnectionLost);
+
+        var (context, ran) = await StreamAsync("next");
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(context));
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task A_consumer_back_after_the_grace_gets_a_slot_and_goes_on()
+    {
+        _fixture.Own("play");
+        await StreamAsync(ends: ConnectionLost);
+        Elapse(StreamSlots.AbandonGrace);
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        var during = -1;
+        var (_, ran) = await StreamAsync(during: () => during = Slots);
+
+        Assert.True(ran);
+        Assert.Equal(1, during);
+    }
+
+    [Fact]
+    public async Task A_consumer_back_after_the_grace_gets_the_refusal_of_the_limit_if_the_slot_went()
+    {
+        _fixture.Own("play");
+        await StreamAsync(ends: ConnectionLost);
+        Elapse(StreamSlots.AbandonGrace);
+        await _fixture.Closer.CloseAbandonedAsync();
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 1, "other");
+
+        var (context, ran) = await StreamAsync();
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_session_that_came_back_as_the_grace_ended_keeps_its_transcode()
+    {
+        _fixture.Own("play");
+        await StreamAsync(ends: ConnectionLost);
+        Elapse(StreamSlots.AbandonGrace);
+        Assert.Equal(0, Slots);
+
+        await StreamAsync();
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task A_slot_that_expires_at_the_idle_time_closes_no_transcode()
+    {
+        _fixture.Own("play");
+        await StreamAsync();
+
+        Elapse(StreamSlots.IdleTimeout);
+        await _fixture.Closer.CloseAbandonedAsync();
+
+        Assert.Equal(0, Slots);
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task A_transcode_that_cannot_be_closed_stops_nothing_else()
+    {
+        _fixture.Own("gone");
+        _fixture.Own("next");
+        await StreamAsync("gone", ends: ConnectionLost);
+        Elapse(StreamSlots.AbandonGrace);
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>())).ThrowsAsync(new InvalidOperationException());
+
+        var (_, ran) = await StreamAsync("next");
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task A_failed_start_of_ffmpeg_is_cleared_at_once_so_that_a_retry_does_not_wait_for_it()
+    {
+        _fixture.Own("play");
+
+        await StreamAsync(failure: new FfmpegException("exited"));
+
+        VerifyClosed("play", Times.Once());
+    }
+
+    [Fact]
+    public async Task Another_failure_leaves_the_transcode_to_the_grace()
+    {
+        _fixture.Own("play");
+
+        await StreamAsync(failure: new InvalidOperationException());
+
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task A_stream_can_be_cut_from_outside()
+    {
+        _fixture.Own("play");
+        var lifetime = new Mock<IHttpRequestLifetimeFeature>();
+
+        await StreamAsync(ends: http =>
+        {
+            http.Features.Set(lifetime.Object);
+            _fixture.Slots.Revoke(_fixture.Peer.Id, _ => false);
+        });
+
+        lifetime.Verify(feature => feature.Abort(), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_stream_of_an_item_still_shared_is_not_cut()
+    {
+        _fixture.Own("play");
+        var lifetime = new Mock<IHttpRequestLifetimeFeature>();
+
+        await StreamAsync(ends: http =>
+        {
+            http.Features.Set(lifetime.Object);
+            _fixture.Slots.Revoke(_fixture.Peer.Id, item => item == ProviderFixture.SharedItem);
+        });
+
+        lifetime.Verify(feature => feature.Abort(), Times.Never);
     }
 
     [Fact]

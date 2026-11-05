@@ -10,11 +10,13 @@ using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Provider;
@@ -33,6 +35,7 @@ internal sealed class ProviderFixture
         Store.Configuration.FederatedFolderPath = "/federata";
         Peer = new User("peer", "auth", "reset");
         Slots = new StreamSlots(Clock);
+        Closer = new AbandonedStreamCloser(Slots, Transcodes.Object, Clock, NullLogger<AbandonedStreamCloser>.Instance);
 
         Authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
             .ReturnsAsync(() => new AuthorizationInfo { User = Caller });
@@ -62,6 +65,10 @@ internal sealed class ProviderFixture
     public User? Caller { get; set; }
 
     public StreamSlots Slots { get; }
+
+    public Mock<ITranscodeManager> Transcodes { get; } = new();
+
+    public AbandonedStreamCloser Closer { get; }
 
     public PeerDirectory Directory { get; }
 

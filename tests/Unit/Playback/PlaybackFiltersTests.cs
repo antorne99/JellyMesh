@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
@@ -539,8 +540,19 @@ public class PlaybackFiltersTests
     {
         await FileAtLimitAsync();
 
-        await FailStockAsync(SegmentOfStub("local-play"), new InvalidOperationException());
+        await FailStockAsync(SegmentOfStub("local-play"), new FfmpegException("exited"));
 
+        _transcodes.Verify(manager => manager.KillTranscodingJobs("device", "local-play", It.IsAny<Func<string, bool>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_failed_start_of_ffmpeg_for_any_reason_is_cleared_and_stays_a_failure()
+    {
+        var failure = new FfmpegException("exited");
+
+        var executed = await FailStockAsync(SegmentOfStub("local-play"), failure);
+
+        Assert.Same(failure, executed.Exception);
         _transcodes.Verify(manager => manager.KillTranscodingJobs("device", "local-play", It.IsAny<Func<string, bool>>()), Times.Once);
     }
 
@@ -549,7 +561,7 @@ public class PlaybackFiltersTests
     {
         await FileAtLimitAsync();
 
-        await FailStockAsync(SegmentOfStub(), new InvalidOperationException());
+        await FailStockAsync(SegmentOfStub(), new FfmpegException("exited"));
 
         _transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()), Times.Never);
     }

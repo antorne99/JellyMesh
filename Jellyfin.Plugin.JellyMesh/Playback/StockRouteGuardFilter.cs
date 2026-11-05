@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
@@ -110,17 +111,18 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
 
             var executed = await next().ConfigureAwait(false);
+
+            // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
+            if (executed.Exception is FfmpegException && !string.IsNullOrWhiteSpace(PlaySessionOf(context)))
+            {
+                await _transcodes.KillTranscodingJobs(authorization.DeviceId ?? string.Empty, PlaySessionOf(context), _ => true).ConfigureAwait(false);
+            }
+
             if (executed.Exception is not null && !executed.ExceptionHandled && _coordinator.TakeFileRefusal(stub.Id))
             {
                 executed.Exception = null;
                 executed.ExceptionHandled = true;
                 executed.Result = _refusal.Refuse(context.HttpContext, authorization.DeviceId ?? string.Empty, PlaybackRefusal.LimitText);
-
-                // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
-                if (!string.IsNullOrWhiteSpace(PlaySessionOf(context)))
-                {
-                    await _transcodes.KillTranscodingJobs(authorization.DeviceId ?? string.Empty, PlaySessionOf(context), _ => true).ConfigureAwait(false);
-                }
             }
 
             return;

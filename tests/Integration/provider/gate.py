@@ -85,6 +85,7 @@ class H(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
         self.end_headers()
         sent = 0
+        expected = r.getheader("Content-Length")
         throttled = m.startswith("throttle:")
         try:
             if self.command != "HEAD":
@@ -96,7 +97,10 @@ class H(http.server.BaseHTTPRequestHandler):
                     sent += len(d)
                     if throttled:
                         time.sleep(16 / int(m[9:]))
-        except OSError:
+        except (OSError, http.client.HTTPException):
+            self.close_connection = True
+        # The server cut the stream: the caller has to see that, not wait for the rest.
+        if self.command != "HEAD" and expected is not None and sent < int(expected):
             self.close_connection = True
         if path.endswith("/stream"):
             record(m, "END", path, sent)
