@@ -180,6 +180,28 @@ public class ManualMergeTests
     }
 
     [Fact]
+    public void ACopyThatLosesItsYearAndIds_StaysInTheMerge()
+    {
+        var merge = Merge(1, _a, _b);
+
+        var result = Resolve([_a, _b with { Year = null, Ids = ContentIds.None }], merge);
+
+        Assert.Single(result.Decisions);
+        Assert.Equal(MatchKind.Manual, result.Decisions[0].Identity.Match);
+        Assert.True(Assert.Single(result.Merges).IsInEffect);
+    }
+
+    [Fact]
+    public void AnEpisodeWithoutAWork_IsNotTouchedByTheMerges()
+    {
+        var episode = Episode(Standard, "Serie", null, null, 1, 1, _hd);
+
+        var result = Resolve([_a, _b, episode], Merge(1, _a, _b));
+
+        Assert.Equal(2, result.Decisions.Count);
+    }
+
+    [Fact]
     public void ACopyThatMoved_IsFoundByItsIds()
     {
         var merge = Merge(1, _a, _b);

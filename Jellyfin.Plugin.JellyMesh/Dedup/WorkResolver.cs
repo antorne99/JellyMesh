@@ -97,7 +97,7 @@ internal sealed class WorkResolver
     public Work? Find(CatalogItem item)
     {
         var work = FindNatural(item);
-        return work is not null && _mergedKeys.TryGetValue(work.Key, out var merged) ? new Work(merged, MatchKind.Manual) : work;
+        return _mergedKeys.TryGetValue(work?.Key ?? KeyOfFilmAlone(item), out var merged) ? new Work(merged, MatchKind.Manual) : work;
     }
 
     /// <summary>
@@ -238,6 +238,9 @@ internal sealed class WorkResolver
         return copyPairs.Concat(workPairs).All(confirmed.Contains);
     }
 
+    // A merged copy that lost its title or year on the remote has no work, and it must not fall out of the merge for that.
+    private static string KeyOfFilmAlone(CatalogItem item) => string.Join('|', Prefix(item.Kind), "item:" + CopyName(item));
+
     private static bool IsCopy(CatalogItem film, MergedCopy copy)
     {
         if (string.Equals(film.ServerId, copy.ServerId, StringComparison.Ordinal) && string.Equals(film.ItemId, copy.ItemId, StringComparison.Ordinal))
@@ -297,9 +300,7 @@ internal sealed class WorkResolver
 
         var films = items
             .Where(item => item.Kind == ContentKind.Movie)
-            .Select(item => (Item: item, Key: FindNatural(item)?.Key))
-            .Where(film => film.Key is not null)
-            .Select(film => (film.Item, Key: film.Key!))
+            .Select(item => (Item: item, Key: FindNatural(item)?.Key ?? KeyOfFilmAlone(item)))
             .DistinctBy(film => (film.Item.ServerId, film.Item.ItemId))
             .OrderBy(film => film.Item.ServerId, StringComparer.Ordinal)
             .ThenBy(film => film.Item.ItemId, StringComparer.Ordinal)
