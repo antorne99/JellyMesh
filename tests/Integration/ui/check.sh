@@ -31,6 +31,7 @@ if [ $# -gt 0 ]; then
   run "$@"
 else
   run first normal loading errors keyboard themes actions
+  run outcomes outcome-themes
 
   set_key first
   run first-nokey

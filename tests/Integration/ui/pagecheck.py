@@ -351,6 +351,211 @@ def nokey(s, width):
     page.context.close()
 
 
+SETTING_ERRORS = [
+    (u.SYNC_INTERVAL, "60", "Sync interval", "at least 300"),
+    (u.SYNC_INTERVAL, "", "Sync interval", "at least 300"),
+    ("#jmRemotePlaybackInfoTimeout", "2", "Wait for a remote", "from 3 to 60"),
+    ("#jmStreamOpenTimeout", "61", "Wait for each step", "from 5 to 60"),
+    ("#jmPlaybackIdle", "110", "Close an idle remote", "from 30 to 109"),
+    ("#jmSessionRetention", "0", "Keep paused sessions", "from 1 to 168"),
+    ("#jmPolicyCache", "1.5", "Remember the transcoding rights", "from 1 to 60"),
+    ("#jmReconciliationTime", "", "Nightly reconciliation time", "hours and minutes"),
+    (u.FEDERATED_FOLDER, "relative/path", "Federated folder", "absolute path"),
+    (u.FEDERATED_FOLDER, "/", "Federated folder", "absolute path"),
+    (u.FEDERATED_FOLDER, "/films/../other", "Federated folder", "absolute path"),
+]
+
+
+def outcome(page, name, kind, says=""):
+    """Checks that an outcome has its word, stands in view, and is what the status region holds."""
+    shown = u.wait_message(page)
+    check(f"{name} says {kind}", shown.startswith(kind + ": "), shown)
+    check(name + " says what happened", says in shown, shown)
+    check(name + " is in view", u.in_view(page, u.OUTCOME), shown)
+    region = page.get_by_role("status").filter(has_text=shown)
+    check(name + " is in the status region", region.count() == 1 and region.get_attribute("id") == u.MESSAGE[1:])
+    return shown
+
+
+def outcomes_shown(page, name):
+    """Outcomes of the actions, where they appear, and when they go."""
+    check(name + " the region is rendered before it has text", page.locator(u.MESSAGE).evaluate(
+        "node => node.getAttribute('role') === 'status' && getComputedStyle(node).display !== 'none' && !node.closest('[hidden]')"))
+    check(name + " shows no outcome yet", u.message(page) == "" and not page.locator(u.DISMISS).is_visible())
+
+    case = u.merge_case(page, PAIR)
+    case.locator(u.CHECKBOX).first.check()
+    u.button(case, "merge").click()
+    outcome(page, name + " a refused merge", "Error", "at least two")
+    error = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
+    u.button(u.server_row(page, "stock"), "libraries").click()
+    u.wait_idle(page)
+    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
+    check(name + " opening the libraries clears the old error", u.message(page) == "", u.message(page))
+
+    u.button(u.server_row(page, "stock"), "test").click()
+    outcome(page, name + " a connection test", "Done", "connected")
+    done = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
+    check(name + " an error and a success differ in colour", error != done, done)
+
+    hold = []
+    page.route("**/JellyMesh/Admin/Servers/*", lambda route: hold.append(route) if route.request.method == "DELETE" else route.continue_())
+    u.button(u.server_row(page, "stock"), "remove").click()
+    until(page, lambda: hold)
+    check(name + " a new action clears the old outcome at once", u.message(page) == "", u.message(page))
+    hold.pop().fulfill(status=204)
+    outcome(page, name + " a removal", "Done", "Removed stock")
+
+    page.route("**/JellyMesh/Admin/Merges", lambda route: route.fulfill(status=200, json={}) if route.request.method == "POST" else route.continue_())
+    case = u.merge_case(page, PAIR)
+    for box in case.locator(u.CHECKBOX).all():
+        box.check()
+    u.button(case, "merge").click()
+    outcome(page, name + " a merge", "Done", "Merged")
+    page.unroute("**/JellyMesh/Admin/Merges")
+
+    page.locator(u.DISMISS).click()
+    check(name + " Dismiss empties the outcome", u.message(page) == "" and not page.locator(u.DISMISS).is_visible(), u.message(page))
+
+
+def settings_refused(page, name):
+    """Each wrong setting is named with its rule and focused, and nothing reaches the server."""
+    saves = []
+    page.on("request", lambda request: saves.append(request.url) if "/Plugins/" in request.url and request.method == "POST" else None)
+    for selector, value, field, rule in SETTING_ERRORS:
+        label = f"{name} {selector} set to '{value}'"
+        before = page.locator(selector).input_value()
+        page.locator(selector).fill(value)
+        page.locator(u.SAVE_SETTINGS).click()
+        shown = outcome(page, label, "Error", field)
+        check(label + " gives the rule", rule in shown, shown)
+        check(label + " says nothing was saved", "nothing was saved" in shown, shown)
+        check(label + " marks the field", rule in u.field_error(page, selector), u.field_error(page, selector))
+        check(label + " is focused", "#" + u.focused(page) == selector, u.focused(page))
+        check(label + " the field is in view", u.in_view(page, selector))
+        healthy(page, label)
+        page.locator(selector).fill(before)
+    check(name + " sends none of them to the server", saves == [], saves)
+
+    policy = page.locator("#jmPolicyCache").input_value()
+    opening = page.locator("#jmStreamOpenTimeout").input_value()
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator("#jmStreamOpenTimeout").fill("0")
+    page.locator(u.SAVE_SETTINGS).click()
+    shown = outcome(page, name + " two wrong fields", "Error", "Wait for each step")
+    check(name + " two wrong fields counts the other", "1 more field" in shown, shown)
+    check(name + " two wrong fields focuses the first", u.focused(page) == "jmStreamOpenTimeout", u.focused(page))
+    check(name + " two wrong fields marks both", u.field_error(page, "#jmPolicyCache") != "" and u.field_error(page, "#jmStreamOpenTimeout") != "")
+    u.shot(page, f"outcome-fields-{page.viewport_size['width']}")
+    page.locator("#jmPolicyCache").fill(policy)
+    page.locator("#jmStreamOpenTimeout").fill(opening)
+
+
+def settings_failed(page, name):
+    """Failures the page cannot foresee: the server refuses, breaks, or does not answer."""
+    config = u.PLUGIN_CONFIG
+
+    folder = page.locator(u.FEDERATED_FOLDER).input_value()
+    page.locator(u.FEDERATED_FOLDER).fill("C:\\films")
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a save the server refuses", "Error", "server refused")
+    check(name + " the field errors have gone", page.locator(u.FIELD_ERROR).count() == 0)
+    page.locator(u.FEDERATED_FOLDER).fill(folder)
+
+    def post(answer):
+        page.route(config, lambda route: answer(route) if route.request.method == "POST" else route.continue_())
+
+    post(lambda route: route.fulfill(status=500, body=""))
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a server error", "Error", "error 500")
+    page.unroute(config)
+
+    post(lambda route: route.abort())
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a save with no answer", "Error", "No answer from this server")
+    page.unroute(config)
+
+    page.route("**/JellyMesh/Admin/Servers/*/Test", lambda route: route.abort())
+    u.button(u.server_row(page, "stock"), "test").click()
+    outcome(page, name + " an action with no answer", "Error", "No answer from this server")
+    page.unroute("**/JellyMesh/Admin/Servers/*/Test")
+
+    page.context.set_offline(True)
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a save offline", "Error", "No answer from this server")
+    page.context.set_offline(False)
+
+
+def peer_limit(page, name):
+    """An empty stream limit is named and focused, and never sent."""
+    sent = []
+    page.on("request", lambda request: sent.append(request.url) if request.method == "PUT" else None)
+    connected = u.peer_row(page, "jellymesh")
+    limit = connected.locator(u.NUMBER)
+    limit.fill("")
+    u.button(connected, "save").click()
+    shown = outcome(page, name + " an empty stream limit", "Error", "Stream limit")
+    check(name + " an empty stream limit gives the rule", "at least 1" in shown, shown)
+    check(name + " an empty stream limit is marked", "at least 1" in connected.locator(u.FIELD_ERROR).inner_text())
+    check(name + " an empty stream limit is focused", limit.evaluate("node => node === document.activeElement"))
+    check(name + " an empty stream limit is not sent", sent == [], sent)
+    u.shot(page, f"outcome-peer-{page.viewport_size['width']}")
+    limit.fill("4")
+    u.button(connected, "save").click()
+    outcome(page, name + " a corrected stream limit", "Done", "Saved jellymesh")
+    check(name + " a corrected stream limit loses its mark", page.locator(u.FIELD_ERROR).count() == 0)
+
+
+def outcomes(s, width):
+    """What an action leaves on the page, at the width of a phone too."""
+    name = width + " outcomes"
+    before = u.config("fresh")
+    page = s.open("fresh", width)
+    outcomes_shown(page, name)
+    healthy(page, name)
+    page.context.close()
+
+    page = s.open("fresh", width)
+    settings_refused(page, name)
+    settings_failed(page, name)
+    peer_limit(page, name)
+    healthy(page, name)
+    check(name + " left the settings as they were", u.config("fresh") == before)
+    page.context.close()
+
+    name = width + " outcome of a failed load"
+
+    def broken(context):
+        context.route("**/JellyMesh/Admin/Status", lambda route: route.fulfill(status=500, body=""))
+
+    page = s.open("fresh", width, route=broken, wait=False)
+    outcome(page, name, "Error", "error 500")
+    page.context.close()
+
+
+def outcome_themes(s, width):
+    """Both kinds of outcome and a marked field stay readable in the dark and light themes."""
+    for theme in ["dark", "light"]:
+        name = f"{width} {theme} outcomes"
+        page = s.open("fresh", width, theme=theme)
+        policy = page.locator("#jmPolicyCache").input_value()
+        page.locator("#jmPolicyCache").fill("0")
+        page.locator(u.SAVE_SETTINGS).click()
+        u.wait_message(page)
+        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": u.MESSAGE + ", " + u.DISMISS + ", " + u.FIELD_ERROR})
+        check(name + " an error is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+        page.screenshot(path=f"{u.SHOTS}/outcome-error-{theme}-{width}.png")
+        page.locator("#jmPolicyCache").fill(policy)
+
+        u.button(u.server_row(page, "stock"), "test").click()
+        outcome(page, name + " a success", "Done", "connected")
+        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": u.MESSAGE + ", " + u.DISMISS})
+        check(name + " a success is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+        page.screenshot(path=f"{u.SHOTS}/outcome-done-{theme}-{width}.png")
+        page.context.close()
+    u.set_theme("fresh", "dark")
+
+
 SCENARIOS = {
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
@@ -362,6 +567,8 @@ SCENARIOS = {
     "actions": (actions, ["1280"]),
     "offline": (offline, WIDTHS),
     "nokey": (nokey, WIDTHS),
+    "outcomes": (outcomes, WIDTHS),
+    "outcome-themes": (outcome_themes, WIDTHS),
 }
 
 with u.Session() as session:

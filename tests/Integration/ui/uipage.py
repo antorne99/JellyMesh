@@ -11,10 +11,14 @@ WEB = "/w"
 SHOTS = os.path.join(WEB, "shots")
 VIEWPORTS = {"1280": {"width": 1280, "height": 900}, "390": {"width": 390, "height": 844}}
 PLUGIN = "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
+PLUGIN_CONFIG = "**/Plugins/" + PLUGIN + "/Configuration"
 
 PAGE = "#JellyMeshConfigPage"
 WARNING = "#jmWarning"
 MESSAGE = "#jmMessage"
+OUTCOME = "#jmOutcome"
+DISMISS = "#jmDismiss"
+FIELD_ERROR = ".jmFieldError"
 STATUS = "#jmStatus"
 SERVERS = "#jmServers"
 SERVER = ".jmServer"
@@ -200,8 +204,32 @@ def wait_message(page, timeout=30000):
 
 
 def clear_message(page):
-    """Empties the outcome of the action before."""
-    page.evaluate("s => { const node = document.querySelector(s); node.textContent = ''; node.hidden = true; }", MESSAGE)
+    """Dismisses the outcome of the action before."""
+    if page.locator(DISMISS).is_visible():
+        page.locator(DISMISS).click()
+
+
+def in_view(page, selector):
+    """Returns whether an element is whole inside the viewport, with nothing of the Dashboard on top of it."""
+    return page.locator(selector).evaluate("""node => {
+      const box = node.getBoundingClientRect();
+      const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return box.height > 0 && box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth
+        && top !== null && node.contains(top);
+    }""")
+
+
+def field_error(page, selector):
+    """Returns the error shown under a field, or an empty text."""
+    return page.locator(selector).evaluate("""input => {
+      const note = document.getElementById(input.getAttribute('aria-describedby'));
+      return note && input.getAttribute('aria-invalid') === 'true' ? note.textContent : '';
+    }""")
+
+
+def focused(page):
+    """Returns the id of the focused element."""
+    return page.evaluate("document.activeElement.id")
 
 
 def shot(page, name):
