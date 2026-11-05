@@ -179,6 +179,8 @@ files=$(local_files)
 check "the local transcode has its files" true "$([ "$files" -gt 0 ] && echo true || echo false)"
 check "a stop by another user is answered as stock would" 204 "$(stop_as_mario "$session" x2)"
 check "a report by another user is answered as stock would" 204 "$(report_as_mario "$session")"
+foreign_segment="/Videos/$tears/hls1/main/40.ts?MediaSourceId=$tears&PlaySessionId=$session&DeviceId=other-user&VideoCodec=h264&AudioCodec=aac&runtimeTicks=1200000000&actualSegmentLengthTicks=30000000&SegmentContainer=ts"
+check "a segment of another user cannot name it" 404 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -H "Authorization: $mario_auth" "http://127.0.0.1:18411$foreign_segment")"
 sleep 3
 check "and the files of the local transcode stay" true "$([ "$(local_files)" -ge "$files" ] && echo true || echo false)"
 close_stream x2

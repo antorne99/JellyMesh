@@ -102,7 +102,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
-            if (_libraryManager.GetItemById<BaseItem>(itemId, user) is null)
+            // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
+            if (_libraryManager.GetItemById<BaseItem>(itemId, user) is null || _sessions.IsLocalOfAnother(user.Id, PlaySessionOf(context)))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;

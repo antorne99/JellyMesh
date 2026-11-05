@@ -458,6 +458,31 @@ public class PlaybackFiltersTests
         Assert.IsType<NoContentResult>(context.Result);
     }
 
+    [Theory]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("DynamicHls", "GetVariantHlsVideoPlaylist")]
+    [InlineData("Videos", "GetVideoStream")]
+    public async Task A_stream_cannot_name_the_local_play_session_of_another_user(string controller, string action)
+    {
+        CanSeeItem();
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play");
+        var context = Context(controller, action, ("itemId", _itemId), ("playSessionId", "LOCAL-PLAY"));
+
+        var passed = await RunAsync(GuardFilter(), context);
+
+        Assert.False(passed);
+        Assert.Equal(StatusCodes.Status404NotFound, (context.Result as StatusCodeResult)?.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stream_of_its_own_local_play_session_passes()
+    {
+        CanSeeItem();
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play");
+
+        Assert.True(await RunAsync(GuardFilter(), Context("DynamicHls", "GetHlsVideoSegment", ("itemId", _itemId), ("playSessionId", "local-play"))));
+    }
+
     [Fact]
     public async Task Its_user_can_stop_a_stub_played_on_this_server()
     {
