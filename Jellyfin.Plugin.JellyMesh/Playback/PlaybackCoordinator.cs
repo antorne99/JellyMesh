@@ -316,6 +316,16 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
+    /// Ends the sessions on a server that is about to be removed: afterwards nothing could reach it to give its slots back.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>A task.</returns>
+    public Task CloseServerAsync(Guid serverId)
+    {
+        return Task.WhenAll(_sessions.All.Where(session => session.Source.ServerId == serverId).Select(session => CloseAsync(session.Id)));
+    }
+
+    /// <summary>
     /// Ends every session at shutdown: they live in memory, so after a restart nothing would close their transcodes.
     /// </summary>
     /// <returns>A task.</returns>

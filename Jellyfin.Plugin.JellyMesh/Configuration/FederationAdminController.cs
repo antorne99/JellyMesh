@@ -5,6 +5,7 @@ using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Common.Api;
@@ -27,6 +28,7 @@ public class FederationAdminController : ControllerBase
     private readonly ICredentialVault _vault;
     private readonly IPluginConfigurationStore _store;
     private readonly IFederatedFolderLinkChecker _linkChecker;
+    private readonly PlaybackCoordinator _playback;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -35,16 +37,19 @@ public class FederationAdminController : ControllerBase
     /// <param name="vault">The credential vault.</param>
     /// <param name="store">The configuration store.</param>
     /// <param name="linkChecker">The federated folder link checker.</param>
+    /// <param name="playback">The playback coordinator.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
         IPluginConfigurationStore store,
-        IFederatedFolderLinkChecker linkChecker)
+        IFederatedFolderLinkChecker linkChecker,
+        PlaybackCoordinator playback)
     {
         _registry = registry;
         _vault = vault;
         _store = store;
         _linkChecker = linkChecker;
+        _playback = playback;
     }
 
     /// <summary>
@@ -92,8 +97,9 @@ public class FederationAdminController : ControllerBase
     [HttpDelete("Servers/{serverId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult RemoveServer([FromRoute] Guid serverId)
+    public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId)
     {
+        await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
         return _registry.Remove(serverId) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
 
