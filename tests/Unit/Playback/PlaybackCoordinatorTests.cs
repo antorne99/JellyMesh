@@ -244,6 +244,24 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task A_server_about_to_go_gives_back_the_slots_of_its_sessions_and_only_those()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        var staying = PlaybackValues.Source("staying");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        fixture.Registry.AddJellyMesh(staying.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        var other = PlaybackValues.Identity() with { DeviceId = "other" };
+        await fixture.Coordinator.OpenAsync(new PlaybackOpenRequest { Identity = other, Stub = PlaybackValues.Stub(staying), LocalToken = PlaybackValues.LocalToken }, CancellationToken.None);
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+
+        Assert.Equal(staying, Assert.Single(fixture.Sessions.All).Source);
+        Assert.Equal(PlaybackValues.RemotePlaySession + "leaving", Assert.Single(fixture.Client.Released));
+    }
+
+    [Fact]
     public async Task Offline_winner_falls_to_the_backup()
     {
         var fixture = new CoordinatorFixture();

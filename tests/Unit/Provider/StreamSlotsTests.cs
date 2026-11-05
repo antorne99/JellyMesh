@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Provider;
@@ -181,6 +182,100 @@ public class StreamSlotsTests
         }
 
         Assert.True(_slots.Owns(_peer, "long"));
+    }
+
+    private static readonly Guid _kept = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid _lost = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+    private void Revoke() => _slots.Revoke(_peer, item => item == _kept);
+
+    private void Paused(string playSession, Guid item)
+    {
+        var reservation = _slots.TryReserve(_peer, int.MaxValue, null)!;
+        _slots.Confirm(_peer, reservation, playSession, item);
+    }
+
+    [Fact]
+    public void Revoking_cuts_what_is_running_on_what_was_lost_and_nothing_else()
+    {
+        var cut = new List<string>();
+        using var kept = _slots.TryEnter(_peer, 3, "kept", _kept, () => cut.Add("kept"));
+        using var lost = _slots.TryEnter(_peer, 3, "lost", _lost, () => cut.Add("lost"));
+
+        Revoke();
+
+        Assert.Equal(["lost"], cut);
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void Revoking_cuts_a_read_with_no_play_session_too()
+    {
+        var cut = false;
+        using var read = _slots.TryEnter(_peer, 3, null, _lost, () => cut = true);
+
+        Revoke();
+
+        Assert.True(cut);
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void Revoking_cuts_a_stream_that_runs_with_its_slot_already_freed()
+    {
+        var cut = false;
+        using var running = _slots.TryEnter(_peer, 3, "lost", _lost, () => cut = true);
+        _slots.ReleaseAll(_peer);
+
+        Revoke();
+
+        Assert.True(cut);
+    }
+
+    [Fact]
+    public void Revoking_closes_the_transcodes_of_what_was_lost()
+    {
+        using var running = _slots.TryEnter(_peer, 3, "running", _lost);
+        Paused("paused", _lost);
+        Paused("kept", _kept);
+
+        Revoke();
+
+        Assert.Equal(["paused", "running"], _slots.TakeClosing().Order(StringComparer.Ordinal));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void Revoking_leaves_the_play_sessions_of_the_peer_its_own()
+    {
+        Paused("lost", _lost);
+
+        Revoke();
+
+        Assert.True(_slots.Owns(_peer, "lost"));
+    }
+
+    [Fact]
+    public void A_request_that_ended_is_not_cut()
+    {
+        var cut = false;
+        _slots.TryEnter(_peer, 3, "lost", _lost, () => cut = true)!.Dispose();
+
+        Revoke();
+
+        Assert.False(cut);
+    }
+
+    [Fact]
+    public void Revoking_a_peer_leaves_the_others_alone()
+    {
+        var cut = false;
+        using var other = _slots.TryEnter(_other, 3, "lost", _lost, () => cut = true);
+
+        Revoke();
+
+        Assert.False(cut);
+        Assert.Equal(1, _slots.Count(_other));
     }
 
     [Fact]

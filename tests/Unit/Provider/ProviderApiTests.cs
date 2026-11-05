@@ -512,6 +512,81 @@ public class PeerAdminControllerTests
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
+    private void TwoLibraries()
+    {
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+        [
+            new VirtualFolderInfo { Name = "Film", ItemId = ProviderFixture.SharedLibrary.ToString(), CollectionType = CollectionTypeOptions.movies },
+            new VirtualFolderInfo { Name = "Altra", ItemId = ProviderFixture.PrivateLibrary.ToString(), CollectionType = CollectionTypeOptions.movies }
+        ]);
+    }
+
+    private static SetPeerRequest Both() => new([ProviderFixture.SharedLibrary.ToString("N"), ProviderFixture.PrivateLibrary.ToString("N")], 2);
+
+    private static SetPeerRequest OnlyPrivate() => new([ProviderFixture.PrivateLibrary.ToString("N")], 2);
+
+    [Fact]
+    public void Removing_a_peer_cuts_all_it_is_playing()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        var cut = 0;
+        using var first = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "one", ProviderFixture.SharedItem, () => cut++);
+        using var second = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "two", ProviderFixture.PrivateItem, () => cut++);
+
+        _controller.RemovePeer(_fixture.Peer.Id);
+
+        Assert.Equal(2, cut);
+    }
+
+    [Fact]
+    public void Taking_a_library_away_cuts_only_what_plays_from_it()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+        var cut = new List<string>();
+        using var lost = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "lost", ProviderFixture.SharedItem, () => cut.Add("lost"));
+        using var kept = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "kept", ProviderFixture.PrivateItem, () => cut.Add("kept"));
+
+        _controller.SetPeer(_fixture.Peer.Id, OnlyPrivate());
+
+        Assert.Equal(["lost"], cut);
+    }
+
+    [Fact]
+    public void An_item_also_in_a_library_still_shared_is_not_cut()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+        var item = new MediaBrowser.Controller.Entities.Movies.Movie { Path = "/media/film/both.mkv", Id = Guid.NewGuid() };
+        _fixture.Library.Setup(manager => manager.GetItemById<MediaBrowser.Controller.Entities.BaseItem>(item.Id, It.IsAny<User>())).Returns(item);
+        _fixture.Library.Setup(manager => manager.GetCollectionFolders(item)).Returns(
+        [
+            new MediaBrowser.Controller.Entities.Folder { Id = ProviderFixture.SharedLibrary },
+            new MediaBrowser.Controller.Entities.Folder { Id = ProviderFixture.PrivateLibrary }
+        ]);
+        var cut = false;
+        using var running = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "both", item.Id, () => cut = true);
+
+        _controller.SetPeer(_fixture.Peer.Id, OnlyPrivate());
+
+        Assert.False(cut);
+    }
+
+    [Fact]
+    public void A_higher_limit_an_added_library_or_the_same_grant_cuts_nothing()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        var cut = false;
+        using var running = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play", ProviderFixture.SharedItem, () => cut = true);
+
+        _controller.SetPeer(_fixture.Peer.Id, Request(3));
+        _controller.SetPeer(_fixture.Peer.Id, Request(3));
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+
+        Assert.False(cut);
+    }
+
     [Fact]
     public void Removing_an_unknown_peer_says_so()
     {
