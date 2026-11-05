@@ -162,3 +162,7 @@ dedup/down.sh                # removes containers, volumes and network
 ## Licences
 
 Source films are from the Blender Foundation under Creative Commons: Elephants Dream (CC BY 2.5), Sintel and Tears of Steel (CC BY 3.0). The media is generated locally and not committed.
+
+## Hardening
+
+`hardening/run.sh` puts a real server with the plugin in front of `hardening/hostile.py`, a fake remote that sends huge bodies, redirects to another host, stalls after its headers and answers with poisoned URLs. It proves each case with what reached a second port standing for a third host (nothing), the memory of a container capped at 1500 MB, and a log at the most verbose level. `hardening/proofs.sh` runs the proofs in `provider/` on private servers to show the limits leave real playback alone, and `hardening/auth-statuses.sh` shows which statuses a real server gives, which is what decides when a new login is due. All of them use `jm-hard-*` containers on ports 18450-18459 and remove them at the end.
