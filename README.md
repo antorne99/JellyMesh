@@ -145,7 +145,9 @@ If you connect both ways, each server needs its own dedicated user on the other.
 <!-- CHECK AT MERGE: text from the merge agent (decision 20), provisional and not in this branch's code. Delete this section if the feature does not land, and confirm the section and button names. -->
 ## Merging duplicates by hand
 
-Films that JellyMesh cannot safely match, such as copies with contradicting provider IDs or the same title and year with nothing to confirm them, stay separate and are listed in the **Duplicate films** section of the plugin page. An admin can select copies and choose **Merge selected**: the best quality wins, the others stay as backups, a local copy still wins, and watch state moves to the title that stays. The choice survives restarts and syncs, and **Undo merge** separates them again.
+Films that JellyMesh cannot safely match, such as copies with contradicting provider IDs or the same title and year with nothing to confirm them, stay separate and are listed in the **Duplicate films** section of the plugin page. An admin can select copies and choose **Merge selected**: the best quality wins, the others stay as backups, a local copy still wins, and watch state moves to the title that stays. The choice survives restarts and syncs.
+
+**Undo merge** separates the copies again. The title that stayed keeps all the watch state. A separated copy usually gets back what it had before the merge, but it can start with no watch state, for instance two copies with the same title and no provider IDs.
 
 This works for films only, not series. Two local films can't be merged, so such cases aren't listed. Merges belong to one server and don't travel to other JellyMesh servers.
 <!-- END CHECK AT MERGE -->
