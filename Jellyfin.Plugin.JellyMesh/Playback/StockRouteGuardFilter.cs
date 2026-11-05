@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -13,10 +14,13 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// <summary>
 /// Covers the stock media routes for stubs. Several of them are anonymous in Jellyfin, and for a stub the server itself
 /// reads the <c>.strm</c> from loopback, so without this anyone with an item ID would read remote data. Also learns of a
-/// stop from <c>DELETE /Videos/ActiveEncodings</c>, which is how jellyfin-web ends a transcode.
+/// stop from <c>DELETE /Videos/ActiveEncodings</c>, which is how jellyfin-web ends a transcode. Stock stops a play session
+/// for anyone who names it, so a stub played on this server is kept out of the reach of other users here.
 /// </summary>
 public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
+    private const string StopEncodingAction = "StopEncodingProcess";
+
     private static readonly HashSet<string> _mediaControllers = new(StringComparer.Ordinal)
     {
         "Videos",
@@ -62,9 +66,21 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
-        if (controller == "HlsSegment" && action == "StopEncodingProcess")
+        if (IsStop(controller, action))
         {
-            await CloseSessionAsync(context).ConfigureAwait(false);
+            var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id;
+            var playSessionId = PlaySessionOf(context);
+            if (caller is { } user && _sessions.IsLocalOfAnother(user, playSessionId))
+            {
+                // What stock answers for a play session it does not know.
+                context.Result = new NoContentResult();
+                return;
+            }
+
+            if (action == StopEncodingAction && caller is { } owner && _sessions.Find(playSessionId) is { } session && session.Identity.UserId == owner)
+            {
+                await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
+            }
         }
         else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
             && StubLookup.ItemIdOf(context) is { } itemId
@@ -92,16 +108,19 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return controller == "Library" && action is "GetDownload" or "GetFile";
     }
 
-    private async Task CloseSessionAsync(ActionExecutingContext context)
+    private static bool IsStop(string controller, string action)
     {
-        if (context.ActionArguments.TryGetValue("playSessionId", out var value)
-            && _sessions.Find(value as string) is { } session)
+        return (controller == "HlsSegment" && action == StopEncodingAction)
+            || (controller == "Playstate" && action is "ReportPlaybackStopped" or "OnPlaybackStopped" or "OnPlaybackStoppedLegacy");
+    }
+
+    private static string? PlaySessionOf(ActionExecutingContext context)
+    {
+        if (context.ActionArguments.TryGetValue("playbackStopInfo", out var report))
         {
-            var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
-            if (authorization.User?.Id == session.Identity.UserId)
-            {
-                await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
-            }
+            return (report as PlaybackStopInfo)?.PlaySessionId;
         }
+
+        return context.ActionArguments.TryGetValue("playSessionId", out var value) ? value as string : null;
     }
 }

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
@@ -74,15 +76,15 @@ public sealed class PlaybackSweeper : BackgroundService
     {
         if (e.PlaySessionId is { } playSessionId)
         {
-            _ = CloseAsync(playSessionId);
+            _ = CloseAsync(playSessionId, e.Users.Select(user => user.Id).ToList());
         }
     }
 
-    private async Task CloseAsync(string playSessionId)
+    private async Task CloseAsync(string playSessionId, IReadOnlyList<Guid> users)
     {
         try
         {
-            await _coordinator.CloseAsync(playSessionId).ConfigureAwait(false);
+            await _coordinator.CloseReportedAsync(playSessionId, users).ConfigureAwait(false);
         }
 #pragma warning disable CA1031 // Runs detached from the event, so nothing above it could handle a failure.
         catch (Exception exception)

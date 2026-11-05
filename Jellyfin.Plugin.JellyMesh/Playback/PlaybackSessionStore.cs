@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using Jellyfin.Plugin.JellyMesh.Security;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -11,6 +12,7 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 public sealed class PlaybackSessionStore
 {
     private readonly ConcurrentDictionary<string, PlaybackSession> _sessions = new(StringComparer.Ordinal);
+    private readonly PlaySessionOwners _localOwners = new();
 
     /// <summary>
     /// Gets a copy of the sessions.
@@ -26,6 +28,28 @@ public sealed class PlaybackSessionStore
         ArgumentNullException.ThrowIfNull(session);
 
         _sessions[session.Id] = session;
+    }
+
+    /// <summary>
+    /// Records the stock play session of a stub played on this server: the local transcode or the local copy. It has no
+    /// session here, and stock would stop it for anyone who names it.
+    /// </summary>
+    /// <param name="userId">The user who opened it.</param>
+    /// <param name="playSessionId">The play session.</param>
+    public void RecordLocal(Guid userId, string playSessionId)
+    {
+        _localOwners.Add(userId, playSessionId);
+    }
+
+    /// <summary>
+    /// Tells whether a play session is a stub played on this server by someone else.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>Whether it belongs to another user.</returns>
+    public bool IsLocalOfAnother(Guid userId, string? playSessionId)
+    {
+        return _localOwners.BelongsToAnother(userId, playSessionId);
     }
 
     /// <summary>

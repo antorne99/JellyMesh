@@ -265,6 +265,36 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
+    /// Records the stock play session of a stub played on this server, so that only its user can stop it.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <param name="playSessionId">The play session.</param>
+    public void RecordLocalPlaySession(Guid userId, string? playSessionId)
+    {
+        if (!string.IsNullOrEmpty(playSessionId))
+        {
+            _sessions.RecordLocal(userId, playSessionId);
+        }
+    }
+
+    /// <summary>
+    /// Ends a session reported as stopped, if the report comes from whoever opened it. Stock takes any play session from any
+    /// user, and the session of someone else is left alone.
+    /// </summary>
+    /// <param name="sessionId">The session.</param>
+    /// <param name="users">The users behind the report.</param>
+    /// <returns>A task.</returns>
+    public async Task CloseReportedAsync(string sessionId, IEnumerable<Guid> users)
+    {
+        ArgumentNullException.ThrowIfNull(users);
+
+        if (_sessions.Find(sessionId) is { } session && users.Contains(session.Identity.UserId))
+        {
+            await CloseAsync(session.Id).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Ends every session at shutdown: they live in memory, so after a restart nothing would close their transcodes.
     /// </summary>
     /// <returns>A task.</returns>
