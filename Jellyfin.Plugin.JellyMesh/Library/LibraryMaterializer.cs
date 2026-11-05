@@ -223,6 +223,11 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 held.Stubs);
         }
 
+        if (view.MergeCases.Count > 0)
+        {
+            _logger.LogInformation("{Count} groups of films may be duplicates. Review them under Duplicate films on the JellyMesh page", view.MergeCases.Count);
+        }
+
         if (run.NeedsScan || plan.MergedStubs > 0)
         {
             _library.QueueLibraryScan();
