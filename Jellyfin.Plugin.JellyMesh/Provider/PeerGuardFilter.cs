@@ -78,6 +78,12 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             case PeerRouteKind.Closed:
                 context.Result = new StatusCodeResult(StatusCodes.Status403Forbidden);
                 return;
+            case PeerRouteKind.StopEncoding when !_slots.Owns(caller.Grant.UserId, PlaySessionOf(http)):
+                context.Result = RefusePlaySession();
+                return;
+            case PeerRouteKind.StopEncoding:
+                await next().ConfigureAwait(false);
+                return;
         }
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
@@ -99,13 +105,20 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        var playSession = http.Request.Query[PlaySessionParameter].ToString();
+        var playSession = PlaySessionOf(http);
         var hasSession = !string.IsNullOrEmpty(playSession);
 
         // HLS without a play session would also kill every job of the device on this server.
         if (!hasSession && action?.ControllerName == "DynamicHls")
         {
             context.Result = new StatusCodeResult(StatusCodes.Status403Forbidden);
+            return;
+        }
+
+        // A segment request kills the job of the play session it names when it restarts ffmpeg, as the stop route does.
+        if (hasSession && !_slots.Owns(caller.Grant.UserId, playSession))
+        {
+            context.Result = RefusePlaySession();
             return;
         }
 
@@ -118,6 +131,12 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
 
         await next().ConfigureAwait(false);
     }
+
+    // One answer for all of them, the same for a play session that exists and one that does not. The joined values of a
+    // repeated parameter and an empty one are never owned, so stock never gets to "every job of the device".
+    private static StatusCodeResult RefusePlaySession() => new(StatusCodes.Status403Forbidden);
+
+    private static string PlaySessionOf(HttpContext http) => http.Request.Query[PlaySessionParameter].ToString();
 
     private static bool IsProviderRead(ControllerActionDescriptor? action, string method)
     {

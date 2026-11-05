@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using Jellyfin.Plugin.JellyMesh.Security;
 
 namespace Jellyfin.Plugin.JellyMesh.Provider;
 
@@ -21,6 +22,7 @@ public sealed class StreamSlots
 
     private readonly Lock _lock = new();
     private readonly Dictionary<Guid, Dictionary<string, Slot>> _peers = [];
+    private readonly PlaySessionOwners _owners = new();
     private readonly TimeProvider _clock;
 
     /// <summary>
@@ -62,7 +64,7 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Turns a reservation into the slot of a play session.
+    /// Turns a reservation into the slot of a play session, and makes the play session the peer's.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="reservation">The reservation.</param>
@@ -77,11 +79,25 @@ public sealed class StreamSlots
                 slots[playSessionId] = new Slot(_clock.GetUtcNow(), 0, false);
             }
         }
+
+        _owners.Add(peerId, playSessionId);
     }
 
     /// <summary>
-    /// Records a stream request. A play session without a slot takes one: that is a paused stream resuming, or a stream
-    /// that outlived a restart. A request with no play session holds a slot only while it runs.
+    /// Tells whether a play session is one a peer opened through its own <c>PlaybackInfo</c>. This outlives the slot: an
+    /// expired stream can resume, and its transcode still has to be closed.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>Whether it is the peer's.</returns>
+    public bool Owns(Guid peerId, string? playSessionId)
+    {
+        return _owners.Owns(peerId, playSessionId);
+    }
+
+    /// <summary>
+    /// Records a stream request. A play session without a slot takes one: that is a paused stream resuming. A request with
+    /// no play session holds a slot only while it runs.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="limit">The most slots of the peer.</param>
@@ -124,6 +140,7 @@ public sealed class StreamSlots
             if (SlotsOf(peerId).TryGetValue(key, out var slot))
             {
                 slot.LastUsed = _clock.GetUtcNow();
+                _owners.Owns(peerId, key);
             }
         }
     }

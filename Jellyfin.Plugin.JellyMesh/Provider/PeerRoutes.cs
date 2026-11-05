@@ -36,8 +36,8 @@ public static class PeerRoutes
             ("MediaInfo", var name) when name.Contains("PlaybackInfo", StringComparison.Ordinal) => PeerRouteKind.PlaybackInfo,
             ("Videos", var name) when reads && name.StartsWith("GetVideoStream", StringComparison.Ordinal) => PeerRouteKind.Stream,
 
-            // Closing a transcode (decision 6). It names a device and a play session, and is what ends the job on this server.
-            (_, "StopEncodingProcess") when HttpMethods.IsDelete(method) => PeerRouteKind.Open,
+            // Closing a transcode (decision 6). Stock stops whatever play session it is told, or every job of a device.
+            (_, "StopEncodingProcess") when HttpMethods.IsDelete(method) => PeerRouteKind.StopEncoding,
             ("DynamicHls", _) when reads => PeerRouteKind.Stream,
             ("Image" or "Subtitle", _) when reads => PeerRouteKind.Item,
             _ => PeerRouteKind.Closed
