@@ -41,4 +41,11 @@ public static class ProviderProtocol
     /// The most changes in a page of the feed.
     /// </summary>
     public const int MaxChangesPerPage = 1000;
+
+    /// <summary>
+    /// The most reads of a peer served at a time: pages of the catalog, images and subtitles. A consumer syncs one call at a
+    /// time and its clients read a subtitle now and then, so this only stops a peer that asks for everything at once.
+    /// Streams are bounded by their slots instead.
+    /// </summary>
+    public const int MaxReadsPerPeer = 8;
 }

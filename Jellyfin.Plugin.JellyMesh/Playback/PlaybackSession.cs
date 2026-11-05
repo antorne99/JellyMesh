@@ -109,6 +109,27 @@ public sealed partial class PlaybackSession
     }
 
     /// <summary>
+    /// Records a request, unless this session already has <see cref="PlaybackLimits.RequestsPerSession"/> running. Dispose
+    /// the result when it ends.
+    /// </summary>
+    /// <param name="clock">The clock.</param>
+    /// <returns>The end of the request, null if there are too many.</returns>
+    public IDisposable? TryBeginRequest(TimeProvider clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+
+        if (Interlocked.Increment(ref _activeRequests) > PlaybackLimits.RequestsPerSession)
+        {
+            Interlocked.Decrement(ref _activeRequests);
+            return null;
+        }
+
+        Interlocked.Exchange(ref _lastRequestTicks, clock.GetUtcNow().UtcTicks);
+        Interlocked.Exchange(ref _parked, 0);
+        return new RequestScope(this, clock);
+    }
+
+    /// <summary>
     /// Marks the transcode as closed by the sweeper. The session stays: a later request restarts ffmpeg on the remote.
     /// </summary>
     /// <returns>Whether this call parked it.</returns>

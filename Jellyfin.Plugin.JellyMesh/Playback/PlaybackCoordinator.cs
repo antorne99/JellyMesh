@@ -10,6 +10,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -34,6 +35,8 @@ public sealed class PlaybackCoordinator
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ConcurrentDictionary<string, StubSource> _workingSources = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
+    private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackCoordinator"/> class.
@@ -80,6 +83,12 @@ public sealed class PlaybackCoordinator
         ArgumentNullException.ThrowIfNull(request);
 
         var previous = _sessions.FindSameStream(request.Identity);
+        if (!await MakeRoomForAsync(request.Identity.UserId, previous).ConfigureAwait(false))
+        {
+            _logger.LogInformation("A user has {Count} streams running, the most allowed", PlaybackLimits.SessionsPerUser);
+            return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable, AnyReachable: true);
+        }
+
         var reachable = new List<StubSource>();
         var refused = 0;
         foreach (var source in Ordered(request.Stub.Sources, previous?.Source))
@@ -185,13 +194,32 @@ public sealed class PlaybackCoordinator
     /// <param name="request">What to open.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The stream.</returns>
-    public Task<RemoteResult<RemoteContent>> OpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
+    public async Task<RemoteResult<RemoteContent>> OpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
-        return WithinAsync(
-            serverId,
-            Times.StreamOpen,
-            (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
-            cancellationToken);
+        var place = _streams.TryEnter(serverId);
+        if (place is null)
+        {
+            return RemoteResult.Fail<RemoteContent>(RemoteFailure.Busy);
+        }
+
+        var handedOver = false;
+        try
+        {
+            var opened = await GatedAsync(
+                serverId,
+                Times.StreamOpen,
+                (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
+                cancellationToken).ConfigureAwait(false);
+            handedOver = opened.IsSuccess;
+            return handedOver ? RemoteResult.Success(opened.Value!.HoldUntilDisposed(place)) : opened;
+        }
+        finally
+        {
+            if (!handedOver)
+            {
+                place.Dispose();
+            }
+        }
     }
 
     /// <summary>
@@ -203,7 +231,7 @@ public sealed class PlaybackCoordinator
     /// <returns>The text.</returns>
     public Task<RemoteResult<string>> ReadPlaylistAsync(Guid serverId, string path, CancellationToken cancellationToken)
     {
-        return WithinAsync(
+        return GatedAsync(
             serverId,
             Times.StreamOpen,
             (endpoint, session, token) => _client.ReadPlaylistAsync(endpoint, session, path, token),
@@ -338,6 +366,26 @@ public sealed class PlaybackCoordinator
         }
     }
 
+    // Each session may hold a transcode on a remote, and a client can make one per device identifier it invents. Those
+    // not in use go first, the oldest before the others: a parked one costs a remote nothing.
+    private async Task<bool> MakeRoomForAsync(Guid userId, PlaybackSession? replaced)
+    {
+        var sessions = _sessions.All.Where(session => session.Identity.UserId == userId && session != replaced).ToList();
+        var excess = sessions.Count - PlaybackLimits.SessionsPerUser + 1;
+        if (excess <= 0)
+        {
+            return true;
+        }
+
+        var unused = sessions.Where(session => !session.IsActive).OrderBy(session => session.LastRequest).Take(excess).ToList();
+        foreach (var session in unused)
+        {
+            await CloseAsync(session.Id).ConfigureAwait(false);
+        }
+
+        return unused.Count == excess;
+    }
+
     private bool IsJellyMesh(Guid serverId)
     {
         return _registry.GetServers().Any(server => server.Id == serverId && server.Mode == RemoteMode.JellyMesh);
@@ -349,7 +397,7 @@ public sealed class PlaybackCoordinator
         // audio track would otherwise be refused by its own stream.
         var replaces = previous?.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId) ? previous.RemotePlaySessionId : null;
         var remoteRequest = ToRemote(request, source, keepIndexes, replaces);
-        var answer = await WithinAsync(
+        var answer = await GatedAsync(
             source.ServerId,
             Times.RemotePlaybackInfo,
             (endpoint, session, token) => _client.GetPlaybackInfoAsync(endpoint, session, remoteRequest, token),
@@ -488,7 +536,7 @@ public sealed class PlaybackCoordinator
         }
 
         var readHardware = !IsJellyMesh(serverId);
-        var policy = await WithinAsync(
+        var policy = await GatedAsync(
             serverId,
             times.RemotePlaybackInfo,
             (endpoint, session, token) => _client.GetTranscodePolicyAsync(endpoint, session, readHardware, token),
@@ -560,6 +608,30 @@ public sealed class PlaybackCoordinator
         if (!result.IsSuccess)
         {
             _logger.LogWarning("Could not close a remote transcode: {Failure}", result.Failure);
+        }
+    }
+
+    // For what a client can multiply. Closing what is open stays outside: it is what frees a remote, and it is bounded by
+    // the sessions that exist.
+    private async Task<RemoteResult<T>> GatedAsync<T>(
+        Guid serverId,
+        TimeSpan timeout,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken)
+    {
+        var gate = _callGates.GetOrAdd(serverId, _ => new SemaphoreSlim(PlaybackLimits.CallsPerServer, PlaybackLimits.CallsPerServer));
+        if (!await gate.WaitAsync(PlaybackLimits.QueueWait, cancellationToken).ConfigureAwait(false))
+        {
+            return RemoteResult.Fail<T>(RemoteFailure.Busy);
+        }
+
+        try
+        {
+            return await WithinAsync(serverId, timeout, call, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 

@@ -85,5 +85,11 @@ public enum RemoteFailure
     /// A JellyMesh remote refused a stream because this server is at its limit there. It says nothing about the health
     /// of the remote, and a stock server never answers this.
     /// </summary>
-    StreamLimitReached
+    StreamLimitReached,
+
+    /// <summary>
+    /// This server already has as many playback calls or streams open on that remote as it allows itself. Says nothing
+    /// about the health of the remote, and no request was sent.
+    /// </summary>
+    Busy
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -22,6 +23,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private readonly PeerDirectory _peers;
     private readonly ProviderCatalog _catalog;
     private readonly StreamSlots _slots;
+    private readonly ConcurrencyLimit<Guid> _reads = new(ProviderProtocol.MaxReadsPerPeer);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PeerGuardFilter"/> class.
@@ -67,6 +69,9 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         var kind = PeerRoutes.Classify(action, http.Request.Method);
         switch (kind)
         {
+            case PeerRouteKind.Open when IsProviderRead(action, http.Request.Method):
+                await ReadAsync(caller, context, next).ConfigureAwait(false);
+                return;
             case PeerRouteKind.Open:
                 await next().ConfigureAwait(false);
                 return;
@@ -79,6 +84,12 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         if (ItemIdOf(context.RouteData) is not { } itemId || _catalog.FindVisible(caller, itemId) is null)
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
+            return;
+        }
+
+        if (kind == PeerRouteKind.Item)
+        {
+            await ReadAsync(caller, context, next).ConfigureAwait(false);
             return;
         }
 
@@ -102,6 +113,24 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         if (request is null)
         {
             context.Result = RefuseOverLimit(http);
+            return;
+        }
+
+        await next().ConfigureAwait(false);
+    }
+
+    private static bool IsProviderRead(ControllerActionDescriptor? action, string method)
+    {
+        return action?.ControllerTypeInfo == typeof(ProviderController) && HttpMethods.IsGet(method);
+    }
+
+    private async Task ReadAsync(PeerCaller caller, ResourceExecutingContext context, ResourceExecutionDelegate next)
+    {
+        // No refusal header: this is not the stream limit, and the consumer must not take it for that.
+        using var read = _reads.TryEnter(caller.Grant.UserId);
+        if (read is null)
+        {
+            context.Result = new StatusCodeResult(StatusCodes.Status429TooManyRequests);
             return;
         }
 
