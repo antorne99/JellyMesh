@@ -45,17 +45,15 @@ Both roles are active on every server with the plugin.
 
 ### From a catalog
 
-<!-- CHECK BEFORE PUBLISHING: replace this URL, and the placeholders in manifest.json, once the repository exists. -->
-The catalog is not live yet, because the repository and its first release don't exist. When it is, add this plugin repository in the Dashboard, install JellyMesh from the plugin catalog, and restart Jellyfin:
+The catalog goes live with the first public release. Then add this plugin repository in the Dashboard, install JellyMesh from the plugin catalog, and restart Jellyfin:
 
 ```
-https://example.invalid/REPLACE_WITH_REPOSITORY/manifest.json
+https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
 ```
 
 ### By hand
 
-<!-- CHECK BEFORE PUBLISHING: link the releases page here. -->
-Download `jellymesh_<version>.zip` from a release and compare it with the `.sha256` file next to it. Unpack the zip into a folder in Jellyfin's `plugins` folder, keeping `meta.json`, and restart Jellyfin. For the Docker image that folder is:
+Download `jellymesh_<version>.zip` from a [release](https://github.com/antorne99/JellyMesh/releases) and compare it with the `.sha256` file next to it. Unpack the zip into a folder in Jellyfin's `plugins` folder, keeping `meta.json`, and restart Jellyfin. For the Docker image that folder is:
 
 ```
 /config/plugins/JellyMesh_0.1.0.0/

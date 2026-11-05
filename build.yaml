@@ -14,7 +14,7 @@ description: >
   between servers you trust. An admin can merge films that can't be matched
   safely.
 category: "General"
-owner: "antoniotornesello"
+owner: "antorne99"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: >

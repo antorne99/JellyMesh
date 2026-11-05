@@ -51,5 +51,21 @@ jobs:
         run: |
           zip=$(ls artifacts/jellymesh_*.zip)
           md5=$(cut -d' ' -f1 "$zip.md5")
-          printf 'MD5 for manifest.json: %s\n\nThe manifest is not updated by this job.\n' "$md5" >artifacts/notes.md
+          printf 'MD5 for manifest.json: %s\n' "$md5" >artifacts/notes.md
           gh release create "$TAG" "$zip" "$zip.md5" "$zip.sha256" --title "JellyMesh $TAG" --notes-file artifacts/notes.md
+
+      # Jellyfin reads the manifest from main, so it changes there and not on the tagged commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: published
+
+      - name: Update the manifest
+        run: |
+          .github/scripts/update-manifest.sh published/manifest.json artifacts/jellymesh_*.zip "$TAG" "$GITHUB_REPOSITORY"
+          cd published
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add manifest.json
+          git commit -m "Publish $TAG in the manifest"
+          git push origin main
