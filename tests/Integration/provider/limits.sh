@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The stream limit: b plays from a, with a limit of 1 for it. Over the limit b passes to the next source, to the local
-# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 8 minutes because it waits for
+# fallback, or to the 503, and a slot never leaks. Runs after federate.sh, and takes about 10 minutes because it waits for
 # real timeouts. usage: MEDIA=... WORK=... limits.sh
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -203,5 +203,164 @@ wait "$reader" 2>/dev/null
 echo "slot of the frozen consumer freed after: $freed s"
 check "the slot of a frozen consumer is freed" true "$([ "$freed" != never ] && echo true || echo false)"
 close_stream c9
+
+# wait_free: until nothing is held on a. Prints the seconds it took.
+wait_free() {
+  local waited
+  for waited in $(seq 0 "${1:-130}"); do
+    [ "$(active_streams)" = 0 ] && { echo "$waited"; return 0; }
+    sleep 1
+  done
+  echo never
+}
+peer_auth="MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"jm-prov-probe\", Version=\"0.1\", Token=\"$token\""
+# take_slot: another stream of the same peer asks. Prints the status; what it opened is in $WORK/taken.
+take_slot() {
+  curl -sS -o "$WORK/taken" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$real/PlaybackInfo"
+}
+give_slot() {
+  as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$WORK/taken")" >/dev/null
+}
+# slow_read <device> <range>: reads a stream of b slowly, in the background. The pid goes to $WORK/reader, the bytes to a file.
+slow_read() {
+  curl -sS -o "$WORK/read-$1" --limit-rate 100k ${2:+-r "$2"} "$(stream_url "$1")" &
+  echo $! >"$WORK/reader"
+}
+kill_reader() {
+  kill -9 "$(cat "$WORK/reader")" 2>/dev/null
+  wait "$(cat "$WORK/reader")" 2>/dev/null
+}
+
+echo "wait for what the earlier cases left: $(wait_free) s"
+
+echo "--- a probe of b drops its connection on purpose: a stream that has not started keeps its slot"
+check "open HLS" 200 "$(open_stream c13 "$tears" "$PROFILE_HLS")"
+sleep 7
+check "held past the grace of a lost connection" 1 "$(active_streams)"
+close_stream c13
+check "free again" 0 "$(active_streams)"
+
+echo "--- a client that drops its connection: the slot goes in seconds, with no help from b"
+gate_mode a throttle:200
+: >"$WORK/gate-a.log"
+check "open" 200 "$(open_stream c14 "$tears" "$PROFILE_DIRECT")"
+slow_read c14
+sleep 3
+check "it holds the slot" 1 "$(active_streams)"
+kill_reader
+freed=$(wait_free 30)
+echo "slot of the dropped connection freed after: $freed s"
+check "freed within seconds" true "$([ "$freed" != never ] && [ "$freed" -le 8 ] && echo true || echo false)"
+check "b did not have to give it back" 0 "$(grep -c 'DELETE /JellyMesh/Provider/Streams' "$WORK/gate-a.log")"
+check "another stream gets it" 200 "$(take_slot)"
+give_slot
+close_stream c14
+
+echo "--- a seek at limit 1: the connection drops, the next one comes at once, and no other stream gets in between"
+check "open" 200 "$(open_stream c15 "$tears" "$PROFILE_DIRECT")"
+slow_read c15
+sleep 3
+kill_reader
+slow_read c15 100000-
+: >"$WORK/seek-others"
+for i in $(seq 1 20); do
+  take_slot >>"$WORK/seek-others"
+  echo >>"$WORK/seek-others"
+  sleep 0.5
+done
+check "no other stream got in, past the grace" 0 "$(grep -c 200 "$WORK/seek-others")"
+check "they were told of the limit" 20 "$(grep -c 429 "$WORK/seek-others")"
+check "the slot stayed with the stream" 1 "$(active_streams)"
+check "the stream kept playing" true "$(kill -0 "$(cat "$WORK/reader")" 2>/dev/null && [ "$(wc -c <"$WORK/read-c15")" -gt 100000 ] && echo true || echo false)"
+kill_reader
+close_stream c15
+check "free again" 0 "$(wait_free 15)"
+gate_mode a up
+
+echo "--- a consumer that gives up on a PlaybackInfo: a finishes it for nobody, and the slot does not stay"
+# A local .strm is what makes the stock action slow: it runs ffprobe on its URL, here through the slowed gate. The peer calls
+# a directly, because a gate that blocks on the server would not pass the disconnect on.
+SLOW="JM Lento (2026)"
+docker exec jm-prov-a sh -c "mkdir -p '/extra/film/$SLOW' && echo 'http://host.docker.internal:18412/Videos/$real/stream?static=true' > '/extra/film/$SLOW/$SLOW.strm'"
+scan a
+slow=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | contains("JM Lento"))][0].Id')
+gate_mode a slow:6000
+gave_up=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' -d "$PROFILE_DIRECT" "http://127.0.0.1:18410/Items/$slow/PlaybackInfo")
+check "the consumer timed out with no answer" 000 "$gave_up"
+freed=$(wait_free 30)
+gate_mode a up
+echo "slot of the abandoned PlaybackInfo freed after: $freed s"
+check "the slot went when the action ended" true "$([ "$freed" != never ] && [ "$freed" -le 8 ] && echo true || echo false)"
+check "the next stream gets it" 200 "$(take_slot)"
+give_slot
+docker exec jm-prov-a rm -rf "/extra/film/$SLOW"
+scan a
+
+echo "--- a stream that fails on a: its slot goes, and a retry in time keeps it"
+check "open" 200 "$(open_stream c17 "$solo" "$PROFILE_DIRECT")"
+solo_file="/extra/film/$SOLO (2026)/$SOLO (2026).mkv"
+docker exec jm-prov-a mv "$solo_file" "$solo_file.away"
+url=$(stream_url c17)
+status=$(curl -sS -o /dev/null -w '%{http_code}' "$url")
+echo "what the client of the broken stream got: $status"
+check "the failure reached the client" true "$([ "$status" -ge 400 ] && echo true || echo false)"
+sleep 2
+check "held for a retry" 1 "$(active_streams)"
+curl -sS -o /dev/null "$url"
+sleep 2
+check "the retry kept it" 1 "$(active_streams)"
+freed=$(wait_free 30)
+echo "slot of the failed stream freed after: $freed s"
+check "freed within seconds" true "$([ "$freed" != never ] && [ "$freed" -le 8 ] && echo true || echo false)"
+docker exec jm-prov-a mv "$solo_file.away" "$solo_file"
+close_stream c17
+
+echo "--- a connected server changed or removed by the administrator: its slots go at once"
+gate_mode a throttle:200
+peer_user=$(user_id a peer)
+check "open" 200 "$(open_stream c18 "$tears" "$PROFILE_DIRECT")"
+slow_read c18
+sleep 3
+check "it holds the slot" 1 "$(active_streams)"
+share a 2 Film Serie
+check "a new limit frees it" 0 "$(active_streams)"
+share a 1 Film Serie
+check "saving the same grant holds nothing either" 0 "$(active_streams)"
+kill_reader
+close_stream c18
+check "open" 200 "$(open_stream c19 "$tears" "$PROFILE_DIRECT")"
+slow_read c19
+sleep 3
+check "it holds the slot" 1 "$(active_streams)"
+req a DELETE "/JellyMesh/Admin/Peers/$peer_user" >/dev/null
+check "removed" 204 "$(status)"
+share a 1 Film Serie
+check "connected again, nothing is held" 0 "$(active_streams)"
+check "the slot is free at once" 200 "$(take_slot)"
+give_slot
+kill_reader
+close_stream c19
+gate_mode a up
+
+echo "--- the slot goes between the probe of the local transcode and the read of ffmpeg: the refusal of the limit"
+gate_mode a notranscode
+check "served" 200 "$(open_stream c20 "$solo" "$PROFILE_HLS")"
+url=$(stream_url c20)
+case "$url" in *JellyMesh/Session*) fallback=no ;; *) fallback=yes ;; esac
+check "by the local server" yes "$fallback"
+gate_mode a up
+check "another stream takes the slot first" 200 "$(take_slot)"
+curl -sS "$url" >"$WORK/race-master"
+variant=$(folder_of "$url")$(grep -v '^#' "$WORK/race-master" | head -1)
+curl -sS "$variant" >"$WORK/race-variant"
+segment=$(folder_of "$variant")$(grep -v '^#' "$WORK/race-variant" | head -1)
+read_segment() { curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$segment"; }
+message=$(message_during c20 8 read_segment)
+check "the first segment is refused with a 503" 503 "$(cat "$WORK/during-c20")"
+check "and the message of the limit" "$LIMIT_TEXT" "$message"
+give_slot
+check "with the slot free again the same URL plays" 200 "$(read_segment)"
+close_stream c20
+check "free again" 0 "$(wait_free 15)"
 
 exit "$FAILED"
