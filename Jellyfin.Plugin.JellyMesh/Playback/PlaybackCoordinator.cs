@@ -100,6 +100,7 @@ public sealed class PlaybackCoordinator
             {
                 _workingSources[request.Stub.Id] = source;
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
+                await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
                 return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response);
             }
 
@@ -358,6 +359,16 @@ public sealed class PlaybackCoordinator
         return value is { Length: > 0 and <= 16 } && value.All(char.IsAsciiLetterOrDigit) ? value : "unknown";
     }
 
+    // A client that left took the play session with it. The slot it holds on a remote would otherwise wait for the sweep.
+    private async Task CloseIfClientLeftAsync(PlaybackInfoResponse response, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            await CloseAsync(response.PlaySessionId!).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
     private async Task ClosePreviousAsync(PlaybackSession? previous)
     {
         if (previous is not null)
@@ -416,15 +427,33 @@ public sealed class PlaybackCoordinator
 
         var info = answer.Value!;
         var remote = info.MediaSources.FirstOrDefault(candidate => candidate.Id == source.MediaSourceId) ?? (info.MediaSources.Count > 0 ? info.MediaSources[0] : null);
-        if (info.ErrorCode is not null || info.PlaySessionId is null || remote is null)
+        if (info.PlaySessionId is null)
         {
             return new Attempt(null, true);
         }
 
-        var session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, cancellationToken).ConfigureAwait(false);
-        if (session is null)
+        if (info.ErrorCode is not null || remote is null)
         {
             await ReleaseSlotAsync(source.ServerId, info.PlaySessionId).ConfigureAwait(false);
+            return new Attempt(null, true);
+        }
+
+        PlaybackSession? session = null;
+        try
+        {
+            session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Also for a client that left during the probe: nothing else knows of this slot.
+            if (session is null)
+            {
+                await ReleaseSlotAsync(source.ServerId, info.PlaySessionId).ConfigureAwait(false);
+            }
+        }
+
+        if (session is null)
+        {
             return new Attempt(null, true);
         }
 
