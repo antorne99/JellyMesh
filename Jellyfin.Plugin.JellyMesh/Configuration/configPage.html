@@ -538,6 +538,32 @@
                 align-items: start;
             }
 
+            .jmFormGrid > .inputContainer {
+                display: grid;
+                grid-row: span 4;
+                grid-template-rows: subgrid;
+                align-self: stretch;
+            }
+
+            .jmFormGrid > .inputContainer > * {
+                grid-row: 2;
+                grid-column: 1;
+                min-width: 0;
+            }
+
+            .jmFormGrid > .inputContainer > label {
+                grid-row: 1;
+                align-self: end;
+            }
+
+            .jmFormGrid > .inputContainer > .jmFieldError {
+                grid-row: 3;
+            }
+
+            .jmFormGrid > .inputContainer > .fieldDescription {
+                grid-row: 4;
+            }
+
             .jmGroup {
                 display: grid;
                 grid-template-columns: minmax(0, 12em) minmax(0, 1fr);
