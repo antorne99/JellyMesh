@@ -23,6 +23,23 @@ OUTCOME = "#jmOutcome"
 DISMISS = "#jmDismiss"
 FIELD_ERROR = ".jmFieldError"
 STATUS = "#jmStatus"
+SUMMARY = "#jmSummary"
+FACT = ".jmFact"
+FACTS = ["Servers", "Last sync", "Federated folder", "Duplicates to review", "Streams in use"]
+NOTE = ".jmNote"
+NOTE_ICON = ".jmNoteIcon"
+ALARM = NOTE + ":has(.warning)"
+TAB_LINK = ".jmTabLink"
+SUMMARY_TEXT = ", ".join([FACT + " dt", FACT + " dd", NOTE, TAB_LINK])
+SETUP = "#jmSetup"
+STEP = ".jmStep"
+STEP_NAME = ".jmStepName"
+STEP_STATE = ".jmStepState"
+STEP_DONE_ICON = ".jmStepDone .jmStepIcon"
+STEPS = ["Set the secret key", "Add a remote server", "Choose libraries to import", "Choose the federated folder",
+         "Run the first sync", "Link the two paths"]
+STEP_TEXT_ALL = ", ".join([STEP_NAME, STEP_STATE, ".jmStepText"])
+ANNOUNCE = "#jmAnnounce"
 SERVERS = "#jmServers"
 SERVER = ".jmServer"
 STATE = ".jmState"
@@ -96,7 +113,7 @@ BUTTON = {
     "save": "Save",
     "connect": "Connect",
 }
-READABLE = ", ".join(["h2, h3, h4, p, label, dt, dd, .fieldDescription", STATE, MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING])
+READABLE = ", ".join(["h2, h3, h4, p, label, dt, dd, .fieldDescription", STATE, MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING, SUMMARY_TEXT])
 FAILURE = {
     "status": "#jmStatusFailure",
     "sync": "#jmSyncFailure",
@@ -282,9 +299,19 @@ def cause_of(row):
     return node.inner_text() if node.evaluate("node => !node.hidden") else ""
 
 
-def fact(row, name):
+def card_fact(row, name):
     """Returns the value of a line on a card."""
     return row.locator(FACT_VALUE % name).inner_text()
+
+
+def fact(page, label):
+    """Finds a fact of the summary by its label."""
+    return page.locator(FACT).filter(has=page.locator("dt", has_text=label))
+
+
+def step(page, name):
+    """Finds a setup step by its name."""
+    return page.locator(STEP).filter(has=page.locator(STEP_NAME, has_text=name))
 
 
 def merge_case(page, title):
