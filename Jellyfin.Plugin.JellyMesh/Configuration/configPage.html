@@ -644,6 +644,7 @@
                                 </button>
                             </div>
                             <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
+                            <div id="jmFolderFromEnvironment" class="fieldDescription" hidden>Set by JELLYMESH_FEDERATED_ROOT on the server. To choose it here, remove the variable and restart.</div>
                             <div id="jmFolderInfo" class="fieldDescription jmFolderInfo">
                                 <div id="jmFolderHint"></div>
                                 <div id="jmFolderPaths"></div>
@@ -1413,6 +1414,10 @@
                     }
 
                     folderShown = shown;
+                    var fromEnvironment = !!folder.FromEnvironment;
+                    el('#jmFederatedFolder').disabled = fromEnvironment;
+                    el('#jmChooseFolder').disabled = fromEnvironment;
+                    el('#jmFolderFromEnvironment').hidden = !fromEnvironment;
                     var notes = el('#jmFolderNotes');
                     notes.textContent = '';
                     updateRows(el('#jmFolderPaths'), folder.Path ? [
@@ -2653,7 +2658,7 @@
                 }
 
                 function settingFields() {
-                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input:not([type=checkbox])'));
+                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input:not([type=checkbox]):not(:disabled)'));
                 }
 
                 // Follows the check the server makes, as far as the page can know the paths of the server.

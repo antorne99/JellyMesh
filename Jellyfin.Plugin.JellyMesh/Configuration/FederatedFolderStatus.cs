@@ -17,6 +17,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 /// <param name="Movies">The link of the film path.</param>
 /// <param name="Series">The link of the series path.</param>
 /// <param name="SeriesGroupingOff">The libraries where a split series would not merge.</param>
+/// <param name="FromEnvironment">Whether <c>JELLYMESH_FEDERATED_ROOT</c> sets the folder, so the page cannot change it.</param>
 public sealed record FederatedFolderStatus(
     string Path,
     string MoviesPath,
@@ -24,4 +25,5 @@ public sealed record FederatedFolderStatus(
     FederatedFolderLinkState Link,
     FederatedPathStatus Movies,
     FederatedPathStatus Series,
-    IReadOnlyList<string> SeriesGroupingOff);
+    IReadOnlyList<string> SeriesGroupingOff,
+    bool FromEnvironment);

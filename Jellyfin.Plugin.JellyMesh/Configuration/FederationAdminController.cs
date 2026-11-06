@@ -29,6 +29,7 @@ public class FederationAdminController : ControllerBase
     private readonly IPluginConfigurationStore _store;
     private readonly IFederatedFolderLinkChecker _linkChecker;
     private readonly PlaybackCoordinator _playback;
+    private readonly IFederatedRootSource _rootSource;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -38,18 +39,21 @@ public class FederationAdminController : ControllerBase
     /// <param name="store">The configuration store.</param>
     /// <param name="linkChecker">The federated folder link checker.</param>
     /// <param name="playback">The playback coordinator.</param>
+    /// <param name="rootSource">The source of the federated folder.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
         IPluginConfigurationStore store,
         IFederatedFolderLinkChecker linkChecker,
-        PlaybackCoordinator playback)
+        PlaybackCoordinator playback,
+        IFederatedRootSource rootSource)
     {
         _registry = registry;
         _vault = vault;
         _store = store;
         _linkChecker = linkChecker;
         _playback = playback;
+        _rootSource = rootSource;
     }
 
     /// <summary>
@@ -244,6 +248,7 @@ public class FederationAdminController : ControllerBase
             report.State,
             report.Movies,
             report.Series,
-            report.SeriesGroupingOff);
+            report.SeriesGroupingOff,
+            PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null);
     }
 }
