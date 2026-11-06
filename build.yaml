@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.1.0.0"
+version: "0.2.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -18,10 +18,9 @@ owner: "antorne99"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: >
-  First release, for Jellyfin 12.x. Films and series from stock and JellyMesh
-  remotes, with dedup and per-episode completion, written to a federated folder
-  you link to your libraries. Remote playback through the local server, with
-  backup sources and a local transcode as fallback. Shared libraries and stream
-  limits between JellyMesh servers, and manual film merges. Tested on Jellyfin
-  12.4 with jellyfin-web only: real Android and TV clients and QSV are not yet
-  tested.
+  A redesigned plugin page, split into five tabs and built from Jellyfin's own
+  controls. It adds a health summary, first-run steps and status cards for
+  servers, says how each action ended and what a removal will do, and picks the
+  federated folder in Jellyfin's folder browser. Doubtful films now show the
+  quality of each copy and what a merge would play. Tested on Jellyfin 12.4 with
+  jellyfin-web only: real Android and TV clients and QSV are not yet tested.
