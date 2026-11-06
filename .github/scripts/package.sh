@@ -46,7 +46,9 @@ fi
 dll=$(sed -n 's/^- "\(.*\.dll\)"$/\1/p' build.yaml)
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
-cp "$out/build/$dll" "$staging/"
+image=$(value image)
+image_name=$(basename "$image")
+cp "$out/build/$dll" "$image" "$staging/"
 
 cat >"$staging/meta.json" <<JSON
 {
@@ -62,6 +64,7 @@ cat >"$staging/meta.json" <<JSON
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "Active",
   "autoUpdate": false,
+  "imagePath": "$image_name",
   "assemblies": ["$dll"]
 }
 JSON
@@ -69,7 +72,7 @@ JSON
 zip_name=jellymesh_$version.zip
 absolute_out=$(cd "$out" && pwd)
 rm -f "$absolute_out/$zip_name" "$absolute_out/$zip_name.md5" "$absolute_out/$zip_name.sha256"
-(cd "$staging" && zip -q -X "$absolute_out/$zip_name" "$dll" meta.json)
+(cd "$staging" && zip -q -X "$absolute_out/$zip_name" "$dll" "$image_name" meta.json)
 (cd "$out" && md5sum "$zip_name" >"$zip_name.md5" && sha256sum "$zip_name" >"$zip_name.sha256")
 
 echo "$out/$zip_name"

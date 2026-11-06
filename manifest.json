@@ -6,6 +6,7 @@
     "description": "JellyMesh shows films and series from other Jellyfin servers in your existing libraries and streams them through the local server. Duplicates become one title: a local copy always wins, otherwise the best quality does, and the other copies stay as backups. Remote servers can be stock Jellyfin or run JellyMesh, which adds shared libraries, stream limits and a change feed between servers you trust. An admin can merge films that can't be matched safely.",
     "owner": "antorne99",
     "category": "General",
+    "imageUrl": "https://raw.githubusercontent.com/antorne99/JellyMesh/main/assets/jellymesh.png",
     "versions": [
       {
         "version": "0.2.1.0",

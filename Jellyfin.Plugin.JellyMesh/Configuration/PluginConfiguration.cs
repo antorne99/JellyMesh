@@ -59,7 +59,7 @@ public class PluginConfiguration : BasePluginConfiguration
     public string ReconciliationTime { get; set; } = "03:00";
 
     /// <summary>
-    /// Gets or sets the user-chosen federated folder. Empty until chosen.
+    /// Gets or sets the federated folder, chosen by the user or set by <c>JELLYMESH_FEDERATED_ROOT</c>. Empty until chosen.
     /// </summary>
     public string FederatedFolderPath { get; set; } = string.Empty;
 
@@ -136,6 +136,17 @@ public class PluginConfiguration : BasePluginConfiguration
         {
             Peers.Add(peer);
         }
+    }
+
+    /// <summary>
+    /// Reads a federated folder set outside the configuration page.
+    /// </summary>
+    /// <param name="value">The value as set.</param>
+    /// <returns>The folder, or <c>null</c> if the value is blank or not a usable folder.</returns>
+    internal static string? FederatedRootOf(string? value)
+    {
+        var path = value?.Trim();
+        return string.IsNullOrEmpty(path) || !IsUsableFolder(path) ? null : path;
     }
 
     /// <summary>

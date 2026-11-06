@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.2.1.0"
+version: "0.2.2.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -15,11 +15,13 @@ description: >
   safely.
 category: "General"
 owner: "antorne99"
+image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: >
-  Loads on every Jellyfin 12.x. Earlier versions were built against the 12.4
-  packages, so older 12.x servers installed them and then showed them as
-  NotSupported. The plugin page is checked on Jellyfin 12.2 and 12.4, and remote
-  playback only on 12.4, with jellyfin-web only: real Android and TV clients and
-  QSV are not yet tested.
+  Adds a logo, shown in the plugin catalog, and a JellyMesh entry in the Plugins
+  section of the Dashboard menu. The federated folder can now be set with the
+  JELLYMESH_FEDERATED_ROOT environment variable, which then wins over the plugin
+  page. The logo and the menu entry are checked on Jellyfin 12.0 and 12.4, and
+  remote playback only on 12.4, with jellyfin-web only: real Android and TV
+  clients and QSV are not yet tested.

@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/jellymesh.png" alt="JellyMesh logo" width="480"></p>
+
 # JellyMesh
 
 JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
@@ -56,7 +58,7 @@ https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
 Download `jellymesh_<version>.zip` from a [release](https://github.com/antorne99/JellyMesh/releases) and compare it with the `.sha256` file next to it. Unpack the zip into a folder in Jellyfin's `plugins` folder, keeping `meta.json`, and restart Jellyfin. For the Docker image that folder is:
 
 ```
-/config/plugins/JellyMesh_0.2.1.0/
+/config/plugins/JellyMesh_0.2.2.0/
 ```
 
 Until a release exists, you can build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
@@ -85,6 +87,7 @@ services:
     image: jellyfin/jellyfin:12.4
     environment:
       JELLYMESH_SECRET_KEY: ${JELLYMESH_SECRET_KEY:?set it in .env}
+      JELLYMESH_FEDERATED_ROOT: /federata # optional, see Setup
     volumes:
       - ./config:/config
       - ./cache:/cache
@@ -108,7 +111,7 @@ All of this is on the plugin page, under Dashboard > Plugins > JellyMesh, unless
 
 1. On the remote, create a dedicated non-admin user that can see the libraries you want. Leave its transcoding permission on, so that the remote can transcode for you. Use it for one server only.
 2. On your server, make the federated folder writable by Jellyfin. In the Compose example above that is `/federata`.
-3. Under **Settings**, enter the path in **Federated folder** and save. It must be an absolute path, and not the filesystem root.
+3. Under **Settings**, enter the path in **Federated folder** and save. It must be an absolute path, and not the filesystem root. If `JELLYMESH_FEDERATED_ROOT` is set, skip this step: at every start the plugin uses that path, and the field is read-only. A value that isn't usable is ignored with a warning in the log. If you remove the variable, the last path stays and the field can be edited again.
 4. Under **Add a server**, enter a name, the tailnet URL of the remote, and the dedicated user and password, then choose **Test and add**. The remote must be online, and an administrator account is refused.
 5. Under **Remote servers**, choose **Libraries**, tick what to import and save. Nothing is imported until you do.
 6. Under **Catalog**, choose **Sync now**. This also creates the `Film` and `Serie` subfolders.
