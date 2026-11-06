@@ -42,6 +42,7 @@ MERGES = "#jmMerges"
 MERGE = ".jmMerge"
 MERGE_DATE = ".jmMergeDate"
 MERGE_TIME = MERGE_DATE + " time"
+MERGE_TEXT = ", ".join([MERGE_CASE, MERGE_NAME, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE])
 PEERS = "#jmPeers"
 ADD_FORM = "#jmAddServerForm"
 ADD_SUBMIT = "#jmAddServer"

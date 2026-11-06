@@ -958,6 +958,7 @@ def control_themes(s, width):
             check(name + " are not white on dark", seen["lightest"] < 0.2, seen["lightest"])
         check(name + " use one font", len(seen["fonts"]) == 1 and "Arial" not in seen["fonts"][0], seen["fonts"])
         readable(page, name + " buttons", u.BUTTONS)
+        readable(page, name + " the merge section", u.MERGE_TEXT)
 
         focus_shows(page, name + " the open tab", page.locator(u.TAB + "[aria-selected=true]"))
         page.keyboard.press("ArrowRight")
