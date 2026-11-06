@@ -55,11 +55,11 @@ public sealed class FederationResolver : IFederationResolver
         MergeCopyView ToCopyView(WorkCopy copy)
         {
             var merged = MergedCopy.From(copy.Item, copy.IsLocal);
-            return new MergeCopyView(merged, NameOf(merged), copy.Item.Metadata.RunTimeTicks, true);
+            return new MergeCopyView(merged, NameOf(merged), copy.Item.Metadata.RunTimeTicks, true) { Versions = BestFirst(copy.Item) };
         }
 
         MergeCopyView ToMergedCopyView(AppliedCopy copy) =>
-            new(copy.Copy, NameOf(copy.Copy), copy.Item?.Metadata.RunTimeTicks, copy.Item is not null);
+            new(copy.Copy, NameOf(copy.Copy), copy.Item?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(copy.Item) };
 
         ResolvedSource ToSource(RemoteSource source)
         {
@@ -99,6 +99,13 @@ public sealed class FederationResolver : IFederationResolver
                 .Select(merge => new ManualMergeView(merge.Merge.Id, merge.Merge.CreatedUtc, merge.IsInEffect, merge.Copies.Select(ToMergedCopyView).ToList()))
                 .ToList()
         };
+    }
+
+    private static List<MediaVersion> BestFirst(CatalogItem? item)
+    {
+        return item is null
+            ? []
+            : QualityRanking.Rank(item.ToSources()).Select(source => new MediaVersion(source.MediaSourceId, source.Quality)).ToList();
     }
 
     private static Guid ToLocalId(string itemId) => Guid.TryParse(itemId, out var id) ? id : Guid.Empty;

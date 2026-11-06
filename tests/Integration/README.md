@@ -154,6 +154,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
 | `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
+| `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
 
@@ -226,6 +227,45 @@ bash merge/up.sh                  # the two remotes, a consumer, a chain of cont
 bash merge/run.sh                 # list, merge, restart, sync, a copy that changes or goes, undo, the page, a local copy
 bash merge/down.sh                # removes containers, volumes, network and scratch files
 ```
+
+### `ui/`
+
+Checks the configuration page in real jellyfin-web, on private servers built from the checkout it runs in. `UI_PREFIX` and `UI_PORT` are required and name everything it makes, so several checkouts can run it at once if each has its own values. The ports are `UI_PORT` to `UI_PORT+3`. `MEDIA` defaults to the main checkout, and `WORK` to `$TMPDIR/$UI_PREFIX-work`. It takes about 2 minutes to start and 20 to check, and holds about 1.5 GB of memory while up, so stagger runs on a small Docker.
+
+```sh
+export UI_PREFIX=jm-ui-811 UI_PORT=18811
+bash ui/up.sh                     # four servers, built from this checkout
+bash ui/check.sh                  # every check in every state, non-zero on any failure
+bash ui/check.sh errors keyboard  # only these scenarios, from the names at the end of pagecheck.py
+bash ui/reinstall.sh              # after changing the page or the plugin: a new build, the state stays
+bash ui/down.sh                   # removes containers, volumes, network and scratch files
+```
+
+| Server | Port | Media | What it shows |
+|---|---|---|---|
+| `fresh` | `UI_PORT` | `locale` | Plugin, consumer of the two below, a synced catalog, doubtful films, the connected server `jellymesh`, the free user `friend` |
+| `stock` | `UI_PORT+1` | `remoto-standard` | No plugin |
+| `peer` | `UI_PORT+2` | `remoto-jellymesh` | Plugin, shares its libraries |
+| `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured |
+
+`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), and `nokey` and `key` for the secret key (on `fresh` by default). Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
+
+The browser runs on the private network of these servers and reaches them by container name. Through `host.docker.internal` a few new connections stayed in `SYN_SENT` for 7 to 45 seconds on Docker Desktop while the server answered others in milliseconds, which failed about one run in three with `urlopen timed out`.
+
+Selectors, button texts and the way to read an outcome live only in `uipage.py`, so a page that changes shape needs changes there. Confirmations are the Jellyfin dialog, read with `wait_confirm` and answered with `answer_confirm`, and a browser dialog counts as a script error. To look at the page some other way, write a script that imports `uipage` and run it with `pw` from `lib.sh`:
+
+```sh
+source ui/lib.sh && pw /path/to/script.py
+```
+
+The page has five tabs, so most of it is hidden at any moment. Reading text or a value works on a hidden tab, while `uipage.py` makes `click`, `fill`, `focus`, `is_visible`, `select_option`, `bounding_box` and `scroll_into_view_if_needed` open the tab of their element first, so a check does not have to name tabs. `page.evaluate` opens nothing: use `u.reveal(node)` or `u.show_tab(page, name)` before measuring what is on screen, and `contrast` in `pagecheck.py` for a selector across all tabs. `Session.open(tab="catalog")` opens the page on a tab, and the `tabs` scenario checks the tabs themselves.
+
+What Jellyfin 12.4 was observed to do with these tabs:
+
+- `LibraryMenu.setTabs` draws them in the Dashboard header at every width, as router links with `role="tab"`, arrow keys and Enter, but not Space. Without `href` a click leaves for `/configurationpage` with no plugin name and ends on Home.
+- An `href` with another query, such as `&tab=catalog`, loads a second copy of the page and hides the first with its edits. A hash after the query, as in `#/configurationpage?name=JellyMesh#catalog`, keeps the page loaded, adds a step to the browser history, and survives a reload and a return.
+- The router pushes that address without an event, while Back and Forward fire `popstate` and `hashchange`.
+- The header empties itself when the next page appears, and tabs must be set again at each `pageshow`. Calling `setTabs(null)` at `pagehide` runs after the next page set its own, and removes the tabs of Home.
 
 ## Not covered here
 

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Jellyfin.Plugin.JellyMesh.Dedup;
 
@@ -75,4 +76,11 @@ public sealed record CatalogItem
     /// Gets the playable versions. Only read for remote items, and a remote item without any is skipped.
     /// </summary>
     public IReadOnlyList<MediaVersion> Versions { get; init; } = [];
+
+    /// <summary>
+    /// Gets the versions as the sources the quality comparison works on.
+    /// </summary>
+    /// <returns>One source per version.</returns>
+    public IEnumerable<RemoteSource> ToSources() =>
+        Versions.Select(version => new RemoteSource(ServerId, ItemId, version.MediaSourceId, version.Quality));
 }

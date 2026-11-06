@@ -38,6 +38,19 @@ public class CatalogItemMapperTests
         Assert.Equal(_serverId.ToString("N"), item.ServerId);
     }
 
+    [Theory]
+    [InlineData("HDR", true, true)]
+    [InlineData("SDR", false, true)]
+    [InlineData("Unknown", false, false)]
+    public void TheRangeSaysWhetherItIsKnown(string range, bool isHdr, bool isKnown)
+    {
+        var film = TestItems.Movie("m") with { MediaSources = [TestItems.Source("m", 1080, 1000, range: range)] };
+
+        var quality = Assert.Single(Assert.Single(CatalogItemMapper.ToCatalogItems(Catalog(Map(film, RemoteItemType.Movie)))).Versions).Quality;
+
+        Assert.Equal((isHdr, isKnown), (quality.IsHdr, quality.IsRangeKnown));
+    }
+
     [Fact]
     public void AFilmCarriesTheMetadataThatConfirmsAMatch()
     {
@@ -136,7 +149,7 @@ public class CatalogItemMapperTests
         var indexed = Map(movie, RemoteItemType.Movie);
 
         Assert.True(indexed.Versions[0].IsRemote);
-        Assert.Equal(new SourceQuality(null, false, null, null), CatalogItemMapper.ToCatalogItems(Catalog(indexed))[0].Versions[0].Quality);
+        Assert.Equal(new SourceQuality(null, false, null, null) { IsRangeKnown = false }, CatalogItemMapper.ToCatalogItems(Catalog(indexed))[0].Versions[0].Quality);
     }
 
     [Fact]

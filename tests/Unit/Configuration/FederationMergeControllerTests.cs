@@ -103,6 +103,47 @@ public sealed class FederationMergeControllerTests
     }
 
     [Fact]
+    public void APreviewAnswersWhatWouldPlay()
+    {
+        ListTitles(true, false);
+
+        var forecast = Assert.IsType<MergeForecast>(Controller().Preview(new MergeRequest(["key0", "key1"])).Value);
+
+        Assert.True(forecast.Copy!.Copy.IsLocal);
+        Assert.Empty(_store.Merges);
+    }
+
+    [Fact]
+    public void APreviewOfOneTitleIsTheSameBadRequest()
+    {
+        ListTitles(false, false);
+
+        var result = Controller().Preview(new MergeRequest(["key0"])).Result;
+
+        var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Contains("at least two", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APreviewOfTwoLocalTitlesIsTheSameBadRequest()
+    {
+        ListTitles(true, true);
+
+        var result = Controller().Preview(new MergeRequest(["key0", "key1"])).Result;
+
+        var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Contains("local", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APreviewOfAnOutdatedListIsTheSameConflict()
+    {
+        ListTitles(false, false);
+
+        Assert.IsType<ConflictObjectResult>(Controller().Preview(new MergeRequest(["key0", "gone"])).Result);
+    }
+
+    [Fact]
     public async Task UndoingAnUnknownMergeIsNotFound()
     {
         var result = await Controller().Undo(Guid.NewGuid(), CancellationToken.None);

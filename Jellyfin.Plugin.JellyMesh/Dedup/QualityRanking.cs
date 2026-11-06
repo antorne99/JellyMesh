@@ -15,6 +15,7 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 public static class QualityRanking
 {
     private const long BitRateTolerancePercent = 95;
+    private const string BestCodec = "AV1";
 
     /// <summary>
     /// Ranks sources best first. Each position holds the winner among the sources not yet placed, so the first backup is
@@ -38,6 +39,40 @@ public static class QualityRanking
 
         return ranked;
     }
+
+    /// <summary>
+    /// Tells whether a missing value could change the winner of <see cref="Rank"/>. Missing values count as lowest there,
+    /// so each source with one is compared again with the best values in their place.
+    /// </summary>
+    /// <param name="sources">The sources.</param>
+    /// <returns>Whether the winner depends on a value nobody knows.</returns>
+    public static bool DependsOnUnknown(IEnumerable<RemoteSource> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+
+        var distinct = sources.Distinct().ToList();
+        if (distinct.Count == 0)
+        {
+            return false;
+        }
+
+        var winner = SelectBest(distinct);
+        return distinct.Where(HasUnknown).Any(source =>
+        {
+            var filled = source with { Quality = WithBestValues(source.Quality) };
+            var expected = source == winner ? filled : winner;
+            return SelectBest(distinct.Select(other => other == source ? filled : other).ToList()) != expected;
+        });
+    }
+
+    private static bool HasUnknown(RemoteSource source) =>
+        source.Quality.Height is null || !source.Quality.IsRangeKnown || source.Quality.BitRate is null || string.IsNullOrEmpty(source.Quality.Codec);
+
+    private static SourceQuality WithBestValues(SourceQuality quality) => new(
+        quality.Height ?? int.MaxValue,
+        quality.IsHdr || !quality.IsRangeKnown,
+        quality.BitRate ?? int.MaxValue,
+        string.IsNullOrEmpty(quality.Codec) ? BestCodec : quality.Codec);
 
     private static RemoteSource SelectBest(List<RemoteSource> sources)
     {
