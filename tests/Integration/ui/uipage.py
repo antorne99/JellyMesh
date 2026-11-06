@@ -33,6 +33,8 @@ PEERS = "#jmPeers"
 ADD_FORM = "#jmAddServerForm"
 ADD_SUBMIT = "#jmAddServer"
 SETTINGS_FORM = "#jmSettingsForm"
+ADVANCED = "#jmAdvanced"
+ADVANCED_TOGGLE = ADVANCED + " > summary"
 FOLDER_INFO = "#jmFolderInfo"
 LOADING = ".docspinner.mdlSpinnerActive"
 CONFIRM = ".dialogContainer .dialog"
@@ -48,6 +50,12 @@ SAVE_SETTINGS = "#jmSettingsForm button[type=submit]"
 SYNC_INTERVAL = "#jmSyncInterval"
 FEDERATED_FOLDER = "#jmFederatedFolder"
 METADATA_PROTECTION = "#jmMetadataProtection"
+CHOOSE_FOLDER = "#jmChooseFolder"
+FOLDER_PATH = ".jmPath"
+FOLDER_NOTES = "#jmFolderNotes"
+PICKER_ROW = CONFIRM + " .lnkPath"
+PICKER_OK = CONFIRM + " button[type=submit]"
+PICKER_CLOSE = CONFIRM + " .btnCloseDialog"
 ADD_FIELDS = {"name": "#jmServerName", "url": "#jmServerUrl", "user": "#jmServerUser", "password": "#jmServerPassword"}
 SETTINGS = {
     SYNC_INTERVAL: "SyncIntervalSeconds",
@@ -223,6 +231,49 @@ def clear_message(page):
     """Dismisses the outcome of the action before."""
     if page.locator(DISMISS).is_visible():
         page.locator(DISMISS).click()
+
+
+def advanced_open(page):
+    """Tells whether the advanced part of the settings is open."""
+    return page.locator(ADVANCED).evaluate("node => node.open")
+
+
+def open_advanced(page):
+    """Opens the advanced part of the settings, where the playback times are."""
+    if not advanced_open(page):
+        page.locator(ADVANCED_TOGGLE).click()
+
+
+def copy_button(page, path):
+    """Finds the copy button of a path to link."""
+    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy")
+
+
+def pasted(page):
+    """Returns what the browser clipboard holds, read by pasting it into the first field of the add form."""
+    field = page.locator(ADD_FIELDS["name"])
+    field.fill("")
+    field.focus()
+    page.keyboard.press("Control+V")
+    value = field.input_value()
+    field.fill("")
+    return value
+
+
+def open_picker(page):
+    """Opens the folder browser of Jellyfin and waits for its list of server folders."""
+    page.locator(CHOOSE_FOLDER).click()
+    page.wait_for_selector(PICKER_ROW, state="visible", timeout=15000)
+
+
+def choose_folder(page, path):
+    """Walks into a folder in the folder browser, accepts it and waits until the dialog has gone."""
+    page.locator(PICKER_ROW + '[data-path="%s"]' % path).click()
+    page.wait_for_selector(PICKER_ROW + ':has-text("...")', state="visible", timeout=15000)
+    page.locator(PICKER_OK).click()
+    page.wait_for_selector(CONFIRM, state="detached", timeout=15000)
+    page.wait_for_selector(CONFIRM_BACKDROP, state="detached", timeout=15000)
+    wait_idle(page)
 
 
 def has_focus(node):

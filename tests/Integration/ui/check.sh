@@ -34,6 +34,7 @@ else
   run edits quiet polling sections
   run outcomes outcome-themes
   run confirms confirm-keyboard
+  run settings-form
 
   set_key first
   run first-nokey

@@ -709,6 +709,7 @@ def settings_refused(page, name):
     """Each wrong setting is named with its rule and focused, and nothing reaches the server."""
     saves = []
     page.on("request", lambda request: saves.append(request.url) if "/Plugins/" in request.url and request.method == "POST" else None)
+    u.open_advanced(page)
     for selector, value, field, rule in SETTING_ERRORS:
         label = f"{name} {selector} set to '{value}'"
         before = page.locator(selector).input_value()
@@ -825,6 +826,7 @@ def outcome_themes(s, width):
     for theme in ["dark", "light"]:
         name = f"{width} {theme} outcomes"
         page = s.open("fresh", width, theme=theme)
+        u.open_advanced(page)
         policy = page.locator("#jmPolicyCache").input_value()
         page.locator("#jmPolicyCache").fill("0")
         page.locator(u.SAVE_SETTINGS).click()
@@ -952,6 +954,242 @@ def confirm_keyboard(s, width):
     page.context.close()
 
 
+ADVANCED_RANGES = {
+    "#jmRemotePlaybackInfoTimeout": "From 3 to 60",
+    "#jmStreamOpenTimeout": "From 5 to 60",
+    "#jmPlaybackIdle": "From 30 to 109",
+    "#jmSessionRetention": "From 1 to 168",
+    "#jmPolicyCache": "From 1 to 60",
+}
+
+
+def advanced_closed(page, name):
+    """The playback times start closed, and the keyboard opens them."""
+    check(name + " starts closed", not u.advanced_open(page))
+    for selector in ADVANCED_RANGES:
+        check(f"{name} hides {selector}", not page.locator(selector).is_visible())
+    for selector in [u.SYNC_INTERVAL, u.FEDERATED_FOLDER, u.METADATA_PROTECTION, u.SAVE_SETTINGS]:
+        check(f"{name} leaves {selector} in reach", page.locator(selector).is_visible())
+
+    toggle = page.locator(u.ADVANCED_TOGGLE)
+    toggle.focus()
+    page.keyboard.press("Enter")
+    check(name + " Enter opens it", u.advanced_open(page))
+    page.keyboard.press("Enter")
+    check(name + " Enter closes it", not u.advanced_open(page))
+    page.keyboard.press("Space")
+    check(name + " Space opens it", u.advanced_open(page))
+    for selector, rule in ADVANCED_RANGES.items():
+        check(f"{name} shows {selector}", page.locator(selector).is_visible())
+        said = page.locator(selector).evaluate("input => input.parentElement.querySelector('.fieldDescription').textContent")
+        check(f"{name} gives the range of {selector}", said.startswith(rule), said)
+
+
+def advanced_opens(page, name):
+    """A wrong value left in the closed part opens it, so the field can be seen and focused."""
+    policy = page.locator("#jmPolicyCache").input_value()
+    interval = page.locator(u.SYNC_INTERVAL).input_value()
+    u.open_advanced(page)
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator(u.ADVANCED_TOGGLE).click()
+    check(name + " the wrong value is hidden", not page.locator("#jmPolicyCache").is_visible())
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a hidden field", "Error", "Remember the transcoding rights")
+    check(name + " a hidden field opens the part", u.advanced_open(page))
+    check(name + " a hidden field is focused", u.focused(page) == "jmPolicyCache", u.focused(page))
+    check(name + " a hidden field is in view", u.in_view(page, "#jmPolicyCache"))
+    check(name + " a hidden field is marked", "from 1 to 60" in u.field_error(page, "#jmPolicyCache"))
+    page.locator("#jmPolicyCache").fill(policy)
+    page.locator(u.ADVANCED_TOGGLE).click()
+
+    page.locator(u.SYNC_INTERVAL).fill("60")
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a common field", "Error", "Sync interval")
+    check(name + " a common field leaves the part closed", not u.advanced_open(page))
+    check(name + " a common field is focused", "#" + u.focused(page) == u.SYNC_INTERVAL, u.focused(page))
+
+    u.open_advanced(page)
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator(u.ADVANCED_TOGGLE).click()
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " both", "Error", "1 more field")
+    check(name + " both focuses the first", "#" + u.focused(page) == u.SYNC_INTERVAL, u.focused(page))
+    check(name + " both shows the other", u.advanced_open(page) and page.locator("#jmPolicyCache").is_visible())
+    page.locator("#jmPolicyCache").fill(policy)
+    page.locator(u.SYNC_INTERVAL).fill(interval)
+    u.clear_message(page)
+
+
+def folder_chosen(page, name):
+    """The folder browser fills the field, and nothing is saved until the admin saves."""
+    field = page.locator(u.FEDERATED_FOLDER)
+    field.fill("relative/path")
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a wrong path", "Error", "absolute path")
+
+    u.open_picker(page)
+    check(name + " lists the folders of the server", page.locator(u.PICKER_ROW + '[data-path="/federata"]').count() == 1)
+    page.locator(u.PICKER_CLOSE).click()
+    page.wait_for_selector(u.CONFIRM, state="detached", timeout=15000)
+    check(name + " cancelling keeps the field", field.input_value() == "relative/path", field.input_value())
+
+    u.open_picker(page)
+    u.shot(page, f"folder-browser-{page.viewport_size['width']}", full_page=False)
+    u.choose_folder(page, "/federata")
+    check(name + " the choice fills the field", field.input_value() == "/federata", field.input_value())
+    check(name + " the choice clears the old error", u.field_error(page, u.FEDERATED_FOLDER) == "")
+    check(name + " the focus returns to the button", "#" + u.focused(page) == u.CHOOSE_FOLDER, u.focused(page))
+    outcome(page, name + " the choice", "Done", "Save the settings")
+    check(name + " the choice is not saved yet", u.config("first")["FederatedFolderPath"] == "")
+    page.wait_for_timeout(6000)
+    check(name + " reading again keeps the choice", field.input_value() == "/federata", field.input_value())
+
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " the choice saves", until(page, lambda: u.config("first")["FederatedFolderPath"] == "/federata"))
+    u.wait_idle(page)
+
+    field.fill("/typed/by/hand")
+    check(name + " the field stays usable", field.input_value() == "/typed/by/hand")
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " a typed path saves", until(page, lambda: u.config("first")["FederatedFolderPath"] == "/typed/by/hand"))
+    u.wait_idle(page)
+
+
+def folder_paths(server):
+    """Returns the two paths to link that the server reports."""
+    folder = u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["FederatedFolder"]
+    return folder["MoviesPath"], folder["SeriesPath"]
+
+
+def copied_over_http(page, name):
+    """The copy buttons work on plain HTTP, where the browser has no clipboard API, and say so."""
+    check(name + " runs on plain HTTP", page.evaluate("!isSecureContext && navigator.clipboard === undefined"))
+    for path in folder_paths("fresh"):
+        button = u.copy_button(page, path)
+        button.click()
+        outcome(page, f"{name} {path}", "Done", path)
+        check(f"{name} {path} reaches the clipboard", u.pasted(page) == path)
+    u.clear_message(page)
+    button = u.copy_button(page, folder_paths("fresh")[1])
+    button.focus()
+    page.keyboard.press("Enter")
+    outcome(page, name + " from the keyboard", "Done", "Copied")
+    check(name + " the focus stays on the button", u.has_focus(button))
+    u.clear_message(page)
+
+
+def copy_refused(s, width):
+    """When the browser refuses, the page says so and leaves the path selected."""
+    name = width + " copy refused"
+
+    def refuses(context):
+        context.add_init_script("document.execCommand = () => false;")
+
+    page = s.open("fresh", width, route=refuses)
+    path = folder_paths("fresh")[0]
+    u.copy_button(page, path).click()
+    outcome(page, name, "Error", "copy it by hand")
+    check(name + " selects the path", page.evaluate("getSelection().toString()") == path, page.evaluate("getSelection().toString()"))
+    healthy(page, name)
+    page.context.close()
+
+
+def copy_with_api(s, width):
+    """Where the browser has a clipboard API it is used, and a refusal falls back to the selection."""
+    name = width + " copy with the API"
+
+    def clipboard(context):
+        context.add_init_script("""Object.defineProperty(navigator, 'clipboard', {value: {writeText: text => {
+          window.jmWritten = (window.jmWritten || []).concat(text);
+          return window.jmWritten.length > 1 ? Promise.reject(new Error('denied')) : Promise.resolve();
+        }}});""")
+
+    page = s.open("fresh", width, route=clipboard)
+    path = folder_paths("fresh")[0]
+    u.copy_button(page, path).click()
+    outcome(page, name, "Done", path)
+    check(name + " writes the path", page.evaluate("window.jmWritten") == [path], page.evaluate("window.jmWritten"))
+    u.clear_message(page)
+    u.copy_button(page, path).click()
+    outcome(page, name + " refused", "Done", path)
+    check(name + " refused still reaches the clipboard", u.pasted(page) == path)
+    page.context.close()
+
+
+def link_warnings(page, name):
+    """A change in the links leaves the path rows and their focus alone, and a long path fits."""
+    button = u.copy_button(page, folder_paths("fresh")[0])
+    u.mark(button)
+    button.focus()
+
+    def unlinked(status):
+        status["FederatedFolder"]["Link"] = "NotLinked"
+        status["FederatedFolder"]["Movies"]["Link"] = "NotLinked"
+
+    fake(page, "Status", unlinked)
+    check(name + " warns about the path", until(page, lambda: "is not linked" in text(page, u.FOLDER_NOTES), 20), text(page, u.FOLDER_NOTES))
+    check(name + " keeps the row", u.is_marked(button))
+    check(name + " keeps the focus", u.has_focus(button))
+    u.shot(page, f"folder-warning-{page.viewport_size['width']}")
+    page.unroute("**/JellyMesh/Admin/Status")
+
+    def long_path(status):
+        status["FederatedFolder"]["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
+
+    fake(page, "Status", long_path)
+    check(name + " shows a long path", until(page, lambda: u.copy_button(page, "a-very-long-folder-name").count() == 1, 20))
+    healthy(page, name + " long path")
+    page.unroute("**/JellyMesh/Admin/Status")
+
+
+def settings_look(s, width):
+    """The settings in both themes, with the advanced part open, stay readable."""
+    for theme in ["dark", "light"]:
+        name = f"{width} {theme} settings"
+        page = s.open("fresh", width, theme=theme)
+        u.shot(page, f"settings-closed-{theme}-{width}")
+        u.open_advanced(page)
+        readable = ", ".join([u.READABLE, u.ADVANCED_TOGGLE, u.FOLDER_PATH + " code", u.FOLDER_PATH + " span", u.FOLDER_NOTES])
+        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": readable})
+        check(name + " text is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+        healthy(page, name)
+        u.shot(page, f"settings-open-{theme}-{width}")
+        page.context.close()
+    u.set_theme("fresh", "dark")
+
+
+def settings_form(s, width):
+    """The Settings form: what stays closed, how the folder is chosen, and how its paths are copied."""
+    name = width + " settings form"
+    page = s.open("fresh", width)
+    advanced_closed(page, name + " advanced")
+    healthy(page, name + " advanced")
+    page.context.close()
+
+    page = s.open("fresh", width)
+    advanced_opens(page, name)
+    healthy(page, name)
+    page.context.close()
+
+    page = s.open("first", width)
+    try:
+        folder_chosen(page, name + " folder")
+        healthy(page, name + " folder")
+    finally:
+        u.settings("first", lambda config: config.update(FederatedFolderPath=""))
+    page.context.close()
+
+    page = s.open("fresh", width)
+    copied_over_http(page, name + " copy")
+    healthy(page, name + " copy")
+    link_warnings(page, name + " links")
+    page.context.close()
+
+    copy_refused(s, width)
+    copy_with_api(s, width)
+    settings_look(s, width)
+
+
 SCENARIOS = {
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
@@ -971,6 +1209,7 @@ SCENARIOS = {
     "sections": (sections, ["1280"]),
     "outcomes": (outcomes, WIDTHS),
     "outcome-themes": (outcome_themes, WIDTHS),
+    "settings-form": (settings_form, WIDTHS),
 }
 
 with u.Session() as session:
