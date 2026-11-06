@@ -17,6 +17,7 @@ namespace Jellyfin.Plugin.JellyMesh;
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     private readonly Lock _configurationLock = new();
+    private readonly string? _federatedRoot;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Plugin"/> class.
@@ -25,12 +26,39 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// <param name="xmlSerializer">Instance of the <see cref="IXmlSerializer"/> interface.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{Plugin}"/> interface.</param>
     public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer, ILogger<Plugin> logger)
+        : this(applicationPaths, xmlSerializer, logger, new EnvironmentFederatedRootSource())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Plugin"/> class with the source of the federated folder.
+    /// </summary>
+    /// <param name="applicationPaths">Instance of the <see cref="IApplicationPaths"/> interface.</param>
+    /// <param name="xmlSerializer">Instance of the <see cref="IXmlSerializer"/> interface.</param>
+    /// <param name="logger">Instance of the <see cref="ILogger{Plugin}"/> interface.</param>
+    /// <param name="rootSource">The source of the federated folder.</param>
+    internal Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer, ILogger<Plugin> logger, IFederatedRootSource rootSource)
         : base(applicationPaths, xmlSerializer)
     {
         Instance = this;
         foreach (var setting in Configuration.Normalize())
         {
             logger.LogWarning("Saved setting {Setting} is out of range: {Saved} runs as {Applied}. Saving the settings keeps the new value", setting.Name, setting.Saved, setting.Applied);
+        }
+
+        var root = rootSource.GetFederatedRoot();
+        _federatedRoot = PluginConfiguration.FederatedRootOf(root);
+        if (_federatedRoot is null)
+        {
+            if (!string.IsNullOrWhiteSpace(root))
+            {
+                logger.LogWarning("{Variable} is ignored: {Value} is not an absolute path other than the filesystem root", EnvironmentFederatedRootSource.VariableName, root);
+            }
+        }
+        else if (!string.Equals(_federatedRoot, Configuration.FederatedFolderPath, StringComparison.Ordinal))
+        {
+            Configuration.FederatedFolderPath = _federatedRoot;
+            SaveConfiguration();
         }
     }
 
@@ -50,13 +78,14 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     /// <summary>
     /// Applies a configuration saved through the stock plugin endpoint. Remote servers are not part
-    /// of that JSON, so the ones in force are kept.
+    /// of that JSON, so the ones in force are kept, and a folder set outside the page stays.
     /// </summary>
     /// <param name="configuration">The configuration to apply.</param>
     public override void UpdateConfiguration(BasePluginConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         var incoming = (PluginConfiguration)configuration;
+        incoming.FederatedFolderPath = _federatedRoot ?? incoming.FederatedFolderPath;
         incoming.Validate();
 
         lock (_configurationLock)

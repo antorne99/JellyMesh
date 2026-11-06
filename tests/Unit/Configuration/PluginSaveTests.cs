@@ -197,7 +197,85 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Empty(logger.Lines);
     }
 
+    [Fact]
+    public void TheVariableSetsTheFolderAndSavesIt()
+    {
+        var logger = new CapturingLogger<Plugin>();
+
+        var loaded = LoadWith(" /federata ", logger);
+
+        Assert.Equal("/federata", loaded.Configuration.FederatedFolderPath);
+        Assert.Contains("<FederatedFolderPath>/federata</FederatedFolderPath>", File.ReadAllText(loaded.ConfigurationFilePath), StringComparison.Ordinal);
+        Assert.Empty(logger.Lines);
+    }
+
+    [Fact]
+    public void TheVariableWinsOverASavedFolder()
+    {
+        _plugin.UpdateConfiguration(new PluginConfiguration { FederatedFolderPath = "/chosen" });
+
+        var loaded = LoadWith("/federata", new CapturingLogger<Plugin>());
+
+        Assert.Equal("/federata", loaded.Configuration.FederatedFolderPath);
+    }
+
+    [Fact]
+    public void AStockSaveCannotChangeTheFolderOfTheVariable()
+    {
+        var loaded = LoadWith("/federata", new CapturingLogger<Plugin>());
+
+        loaded.UpdateConfiguration(new PluginConfiguration { FederatedFolderPath = "/chosen", SyncIntervalSeconds = 600 });
+
+        Assert.Equal("/federata", loaded.Configuration.FederatedFolderPath);
+        Assert.Equal(600, loaded.Configuration.SyncIntervalSeconds);
+    }
+
+    [Fact]
+    public void AStockSaveCannotClearTheFolderOfTheVariable()
+    {
+        var loaded = LoadWith("/federata", new CapturingLogger<Plugin>());
+
+        loaded.UpdateConfiguration(new PluginConfiguration());
+
+        Assert.Equal("/federata", loaded.Configuration.FederatedFolderPath);
+    }
+
+    [Theory]
+    [InlineData("relative/path")]
+    [InlineData("/")]
+    [InlineData("/films/../other")]
+    public void AnUnusableVariableIsIgnoredWithAWarning(string value)
+    {
+        _plugin.UpdateConfiguration(new PluginConfiguration { FederatedFolderPath = "/chosen" });
+        var logger = new CapturingLogger<Plugin>();
+
+        var loaded = LoadWith(value, logger);
+        loaded.UpdateConfiguration(new PluginConfiguration { FederatedFolderPath = "/typed" });
+
+        Assert.Equal("/typed", loaded.Configuration.FederatedFolderPath);
+        var line = Assert.Single(logger.Lines);
+        Assert.Contains(EnvironmentFederatedRootSource.VariableName, line, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void WithoutTheVariableTheFolderStaysTheChoiceOfTheUser(string? value)
+    {
+        _plugin.UpdateConfiguration(new PluginConfiguration { FederatedFolderPath = "/chosen" });
+        var logger = new CapturingLogger<Plugin>();
+
+        var loaded = LoadWith(value, logger);
+
+        Assert.Equal("/chosen", loaded.Configuration.FederatedFolderPath);
+        Assert.Empty(logger.Lines);
+    }
+
     public void Dispose() => Directory.Delete(_folder, true);
+
+    private Plugin LoadWith(string? federatedRoot, CapturingLogger<Plugin> logger)
+        => new(_paths, new RealXmlSerializer(), logger, new FixedFederatedRootSource(federatedRoot));
 
     private sealed class RealXmlSerializer : IXmlSerializer
     {

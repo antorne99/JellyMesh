@@ -30,13 +30,14 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null)
         => new(
             fixture.Registry,
             fixture.Vault,
             fixture.Store,
             checker ?? new RecordingChecker(FederatedFolderLinkState.NotChecked),
-            new CoordinatorFixture().Coordinator);
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(federatedRoot));
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -52,7 +53,8 @@ public class FederationAdminControllerTests
             new RegistryFixture().Vault,
             playback.Store,
             new RecordingChecker(FederatedFolderLinkState.NotChecked),
-            playback.Coordinator);
+            playback.Coordinator,
+            new FixedFederatedRootSource(null));
 
         var result = await controller.RemoveServer(source.ServerId);
 
@@ -232,6 +234,20 @@ public class FederationAdminControllerTests
 
         Assert.Equal(FederatedFolderLinkState.NotChecked, folder.Link);
         Assert.False(checker.Called);
+    }
+
+    [Theory]
+    [InlineData("/federata", true)]
+    [InlineData("relative/path", false)]
+    [InlineData("  ", false)]
+    [InlineData(null, false)]
+    public void TheFolderSaysWhetherAUsableVariableSetsIt(string? federatedRoot, bool expected)
+    {
+        using var fixture = new RegistryFixture();
+
+        var folder = ControllerFor(fixture, federatedRoot: federatedRoot).GetStatus().Value!.FederatedFolder;
+
+        Assert.Equal(expected, folder.FromEnvironment);
     }
 
     [Fact]

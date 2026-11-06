@@ -25,6 +25,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
         serviceCollection.AddSingleton<IPluginConfigurationStore, PluginConfigurationStore>();
         serviceCollection.AddSingleton<ISecretKeySource, EnvironmentSecretKeySource>();
+        serviceCollection.AddSingleton<IFederatedRootSource, EnvironmentFederatedRootSource>();
         serviceCollection.AddSingleton<ICredentialVault, CredentialVault>();
         serviceCollection.AddSingleton<IJellyfinRemoteClient, JellyfinRemoteClient>();
         serviceCollection.AddSingleton<IRemoteServerRegistry, RemoteServerRegistry>();

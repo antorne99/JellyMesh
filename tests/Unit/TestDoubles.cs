@@ -50,6 +50,11 @@ internal sealed class InMemoryMergeStore : IManualMergeStore
     }
 }
 
+internal sealed class FixedFederatedRootSource(string? root) : IFederatedRootSource
+{
+    public string? GetFederatedRoot() => root;
+}
+
 internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 {
     public PluginConfiguration Configuration { get; } = new();
