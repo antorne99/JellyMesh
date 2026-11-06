@@ -215,7 +215,7 @@ At 16 playback sessions, the oldest unused one closes first. If all are in use, 
 
 ## Development
 
-The plan and its decisions are in `docs/` (in Italian). `tests/Integration/README.md` describes the test environment and the proof scripts. To run the unit tests, from the repository root:
+`tests/Integration/README.md` describes the test environment and the proof scripts. To run the unit tests, from the repository root:
 
 ```sh
 docker run --rm -v "$PWD":/src -v jellymesh-nuget:/root/.nuget/packages -w /src \
