@@ -285,7 +285,7 @@ def server_row(page, name):
 
 def peer_row(page, name):
     """Finds the row of a connected server."""
-    return page.locator(PEERS + " > div").filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
+    return page.locator(PEERS + " > div > div").filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
 
 
 def state_of(row):

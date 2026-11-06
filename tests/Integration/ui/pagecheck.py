@@ -1040,6 +1040,7 @@ def controls(s, width):
     check(name + " the select has one arrow", new_peer.locator(u.SELECT_ARROW).count() == 1, new_peer.locator(u.SELECT_ARROW).count())
     limit = connected.get_by_label(u.LIMIT_LABEL, exact=True)
     check(name + " the limit has its label", limit.get_attribute("type") == "number")
+    check(name + " the limit is as narrow as its value", limit.bounding_box()["width"] < 200, limit.bounding_box())
     check(name + " has no label inside a label", page.locator(u.NESTED_LABEL).count() == 0)
     limit.fill("")
     check(name + " an empty limit keeps its label", connected.get_by_text(u.LIMIT_LABEL, exact=True).is_visible())
@@ -1715,6 +1716,13 @@ def tabs_laid_out(s, width):
     check(name + " Servers says what it reads", "reads from other servers" in page.locator(u.PANEL + ":not([hidden])").inner_text())
     u.show_tab(page, "sharing")
     check(name + " Sharing says what others read", "read from this server" in page.locator(u.PANEL + ":not([hidden])").inner_text())
+    connected = u.peer_row(page, "jellymesh").bounding_box()
+    connect = u.peer_row(page, u.NEW_PEER).bounding_box()
+    beside = connect["x"] >= connected["x"] + connected["width"]
+    below = connect["y"] >= connected["y"] + connected["height"]
+    check(name + " Sharing fits its width", beside if width == "1280" else below, [connected, connect])
+    titles = [u.peer_row(page, title).get_by_role("heading").bounding_box()["y"] for title in ("jellymesh", u.NEW_PEER)]
+    check(name + " Sharing aligns its two titles", width != "1280" or abs(titles[0] - titles[1]) < 1, titles)
     healthy(page, name)
     page.context.close()
 

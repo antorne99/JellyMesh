@@ -435,9 +435,16 @@
                 margin-top: 1em;
             }
 
-            #jmPeers .inputContainer,
-            #jmPeers .selectContainer {
-                max-width: 54em;
+            #jmPeerNew:empty {
+                display: none;
+            }
+
+            #jmPeerNew h4 {
+                margin-top: 1em;
+            }
+
+            #jmPeers input[type="number"] {
+                max-width: 8em;
             }
 
             #JellyMeshConfigPage .emby-button:focus-visible,
@@ -607,7 +614,10 @@
                     <h3 class="sectionTitle">Connected JellyMesh servers</h3>
                     <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
                     <div id="jmPeersFailure" role="alert" hidden class="jmAlert"></div>
-                    <div id="jmPeers"></div>
+                    <div id="jmPeers" class="jmColumns">
+                        <div id="jmPeerList"></div>
+                        <div id="jmPeerNew"></div>
+                    </div>
                 </section>
 
                 <section data-jm-tab="settings" role="tabpanel" aria-label="Settings" hidden>
@@ -1764,13 +1774,19 @@
                             return peer.UserId === user.Id;
                         });
                     });
-                    if (free.length > 0) {
-                        rows.push({ key: 'new', build: renderNewPeer, args: [free, options.Libraries] });
-                    } else if (peers.length === 0) {
-                        rows.push({ key: 'none', build: create, args: ['p', 'Create a non-admin user for the other server first.'] });
+                    if (rows.length === 0) {
+                        rows.push({ key: 'none', build: create, args: ['p', 'No connected servers yet.'] });
                     }
 
-                    updateRows(el('#jmPeers'), rows);
+                    var connect = [];
+                    if (free.length > 0) {
+                        connect.push({ key: 'new', build: renderNewPeer, args: [free, options.Libraries] });
+                    } else if (peers.length === 0) {
+                        connect.push({ key: 'none', build: create, args: ['p', 'Create a non-admin user for the other server first.'] });
+                    }
+
+                    updateRows(el('#jmPeerList'), rows);
+                    updateRows(el('#jmPeerNew'), connect);
                 }
 
                 var mergeDetails = 0;
