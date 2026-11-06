@@ -2164,6 +2164,7 @@
                 // Derives the steps of the first setup from the state of the server.
                 function setupSteps(status, sync) {
                     var folder = status.FederatedFolder;
+                    var firstSync = syncState(status, sync);
                     var waiting = status.Servers.filter(function (server) {
                         return server.ImportedLibraryIds.length === 0;
                     }).map(function (server) {
@@ -2195,8 +2196,8 @@
                     }, {
                         key: 'sync',
                         name: 'Run the first sync',
-                        state: syncState(status, sync),
-                        text: status.Suspended ? 'It waits for the secret key.' : 'It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.',
+                        state: firstSync,
+                        text: status.Suspended && firstSync !== 'done' ? 'It waits for the secret key.' : 'It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.',
                         tab: 'catalog'
                     }, {
                         key: 'link',

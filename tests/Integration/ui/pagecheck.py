@@ -2265,6 +2265,7 @@ def overview_nokey(s, width):
     check(name + " reports no server problem", u.fact(page, "Servers").locator(u.ALARM).count() == 0, alarms(page))
     check(name + " keeps a real date", re.search(r"\d", fact_value(page, "Last sync")) is not None, fact_value(page, "Last sync"))
     check(name + " shows the key step", step_state(page, "Set the secret key") == "To do", step_state(page, "Set the secret key"))
+    check(name + " a sync already done waits for nothing", "waits" not in u.step(page, "Run the first sync").inner_text(), u.step(page, "Run the first sync").inner_text())
     check(name + " does not repeat the warning", text(page, u.WARNING) not in text(page, u.SETUP) + text(page, u.SUMMARY))
     healthy(page, name)
     u.shot(page, f"overview-nokey-{width}")
