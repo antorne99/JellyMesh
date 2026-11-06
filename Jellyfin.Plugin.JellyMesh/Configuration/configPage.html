@@ -836,6 +836,20 @@
                 margin-top: 1em;
             }
 
+            .jmLibrariesTitle {
+                margin: 0;
+                font-weight: 600;
+            }
+
+            .jmLibrariesNote {
+                margin: 0.25em 0 0.75em;
+                color: var(--jm-muted);
+            }
+
+            .jmLibrariesNote:focus {
+                outline: none;
+            }
+
             #jmPeerNew {
                 margin-top: 1.25em;
             }
@@ -1088,6 +1102,7 @@
                             <span class="material-icons expand_more jmChevron" aria-hidden="true"></span>
                         </summary>
                         <form id="jmAddServerForm" autocomplete="off">
+                            <p>JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.</p>
                             <div class="jmFormGrid">
                                 <div class="inputContainer">
                                     <label class="inputLabel inputLabelUnfocused" for="jmServerName">Name</label>
@@ -1109,8 +1124,9 @@
                                 </div>
                             </div>
                             <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit emby-button">
-                                <span>Test and add</span>
+                                <span>Connect and choose libraries</span>
                             </button>
+                            <p id="jmAddBlocked" class="fieldDescription" hidden>Connecting a server waits for the secret key. The Overview says what to do.</p>
                         </form>
                     </details>
                 </section>
@@ -1298,6 +1314,7 @@
                 };
                 var unknownProblem = 'unknown problem';
                 var unknownProblemStep = 'Test the connection to see what is wrong.';
+                var libraryKinds = { movies: 'films', tvshows: 'series' };
                 var modeLabels = { Unknown: 'mode not known yet', Standard: 'standard Jellyfin server', JellyMesh: 'JellyMesh server' };
                 var defaultStreamLimit = 2;
                 var mergeReasons = {
@@ -1758,10 +1775,23 @@
                     });
                 }
 
+                // Names a library with what it holds. Any other type is shown as the remote gave it.
+                function libraryLabel(library) {
+                    return library.Name + ' (' + (libraryKinds[library.CollectionType] || library.CollectionType) + ')';
+                }
+
                 function renderLibraries(container, server, libraries) {
                     container.textContent = '';
+                    var title = create('p', 'Libraries to import from ' + server.Name);
+                    title.className = 'jmLibrariesTitle';
+                    container.appendChild(title);
+                    var note = create('p', libraries.length === 0
+                        ? 'This user sees no film or series libraries. Give it access on that server, then open Libraries again.'
+                        : 'Nothing is imported from this server until you choose its libraries and save.');
+                    note.className = 'jmLibrariesNote';
+                    note.tabIndex = -1;
+                    container.appendChild(note);
                     if (libraries.length === 0) {
-                        container.appendChild(create('p', 'This user sees no film or series libraries.'));
                         return;
                     }
 
@@ -1769,7 +1799,7 @@
                     list.className = 'checkboxList';
                     container.appendChild(list);
                     var boxes = libraries.map(function (library) {
-                        var box = addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
+                        var box = addCheckbox(list, library.Id, libraryLabel(library));
                         box.checked = library.Selected;
                         return box;
                     });
@@ -1781,7 +1811,7 @@
                             return box.value;
                         });
                         act(api('POST', 'Servers/' + server.Id + '/Libraries', { LibraryIds: ids }).then(function () {
-                            showMessage('Libraries saved for ' + server.Name + '.');
+                            showMessage('Libraries saved for ' + server.Name + '. The next sync reads them.');
                             return loadStatus();
                         }));
                     }));
@@ -1916,8 +1946,9 @@
                         setText(stateText, sentence(health.state));
                         state.className = 'jmState ' + health.tone;
                         icon.className = 'material-icons jmStateIcon ' + health.icon;
-                        setText(cause, health.cause);
-                        cause.hidden = !health.cause;
+                        var nothingChosen = !health.cause && server.ImportedLibraryIds.length === 0;
+                        setText(cause, nothingChosen ? 'No libraries chosen, so nothing is imported from this server yet.' : health.cause);
+                        cause.hidden = !health.cause && !nothingChosen;
                         setText(meta, sentence(modeLabel(server.Mode)) + (currentReport ? ', ' + catalogText : ''));
                         setText(url, server.Url);
                         setText(mode, sentence(modeLabel(server.Mode)));
@@ -1930,6 +1961,11 @@
 
                     var libraries = create('div');
                     libraries.className = 'jmLibraries';
+                    row.jmShowLibraries = function () {
+                        return api('GET', 'Servers/' + server.Id + '/Libraries').then(function (result) {
+                            renderLibraries(libraries, server, result);
+                        });
+                    };
                     var actions = actionRow();
                     actions.appendChild(button('Test connection', function () {
                         act(api('POST', 'Servers/' + server.Id + '/Test').then(function (result) {
@@ -1939,9 +1975,7 @@
                         }));
                     }));
                     actions.appendChild(button('Libraries', function () {
-                        act(api('GET', 'Servers/' + server.Id + '/Libraries').then(function (result) {
-                            renderLibraries(libraries, server, result);
-                        }));
+                        act(row.jmShowLibraries());
                     }));
                     actions.appendChild(button('Remove', function () {
                         confirmAction('Remove this server?', [
@@ -2152,6 +2186,23 @@
                     updateRows(el('#jmServers'), servers);
                 }
 
+                // Opens the card of a server just added with its libraries, and moves the focus to the choice.
+                function chooseLibraries(server) {
+                    var row = (el('#jmServers').jmRows || {})[server.Id];
+                    if (!row) {
+                        showMessage('Added ' + server.Name + '. Open Libraries on its card to choose what to import.');
+                        return Promise.resolve();
+                    }
+
+                    row.open = true;
+                    return row.jmShowLibraries().then(function () {
+                        showMessage('Added ' + server.Name + '. Choose its libraries.');
+                        var target = row.querySelector('.jmLibraries input') || row.querySelector('.jmLibrariesNote');
+                        target.focus({ preventScroll: true });
+                        target.scrollIntoView({ block: 'center' });
+                    });
+                }
+
                 // Opens the form while there is no server, and leaves it as the admin set it otherwise.
                 function showAddServer(total) {
                     var part = el('#jmAddServerPart');
@@ -2247,7 +2298,7 @@
                         librariesShown = shown;
                         list.textContent = '';
                         boxes = current.map(function (library) {
-                            return addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
+                            return addCheckbox(list, library.Id, libraryLabel(library));
                         });
                     }
 
@@ -3237,7 +3288,7 @@
                         key: 'server',
                         name: 'Add a remote server',
                         state: stateOf(status.Servers.length > 0),
-                        text: 'Log in with a dedicated non-admin user of that server, at its tailnet address.',
+                        text: 'Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.',
                         tab: 'servers'
                     }, {
                         key: 'libraries',
@@ -3563,8 +3614,12 @@
                     password.value = '';
                     act(api('POST', 'Servers', request).then(function (server) {
                         el('#jmAddServerForm').reset();
-                        showMessage('Added ' + server.Name + '.');
-                        return Promise.all([loadStatus(), loadSync()]);
+                        el('#jmAddServerPart').open = false;
+                        return Promise.all([loadStatus(), loadSync()]).then(function () {
+                            return chooseLibraries(server);
+                        }).catch(function (error) {
+                            throw new Error('Added ' + server.Name + ', but its libraries could not be read. ' + error.message + ' Open Libraries on its card to try again.');
+                        });
                     }));
                 });
 
