@@ -28,14 +28,16 @@ with sync_playwright() as p:
     page.locator("#jmMergeCases").scroll_into_view_if_needed()
     page.screenshot(path=CAP + "-list.png", full_page=True)
 
-    # One title only: the server refuses, and the page says so.
-    group.locator("input[type=checkbox]").first.check()
-    group.get_by_text("Merge selected").click()
-    page.wait_for_function("document.getElementById('jmMessage').textContent !== ''", timeout=15000)
-    print("REFUSED", json.dumps(page.locator("#jmMessage").inner_text()), flush=True)
+    # One title only: the page does not offer the merge, and says why.
+    group.locator("label").first.click()
+    state = "disabled" if group.get_by_text("Merge selected").is_disabled() else "enabled"
+    print("REFUSED", json.dumps(state + ": " + group.locator(".jmMergeResult").inner_text()), flush=True)
 
     for box in group.locator("input[type=checkbox]").all():
-        box.check()
+        if not box.is_checked():
+            box.locator("..").click()
+    page.wait_for_function("t => [...document.querySelectorAll('.jmMergeCase')].some(c => c.textContent.includes(t) && c.querySelector('.jmMergeResult').textContent.includes('If merged'))", arg=TITLE, timeout=15000)
+    print("FORECAST", json.dumps(group.locator(".jmMergeResult").inner_text()), flush=True)
     group.get_by_text("Merge selected").click()
     page.wait_for_selector(".jmMerge:has-text('" + TITLE + "')", state="attached", timeout=30000)
     merged = page.locator(".jmMerge", has_text=TITLE)

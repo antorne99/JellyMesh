@@ -27,8 +27,18 @@ SYNC_SERVERS = "#jmSyncServers"
 SYNC_NOW = "#jmSyncNow"
 MERGE_CASES = "#jmMergeCases"
 MERGE_CASE = ".jmMergeCase"
+MERGE_TITLE = ".jmMergeTitle"
+MERGE_DETAILS = ".jmMergeDetails"
+MERGE_QUALITY = ".jmMergeQuality"
+MERGE_RESULT = ".jmMergeResult"
+MERGE_HINT = MERGE_RESULT + ".jmMergeHint"
+MERGE_LABEL = MERGE_TITLE + " label"
+MERGE_NAME = MERGE_LABEL + " .checkboxLabel"
+MERGE_OUTLINE = MERGE_LABEL + " .checkboxOutline"
 MERGES = "#jmMerges"
 MERGE = ".jmMerge"
+MERGE_DATE = ".jmMergeDate"
+MERGE_TIME = MERGE_DATE + " time"
 PEERS = "#jmPeers"
 ADD_FORM = "#jmAddServerForm"
 ADD_SUBMIT = "#jmAddServer"
@@ -78,7 +88,7 @@ BUTTON = {
     "save": "Save",
     "connect": "Connect",
 }
-READABLE = "h2, h3, h4, p, label, .fieldDescription, " + MERGE_CASE + ", " + WARNING
+READABLE = ", ".join(["h2, h3, h4, p, label, .fieldDescription", MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING])
 FAILURE = {
     "status": "#jmStatusFailure",
     "sync": "#jmSyncFailure",
@@ -221,6 +231,13 @@ def peer_row(page, name):
 def merge_case(page, title):
     """Finds the group of doubtful films that holds a title."""
     return page.locator(MERGE_CASE, has_text=title)
+
+
+def refresh_merges(page):
+    """Reads the page again the way it does when it is shown, and waits for the merges to answer."""
+    with page.expect_response("**/JellyMesh/Admin/Merges"):
+        page.locator(PAGE).evaluate("node => node.dispatchEvent(new Event('pageshow'))")
+    wait_idle(page)
 
 
 def button(scope, name):

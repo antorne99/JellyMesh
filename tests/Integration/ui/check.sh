@@ -36,6 +36,7 @@ else
   run confirms confirm-keyboard
   run settings-form
   run controls control-themes
+  run merge-details
 
   set_key first
   run first-nokey

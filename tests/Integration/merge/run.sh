@@ -145,7 +145,8 @@ docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -
   bash -c 'test -d /pw/playwright || pip install -q --target /pw --no-warn-script-location playwright==1.48.0 2>/dev/null; exec python3 "$@"' _ \
   /w/configpage.py http://host.docker.internal:18441 "$(token_of fresh)" "$uid" "$sid" /w/page | tee "$WORK/web/page.out"
 check "the page lists the chain" true "$(grep '^CASE ' "$WORK/web/page.out" | cut -d' ' -f2- | jq 'contains("JM Catena Tre") and contains("stock") and contains("peer") and contains("min")')"
-check "the page shows a refusal" true "$(grep '^REFUSED' "$WORK/web/page.out" | cut -d' ' -f2- | jq 'contains("at least two")')"
+check "the page does not offer a merge of one title, and says why" true "$(grep '^REFUSED' "$WORK/web/page.out" | cut -d' ' -f2- | jq 'startswith("disabled") and contains("at least two")')"
+check "the page says what would play" true "$(grep '^FORECAST' "$WORK/web/page.out" | cut -d' ' -f2- | jq 'contains("on peer plays")')"
 check "the page merged" true "$(grep '^MERGED' "$WORK/web/page.out" | cut -d' ' -f2- | jq 'contains("Merged")')"
 check "and lists the merge" true "$(grep '^MERGE ' "$WORK/web/page.out" | cut -d' ' -f2- | jq 'contains("JM Catena Due")')"
 check "the page undid it" true "$(grep '^UNDONE' "$WORK/web/page.out" | cut -d' ' -f2- | jq 'contains("undone")')"
