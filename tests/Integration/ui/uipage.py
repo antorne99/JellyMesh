@@ -51,6 +51,8 @@ SYNC_INTERVAL = "#jmSyncInterval"
 FEDERATED_FOLDER = "#jmFederatedFolder"
 METADATA_PROTECTION = "#jmMetadataProtection"
 CHOOSE_FOLDER = "#jmChooseFolder"
+FOLDER_PATH = ".jmPath"
+FOLDER_NOTES = "#jmFolderNotes"
 PICKER_ROW = CONFIRM + " .lnkPath"
 PICKER_OK = CONFIRM + " button[type=submit]"
 PICKER_CLOSE = CONFIRM + " .btnCloseDialog"
@@ -240,6 +242,22 @@ def open_advanced(page):
     """Opens the advanced part of the settings, where the playback times are."""
     if not advanced_open(page):
         page.locator(ADVANCED_TOGGLE).click()
+
+
+def copy_button(page, path):
+    """Finds the copy button of a path to link."""
+    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy")
+
+
+def pasted(page):
+    """Returns what the browser clipboard holds, read by pasting it into the first field of the add form."""
+    field = page.locator(ADD_FIELDS["name"])
+    field.fill("")
+    field.focus()
+    page.keyboard.press("Control+V")
+    value = field.input_value()
+    field.fill("")
+    return value
 
 
 def open_picker(page):

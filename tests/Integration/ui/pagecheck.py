@@ -1055,8 +1055,111 @@ def folder_chosen(page, name):
     u.wait_idle(page)
 
 
+def folder_paths(server):
+    """Returns the two paths to link that the server reports."""
+    folder = u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["FederatedFolder"]
+    return folder["MoviesPath"], folder["SeriesPath"]
+
+
+def copied_over_http(page, name):
+    """The copy buttons work on plain HTTP, where the browser has no clipboard API, and say so."""
+    check(name + " runs on plain HTTP", page.evaluate("!isSecureContext && navigator.clipboard === undefined"))
+    for path in folder_paths("fresh"):
+        button = u.copy_button(page, path)
+        button.click()
+        outcome(page, f"{name} {path}", "Done", path)
+        check(f"{name} {path} reaches the clipboard", u.pasted(page) == path)
+    u.clear_message(page)
+    button = u.copy_button(page, folder_paths("fresh")[1])
+    button.focus()
+    page.keyboard.press("Enter")
+    outcome(page, name + " from the keyboard", "Done", "Copied")
+    check(name + " the focus stays on the button", u.has_focus(button))
+    u.clear_message(page)
+
+
+def copy_refused(s, width):
+    """When the browser refuses, the page says so and leaves the path selected."""
+    name = width + " copy refused"
+
+    def refuses(context):
+        context.add_init_script("document.execCommand = () => false;")
+
+    page = s.open("fresh", width, route=refuses)
+    path = folder_paths("fresh")[0]
+    u.copy_button(page, path).click()
+    outcome(page, name, "Error", "copy it by hand")
+    check(name + " selects the path", page.evaluate("getSelection().toString()") == path, page.evaluate("getSelection().toString()"))
+    healthy(page, name)
+    page.context.close()
+
+
+def copy_with_api(s, width):
+    """Where the browser has a clipboard API it is used, and a refusal falls back to the selection."""
+    name = width + " copy with the API"
+
+    def clipboard(context):
+        context.add_init_script("""Object.defineProperty(navigator, 'clipboard', {value: {writeText: text => {
+          window.jmWritten = (window.jmWritten || []).concat(text);
+          return window.jmWritten.length > 1 ? Promise.reject(new Error('denied')) : Promise.resolve();
+        }}});""")
+
+    page = s.open("fresh", width, route=clipboard)
+    path = folder_paths("fresh")[0]
+    u.copy_button(page, path).click()
+    outcome(page, name, "Done", path)
+    check(name + " writes the path", page.evaluate("window.jmWritten") == [path], page.evaluate("window.jmWritten"))
+    u.clear_message(page)
+    u.copy_button(page, path).click()
+    outcome(page, name + " refused", "Done", path)
+    check(name + " refused still reaches the clipboard", u.pasted(page) == path)
+    page.context.close()
+
+
+def link_warnings(page, name):
+    """A change in the links leaves the path rows and their focus alone, and a long path fits."""
+    button = u.copy_button(page, folder_paths("fresh")[0])
+    u.mark(button)
+    button.focus()
+
+    def unlinked(status):
+        status["FederatedFolder"]["Link"] = "NotLinked"
+        status["FederatedFolder"]["Movies"]["Link"] = "NotLinked"
+
+    fake(page, "Status", unlinked)
+    check(name + " warns about the path", until(page, lambda: "is not linked" in text(page, u.FOLDER_NOTES), 20), text(page, u.FOLDER_NOTES))
+    check(name + " keeps the row", u.is_marked(button))
+    check(name + " keeps the focus", u.has_focus(button))
+    u.shot(page, f"folder-warning-{page.viewport_size['width']}")
+    page.unroute("**/JellyMesh/Admin/Status")
+
+    def long_path(status):
+        status["FederatedFolder"]["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
+
+    fake(page, "Status", long_path)
+    check(name + " shows a long path", until(page, lambda: u.copy_button(page, "a-very-long-folder-name").count() == 1, 20))
+    healthy(page, name + " long path")
+    page.unroute("**/JellyMesh/Admin/Status")
+
+
+def settings_look(s, width):
+    """The settings in both themes, with the advanced part open, stay readable."""
+    for theme in ["dark", "light"]:
+        name = f"{width} {theme} settings"
+        page = s.open("fresh", width, theme=theme)
+        u.shot(page, f"settings-closed-{theme}-{width}")
+        u.open_advanced(page)
+        readable = ", ".join([u.READABLE, u.ADVANCED_TOGGLE, u.FOLDER_PATH + " code", u.FOLDER_PATH + " span", u.FOLDER_NOTES])
+        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": readable})
+        check(name + " text is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+        healthy(page, name)
+        u.shot(page, f"settings-open-{theme}-{width}")
+        page.context.close()
+    u.set_theme("fresh", "dark")
+
+
 def settings_form(s, width):
-    """The Settings form: what stays closed, and how the folder is chosen."""
+    """The Settings form: what stays closed, how the folder is chosen, and how its paths are copied."""
     name = width + " settings form"
     page = s.open("fresh", width)
     advanced_closed(page, name + " advanced")
@@ -1075,6 +1178,16 @@ def settings_form(s, width):
     finally:
         u.settings("first", lambda config: config.update(FederatedFolderPath=""))
     page.context.close()
+
+    page = s.open("fresh", width)
+    copied_over_http(page, name + " copy")
+    healthy(page, name + " copy")
+    link_warnings(page, name + " links")
+    page.context.close()
+
+    copy_refused(s, width)
+    copy_with_api(s, width)
+    settings_look(s, width)
 
 
 SCENARIOS = {
