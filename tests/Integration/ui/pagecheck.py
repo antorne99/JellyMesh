@@ -242,7 +242,7 @@ def keyboard(s, width):
     for action in [u.BUTTON["test"], u.BUTTON["libraries"], u.BUTTON["remove"], u.BUTTON["merge"], u.BUTTON["connect"], u.BUTTON["save"],
                    u.SYNC_NOW[1:], u.ADD_SUBMIT[1:], u.SYNC_INTERVAL[1:], u.ADD_FIELDS["name"][1:], u.METADATA_PROTECTION[1:]]:
         check(f"{name} reaches {action}", action in reached, reached)
-    check(name + " reaches a settings Save", reached.count(u.BUTTON["save"]) >= 2, reached)
+    check(name + " reaches a settings Save", u.SAVE_SETTINGS[1:] in reached, reached)
     check(name + " reaches the title checkboxes", reached.count("checkbox") >= 5, reached)
 
     libraries = u.button(u.server_row(page, "stock"), "libraries")
