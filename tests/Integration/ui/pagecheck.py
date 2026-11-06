@@ -1763,6 +1763,12 @@ def tabs_remembered(s, width):
     check(name + " Back moves the mark", until(page, lambda: page.locator(u.TAB + "[aria-selected=true]").inner_text() == "Catalog"))
     page.go_forward()
     check(name + " Forward goes to the next tab", until(page, lambda: u.shown_tab(page) == "sharing"), u.shown_tab(page))
+    page.locator(u.PAGE).evaluate("""node => { const link = document.createElement('a');
+      link.href = '#/configurationpage?name=JellyMesh#settings'; node.appendChild(link); link.click(); link.remove(); }""")
+    check(name + " a plain link on the page opens a tab", until(page, lambda: u.shown_tab(page) == "settings"), u.shown_tab(page))
+    check(name + " a plain link keeps the page loaded", u.is_marked(page.locator(u.PAGE)) and page.locator(u.PAGE).count() == 1)
+    page.go_back()
+    until(page, lambda: u.shown_tab(page) == "sharing")
     page.locator(u.NUMBER).first.focus()
     page.go_back()
     until(page, lambda: u.shown_tab(page) == "catalog")
