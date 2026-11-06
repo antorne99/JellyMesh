@@ -72,6 +72,71 @@
             #JellyMeshConfigPage input[aria-invalid="true"] {
                 border-color: var(--jf-palette-error-main, #c62828);
             }
+
+            .jmMergeCase,
+            .jmMerge {
+                margin-bottom: 1.5em;
+                padding-top: 1em;
+                border-top: 1px solid var(--jf-palette-divider, rgba(255, 255, 255, 0.12));
+                overflow-wrap: anywhere;
+            }
+
+            .jmMergeReason {
+                margin: 0 0 0.75em;
+            }
+
+            .jmMergeTitle {
+                margin-bottom: 0.75em;
+            }
+
+            .jmMergeTitle .emby-checkbox-label {
+                height: auto;
+                min-height: 2.35em;
+            }
+
+            .jmMergeTitle .checkboxLabel {
+                font-weight: 500;
+            }
+
+            .jmMergeDetails {
+                padding-left: 2.4em;
+            }
+
+            .jmMergeDetails,
+            .jmMergeQuality,
+            .jmMergeDate {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+                font-variant-numeric: tabular-nums;
+            }
+
+            .jmMergeCopy + .jmMergeCopy {
+                margin-top: 0.5em;
+            }
+
+            .jmMergeResult {
+                margin: 1em 0 0.75em;
+            }
+
+            .jmMergeResult.jmMergeHint {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmMergeCase .emby-button:disabled {
+                opacity: 0.45;
+                cursor: default;
+            }
+
+            .jmMergeDate {
+                margin: 0 0 0.5em;
+            }
+
+            .jmMergeUnused {
+                margin-top: 0.5em;
+            }
+
+            .jmMerge .emby-button {
+                margin-top: 0.75em;
+            }
         </style>
         <div data-role="content">
             <div class="content-primary">
@@ -881,17 +946,27 @@
                     updateRows(el('#jmPeers'), rows);
                 }
 
-                function describeCopy(copy) {
-                    var parts = [copy.Copy.Title || 'Untitled'];
-                    if (copy.Copy.Year) {
-                        parts[0] += ' (' + copy.Copy.Year + ')';
-                    }
+                var mergeDetails = 0;
 
+                function copyTitle(copy) {
+                    return (copy.Copy.Title || 'Untitled') + (copy.Copy.Year ? ' (' + copy.Copy.Year + ')' : '');
+                }
+
+                function copyPlace(copy) {
+                    return copy.Copy.IsLocal ? 'this server' : (copy.ServerName || 'a server no longer configured');
+                }
+
+                // Describes a copy. The title and the server are left out where a checkbox already names them.
+                function describeCopy(copy, named) {
+                    var parts = named ? [copyTitle(copy)] : [];
                     if (copy.RunTimeTicks) {
                         parts.push(Math.round(copy.RunTimeTicks / ticksPerMinute) + ' min');
                     }
 
-                    parts.push(copy.Copy.IsLocal ? 'this server' : (copy.ServerName || 'a server no longer configured'));
+                    if (named) {
+                        parts.push(copyPlace(copy));
+                    }
+
                     if (copy.Copy.Tmdb) {
                         parts.push('TMDb ' + copy.Copy.Tmdb);
                     }
@@ -907,62 +982,214 @@
                     return parts.join(' - ');
                 }
 
-                function renderMergeTitle(title, boxes) {
-                    var label = create('label');
-                    label.style.display = 'block';
-                    label.style.marginBottom = '0.5em';
-                    var box = create('input');
-                    box.type = 'checkbox';
-                    box.value = title.WorkKey;
-                    boxes.push(box);
-                    label.appendChild(box);
-                    label.appendChild(document.createTextNode(title.MergeIds.length > 0 ? ' Already merged:' : ''));
-                    title.Copies.forEach(function (copy) {
-                        var line = create('div', describeCopy(copy));
-                        line.style.marginLeft = '1.5em';
-                        label.appendChild(line);
-                    });
+                function formatBitRate(bitRate) {
+                    return bitRate < 1000000 ? Math.round(bitRate / 1000) + ' kbit/s' : (bitRate / 1000000).toFixed(1) + ' Mbit/s';
+                }
 
-                    return label;
+                function describeQuality(quality) {
+                    if (!quality.Height && !quality.IsRangeKnown && !quality.BitRate && !quality.Codec) {
+                        return 'Quality unknown';
+                    }
+
+                    return [
+                        quality.Height ? quality.Height + 'p' : 'resolution unknown',
+                        quality.IsRangeKnown ? (quality.IsHdr ? 'HDR' : 'SDR') : 'HDR unknown',
+                        quality.BitRate ? formatBitRate(quality.BitRate) : 'bitrate unknown',
+                        quality.Codec ? quality.Codec.toUpperCase() : 'codec unknown'
+                    ].join(' - ');
+                }
+
+                // Gives one line per version, best first.
+                function qualityLines(copy) {
+                    if (copy.Versions.length === 0) {
+                        return [copy.Copy.IsLocal && copy.IsFound ? 'Quality not read: a local copy plays whatever its quality.' : 'Quality unknown'];
+                    }
+
+                    return copy.Versions.map(function (version, index) {
+                        var line = describeQuality(version.Quality);
+                        if (copy.Versions.length === 1) {
+                            return line;
+                        }
+
+                        return (index === 0 ? 'Best version: ' : 'Other version: ') + line;
+                    });
+                }
+
+                function renderCopy(copy, named) {
+                    var line = create('div');
+                    line.className = 'jmMergeCopy';
+                    var text = describeCopy(copy, named);
+                    if (text) {
+                        line.appendChild(create('div', text));
+                    }
+
+                    qualityLines(copy).forEach(function (quality) {
+                        var node = create('div', quality);
+                        node.className = 'jmMergeQuality';
+                        line.appendChild(node);
+                    });
+                    return line;
+                }
+
+                function titleName(title) {
+                    var first = title.Copies[0];
+                    var more = title.Copies.length - 1;
+                    return copyTitle(first) + ', ' + copyPlace(first) + (more > 0 ? ' and ' + more + ' more' : '');
+                }
+
+                // A kept row gets new text and keeps its checkbox, so a refresh leaves the selection and the focus alone.
+                function renderMergeTitle(title, changed) {
+                    var row = create('div');
+                    row.className = 'jmMergeTitle';
+                    row.innerHTML = '<label class="emby-checkbox-label"><input type="checkbox" is="emby-checkbox" /><span></span></label>';
+                    var name = row.querySelector('span');
+                    var details = create('div');
+                    details.className = 'jmMergeDetails';
+                    details.id = 'jmMergeDetails' + (++mergeDetails);
+                    row.appendChild(details);
+                    var box = row.querySelector('input');
+                    box.value = title.WorkKey;
+                    box.setAttribute('aria-describedby', details.id);
+                    box.addEventListener('change', changed);
+                    row.jmBox = box;
+                    row.jmUpdate = function (current) {
+                        row.jmTitle = current;
+                        setText(name, titleName(current));
+                        details.textContent = '';
+                        if (current.MergeIds.length > 0) {
+                            details.appendChild(create('div', 'Already merged:'));
+                        }
+
+                        current.Copies.forEach(function (copy) {
+                            details.appendChild(renderCopy(copy, current.Copies.length > 1));
+                        });
+                    };
+                    row.jmUpdate(title);
+                    return row;
+                }
+
+                function describeForecast(forecast) {
+                    if (!forecast.Copy) {
+                        return 'Which copy would play cannot be known: no copy has any quality data.';
+                    }
+
+                    var name = copyTitle(forecast.Copy) + ' on ' + copyPlace(forecast.Copy);
+                    if (forecast.Copy.Copy.IsLocal) {
+                        return 'If merged, ' + name + ' plays, because a local copy always wins.';
+                    }
+
+                    if (!forecast.IsCertain) {
+                        return 'Which copy would play cannot be known for sure, because some quality values are unknown. As the catalog stands, ' + name + ' would be chosen.';
+                    }
+
+                    return 'If merged, ' + name + ' plays: ' + describeQuality(forecast.Version.Quality) + '. The others stay as backups.';
                 }
 
                 function renderMergeCase(group) {
                     var row = create('div');
                     row.className = 'jmMergeCase';
-                    row.style.marginBottom = '1.5em';
-                    row.appendChild(create('p', mergeReasons[group.Kind] || group.Kind));
+                    var reason = create('p');
+                    reason.className = 'jmMergeReason';
+                    row.appendChild(reason);
+                    var titles = create('div');
+                    row.appendChild(titles);
+                    var result = create('p');
+                    result.className = 'jmMergeResult';
+                    result.setAttribute('role', 'status');
+                    row.appendChild(result);
+                    var ticket = 0;
 
-                    var boxes = [];
-                    group.Titles.forEach(function (title) {
-                        row.appendChild(renderMergeTitle(title, boxes));
-                    });
-
-                    row.appendChild(button('Merge selected', function () {
-                        var keys = boxes.filter(function (box) {
-                            return box.checked;
-                        }).map(function (box) {
-                            return box.value;
+                    function selected() {
+                        return Array.prototype.filter.call(titles.children, function (title) {
+                            return title.jmBox.checked;
                         });
-                        act(api('POST', 'Merges', { WorkKeys: keys }).then(function () {
+                    }
+
+                    function keys() {
+                        return selected().map(function (title) {
+                            return title.jmBox.value;
+                        });
+                    }
+
+                    function showResult(text, isHint) {
+                        setText(result, text);
+                        result.classList.toggle('jmMergeHint', isHint);
+                    }
+
+                    // Mirrors the checks of the server, and asks it what would play: the comparison lives there alone.
+                    function selectionChanged() {
+                        var chosen = selected();
+                        var locals = chosen.filter(function (title) {
+                            return title.jmTitle.HasLocalCopy;
+                        });
+                        var hint = '';
+                        if (chosen.length < 2) {
+                            hint = 'Select at least two titles to merge them.';
+                        } else if (locals.length > 1) {
+                            hint = 'Select at most one title with a local copy: two local films cannot be merged.';
+                        }
+
+                        merge.disabled = hint !== '';
+                        var current = ++ticket;
+                        if (hint) {
+                            showResult(hint, true);
+                            return;
+                        }
+
+                        showResult('Checking which copy would play.', true);
+                        api('POST', 'Merges/Preview', { WorkKeys: keys() }, AbortSignal.timeout(readTimeoutMilliseconds)).then(function (forecast) {
+                            if (current === ticket) {
+                                showResult(describeForecast(forecast), false);
+                            }
+                        }).catch(function (error) {
+                            if (current === ticket) {
+                                showResult('Could not tell which copy would play. ' + error.message, false);
+                            }
+                        });
+                    }
+
+                    var merge = button('Merge selected', function () {
+                        act(api('POST', 'Merges', { WorkKeys: keys() }).then(function () {
                             showMessage('Merged. The film list changes after the library scan that was queued.');
                             return loadMerges();
                         }));
-                    }));
+                    });
+                    row.appendChild(merge);
+                    row.jmUpdate = function (current) {
+                        setText(reason, mergeReasons[current.Kind] || current.Kind);
+                        updateRows(titles, current.Titles.map(function (title) {
+                            return { key: title.WorkKey, build: renderMergeTitle, args: [title, selectionChanged] };
+                        }));
+                        selectionChanged();
+                    };
+                    row.jmUpdate(group);
                     return row;
                 }
 
                 function renderMerge(merge) {
                     var row = create('div');
                     row.className = 'jmMerge';
-                    row.style.marginBottom = '1em';
-                    merge.Copies.forEach(function (copy) {
-                        row.appendChild(create('div', describeCopy(copy)));
-                    });
+                    var details = create('div');
+                    row.appendChild(details);
+                    row.jmUpdate = function (current) {
+                        details.textContent = '';
+                        var date = create('p', 'Merged on ');
+                        date.className = 'jmMergeDate';
+                        var time = create('time', formatDate(current.CreatedUtc));
+                        time.setAttribute('datetime', current.CreatedUtc);
+                        date.appendChild(time);
+                        details.appendChild(date);
+                        current.Copies.forEach(function (copy) {
+                            details.appendChild(renderCopy(copy, true));
+                        });
 
-                    if (!merge.IsInEffect) {
-                        row.appendChild(create('div', 'Not in effect: a copy is missing, or the IDs already make these one film.'));
-                    }
-
+                        if (!current.IsInEffect) {
+                            var unused = create('div', 'Not in effect: a copy is missing, or the IDs already make these one film.');
+                            unused.className = 'jmMergeUnused';
+                            details.appendChild(unused);
+                        }
+                    };
+                    row.jmUpdate(merge);
                     row.appendChild(button('Undo merge', function () {
                         confirmAction('Undo this merge?', [
                             'These copies become separate titles again after the library scan that follows.',
@@ -982,8 +1209,9 @@
                     warning.textContent = list.IsStoreDamaged ? 'The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.' : '';
                     warning.hidden = !list.IsStoreDamaged;
 
+                    // Keys a case by its first title and a merge by its ID, which stay while their data changes.
                     var cases = list.Cases.map(function (group) {
-                        return { key: JSON.stringify(group), build: renderMergeCase, args: [group] };
+                        return { key: group.Titles[0].WorkKey, build: renderMergeCase, args: [group] };
                     });
                     if (list.Cases.length === 0) {
                         cases.push({ key: 'none', build: create, args: ['p', 'No doubtful films.'] });
@@ -992,7 +1220,7 @@
                     updateRows(el('#jmMergeCases'), cases);
 
                     var merges = list.Merges.map(function (merge) {
-                        return { key: JSON.stringify(merge), build: renderMerge, args: [merge] };
+                        return { key: merge.Id, build: renderMerge, args: [merge] };
                     });
                     if (list.Merges.length === 0) {
                         merges.push({ key: 'none', build: create, args: ['p', 'Nothing merged.'] });

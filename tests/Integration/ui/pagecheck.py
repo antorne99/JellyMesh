@@ -2,6 +2,7 @@
 
 Usage: pagecheck.py <scenario>...   Run it through check.sh, which puts the servers in the state each one expects.
 """
+import json
 import re
 import sys
 
@@ -42,6 +43,18 @@ def healthy(page, name):
     check(name + " has no script error", not page.errors, page.errors)
     sizes = page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
     check(name + " does not scroll sideways", sizes[0] <= sizes[1], sizes)
+
+
+def refused_merge(page, case):
+    """Selects two titles and lets only one reach the server, which refuses what the page would not send."""
+    def one_title(route):
+        body = json.loads(route.request.post_data)
+        route.continue_(post_data=json.dumps({"WorkKeys": body["WorkKeys"][:1]}))
+
+    page.route("**/JellyMesh/Admin/Merges", one_title)
+    for box in case.locator(u.CHECKBOX).all():
+        u.tick(box)
+    u.button(case, "merge").click()
 
 
 def settings_match(page, server, name):
@@ -172,9 +185,9 @@ def errors(s, width):
 
     u.clear_message(page)
     case = u.merge_case(page, PAIR)
-    case.locator(u.CHECKBOX).first.check()
-    u.button(case, "merge").click()
+    refused_merge(page, case)
     shown = u.wait_message(page)
+    page.unroute("**/JellyMesh/Admin/Merges")
     check(name + " one title cannot be merged", "at least two" in shown, shown)
     check(name + " nothing was merged", u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]["Merges"] == [])
     u.shot(page, f"error-merge-{width}")
@@ -199,6 +212,7 @@ def keyboard(s, width):
     """Every main action can be reached with Tab, in order, and used from the keyboard."""
     name = width + " keyboard"
     page = s.open("fresh", width)
+    pair = u.merge_case(page, PAIR)
     reached = []
     for _ in range(400):
         page.keyboard.press("Tab")
@@ -208,6 +222,8 @@ def keyboard(s, width):
             break
         if focus is not None:
             reached.append(focus)
+        if focus == "checkbox" and u.has_focus(pair):
+            page.keyboard.press("Space")
 
     for action in [u.BUTTON["test"], u.BUTTON["libraries"], u.BUTTON["remove"], u.BUTTON["merge"], u.BUTTON["connect"], u.BUTTON["save"],
                    u.SYNC_NOW[1:], u.ADD_SUBMIT[1:], u.SYNC_INTERVAL[1:], u.ADD_FIELDS["name"][1:], u.METADATA_PROTECTION[1:]]:
@@ -220,7 +236,7 @@ def keyboard(s, width):
     page.keyboard.press("Enter")
     page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
     check(name + " Enter opens the libraries", u.server_row(page, "stock").locator(u.CHECKBOX).count() == 2)
-    box = u.merge_case(page, PAIR).locator(u.CHECKBOX).first
+    box = u.merge_case(page, CHAIN).locator(u.CHECKBOX).first
     box.focus()
     page.keyboard.press("Space")
     check(name + " Space selects a title", box.is_checked())
@@ -297,7 +313,7 @@ def actions(s, width):
     u.clear_message(page)
     case = u.merge_case(page, PAIR)
     for box in case.locator(u.CHECKBOX).all():
-        box.check()
+        u.tick(box)
     u.button(case, "merge").click()
     page.wait_for_selector(u.MERGE, state="attached", timeout=30000)
     check(name + " a merge is listed", PAIR in page.locator(u.MERGE).inner_text())
@@ -430,10 +446,10 @@ def edits(s, width):
     u.wait_message(page)
 
     other = u.merge_case(page, CHAIN).locator(u.CHECKBOX).first
-    other.check()
+    u.tick(other)
     case = u.merge_case(page, PAIR)
     for box in case.locator(u.CHECKBOX).all():
-        box.check()
+        u.tick(box)
     merge = u.button(case, "merge")
     u.clear_message(page)
     merge.focus()
@@ -668,10 +684,9 @@ def outcomes_shown(page, name):
         "node => node.getAttribute('role') === 'status' && getComputedStyle(node).display !== 'none' && !node.closest('[hidden]')"))
     check(name + " shows no outcome yet", u.message(page) == "" and not page.locator(u.DISMISS).is_visible())
 
-    case = u.merge_case(page, PAIR)
-    case.locator(u.CHECKBOX).first.check()
-    u.button(case, "merge").click()
+    refused_merge(page, u.merge_case(page, PAIR))
     outcome(page, name + " a refused merge", "Error", "at least two")
+    page.unroute("**/JellyMesh/Admin/Merges")
     error = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
     u.button(u.server_row(page, "stock"), "libraries").click()
     u.wait_idle(page)
@@ -696,7 +711,7 @@ def outcomes_shown(page, name):
     page.route("**/JellyMesh/Admin/Merges", lambda route: route.fulfill(status=200, json={}) if route.request.method == "POST" else route.continue_())
     case = u.merge_case(page, PAIR)
     for box in case.locator(u.CHECKBOX).all():
-        box.check()
+        u.tick(box)
     u.button(case, "merge").click()
     outcome(page, name + " a merge", "Done", "Merged")
     page.unroute("**/JellyMesh/Admin/Merges")
@@ -952,6 +967,238 @@ def confirm_keyboard(s, width):
     page.context.close()
 
 
+def select(case, count):
+    """Selects the first titles of a group and leaves the others clear."""
+    for index, box in enumerate(case.locator(u.CHECKBOX).all()):
+        u.tick(box, index < count)
+
+
+def result(case):
+    """Returns the line under a group once the server has answered it."""
+    node = case.locator(u.MERGE_RESULT)
+    until(case.page, lambda: "Checking" not in node.inner_text(), 10)
+    return node.inner_text()
+
+
+def titles_of(data, name):
+    """Returns the titles of the group that holds a film, in an answer of the merge list."""
+    return next(group for group in data["Cases"] if name in str(group))["Titles"]
+
+
+def merge_markup(page, name):
+    """The markup of a title: a real emby-checkbox on the line of its short name, with the details outside the label."""
+    case = u.merge_case(page, PAIR)
+    seen = case.locator(u.MERGE_TITLE).first.evaluate("""row => {
+      const label = row.querySelector('label');
+      const box = label.querySelector('input');
+      const details = document.getElementById(box.getAttribute('aria-describedby'));
+      const nameBox = label.querySelector('.checkboxLabel').getBoundingClientRect();
+      const outline = label.querySelector('.checkboxOutline').getBoundingClientRect();
+      return {upgraded: box.classList.contains('emby-checkbox') && box.dataset.embycheckbox === 'true',
+        blocks: label.querySelectorAll(':not(input, span)').length,
+        outside: !!details && !label.contains(details), described: details ? details.textContent : '',
+        level: outline.top < nameBox.bottom && nameBox.top < outline.bottom, right: nameBox.left >= outline.right - 1};
+    }""")
+    check(name + " the checkbox is an emby-checkbox", seen["upgraded"], seen)
+    check(name + " the label holds no block element", seen["blocks"] == 0, seen)
+    check(name + " the details are outside the label", seen["outside"], seen)
+    check(name + " the details describe the checkbox", "min" in seen["described"], seen)
+    check(name + " the checkbox is on the line of its name", seen["level"] and seen["right"], seen)
+
+    data = u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
+    copies = [title["Copies"][0] for title in titles_of(data, PAIR)]
+    for copy in copies:
+        box = page.get_by_role("checkbox", name=f"{PAIR} (2026), {copy['ServerName']}", exact=True)
+        check(f"{name} the name of {copy['ServerName']} is short and whole", box.count() == 1, copy["ServerName"])
+
+    shown = case.inner_text()
+    for copy in copies:
+        quality = copy["Versions"][0]["Quality"]
+        for value in [f"{quality['Height']}p", "HDR" if quality["IsHdr"] else "SDR", "Mbit/s" if quality["BitRate"] >= 1000000 else "kbit/s", quality["Codec"].upper()]:
+            check(f"{name} shows {value} of {copy['ServerName']}", value in shown, shown)
+
+
+def merge_unknown(s, width, name):
+    """Missing values stay unknown, several versions are all shown, and remote text stays text."""
+    def change(data):
+        titles = titles_of(data, PAIR)
+        titles[0]["Copies"][0]["Versions"] = [
+            {"MediaSourceId": "best", "Quality": {"Height": 2160, "IsHdr": True, "IsRangeKnown": True, "BitRate": 800000, "Codec": HOSTILE}},
+            {"MediaSourceId": "low", "Quality": {"Height": None, "IsHdr": False, "IsRangeKnown": False, "BitRate": None, "Codec": None}},
+        ]
+        titles[1]["Copies"][0]["Versions"] = [
+            {"MediaSourceId": "gone", "Quality": {"Height": 1080, "IsHdr": False, "IsRangeKnown": False, "BitRate": None, "Codec": None}}]
+        titles[1]["Copies"].append({**titles[1]["Copies"][0], "Copy": {**titles[1]["Copies"][0]["Copy"], "IsLocal": True, "ItemId": "here"}, "Versions": []})
+
+    page = s.open("fresh", width, route=lambda context: context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, change)))
+    shown = u.merge_case(page, PAIR).inner_text()
+    check(name + " shows the best version first", "Best version: 2160p - HDR - 800 kbit/s" in shown, shown)
+    check(name + " shows the other version", "Other version: Quality unknown" in shown, shown)
+    check(name + " says what is unknown one by one", "1080p - HDR unknown - bitrate unknown - codec unknown" in shown, shown)
+    check(name + " says a local copy has no quality read", "Quality not read" in shown, shown)
+    check(name + " shows several copies in the name", " and 1 more" in text(page, u.MERGE_NAME + " >> nth=1"), shown)
+    check(name + " keeps remote text as text", HOSTILE.upper() in shown and page.locator(u.MERGE_CASES + " b").count() == 0, shown)
+    healthy(page, name)
+    u.shot(page, f"merge-unknown-{width}")
+    page.context.close()
+
+
+def answer_list(route, change):
+    """Rewrites the merge list and passes every other request on."""
+    if route.request.method != "GET":
+        route.continue_()
+        return
+    response = route.fetch()
+    data = response.json()
+    change(data)
+    route.fulfill(response=response, json=data)
+
+
+def merge_selection(page, name):
+    """The button follows the rules of the server, and the line under it says why or what would play."""
+    case = u.merge_case(page, PAIR)
+    merge = u.button(case, "merge")
+    check(name + " nothing selected cannot merge", merge.is_disabled())
+    check(name + " nothing selected says what is needed", "at least two" in result(case), result(case))
+    select(case, 1)
+    check(name + " one title cannot merge", merge.is_disabled())
+    check(name + " one title says what is needed", "at least two" in result(case), result(case))
+    posts = []
+    page.on("request", lambda request: posts.append(request.url) if request.method == "POST" and "/Merges" in request.url else None)
+    faded = merge.evaluate("node => getComputedStyle(node).opacity")
+    select(case, 2)
+    check(name + " two titles can merge", merge.is_enabled())
+    solid = until(page, lambda: float(merge.evaluate("node => getComputedStyle(node).opacity")) == 1, 3)
+    check(name + " a button that cannot merge looks it", float(faded) < 1 and solid, faded)
+
+    data = u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
+    keys = [title["WorkKey"] for title in titles_of(data, PAIR)]
+    forecast = u.api("fresh", "POST", "/JellyMesh/Admin/Merges/Preview", {"WorkKeys": keys})[1]
+    said = result(case)
+    check(name + " the server has a winner", forecast["Copy"]["ServerName"] == "peer" and forecast["IsCertain"], forecast)
+    check(name + " says what would play", f"on {forecast['Copy']['ServerName']} plays" in said and f"{forecast['Version']['Quality']['Height']}p" in said, said)
+    check(name + " says the others stay as backups", "backups" in said, said)
+    check(name + " the line is a status region", case.locator(u.MERGE_RESULT).get_attribute("role") == "status")
+    check(name + " asks only for a preview", posts and all(url.endswith("/Merges/Preview") for url in posts), posts)
+    check(name + " nothing was merged by asking", u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]["Merges"] == [])
+    select(case, 0)
+
+
+def merge_forecasts(s, width, name):
+    """Every answer about what would play, and two local titles."""
+    def two_local(data):
+        for title in titles_of(data, PAIR):
+            title["HasLocalCopy"] = True
+
+    page = s.open("fresh", width, route=lambda context: context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, two_local)))
+    case = u.merge_case(page, PAIR)
+    select(case, 2)
+    check(name + " two local titles cannot merge", u.button(case, "merge").is_disabled())
+    check(name + " two local titles say why", "two local films" in result(case), result(case))
+    page.context.close()
+
+    page = s.open("fresh", width)
+    case = u.merge_case(page, PAIR)
+    copy = titles_of(u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1], PAIR)[0]["Copies"][0]
+    local = {**copy, "Copy": {**copy["Copy"], "IsLocal": True}, "Versions": []}
+    answers = [
+        ({"Copy": local, "Version": None, "IsCertain": True}, 200, "local copy always wins"),
+        ({"Copy": copy, "Version": copy["Versions"][0], "IsCertain": False}, 200, "cannot be known for sure"),
+        ({"Copy": None, "Version": None, "IsCertain": False}, 200, "cannot be known"),
+        ({"Message": "The list changed. Check it again, then merge."}, 409, "The list changed"),
+    ]
+    for answer, status, says in answers:
+        page.route("**/JellyMesh/Admin/Merges/Preview", lambda route: route.fulfill(status=status, json=answer))
+        select(case, 0)
+        select(case, 2)
+        check(f"{name} says '{says}'", says in result(case), result(case))
+        page.unroute("**/JellyMesh/Admin/Merges/Preview")
+
+    hold = []
+    page.route("**/JellyMesh/Admin/Merges/Preview", lambda route: hold.append(route))
+    select(case, 0)
+    select(case, 2)
+    until(page, lambda: hold)
+    select(case, 1)
+    hold.pop().fulfill(status=200, json={"Copy": None, "Version": None, "IsCertain": False})
+    page.wait_for_timeout(300)
+    check(name + " a late answer does not replace the current one", "at least two" in result(case), result(case))
+    healthy(page, name)
+    u.shot(page, f"merge-forecast-{width}")
+    page.context.close()
+
+
+def merge_refresh(s, width, name):
+    """New data reaches a kept row, which keeps its selection, its focus and its answer."""
+    state = {"bitrate": None}
+
+    def change(data):
+        if state["bitrate"]:
+            titles_of(data, PAIR)[0]["Copies"][0]["Versions"][0]["Quality"]["BitRate"] = state["bitrate"]
+
+    page = s.open("fresh", width, route=lambda context: context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, change)))
+    case = u.merge_case(page, PAIR)
+    box = case.locator(u.CHECKBOX).first
+    last = case.locator(u.CHECKBOX).last
+    select(case, 1)
+    u.mark(box)
+    last.focus()
+    state["bitrate"] = 123456789
+    u.refresh_merges(page)
+    check(name + " shows the new data", until(page, lambda: "123.5 Mbit/s" in case.inner_text()), case.inner_text())
+    check(name + " keeps the row", u.is_marked(box))
+    check(name + " keeps the selection", box.is_checked() and not last.is_checked())
+    check(name + " keeps the focus", last.evaluate("node => node === document.activeElement"))
+    check(name + " keeps the rule of the button", u.button(case, "merge").is_disabled())
+    page.keyboard.press("Space")
+    check(name + " the focused box still works", last.is_checked())
+    check(name + " the button follows", u.button(case, "merge").is_enabled())
+    healthy(page, name)
+    page.context.close()
+
+
+def merge_dates(s, width, name):
+    """A merge shows its date, its quality and why it is not in effect."""
+    merges = lambda: u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
+    keys = [title["WorkKey"] for title in titles_of(merges(), PAIR)]
+    u.api("fresh", "POST", "/JellyMesh/Admin/Merges", {"WorkKeys": keys})
+    merge = merges()["Merges"][0]
+
+    def lapsed(data):
+        data["Merges"][0]["IsInEffect"] = False
+
+    try:
+        page = s.open("fresh", width, route=lambda context: context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, lapsed)))
+        row = page.locator(u.MERGE)
+        check(name + " has a date", row.locator(u.MERGE_TIME).get_attribute("datetime") == merge["CreatedUtc"], row.inner_text())
+        check(name + " says when", row.locator(u.MERGE_DATE).inner_text().startswith("Merged on ") and any(c.isdigit() for c in row.locator(u.MERGE_TIME).inner_text()), row.inner_text())
+        check(name + " shows the quality of its copies", "Mbit/s" in row.inner_text() or "kbit/s" in row.inner_text(), row.inner_text())
+        check(name + " explains that it is not in effect", "Not in effect: a copy is missing, or the IDs already make these one film." in row.inner_text(), row.inner_text())
+        u.shot(page, f"merge-date-{width}")
+        healthy(page, name)
+        page.context.close()
+    finally:
+        u.api("fresh", "DELETE", "/JellyMesh/Admin/Merges/" + merge["Id"])
+
+
+def merge_details(s, width):
+    """What the group of doubtful films says about quality, what would play, and when a merge can be made."""
+    name = width + " merge details"
+    page = s.open("fresh", width)
+    merge_markup(page, name)
+    merge_selection(page, name)
+    healthy(page, name)
+    select(u.merge_case(page, PAIR), 2)
+    result(u.merge_case(page, PAIR))
+    u.merge_case(page, PAIR).scroll_into_view_if_needed()
+    u.shot(page, f"merge-details-{width}")
+    page.context.close()
+    merge_unknown(s, width, name + " unknown values")
+    merge_forecasts(s, width, name + " forecast")
+    merge_refresh(s, width, name + " refresh")
+    merge_dates(s, width, name + " merged")
+
+
 SCENARIOS = {
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
@@ -971,6 +1218,7 @@ SCENARIOS = {
     "sections": (sections, ["1280"]),
     "outcomes": (outcomes, WIDTHS),
     "outcome-themes": (outcome_themes, WIDTHS),
+    "merge-details": (merge_details, WIDTHS),
 }
 
 with u.Session() as session:
