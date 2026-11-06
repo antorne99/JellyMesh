@@ -86,6 +86,10 @@ SAVE_BAR = "#jmSaveBar"
 VERSION = "#jmVersion"
 BANNER = "#jmBanner"
 ADD_PART = "#jmAddServerPart"
+ADD_BLOCKED = "#jmAddBlocked"
+LIBRARIES_NOTE = ".jmLibrariesNote"
+STEP_COMMAND = ".jmStepCommands .jmPath"
+STEP_AFTER = ".jmStepAfter"
 COMPARE_ROW = ".jmCompareRow"
 SYNC_INTERVAL = "#jmSyncInterval"
 FEDERATED_FOLDER = "#jmFederatedFolder"
@@ -264,8 +268,9 @@ class Session:
         self._browser.close()
         self._playwright.stop()
 
-    def open(self, server, viewport="1280", theme="dark", route=None, wait=True, tab=""):
-        """Opens the page, on a tab if named. route gets the Playwright context before the page loads, to fake or delay answers."""
+    def open(self, server, viewport="1280", theme="dark", route=None, wait=True, tab="", language=None):
+        """Opens the page, on a tab if named, in a Jellyfin display language if named.
+        route gets the Playwright context before the page loads, to fake or delay answers."""
         set_theme(server, theme)
         target = targets()[server]
         credentials = {"Servers": [{
@@ -276,6 +281,9 @@ class Session:
         context.add_init_script(
             "localStorage.setItem('jellyfin_credentials', " + json.dumps(json.dumps(credentials)) + ");"
             "localStorage.setItem('enableAutoLogin', 'true');")
+        if language:
+            context.add_init_script("localStorage.setItem(" + json.dumps(target["user"] + "-language") + ", " + json.dumps(language) + ");")
+
         if route:
             route(context)
 
