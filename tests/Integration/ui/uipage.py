@@ -25,6 +25,10 @@ FIELD_ERROR = ".jmFieldError"
 STATUS = "#jmStatus"
 SERVERS = "#jmServers"
 SERVER = ".jmServer"
+STATE = ".jmState"
+STATE_ICON = ".jmStateIcon"
+CAUSE = ".jmCause"
+FACT_VALUE = "dt:text-is('%s') + dd"
 SYNC_STATUS = "#jmSyncStatus"
 SYNC_SERVERS = "#jmSyncServers"
 SYNC_NOW = "#jmSyncNow"
@@ -92,10 +96,11 @@ BUTTON = {
     "save": "Save",
     "connect": "Connect",
 }
-READABLE = ", ".join(["h2, h3, h4, p, label, .fieldDescription", MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING])
+READABLE = ", ".join(["h2, h3, h4, p, label, dt, dd, .fieldDescription", STATE, MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING])
 FAILURE = {
     "status": "#jmStatusFailure",
     "sync": "#jmSyncFailure",
+    "servers-sync": "#jmServersSyncFailure",
     "peers": "#jmPeersFailure",
     "merges": "#jmMergesFailure",
     "settings": "#jmSettingsFailure",
@@ -264,6 +269,22 @@ def server_row(page, name):
 def peer_row(page, name):
     """Finds the row of a connected server."""
     return page.locator(PEERS + " > div").filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
+
+
+def state_of(row):
+    """Returns the state a server card writes out."""
+    return row.locator(STATE).inner_text()
+
+
+def cause_of(row):
+    """Returns what a server card says is wrong, or an empty text."""
+    node = row.locator(CAUSE)
+    return node.inner_text() if node.evaluate("node => !node.hidden") else ""
+
+
+def fact(row, name):
+    """Returns the value of a line on a card."""
+    return row.locator(FACT_VALUE % name).inner_text()
 
 
 def merge_case(page, title):

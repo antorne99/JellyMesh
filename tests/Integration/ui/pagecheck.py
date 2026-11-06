@@ -110,12 +110,14 @@ def normal(s, width):
     check(name + " has no warning", not page.locator(u.WARNING).is_visible())
     stock = u.server_row(page, "stock")
     peer = u.server_row(page, "peer")
-    check(name + " lists the stock remote as standard", "standard" in stock.inner_text() and "online" in stock.inner_text(), stock.inner_text())
-    check(name + " lists the peer as JellyMesh", "JellyMesh" in peer.inner_text() and "online" in peer.inner_text(), peer.inner_text())
+    check(name + " lists the stock remote as standard", u.fact(stock, "Mode") == "Standard Jellyfin server" and u.state_of(stock) == "Online", stock.inner_text())
+    check(name + " lists the peer as JellyMesh", u.fact(peer, "Mode") == "JellyMesh server" and u.state_of(peer) == "Online", peer.inner_text())
     sync = u.api("fresh", "GET", "/JellyMesh/Admin/Sync")[1]
     catalog = text(page, u.SYNC_SERVERS)
     for server in sync["Servers"]:
-        check(f"{name} counts the films of {server['ServerName']}", f"{server['ServerName']}: {server['Movies']} films" in catalog, catalog)
+        counted = u.fact(u.server_row(page, server["ServerName"]), "Catalog")
+        check(f"{name} counts the films of {server['ServerName']}", counted.startswith(f"{server['Movies']} films"), counted)
+        check(f"{name} says how the sync of {server['ServerName']} went", f"{server['ServerName']}: synced." in catalog, catalog)
     check(name + " can sync", page.locator(u.SYNC_NOW).is_enabled())
     check(name + " lists the pair", u.merge_case(page, PAIR).count() == 1)
     check(name + " lists the chain", u.merge_case(page, CHAIN).count() == 1)
@@ -371,10 +373,12 @@ def offline(s, width):
     name = width + " offline remote"
     page = s.open("fresh", width)
     stock = u.server_row(page, "stock")
-    check(name + " marks the remote", "offline" in stock.inner_text(), stock.inner_text())
-    check(name + " leaves the other online", "online" in u.server_row(page, "peer").inner_text())
+    check(name + " marks the remote", u.state_of(stock) == "Offline", u.state_of(stock))
+    check(name + " leaves the other online", u.state_of(u.server_row(page, "peer")) == "Online")
+    check(name + " keeps the count of the catalog", re.match(r"[1-9]\d* films", u.fact(stock, "Catalog")) is not None, u.fact(stock, "Catalog"))
+    check(name + " says the catalog is kept", "These entries are kept as they were" in u.cause_of(stock), u.cause_of(stock))
     lines = text(page, u.SYNC_SERVERS)
-    check(name + " says the catalog is kept", re.search(r"stock: [1-9]\d* films.*offline", lines, re.I | re.S) is not None, lines)
+    check(name + " says so in the catalog", "stock: offline, entries kept" in lines, lines)
     u.shot(page, f"offline-{width}")
     u.button(stock, "test").click()
     shown = u.wait_message(page)
@@ -453,7 +457,7 @@ def edits(s, width):
     u.button(stock, "save_libraries").click()
     u.wait_message(page)
     kept("saved libraries", "7")
-    check(name + " saved libraries update their row", "libraries to import: 1" in stock.inner_text(), stock.inner_text())
+    check(name + " saved libraries update their row", u.fact(stock, "Libraries to import") == "1", stock.inner_text())
     u.tick(stock.locator(u.CHECKBOX).first)
     u.clear_message(page)
     u.button(stock, "save_libraries").click()
@@ -593,8 +597,8 @@ def polling(s, width):
 
     fake(page, "Peers", lambda peers: peers[0].update(ActiveStreams=1))
     fake(page, "Status", lambda status: [server.update(Connection="Offline") for server in status["Servers"] if server["Name"] == "stock"])
-    check(name + " stream use stays current", until(page, lambda: "Streams in use: 1 of" in connected.inner_text(), 18), connected.inner_text())
-    check(name + " server state stays current", until(page, lambda: "offline" in stock.inner_text(), 18), stock.inner_text())
+    check(name + " stream use stays current", until(page, lambda: u.fact(connected, "Streams in use").startswith("1 of"), 18), connected.inner_text())
+    check(name + " server state stays current", until(page, lambda: u.state_of(stock) == "Offline", 18), stock.inner_text())
     check(name + " the rows were not rebuilt", u.is_marked(stock) and u.is_marked(connected))
     check(name + " the row being edited keeps its value", limit.input_value() == "6", limit.input_value())
     check(name + " the row being edited keeps the focus", u.has_focus(limit))
@@ -1831,8 +1835,8 @@ def tabs_visible_parts(s, width):
     stock = u.server_row(page, "stock")
     fake(page, "Peers", lambda peers: peers[0].update(ActiveStreams=1))
     fake(page, "Status", lambda status: [server.update(Connection="Offline") for server in status["Servers"] if server["Name"] == "stock"])
-    check(name + " a hidden section updates", until(page, lambda: "Streams in use: 1 of" in connected.inner_text(), 18), connected.inner_text())
-    check(name + " another hidden section updates", until(page, lambda: "offline" in stock.inner_text(), 18), stock.inner_text())
+    check(name + " a hidden section updates", until(page, lambda: u.fact(connected, "Streams in use").startswith("1 of"), 18), connected.inner_text())
+    check(name + " another hidden section updates", until(page, lambda: u.state_of(stock) == "Offline", 18), stock.inner_text())
     check(name + " updating leaves the tab alone", u.shown_tab(page) == "overview", u.shown_tab(page))
     page.unroute_all(behavior="ignoreErrors")
     u.close(page)
@@ -1903,6 +1907,293 @@ def tabs_field_error(s, width):
     page.context.close()
 
 
+def of_server(status, name):
+    """Returns a server from the answer of Status or Sync."""
+    return next(server for server in status["Servers"] if name in (server.get("Name"), server.get("ServerName")))
+
+
+def card_shows(page, name, server, report):
+    """Checks that a card holds what the backend said about a server."""
+    row = u.server_row(page, server["Name"])
+    check(name + " shows the URL", u.fact(row, "URL") == server["Url"], u.fact(row, "URL"))
+    check(name + " shows the libraries to import", u.fact(row, "Libraries to import") == str(len(server["ImportedLibraryIds"])), u.fact(row, "Libraries to import"))
+    counts = f"{report['Movies']} films, {report['Series']} series, {report['Episodes']} episodes"
+    check(name + " shows the counts", u.fact(row, "Catalog") == counts, u.fact(row, "Catalog"))
+    check(name + " shows the last complete sync", re.search(r"\d", u.fact(row, "Last complete sync")) is not None, u.fact(row, "Last complete sync"))
+    return row
+
+
+def state_is_written(page, name):
+    """Checks that each card writes its state out, with an icon the admin does not depend on and no raw enum name."""
+    for row in page.locator(u.SERVER).all():
+        state = u.state_of(row)
+        check(name + " writes out the state", state != "" and state[0].isupper() and re.search(r"[a-z][A-Z]", state) is None, state)
+        check(name + " hides the icon from a screen reader", row.locator(u.STATE_ICON).get_attribute("aria-hidden") == "true")
+
+
+def set_all(servers, **fields):
+    """Sets the same fields on every server in an answer."""
+    for server in servers:
+        server.update(fields)
+
+
+def cards_online(page, name):
+    """The cards of working servers, and the Catalog tab next to them."""
+    status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
+    sync = u.api("fresh", "GET", "/JellyMesh/Admin/Sync")[1]
+    for server, label in [("stock", "Standard Jellyfin server"), ("peer", "JellyMesh server")]:
+        row = card_shows(page, f"{name} {server}", of_server(status, server), of_server(sync, server))
+        check(f"{name} {server} says it is online", u.state_of(row) == "Online", u.state_of(row))
+        check(f"{name} {server} names the mode", u.fact(row, "Mode") == label, u.fact(row, "Mode"))
+        check(f"{name} {server} shows the last check", re.search(r"\d", u.fact(row, "Last check")) is not None, u.fact(row, "Last check"))
+        check(f"{name} {server} says nothing is wrong", u.cause_of(row) == "", u.cause_of(row))
+    state_is_written(page, name)
+    lines = text(page, u.SYNC_SERVERS)
+    check(name + " the catalog does not repeat the counts", "films" not in lines and "episodes" not in lines, lines)
+    check(name + " the catalog has one line per server", page.locator(u.SYNC_SERVERS + " > p").count() == 2, lines)
+    check(name + " the catalog keeps the sync", "Last sync: " in text(page, u.SYNC_STATUS) and page.locator(u.SYNC_NOW).count() == 1)
+    connected = u.peer_row(page, "jellymesh")
+    check(name + " the peer shows its streams", u.fact(connected, "Streams in use") == "0 of 4", u.fact(connected, "Streams in use"))
+    check(name + " the peer shows its libraries", u.fact(connected, "Shared libraries") == "2 of 2", u.fact(connected, "Shared libraries"))
+    check(name + " a new peer starts at the default limit", u.peer_row(page, u.NEW_PEER).locator(u.NUMBER).input_value() == "2")
+
+
+def cards_faults(s, width):
+    """A card names the cause and the next step of each failure, in place, and any text fits."""
+    name = width + " card faults"
+    page = s.open("fresh", width)
+    stock = u.server_row(page, "stock")
+    u.reveal(stock)
+
+    def fault(connection, failure=None, state="Stale", **fields):
+        """Answers the next reads as if the stock remote had this fault."""
+        page.unroute_all(behavior="ignoreErrors")
+        fake(page, "Status", lambda data: of_server(data, "stock").update(Connection=connection, **fields))
+        fake(page, "Sync", lambda data: of_server(data, "stock").update(State=state, Failure=failure))
+
+    def shows(label, state_text, *says):
+        check(f"{name} {label} is written", until(page, lambda: u.state_of(stock) == state_text, 22), u.state_of(stock))
+        cause = u.cause_of(stock)
+        check(f"{name} {label} says what to do", all(part in cause for part in says), cause)
+
+    fault("AuthenticationFailed", "AuthenticationFailed")
+    shows("login refused", "Login refused", "Last sync failed (login refused)", "kept as they were", "add it again with a working one")
+    u.shot(page, f"card-login-refused-{width}")
+
+    fault("NotChecked", "LibraryUnavailable")
+    shows("a sync failure after a restart", "A chosen library is gone", "Last sync failed (a chosen library is gone)", "Open Libraries")
+
+    fault("Online", "ServerError")
+    shows("a sync failure on a working connection", "Online, last sync failed", "Last sync failed (server error)", "log of that server")
+
+    fault("Offline", None, "Complete")
+    shows("a failed check after a good sync", "Offline", "tailnet")
+
+    fault("NewFailure", "AnotherNewFailure", Mode="NewMode")
+    shows("an unknown failure", "Unknown problem", "Last sync failed (unknown problem)", "Test the connection")
+    check(name + " an unknown failure shows no enum name", "NewFailure" not in stock.inner_text(), stock.inner_text())
+    check(name + " an unknown mode shows no enum name", u.fact(stock, "Mode") == "Mode not known yet", u.fact(stock, "Mode"))
+
+    long_url = "http://" + "a-very-long-host-name-without-any-place-to-break" * 3 + ".tailnet.ts.net:8096"
+    fault("Online", None, "Complete", Name=LONG_NAME, Url=long_url)
+    long_card = u.server_row(page, LONG_NAME)
+    check(name + " a long name updates in place", until(page, lambda: long_card.count() == 1, 22))
+    if long_card.count() == 1:
+        box = long_card.bounding_box()
+        check(name + " a long name stays on the screen", box["x"] + box["width"] <= u.VIEWPORTS[width]["width"], box)
+        url = long_card.locator(u.FACT_VALUE % "URL").bounding_box()
+        check(name + " a long URL stays in its card", url["x"] + url["width"] <= box["x"] + box["width"], [url, box])
+        u.button(long_card, "remove").evaluate("node => node.scrollIntoView()")
+    healthy(page, name)
+    u.shot(page, f"card-long-{width}")
+
+    fault("Online", None, "Complete", Name=HOSTILE)
+    hostile = u.server_row(page, HOSTILE)
+    check(name + " a name with markup stays text", until(page, lambda: hostile.count() == 1, 22) and hostile.locator("b").count() == 0)
+    healthy(page, name)
+    u.close(page)
+
+
+def cards_in_place(s, width):
+    """Polling updates a card without closing its Libraries panel or moving the focus."""
+    name = width + " cards in place"
+    page = s.open("fresh", width)
+    stock = u.server_row(page, "stock")
+    connected = u.peer_row(page, "jellymesh")
+    u.button(stock, "libraries").click()
+    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
+    u.tick(stock.locator(u.CHECKBOX).first, False)
+    box = stock.locator(u.CHECKBOX).last
+    box.focus()
+    u.mark(stock)
+    u.mark(box)
+
+    fake(page, "Sync", lambda data: of_server(data, "stock").update(Movies=321, IsOffline=True, State="Stale", Failure="Timeout"))
+    check(name + " sync data reaches the card", until(page, lambda: u.fact(stock, "Catalog").startswith("321 films"), 8), u.fact(stock, "Catalog"))
+    check(name + " the state follows the sync", u.state_of(stock) in ("Online, last sync failed", "Offline"), u.state_of(stock))
+    fake(page, "Status", lambda data: of_server(data, "stock").update(Connection="Offline"))
+    check(name + " the state follows the status", until(page, lambda: u.state_of(stock) == "Offline", 18), u.state_of(stock))
+    check(name + " the card is the same one", u.is_marked(stock))
+    check(name + " the panel stays open", stock.locator(u.CHECKBOX).count() == 2)
+    check(name + " the panel keeps its edit", stock.locator(u.CHECKBOX + ":checked").count() == 1)
+    check(name + " the panel box is the same one", u.is_marked(box))
+    check(name + " the focus stays", u.has_focus(box))
+
+    page.unroute("**/JellyMesh/Admin/Sync")
+    failing = {"on": True}
+    page.route("**/JellyMesh/Admin/Sync", lambda route: route.fulfill(status=500, json={}) if failing["on"] else route.continue_())
+    note = page.locator(u.FAILURE["servers-sync"])
+    check(name + " a failed sync read shows beside the cards", until(page, note.is_visible, 8))
+    check(name + " a failed sync read keeps the counts", u.fact(stock, "Catalog").startswith("321 films"), u.fact(stock, "Catalog"))
+    failing["on"] = False
+    check(name + " the note goes when the read works", until(page, lambda: not note.is_visible(), 8))
+    page.unroute_all(behavior="ignoreErrors")
+
+    u.mark(connected)
+    connected.locator(u.NUMBER).fill("6")
+    fake(page, "Peers", lambda peers: peers[0].update(UserName="renamed", ActiveStreams=3, SharedLibraryIds=peers[0]["SharedLibraryIds"][:1]))
+    renamed = u.peer_row(page, "renamed")
+    check(name + " a peer name updates", until(page, lambda: renamed.count() == 1, 18))
+    check(name + " the peer card is the same one", u.is_marked(renamed))
+    check(name + " peer streams update", u.fact(renamed, "Streams in use") == "3 of 4", u.fact(renamed, "Streams in use"))
+    check(name + " shared libraries update", u.fact(renamed, "Shared libraries") == "1 of 2", u.fact(renamed, "Shared libraries"))
+    check(name + " an unsaved limit stays", renamed.locator(u.NUMBER).input_value() == "6", renamed.locator(u.NUMBER).input_value())
+    page.unroute_all(behavior="ignoreErrors")
+    fake(page, "Peers", lambda peers: peers[0].update(UserName=""))
+    gone = u.peer_row(page, "A user no longer on this server")
+    check(name + " a peer without a user keeps a name", until(page, lambda: gone.count() == 1, 18))
+    healthy(page, name)
+    u.close(page)
+
+
+def cards_empty(s, width):
+    """A card that the sync has not reported on yet, and a date that a restart would lose."""
+    name = width + " cards without sync data"
+    held = []
+
+    def hold(context):
+        context.route("**/JellyMesh/Admin/Sync", lambda route: held.append(route))
+
+    page = s.open("fresh", width, route=hold, wait=False)
+    page.wait_for_selector(u.SERVER, state="attached", timeout=30000)
+    stock = u.server_row(page, "stock")
+    check(name + " has its card", stock.count() == 1)
+    check(name + " says the catalog is not read yet", u.fact(stock, "Catalog") == "Not read yet", u.fact(stock, "Catalog"))
+    until(page, lambda: held)
+    for route in held:
+        route.continue_()
+    page.unroute_all(behavior="ignoreErrors")
+    page.context.unroute_all(behavior="ignoreErrors")
+    check(name + " fills in when the sync answers", until(page, lambda: "films" in u.fact(stock, "Catalog"), 10), u.fact(stock, "Catalog"))
+    u.close(page)
+
+    name = width + " sync state lost at a restart"
+
+    def lost(context):
+        fake(context, "Sync", lambda data: data.update(LastFinishedUtc=None))
+
+    page = s.open("fresh", width, route=lost)
+    line = text(page, u.SYNC_STATUS)
+    check(name + " shows a real date", "never" not in line and re.search(r"\d", line) is not None, line)
+    u.close(page)
+
+
+def cards(s, width):
+    """The cards of the Servers and Sharing tabs with every server working, in both themes."""
+    for theme in ["dark", "light"]:
+        name = f"{width} {theme} cards"
+        page = s.open("fresh", width, theme=theme)
+        cards_online(page, name)
+        u.button(u.server_row(page, "stock"), "libraries").click()
+        page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
+        healthy(page, name)
+        u.show_tab(page, "servers")
+        u.shot(page, f"cards-servers-{theme}-{width}")
+        u.show_tab(page, "sharing")
+        u.shot(page, f"cards-sharing-{theme}-{width}")
+        u.show_tab(page, "catalog")
+        u.shot(page, f"cards-catalog-{theme}-{width}")
+        page.context.close()
+    u.set_theme("fresh", "dark")
+    cards_faults(s, width)
+    cards_empty(s, width)
+
+
+def cards_all_themes(s, width):
+    """The text of a card that shows a fault is readable in every theme."""
+    for theme, _ in THEMES:
+        name = f"{width} {theme} cards"
+
+        def login_refused(context):
+            fake(context, "Status", lambda data: of_server(data, "stock").update(Connection="AuthenticationFailed"))
+
+        page = s.open("fresh", width, theme=theme, route=login_refused)
+        readable(page, name, ", ".join([u.SERVER + " " + part for part in ("h4", "dt", "dd", u.STATE, u.CAUSE)]))
+        readable(page, name + " peers", ", ".join([u.PEERS + " " + part for part in ("h4", "dt", "dd")]))
+        u.close(page)
+    u.set_theme("fresh", "dark")
+
+
+def cards_offline(s, width):
+    """The cards with the stock remote really stopped."""
+    name = width + " cards offline"
+    page = s.open("fresh", width)
+    status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
+    sync = u.api("fresh", "GET", "/JellyMesh/Admin/Sync")[1]
+    stock = card_shows(page, name, of_server(status, "stock"), of_server(sync, "stock"))
+    cause = u.cause_of(stock)
+    check(name + " says offline", u.state_of(stock) == "Offline", u.state_of(stock))
+    for part in ["could not reach it", "kept as they were", "full read runs when it answers again", "tailnet"]:
+        check(f"{name} says {part}", part in cause, cause)
+    check(name + " has no capitals", "OFFLINE" not in page.locator(u.PAGE).inner_text())
+    state_is_written(page, name)
+    lines = text(page, u.SYNC_SERVERS)
+    check(name + " the catalog points to the card", "stock: offline, entries kept. See the Servers tab." in lines, lines)
+    check(name + " the catalog leaves the other alone", "peer: synced." in lines, lines)
+    u.show_tab(page, "servers")
+    healthy(page, name)
+    u.shot(page, f"cards-offline-{width}")
+    page.context.close()
+
+
+def cards_nokey(s, width):
+    """The cards with the secret key really gone, which is also a restart."""
+    name = width + " cards without a key"
+    page = s.open("fresh", width)
+    for server in ["stock", "peer"]:
+        row = u.server_row(page, server)
+        check(f"{name} {server} is suspended", u.state_of(row) == "Suspended", u.state_of(row))
+        check(f"{name} {server} says why", "until the secret key is fixed" in u.cause_of(row), u.cause_of(row))
+        check(f"{name} {server} keeps the counts", "films" in u.fact(row, "Catalog"), u.fact(row, "Catalog"))
+        check(f"{name} {server} can still be removed", u.button(row, "remove").is_enabled())
+    check(name + " is never not checked", "Not checked yet" not in text(page, u.SERVERS), text(page, u.SERVERS))
+    lines = text(page, u.SYNC_SERVERS)
+    check(name + " the catalog says so", "stock: suspended." in lines and "peer: suspended." in lines, lines)
+    line = text(page, u.SYNC_STATUS)
+    check(name + " the last sync has a real date", "never" not in line, line)
+    u.show_tab(page, "servers")
+    healthy(page, name)
+    u.shot(page, f"cards-nokey-{width}")
+    page.context.close()
+
+
+def cards_restart(s, width):
+    """A server just restarted: the run state is gone, and the dates of each server are not."""
+    name = width + " cards after a restart"
+    sync = u.api("fresh", "GET", "/JellyMesh/Admin/Sync")[1]
+    check(name + " starts with no run state", sync.get("LastFinishedUtc") is None, sync.get("LastFinishedUtc"))
+    check(name + " starts with real dates", all(server.get("LastSuccessUtc") for server in sync["Servers"]), sync["Servers"])
+    page = s.open("fresh", width)
+    line = text(page, u.SYNC_STATUS)
+    check(name + " the last sync has a real date", "never" not in line and re.search(r"\d", line) is not None, line)
+    stock = u.server_row(page, "stock")
+    check(name + " says it was not checked", u.state_of(stock) == "Not checked yet", u.state_of(stock))
+    check(name + " says when the check was", u.fact(stock, "Last check") == "Not since this server started", u.fact(stock, "Last check"))
+    check(name + " shows the complete sync", re.search(r"\d", u.fact(stock, "Last complete sync")) is not None, u.fact(stock, "Last complete sync"))
+    healthy(page, name)
+    page.context.close()
+
+
 def tabs(s, width):
     """The tabs of the page, on their own."""
     tabs_laid_out(s, width)
@@ -1937,6 +2228,12 @@ SCENARIOS = {
     "settings-form": (settings_form, WIDTHS),
     "controls": (controls, WIDTHS),
     "control-themes": (control_themes, WIDTHS),
+    "cards": (cards, WIDTHS),
+    "cards-in-place": (cards_in_place, ["1280"]),
+    "cards-themes": (cards_all_themes, ["1280"]),
+    "cards-offline": (cards_offline, WIDTHS),
+    "cards-nokey": (cards_nokey, WIDTHS),
+    "cards-restart": (cards_restart, WIDTHS),
 }
 
 with u.Session() as session:
