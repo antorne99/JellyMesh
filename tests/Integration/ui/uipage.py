@@ -79,6 +79,20 @@ FAILURE = {
     "settings": "#jmSettingsFailure",
 }
 NEW_PEER = "Connect a server"
+ALERT = ".jmAlert"
+ALERTS_WITH_DATA = [WARNING, "#jmIndexWarning", "#jmMergeWarning"]
+SELECT = "select"
+SELECT_ARROW = ".selectArrow"
+CHECK_MARK = ".checkboxOutline"
+CHECK_LABEL = ".checkboxLabel"
+USER_LABEL = "User"
+LIMIT_LABEL = "Stream limit"
+CONTROLS = ", ".join(scope + " " + part for scope in (SERVERS, PEERS) for part in (CHECK_LABEL, NUMBER, SELECT, "label"))
+BUTTONS = PAGE + " .emby-button:not(:disabled)"
+NOT_UPGRADED = ", ".join(scope + " " + part for scope in (SERVERS, PEERS) for part in (
+    CHECKBOX + ":not(.emby-checkbox)", NUMBER + ":not(.emby-input)", SELECT + ":not(.emby-select)"))
+INLINE_STYLE = PAGE + " [style]:not(.selectArrowContainer *)"
+NESTED_LABEL = PAGE + " label label"
 
 
 def targets():
@@ -210,6 +224,21 @@ def tick(box, on=True):
     """Sets a Jellyfin checkbox as a person does, by clicking its label: the box itself is hidden under the drawn one."""
     if box.is_checked() != on:
         box.locator("xpath=ancestor::label").click()
+
+
+def reach(page, node):
+    """Puts the keyboard on a control with the Tab key, which is what makes the browser show focus."""
+    node.focus()
+    page.keyboard.press("Tab")
+    page.keyboard.press("Shift+Tab")
+    page.mouse.move(0, 0)
+    page.wait_for_timeout(300)
+
+
+def close(page):
+    """Closes a page whose reads go through routes, some of which may still be on their way."""
+    page.context.unroute_all(behavior="ignoreErrors")
+    page.context.close()
 
 
 def message(page):
