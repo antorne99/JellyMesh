@@ -709,6 +709,7 @@ def settings_refused(page, name):
     """Each wrong setting is named with its rule and focused, and nothing reaches the server."""
     saves = []
     page.on("request", lambda request: saves.append(request.url) if "/Plugins/" in request.url and request.method == "POST" else None)
+    u.open_advanced(page)
     for selector, value, field, rule in SETTING_ERRORS:
         label = f"{name} {selector} set to '{value}'"
         before = page.locator(selector).input_value()
@@ -825,6 +826,7 @@ def outcome_themes(s, width):
     for theme in ["dark", "light"]:
         name = f"{width} {theme} outcomes"
         page = s.open("fresh", width, theme=theme)
+        u.open_advanced(page)
         policy = page.locator("#jmPolicyCache").input_value()
         page.locator("#jmPolicyCache").fill("0")
         page.locator(u.SAVE_SETTINGS).click()

@@ -33,6 +33,8 @@ PEERS = "#jmPeers"
 ADD_FORM = "#jmAddServerForm"
 ADD_SUBMIT = "#jmAddServer"
 SETTINGS_FORM = "#jmSettingsForm"
+ADVANCED = "#jmAdvanced"
+ADVANCED_TOGGLE = ADVANCED + " > summary"
 FOLDER_INFO = "#jmFolderInfo"
 LOADING = ".docspinner.mdlSpinnerActive"
 CONFIRM = ".dialogContainer .dialog"
@@ -223,6 +225,17 @@ def clear_message(page):
     """Dismisses the outcome of the action before."""
     if page.locator(DISMISS).is_visible():
         page.locator(DISMISS).click()
+
+
+def advanced_open(page):
+    """Tells whether the advanced part of the settings is open."""
+    return page.locator(ADVANCED).evaluate("node => node.open")
+
+
+def open_advanced(page):
+    """Opens the advanced part of the settings, where the playback times are."""
+    if not advanced_open(page):
+        page.locator(ADVANCED_TOGGLE).click()
 
 
 def has_focus(node):

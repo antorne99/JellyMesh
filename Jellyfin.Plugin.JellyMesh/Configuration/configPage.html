@@ -61,6 +61,51 @@
                 outline-offset: 2px;
             }
 
+            .jmAdvanced {
+                margin-bottom: 1.8em;
+            }
+
+            .jmAdvanced > summary {
+                display: grid;
+                grid-template-columns: 1fr auto;
+                column-gap: 1em;
+                align-items: center;
+                margin-bottom: 1.5em;
+                padding-bottom: 0.5em;
+                border-bottom: 0.1em solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+                list-style: none;
+                cursor: pointer;
+            }
+
+            .jmAdvanced > summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .jmAdvanced > summary:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmAdvanced > summary .sectionTitle {
+                margin: 0 0 0.25em;
+            }
+
+            .jmAdvancedIcon {
+                grid-column: 2;
+                grid-row: 1 / span 2;
+                transition: transform 180ms ease-out;
+            }
+
+            .jmAdvanced[open] .jmAdvancedIcon {
+                transform: rotate(180deg);
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .jmAdvancedIcon {
+                    transition: none;
+                }
+            }
+
             .jmFieldError {
                 margin-top: 0.25em;
                 padding: 0.25em 0.5em;
@@ -165,32 +210,38 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
                     </div>
-                    <h3 class="sectionTitle">Playback times</h3>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
-                        <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
-                        <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A client waits this long on each source before the next one is tried.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
-                        <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
-                        <div class="fieldDescription">From 5 to 60. Opening takes up to three steps per source. Raise it if a remote is slow to start a transcode.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
-                        <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
-                        <div class="fieldDescription">From 30 to 109: a JellyMesh remote frees an unused stream after 120 seconds, and this must end first. A paused player resumes by itself.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
-                        <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
-                        <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
-                        <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
-                        <div class="fieldDescription">From 1 to 60.</div>
-                    </div>
+                    <details id="jmAdvanced" class="jmAdvanced">
+                        <summary>
+                            <h3 class="sectionTitle">Advanced playback times</h3>
+                            <span class="fieldDescription">Most servers can keep these values.</span>
+                            <span class="material-icons expand_more jmAdvancedIcon" aria-hidden="true"></span>
+                        </summary>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
+                            <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
+                            <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
+                            <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
+                            <div class="fieldDescription">From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
+                            <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
+                            <div class="fieldDescription">From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
+                            <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
+                            <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
+                            <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
+                            <div class="fieldDescription">From 1 to 60. A change to these rights on the remote takes up to this long to apply here.</div>
+                        </div>
+                    </details>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                         <span>Save</span>
                     </button>
@@ -284,8 +335,13 @@
                     showOutcome('Error', text);
                 }
 
-                // Marks a field as wrong and says why right under it.
+                // Marks a field as wrong and says why right under it, opening the part of the page that holds it.
                 function markField(input, text) {
+                    var part = input.closest('details');
+                    if (part) {
+                        part.open = true;
+                    }
+
                     var note = create('div', text);
                     fieldNotes += 1;
                     note.id = 'jmFieldError' + fieldNotes;
