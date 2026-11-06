@@ -1489,7 +1489,12 @@
                 }
 
                 // Returns the most recent date a sync left, in the run in memory or in the catalogs.
+                // A timer run with no server read nothing, so it gives no date.
                 function lastSyncDate(sync) {
+                    if (sync.Servers.length === 0) {
+                        return null;
+                    }
+
                     return sync.Servers.reduce(function (dates, server) {
                         return dates.concat([server.LastAttemptUtc, server.LastSuccessUtc]);
                     }, [sync.LastFinishedUtc]).filter(Boolean).sort(function (first, second) {

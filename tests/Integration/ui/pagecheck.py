@@ -2166,6 +2166,16 @@ def cards_empty(s, width):
     check(name + " shows a real date", "never" not in line and re.search(r"\d", line) is not None, line)
     u.close(page)
 
+    name = width + " a timer run with no server"
+
+    def timer_ran(context):
+        fake(context, "Sync", lambda data: data.update(LastFinishedUtc="2026-01-02T03:04:05Z"))
+
+    page = s.open("first", width, route=timer_ran)
+    check(name + " gives no date", text(page, u.SYNC_STATUS) == "Last sync: never.", text(page, u.SYNC_STATUS))
+    check(name + " agrees with the summary", fact_value(page, "Last sync") == "Never", fact_value(page, "Last sync"))
+    u.close(page)
+
 
 def cards(s, width):
     """The cards of the Servers and Sharing tabs with every server working, in both themes."""
