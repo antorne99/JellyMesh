@@ -14,6 +14,9 @@ PAIR = "JM Sonda Mobile"
 CHAIN = "JM Catena Uno"
 HOSTILE = "<b>x</b>"
 HOSTILE_PEER = "<i>y</i>"
+LONG_NAME = "A library with a very long name " + "and_no_spaces" * 12
+SECOND_USER = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+THEMES = [("dark", True), ("light", False), ("blueradiance", True), ("appletv", False), ("purplehaze", True), ("wmc", True)]
 
 
 def check(name, passed, detail=""):
@@ -228,24 +231,33 @@ def keyboard(s, width):
     page.context.close()
 
 
-CONTRAST = """s => {
-  const parse = c => { const m = c.match(/[\\d.]+/g).map(Number); return {r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1}; };
+COLOURS = """
+  const parse = c => {
+    const m = c.match(/[\\d.]+/g).map(Number);
+    const scale = c.startsWith('color(') ? 255 : 1;
+    return {r: m[0] * scale, g: m[1] * scale, b: m[2] * scale, a: m.length > 3 ? m[3] : 1};
+  };
   const over = (top, under) => ({r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a), b: top.b * top.a + under.b * (1 - top.a), a: 1});
   const channel = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
   const luminance = c => 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+  const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
   const backdrop = node => {
     const layers = [];
     for (let e = node; e; e = e.parentElement) { layers.push(parse(getComputedStyle(e).backgroundColor)); }
     return layers.reverse().reduce((under, top) => over(top, under), {r: 255, g: 255, b: 255, a: 1});
   };
+"""
+
+CONTRAST = "s => {" + COLOURS + """
   const root = document.querySelector(s.page);
-  const worst = [...root.querySelectorAll(s.readable)].filter(e => e.offsetParent !== null && e.textContent.trim() !== '').map(e => {
+  const seen = [...root.querySelectorAll(s.readable)].filter(e => e.offsetParent !== null && (e.textContent.trim() !== '' || e.value)).map(e => {
     const under = backdrop(e);
     const text = over(parse(getComputedStyle(e).color), under);
-    const a = luminance(text), b = luminance(under);
-    return {ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), text: e.textContent.trim().slice(0, 40)};
-  }).sort((x, y) => x.ratio - y.ratio)[0];
-  return {worst, background: luminance(backdrop(root))};
+    return {ratio: ratio(luminance(text), luminance(under)), under: luminance(under), font: getComputedStyle(e).fontFamily,
+      text: (e.textContent.trim() || e.value).slice(0, 40)};
+  }).sort((x, y) => x.ratio - y.ratio);
+  return {worst: seen[0], lightest: Math.max(...seen.map(e => e.under)), fonts: [...new Set(seen.map(e => e.font))],
+    background: luminance(backdrop(root))};
 }"""
 
 
@@ -363,9 +375,9 @@ def edits(s, width):
     new_peer = u.peer_row(page, u.NEW_PEER)
     u.button(stock, "libraries").click()
     page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
-    stock.locator(u.CHECKBOX).first.uncheck()
+    u.tick(stock.locator(u.CHECKBOX).first, False)
     connected.locator(u.NUMBER).fill("9")
-    connected.locator(u.CHECKBOX).first.uncheck()
+    u.tick(connected.locator(u.CHECKBOX).first, False)
 
     def kept(action, limit="9"):
         check(f"{name} {action} keeps the open panel", stock.locator(u.CHECKBOX).count() == 2, stock.locator(u.CHECKBOX).count())
@@ -407,13 +419,13 @@ def edits(s, width):
     u.wait_message(page)
     kept("saved libraries", "7")
     check(name + " saved libraries update their row", "libraries to import: 1" in stock.inner_text(), stock.inner_text())
-    stock.locator(u.CHECKBOX).first.check()
+    u.tick(stock.locator(u.CHECKBOX).first)
     u.clear_message(page)
     u.button(stock, "save_libraries").click()
     u.wait_message(page)
 
     new_peer.locator(u.NUMBER).fill("5")
-    new_peer.locator(u.CHECKBOX).first.check()
+    u.tick(new_peer.locator(u.CHECKBOX).first)
     connected.locator(u.NUMBER).fill("4")
     save = u.button(connected, "save")
     u.clear_message(page)
@@ -424,7 +436,7 @@ def edits(s, width):
     check(name + " a saved peer keeps the other row's box", new_peer.locator(u.CHECKBOX + ":checked").count() == 1)
     check(name + " a saved peer keeps the focus", u.has_focus(save))
     check(name + " a saved peer shows what was saved", connected.locator(u.CHECKBOX + ":checked").count() == 1)
-    connected.locator(u.CHECKBOX).first.check()
+    u.tick(connected.locator(u.CHECKBOX).first)
     u.clear_message(page)
     u.button(connected, "save").click()
     u.wait_message(page)
@@ -845,6 +857,190 @@ def outcome_themes(s, width):
     u.set_theme("fresh", "dark")
 
 
+FOCUS_RING = "mark => {" + COLOURS + """
+  const node = document.activeElement;
+  const ring = mark ? node.parentElement.querySelector(mark) : node;
+  const look = getComputedStyle(ring);
+  const under = backdrop(ring.parentElement);
+  const fill = backdrop(node);
+  const text = over(parse(getComputedStyle(node).color), fill);
+  return {style: look.outlineStyle, width: parseFloat(look.outlineWidth),
+    ring: ratio(luminance(over(parse(look.outlineColor), under)), luminance(under)), text: ratio(luminance(text), luminance(fill))};
+}"""
+
+
+def focus_shows(page, name, node, mark=None):
+    """Checks that a control reached with the keyboard has a ring that stands out, and stays readable."""
+    u.reach(page, node)
+    seen = page.evaluate(FOCUS_RING, mark)
+    check(name + " shows a ring", seen["style"] == "solid" and seen["width"] >= 2, seen)
+    check(name + " has a ring that stands out", seen["ring"] >= 3, seen)
+    if mark is None:
+        check(name + " stays readable", seen["text"] >= 4.5, seen)
+
+
+def readable(page, name, selector):
+    """Checks the contrast of what a selector finds, and returns the measures."""
+    seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": selector})
+    check(name + " is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+    return seen
+
+
+def broken_reads(context):
+    """Refuses every read of the page, so that each part shows its failure."""
+    for pattern in ["**/JellyMesh/Admin/Status", "**/JellyMesh/Admin/Sync", "**/JellyMesh/Admin/Peers", "**/JellyMesh/Admin/Merges", u.PLUGIN_CONFIG]:
+        context.route(pattern, lambda route: route.fulfill(status=500, json={}))
+
+
+def warned(context):
+    """Gives the status, the sync and the merges each a warning to show."""
+    fake(context, "Status", lambda data: data.update(Warning="A warning from the status."))
+    fake(context, "Sync", lambda data: data.update(Health="Corrupt"))
+    fake(context, "Merges", lambda data: data.update(IsStoreDamaged=True))
+
+
+def control_themes(s, width):
+    """Jellyfin controls, focus, alerts and outcomes look right in each of the six themes."""
+    for theme, dark in THEMES:
+        name = f"{width} {theme} controls"
+        page = s.open("fresh", width, theme=theme, route=warned)
+        check(name + " has the theme", u.theme_of(page) == theme, u.theme_of(page))
+        stock = u.server_row(page, "stock")
+        connected = u.peer_row(page, "jellymesh")
+        new_peer = u.peer_row(page, u.NEW_PEER)
+        u.button(stock, "libraries").click()
+        page.wait_for_selector(u.SERVER + " " + u.CHECK_MARK, state="attached", timeout=15000)
+        page.mouse.move(0, 0)
+
+        check(name + " are all upgraded", page.locator(u.NOT_UPGRADED).count() == 0, page.locator(u.NOT_UPGRADED).count())
+        seen = readable(page, name, u.CONTROLS)
+        check(name + " sets the background", (seen["background"] < 0.2) == dark, seen["background"])
+        if dark:
+            check(name + " are not white on dark", seen["lightest"] < 0.2, seen["lightest"])
+        check(name + " use one font", len(seen["fonts"]) == 1 and "Arial" not in seen["fonts"][0], seen["fonts"])
+        readable(page, name + " buttons", u.BUTTONS)
+
+        focus_shows(page, name + " a button", u.button(stock, "test"))
+        focus_shows(page, name + " a main button", page.locator(u.SAVE_SETTINGS))
+        focus_shows(page, name + " a number", connected.locator(u.NUMBER))
+        focus_shows(page, name + " a select", new_peer.locator(u.SELECT))
+        focus_shows(page, name + " a library box", stock.locator(u.CHECKBOX).first, u.CHECK_MARK)
+        focus_shows(page, name + " a settings box", page.locator(u.METADATA_PROTECTION), u.CHECK_MARK)
+        page.evaluate("document.activeElement.blur()")
+
+        for alert in u.ALERTS_WITH_DATA:
+            check(f"{name} shows {alert}", page.locator(alert).is_visible())
+        readable(page, name + " a warning", u.ALERT)
+
+        limit = connected.locator(u.NUMBER)
+        limit.fill("")
+        u.button(connected, "save").click()
+        u.wait_message(page)
+        readable(page, name + " an error", u.MESSAGE + ", " + u.DISMISS + ", " + u.FIELD_ERROR)
+        limit.fill("4")
+        u.clear_message(page)
+        u.button(stock, "test").click()
+        u.wait_message(page)
+        readable(page, name + " a success", u.MESSAGE + ", " + u.DISMISS)
+        u.clear_message(page)
+
+        check(name + " has no inline style", page.locator(u.INLINE_STYLE).count() == 0, page.locator(u.INLINE_STYLE).count())
+        healthy(page, name)
+        u.shot(page, f"control-{theme}-{width}")
+        u.close(page)
+
+        name = f"{width} {theme} failures"
+        page = s.open("fresh", width, theme=theme, route=broken_reads, wait=False)
+        page.wait_for_selector(u.PAGE, state="attached", timeout=30000)
+        notes = [page.locator(selector) for selector in u.FAILURE.values()]
+        check(name + " all show", until(page, lambda: all(note.is_visible() for note in notes), 20))
+        u.wait_idle(page)
+        readable(page, name, u.ALERT)
+        check(name + " have no inline style", page.locator(u.INLINE_STYLE).count() == 0)
+        healthy(page, name)
+        u.shot(page, f"failure-{theme}-{width}")
+        u.close(page)
+    u.set_theme("fresh", "dark")
+
+
+def controls(s, width):
+    """The Jellyfin controls take any text, keep what the admin does, and send what the form shows."""
+    name = width + " controls"
+    extra = [{"Id": "jm-long", "Name": LONG_NAME, "CollectionType": "movies"}, {"Id": "jm-hostile", "Name": HOSTILE, "CollectionType": "movies"}]
+
+    def odd(context):
+        fake(context, "Servers/*/Libraries", lambda data: data.extend(dict(item, Selected=False) for item in extra))
+        fake(context, "Peers/Options", lambda data: (data["Users"].append({"Id": SECOND_USER, "Name": "second"}), data["Libraries"].extend(extra)))
+
+    page = s.open("fresh", width, route=odd)
+    stock = u.server_row(page, "stock")
+    connected = u.peer_row(page, "jellymesh")
+    new_peer = u.peer_row(page, u.NEW_PEER)
+    u.button(stock, "libraries").click()
+    page.wait_for_selector(u.SERVER + " " + u.CHECK_MARK, state="attached", timeout=15000)
+
+    select = new_peer.get_by_label(u.USER_LABEL, exact=True)
+    check(name + " the select has its label", select.evaluate("node => node.tagName") == "SELECT")
+    check(name + " the select has one arrow", new_peer.locator(u.SELECT_ARROW).count() == 1, new_peer.locator(u.SELECT_ARROW).count())
+    limit = connected.get_by_label(u.LIMIT_LABEL, exact=True)
+    check(name + " the limit has its label", limit.get_attribute("type") == "number")
+    check(name + " has no label inside a label", page.locator(u.NESTED_LABEL).count() == 0)
+    limit.fill("")
+    check(name + " an empty limit keeps its label", connected.get_by_text(u.LIMIT_LABEL, exact=True).is_visible())
+    limit.fill("4")
+
+    names = stock.locator(u.CHECK_LABEL)
+    check(name + " a name with markup stays text", names.filter(has_text=HOSTILE).count() == 1, names.all_inner_texts())
+    check(name + " a name renders no markup", stock.locator("b").count() == 0)
+    long_label = stock.locator("label", has_text=LONG_NAME)
+    box = long_label.bounding_box()
+    below = stock.locator("label", has_text=HOSTILE).bounding_box()
+    check(name + " a long name stays on the screen", box["x"] + box["width"] <= u.VIEWPORTS[width]["width"], box)
+    check(name + " a long name does not cover the next", box["y"] + box["height"] <= below["y"], [box, below])
+
+    long_label.locator(u.CHECK_MARK).click()
+    check(name + " the drawn box selects", stock.locator(u.CHECKBOX + "[value=jm-long]").is_checked())
+    last = stock.locator(u.CHECKBOX).last
+    last.focus()
+    page.keyboard.press("Space")
+    check(name + " Space selects a library", last.is_checked())
+
+    u.mark(select)
+    u.mark(limit)
+    select.select_option(SECOND_USER)
+    limit.fill("6")
+    select.focus()
+    with page.expect_response("**/JellyMesh/Admin/Peers", timeout=25000):
+        pass
+    u.wait_idle(page)
+    check(name + " polling keeps the select", u.is_marked(select))
+    check(name + " polling keeps the choice", select.input_value() == SECOND_USER, select.input_value())
+    check(name + " polling keeps the focus", u.has_focus(select))
+    check(name + " polling keeps the limit", u.is_marked(limit) and limit.input_value() == "6", limit.input_value())
+    limit.fill("4")
+
+    sent = []
+
+    def connect(route):
+        if route.request.method == "PUT":
+            sent.append((route.request.url, route.request.post_data_json))
+            route.fulfill(status=204)
+        else:
+            route.fallback()
+
+    page.route("**/JellyMesh/Admin/Peers/*", connect)
+    new_peer.locator(u.NUMBER).fill("3")
+    u.tick(new_peer.locator(u.CHECKBOX).first)
+    chosen = new_peer.locator(u.CHECKBOX).first.get_attribute("value")
+    u.button(new_peer, "connect").click()
+    u.wait_message(page)
+    check(name + " connect sends the chosen user", len(sent) == 1 and sent[0][0].endswith("/Peers/" + SECOND_USER), sent)
+    check(name + " connect sends the form", bool(sent) and sent[0][1] == {"SharedLibraryIds": [chosen], "MaxStreams": 3}, sent)
+    healthy(page, name)
+    u.shot(page, f"controls-{width}")
+    u.close(page)
+
+
 def confirm_shows(page, name, title, says, viewport):
     """Checks what a confirmation dialog says, that Cancel is the safe default, and that it fits the screen."""
     shown_title, shown_text = u.wait_confirm(page)
@@ -1210,6 +1406,10 @@ SCENARIOS = {
     "outcomes": (outcomes, WIDTHS),
     "outcome-themes": (outcome_themes, WIDTHS),
     "settings-form": (settings_form, WIDTHS),
+
+
+    "controls": (controls, WIDTHS),
+    "control-themes": (control_themes, WIDTHS),
 }
 
 with u.Session() as session:

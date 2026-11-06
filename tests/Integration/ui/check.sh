@@ -35,6 +35,7 @@ else
   run outcomes outcome-themes
   run confirms confirm-keyboard
   run settings-form
+  run controls control-themes
 
   set_key first
   run first-nokey

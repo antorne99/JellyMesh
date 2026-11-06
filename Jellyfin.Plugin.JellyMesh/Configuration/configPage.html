@@ -182,23 +182,91 @@
             #JellyMeshConfigPage input[aria-invalid="true"] {
                 border-color: var(--jf-palette-error-main, #c62828);
             }
+
+            .jmAlert {
+                margin-bottom: 1em;
+                padding: 1em;
+                border: 1px solid var(--jf-palette-warning-main, #ed6c02);
+                border-radius: 4px;
+                background: var(--jf-palette-background-paper, #202020);
+                background: color-mix(in srgb, var(--jf-palette-warning-main, #ed6c02) 16%, var(--jf-palette-background-paper, #202020));
+                color: var(--jf-palette-text-primary, #fff);
+            }
+
+            .jmFolderInfo {
+                margin-bottom: 1.5em;
+            }
+
+            .jmFolderWarning {
+                font-weight: bold;
+            }
+
+            .jmServer,
+            .jmPeer,
+            .jmMergeCase {
+                margin-bottom: 1.5em;
+            }
+
+            #jmPeers .inputContainer,
+            #jmPeers .selectContainer {
+                max-width: 54em;
+            }
+
+            .jmMerge {
+                margin-bottom: 1em;
+            }
+
+            .jmMergeTitle {
+                display: block;
+                margin-bottom: 0.5em;
+            }
+
+            .jmMergeCopy {
+                margin-left: 1.5em;
+            }
+
+            #JellyMeshConfigPage .emby-button:focus-visible,
+            #JellyMeshConfigPage .emby-input:focus-visible,
+            #JellyMeshConfigPage .emby-select:focus-visible,
+            #JellyMeshConfigPage .emby-checkbox:focus-visible + span + .checkboxOutline {
+                outline: 2px solid var(--jf-palette-text-primary, #fff) !important;
+                outline-offset: 2px;
+            }
+
+            #JellyMeshConfigPage .raised:not(.button-submit):focus {
+                background: var(--jf-palette-Button-inheritContainedBg, #424242);
+            }
+
+            #JellyMeshConfigPage .button-submit:not(:hover) {
+                color: rgba(0, 0, 0, 0.87);
+            }
+
+            #JellyMeshConfigPage .emby-checkbox-label {
+                height: auto;
+                min-height: 2.35em;
+            }
+
+            #JellyMeshConfigPage .checkboxLabel {
+                min-width: 0;
+                overflow-wrap: anywhere;
+            }
         </style>
         <div data-role="content">
             <div class="content-primary">
                 <h2 class="sectionTitle">JellyMesh</h2>
 
-                <div id="jmWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmWarning" role="alert" hidden class="jmAlert"></div>
 
                 <h3 class="sectionTitle">Status</h3>
-                <div id="jmStatusFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmStatusFailure" role="alert" hidden class="jmAlert"></div>
                 <p id="jmStatus"></p>
 
                 <h3 class="sectionTitle">Remote servers</h3>
                 <div id="jmServers"></div>
 
                 <h3 class="sectionTitle">Catalog</h3>
-                <div id="jmIndexWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <div id="jmSyncFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmIndexWarning" role="alert" hidden class="jmAlert"></div>
+                <div id="jmSyncFailure" role="alert" hidden class="jmAlert"></div>
                 <p id="jmSyncStatus"></p>
                 <div id="jmSyncServers"></div>
                 <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
@@ -207,15 +275,15 @@
 
                 <h3 class="sectionTitle">Duplicate films</h3>
                 <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
-                <div id="jmMergeWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <div id="jmMergesFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmMergeWarning" role="alert" hidden class="jmAlert"></div>
+                <div id="jmMergesFailure" role="alert" hidden class="jmAlert"></div>
                 <div id="jmMergeCases"></div>
                 <h4>Merged films</h4>
                 <div id="jmMerges"></div>
 
                 <h3 class="sectionTitle">Connected JellyMesh servers</h3>
                 <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
-                <div id="jmPeersFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmPeersFailure" role="alert" hidden class="jmAlert"></div>
                 <div id="jmPeers"></div>
 
                 <form id="jmAddServerForm" autocomplete="off">
@@ -245,7 +313,7 @@
 
                 <form id="jmSettingsForm" novalidate>
                     <h3 class="sectionTitle">Settings</h3>
-                    <div id="jmSettingsFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                    <div id="jmSettingsFailure" role="alert" hidden class="jmAlert"></div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
                         <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
@@ -589,6 +657,28 @@
                     return node;
                 }
 
+                // Adds a Jellyfin checkbox to a list and returns it. Jellyfin upgrades it when the list joins the page.
+                function addCheckbox(list, value, text) {
+                    var label = create('label');
+                    label.className = 'emby-checkbox-label';
+                    var box = create('input');
+                    box.setAttribute('is', 'emby-checkbox');
+                    box.type = 'checkbox';
+                    box.value = value;
+                    label.appendChild(box);
+                    label.appendChild(create('span', text));
+                    list.appendChild(label);
+                    return box;
+                }
+
+                // Wraps a Jellyfin field in the container that holds the label and arrow it adds to itself.
+                function fieldBox(className, field) {
+                    var box = create('div');
+                    box.className = className;
+                    box.appendChild(field);
+                    return box;
+                }
+
                 // Makes a value safe inside a Dashboard.confirm message, which Jellyfin renders as HTML.
                 function escapeHtml(value) {
                     return create('div', value).innerHTML;
@@ -610,16 +700,12 @@
                         return;
                     }
 
+                    var list = create('div');
+                    list.className = 'checkboxList';
+                    container.appendChild(list);
                     var boxes = libraries.map(function (library) {
-                        var label = create('label');
-                        label.style.display = 'block';
-                        var box = create('input');
-                        box.type = 'checkbox';
-                        box.value = library.Id;
+                        var box = addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
                         box.checked = library.Selected;
-                        label.appendChild(box);
-                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                        container.appendChild(label);
                         return box;
                     });
 
@@ -639,7 +725,6 @@
                 function renderServer(server) {
                     var row = create('div');
                     row.className = 'jmServer';
-                    row.style.marginBottom = '1.5em';
                     row.appendChild(create('h4', server.Name));
                     var state = create('p');
                     row.appendChild(state);
@@ -892,6 +977,7 @@
 
                 function renderPeerEditor(container, userId, libraries, shared, maxStreams) {
                     var list = create('div');
+                    list.className = 'checkboxList';
                     container.appendChild(list);
                     var boxes = [];
                     var saved = { shared: shared, limit: String(maxStreams) };
@@ -910,15 +996,7 @@
                         librariesShown = shown;
                         list.textContent = '';
                         boxes = current.map(function (library) {
-                            var label = create('label');
-                            label.style.display = 'block';
-                            var box = create('input');
-                            box.type = 'checkbox';
-                            box.value = library.Id;
-                            label.appendChild(box);
-                            label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                            list.appendChild(label);
-                            return box;
+                            return addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
                         });
                     }
 
@@ -932,14 +1010,13 @@
                         }
                     }
 
-                    var limitLabel = create('label', 'Stream limit ');
-                    limitLabel.style.display = 'block';
                     var limit = create('input');
+                    limit.setAttribute('is', 'emby-input');
+                    limit.setAttribute('label', 'Stream limit');
                     limit.type = 'number';
                     limit.min = '1';
                     limit.required = true;
-                    limitLabel.appendChild(limit);
-                    container.appendChild(limitLabel);
+                    container.appendChild(fieldBox('inputContainer', limit));
                     showLibraries(libraries);
                     reset();
 
@@ -977,7 +1054,7 @@
 
                 function renderPeer(peer, libraries) {
                     var row = create('div');
-                    row.style.marginBottom = '1.5em';
+                    row.className = 'jmPeer';
                     row.appendChild(create('h4', peer.UserName));
                     var streams = create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams);
                     row.appendChild(streams);
@@ -1013,6 +1090,8 @@
                     var row = create('div');
                     row.appendChild(create('h4', 'Connect a server'));
                     var select = create('select');
+                    select.setAttribute('is', 'emby-select');
+                    select.setAttribute('label', 'User');
                     var usersShown = '';
 
                     // Lists the free users and keeps the one chosen while it is still free.
@@ -1037,7 +1116,7 @@
                     }
 
                     showUsers(users);
-                    row.appendChild(select);
+                    row.appendChild(fieldBox('selectContainer', select));
                     var editor = renderPeerEditor(row, function () {
                         return select.value;
                     }, libraries, [], 2);
@@ -1104,8 +1183,7 @@
 
                 function renderMergeTitle(title, boxes) {
                     var label = create('label');
-                    label.style.display = 'block';
-                    label.style.marginBottom = '0.5em';
+                    label.className = 'jmMergeTitle';
                     var box = create('input');
                     box.type = 'checkbox';
                     box.value = title.WorkKey;
@@ -1114,7 +1192,7 @@
                     label.appendChild(document.createTextNode(title.MergeIds.length > 0 ? ' Already merged:' : ''));
                     title.Copies.forEach(function (copy) {
                         var line = create('div', describeCopy(copy));
-                        line.style.marginLeft = '1.5em';
+                        line.className = 'jmMergeCopy';
                         label.appendChild(line);
                     });
 
@@ -1124,7 +1202,6 @@
                 function renderMergeCase(group) {
                     var row = create('div');
                     row.className = 'jmMergeCase';
-                    row.style.marginBottom = '1.5em';
                     row.appendChild(create('p', mergeReasons[group.Kind] || group.Kind));
 
                     var boxes = [];
@@ -1149,7 +1226,6 @@
                 function renderMerge(merge) {
                     var row = create('div');
                     row.className = 'jmMerge';
-                    row.style.marginBottom = '1em';
                     merge.Copies.forEach(function (copy) {
                         row.appendChild(create('div', describeCopy(copy)));
                     });
