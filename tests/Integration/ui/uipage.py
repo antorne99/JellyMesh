@@ -206,6 +206,12 @@ def button(scope, name):
     return scope.get_by_role("button", name=BUTTON[name], exact=True)
 
 
+def tick(box, on=True):
+    """Sets a Jellyfin checkbox as a person does, by clicking its label: the box itself is hidden under the drawn one."""
+    if box.is_checked() != on:
+        box.locator("xpath=ancestor::label").click()
+
+
 def message(page):
     """Returns the outcome the page shows for the last action, or an empty text."""
     node = page.locator(MESSAGE)

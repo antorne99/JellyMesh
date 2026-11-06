@@ -72,6 +72,16 @@
             #JellyMeshConfigPage input[aria-invalid="true"] {
                 border-color: var(--jf-palette-error-main, #c62828);
             }
+
+            #JellyMeshConfigPage .emby-checkbox-label {
+                height: auto;
+                min-height: 2.35em;
+            }
+
+            #JellyMeshConfigPage .checkboxLabel {
+                min-width: 0;
+                overflow-wrap: anywhere;
+            }
         </style>
         <div data-role="content">
             <div class="content-primary">
@@ -457,6 +467,28 @@
                     return node;
                 }
 
+                // Adds a Jellyfin checkbox to a list and returns it. Jellyfin upgrades it when the list joins the page.
+                function addCheckbox(list, value, text) {
+                    var label = create('label');
+                    label.className = 'emby-checkbox-label';
+                    var box = create('input');
+                    box.setAttribute('is', 'emby-checkbox');
+                    box.type = 'checkbox';
+                    box.value = value;
+                    label.appendChild(box);
+                    label.appendChild(create('span', text));
+                    list.appendChild(label);
+                    return box;
+                }
+
+                // Wraps a Jellyfin field in the container that holds the label and arrow it adds to itself.
+                function fieldBox(className, field) {
+                    var box = create('div');
+                    box.className = className;
+                    box.appendChild(field);
+                    return box;
+                }
+
                 // Makes a value safe inside a Dashboard.confirm message, which Jellyfin renders as HTML.
                 function escapeHtml(value) {
                     return create('div', value).innerHTML;
@@ -478,16 +510,12 @@
                         return;
                     }
 
+                    var list = create('div');
+                    list.className = 'checkboxList';
+                    container.appendChild(list);
                     var boxes = libraries.map(function (library) {
-                        var label = create('label');
-                        label.style.display = 'block';
-                        var box = create('input');
-                        box.type = 'checkbox';
-                        box.value = library.Id;
+                        var box = addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
                         box.checked = library.Selected;
-                        label.appendChild(box);
-                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                        container.appendChild(label);
                         return box;
                     });
 
@@ -697,6 +725,7 @@
 
                 function renderPeerEditor(container, userId, libraries, shared, maxStreams) {
                     var list = create('div');
+                    list.className = 'checkboxList';
                     container.appendChild(list);
                     var boxes = [];
                     var saved = { shared: shared, limit: String(maxStreams) };
@@ -715,15 +744,7 @@
                         librariesShown = shown;
                         list.textContent = '';
                         boxes = current.map(function (library) {
-                            var label = create('label');
-                            label.style.display = 'block';
-                            var box = create('input');
-                            box.type = 'checkbox';
-                            box.value = library.Id;
-                            label.appendChild(box);
-                            label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                            list.appendChild(label);
-                            return box;
+                            return addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
                         });
                     }
 
@@ -737,14 +758,13 @@
                         }
                     }
 
-                    var limitLabel = create('label', 'Stream limit ');
-                    limitLabel.style.display = 'block';
                     var limit = create('input');
+                    limit.setAttribute('is', 'emby-input');
+                    limit.setAttribute('label', 'Stream limit');
                     limit.type = 'number';
                     limit.min = '1';
                     limit.required = true;
-                    limitLabel.appendChild(limit);
-                    container.appendChild(limitLabel);
+                    container.appendChild(fieldBox('inputContainer', limit));
                     showLibraries(libraries);
                     reset();
 
@@ -818,6 +838,8 @@
                     var row = create('div');
                     row.appendChild(create('h4', 'Connect a server'));
                     var select = create('select');
+                    select.setAttribute('is', 'emby-select');
+                    select.setAttribute('label', 'User');
                     var usersShown = '';
 
                     // Lists the free users and keeps the one chosen while it is still free.
@@ -842,7 +864,7 @@
                     }
 
                     showUsers(users);
-                    row.appendChild(select);
+                    row.appendChild(fieldBox('selectContainer', select));
                     var editor = renderPeerEditor(row, function () {
                         return select.value;
                     }, libraries, [], 2);
