@@ -106,6 +106,23 @@
                 }
             }
 
+            .jmFolderPick {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: flex-end;
+                gap: 0.5em 1em;
+            }
+
+            .jmFolderField {
+                flex: 1 1 14em;
+                min-width: 0;
+            }
+
+            .jmFolderPick .emby-button {
+                flex: none;
+                margin: 0;
+            }
+
             .jmFieldError {
                 margin-top: 0.25em;
                 padding: 0.25em 0.5em;
@@ -191,8 +208,15 @@
                         <input id="jmReconciliationTime" type="time" is="emby-input" required />
                     </div>
                     <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
-                        <input id="jmFederatedFolder" type="text" is="emby-input" />
+                        <div class="jmFolderPick">
+                            <div class="jmFolderField">
+                                <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
+                                <input id="jmFederatedFolder" type="text" is="emby-input" />
+                            </div>
+                            <button id="jmChooseFolder" is="emby-button" type="button" class="raised emby-button">
+                                <span>Choose folder</span>
+                            </button>
+                        </div>
                         <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
                     </div>
                     <div id="jmFolderInfo" class="fieldDescription" style="margin-bottom:1.5em;"></div>
@@ -346,7 +370,7 @@
                     fieldNotes += 1;
                     note.id = 'jmFieldError' + fieldNotes;
                     note.className = 'jmFieldError';
-                    (input.closest('label') || input).after(note);
+                    (input.closest('label, .jmFolderPick') || input).after(note);
                     input.setAttribute('aria-invalid', 'true');
                     input.setAttribute('aria-describedby', note.id);
                 }
@@ -1271,6 +1295,23 @@
                         showMessage('Added ' + server.Name + '.');
                         return Promise.all([loadStatus(), loadSync()]);
                     }));
+                });
+
+                el('#jmChooseFolder').addEventListener('click', function () {
+                    var picker = new Dashboard.DirectoryBrowser();
+                    picker.show({
+                        header: 'Choose the federated folder',
+                        instruction: 'These are the folders of the server. JellyMesh writes only inside the one you choose.',
+                        includeFiles: false,
+                        callback: function (path) {
+                            var field = el('#jmFederatedFolder');
+                            field.value = path;
+                            clearField(field);
+                            picker.close();
+                            el('#jmChooseFolder').focus();
+                            showMessage(path + ' is in the field. Save the settings to use it.');
+                        }
+                    });
                 });
 
                 el('#jmSettingsForm').addEventListener('submit', function (e) {
