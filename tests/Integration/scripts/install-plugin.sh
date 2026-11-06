@@ -19,6 +19,7 @@ yaml_value() {
 }
 
 version=$(yaml_value version)
+image=$(yaml_value image)
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 
@@ -31,14 +32,16 @@ jq -n \
   --arg guid "$(yaml_value guid)" --arg name "$(yaml_value name)" --arg version "$version" \
   --arg targetAbi "$(yaml_value targetAbi)" --arg category "$(yaml_value category)" \
   --arg owner "$(yaml_value owner)" --arg overview "$(yaml_value overview)" \
+  --arg imagePath "$(basename "$image")" \
   '{$guid, $name, $version, $targetAbi, $category, $owner, $overview, description: $overview,
-    status: "Active", autoUpdate: false, assemblies: ["Jellyfin.Plugin.JellyMesh.dll"]}' \
+    status: "Active", autoUpdate: false, $imagePath, assemblies: ["Jellyfin.Plugin.JellyMesh.dll"]}' \
   >"$out/meta.json"
 
 target=/config/plugins/JellyMesh_$version
 echo "installing into $container:$target"
 docker exec "$container" sh -c 'rm -rf /config/plugins/JellyMesh_* && mkdir -p "$1"' sh "$target"
 docker cp "$out/build/Jellyfin.Plugin.JellyMesh.dll" "$container:$target/"
+docker cp "$repo/$image" "$container:$target/"
 docker cp "$out/meta.json" "$container:$target/"
 docker restart "$container" >/dev/null
 echo "restarted $container"

@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/jellymesh.png" alt="JellyMesh logo" width="480"></p>
+
 # JellyMesh
 
 JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
