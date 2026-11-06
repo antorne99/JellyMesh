@@ -56,7 +56,7 @@ https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
 Download `jellymesh_<version>.zip` from a [release](https://github.com/antorne99/JellyMesh/releases) and compare it with the `.sha256` file next to it. Unpack the zip into a folder in Jellyfin's `plugins` folder, keeping `meta.json`, and restart Jellyfin. For the Docker image that folder is:
 
 ```
-/config/plugins/JellyMesh_0.2.0.0/
+/config/plugins/JellyMesh_0.2.1.0/
 ```
 
 Until a release exists, you can build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
