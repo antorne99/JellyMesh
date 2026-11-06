@@ -21,6 +21,7 @@ with sync_playwright() as p:
     page = context.new_page()
     page.goto(f"{BASE}/web/index.html#/configurationpage?name=JellyMesh")
     page.wait_for_selector(".jmMergeCase", state="attached", timeout=30000)
+    page.locator("[role=tab][data-tab-index]", has_text="Catalog").click()
 
     group = page.locator(".jmMergeCase", has_text=TITLE)
     print("CASES", page.locator(".jmMergeCase").count(), flush=True)

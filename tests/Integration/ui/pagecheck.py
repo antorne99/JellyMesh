@@ -212,21 +212,25 @@ def errors(s, width):
 
 
 def keyboard(s, width):
-    """Every main action can be reached with Tab, in order, and used from the keyboard."""
+    """Every main action can be reached with Tab, in order through each tab, and used from the keyboard."""
     name = width + " keyboard"
     page = s.open("fresh", width)
     pair = u.merge_case(page, PAIR)
     reached = []
-    for _ in range(400):
-        page.keyboard.press("Tab")
-        focus = page.evaluate("""p => { const e = document.activeElement;
-          return e.closest(p) ? (e.id || (e.textContent || '').trim() || e.type) : null; }""", u.PAGE)
-        if focus is None and reached:
-            break
-        if focus is not None:
-            reached.append(focus)
-        if focus == "checkbox" and u.has_focus(pair):
-            page.keyboard.press("Space")
+    for tab in u.TABS:
+        u.show_tab(page, tab)
+        inside = False
+        for _ in range(400):
+            page.keyboard.press("Tab")
+            focus = page.evaluate("""p => { const e = document.activeElement;
+              return e.closest(p) ? (e.id || (e.textContent || '').trim() || e.type) : null; }""", u.PAGE)
+            if focus is None and inside:
+                break
+            if focus is not None:
+                inside = True
+                reached.append(focus)
+            if focus == "checkbox" and u.has_focus(pair):
+                page.keyboard.press("Space")
 
     for action in [u.BUTTON["test"], u.BUTTON["libraries"], u.BUTTON["remove"], u.BUTTON["merge"], u.BUTTON["connect"], u.BUTTON["save"],
                    u.SYNC_NOW[1:], u.ADD_SUBMIT[1:], u.SYNC_INTERVAL[1:], u.ADD_FIELDS["name"][1:], u.METADATA_PROTECTION[1:]]:
@@ -277,13 +281,28 @@ CONTRAST = "s => {" + COLOURS + """
 }"""
 
 
+def contrast(page, selector):
+    """Measures what a selector finds in every tab, comes back to the tab it was on, and returns the worst."""
+    shown = u.shown_tab(page)
+    seen = []
+    for tab in u.TABS:
+        u.show_tab(page, tab)
+        seen.append(page.evaluate(CONTRAST, {"page": u.PAGE, "readable": selector}))
+    u.show_tab(page, shown)
+    found = [one for one in seen if one["worst"]]
+    return {"worst": min((one["worst"] for one in found), key=lambda worst: worst["ratio"]),
+            "lightest": max(one["lightest"] for one in found),
+            "fonts": sorted({font for one in found for font in one["fonts"]}),
+            "background": seen[0]["background"]}
+
+
 def themes(s, width):
     """The page follows the theme chosen in Jellyfin and stays readable."""
     for theme, dark in [("dark", True), ("light", False)]:
         name = f"{width} {theme} theme"
         page = s.open("fresh", width, theme=theme)
         check(name + " is loaded", u.theme_of(page) == theme, u.theme_of(page))
-        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": u.READABLE})
+        seen = contrast(page, u.READABLE)
         check(name + " sets the background", (seen["background"] < 0.2) == dark, seen["background"])
         check(name + " text is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
         healthy(page, name)
@@ -375,7 +394,7 @@ def nokey(s, width):
     check(name + " cannot sync", page.locator(u.SYNC_NOW).is_disabled())
     check(name + " still lists the servers", page.locator(u.SERVER).count() == 2)
     check(name + " shows the settings", page.locator(u.SYNC_INTERVAL).input_value() != "")
-    seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": u.WARNING})
+    seen = contrast(page, u.WARNING)
     check(name + " the warning is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
     healthy(page, name)
     u.shot(page, f"nokey-{width}")
@@ -858,14 +877,14 @@ def outcome_themes(s, width):
         page.locator("#jmPolicyCache").fill("0")
         page.locator(u.SAVE_SETTINGS).click()
         u.wait_message(page)
-        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": u.MESSAGE + ", " + u.DISMISS + ", " + u.FIELD_ERROR})
+        seen = contrast(page, u.MESSAGE + ", " + u.DISMISS + ", " + u.FIELD_ERROR)
         check(name + " an error is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
         page.screenshot(path=f"{u.SHOTS}/outcome-error-{theme}-{width}.png")
         page.locator("#jmPolicyCache").fill(policy)
 
         u.button(u.server_row(page, "stock"), "test").click()
         outcome(page, name + " a success", "Done", "connected")
-        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": u.MESSAGE + ", " + u.DISMISS})
+        seen = contrast(page, u.MESSAGE + ", " + u.DISMISS)
         check(name + " a success is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
         page.screenshot(path=f"{u.SHOTS}/outcome-done-{theme}-{width}.png")
         page.context.close()
@@ -887,6 +906,11 @@ FOCUS_RING = "mark => {" + COLOURS + """
 def focus_shows(page, name, node, mark=None):
     """Checks that a control reached with the keyboard has a ring that stands out, and stays readable."""
     u.reach(page, node)
+    ring_shows(page, name, mark)
+
+
+def ring_shows(page, name, mark=None):
+    """Checks the ring of the control that has the keyboard."""
     seen = page.evaluate(FOCUS_RING, mark)
     check(name + " shows a ring", seen["style"] == "solid" and seen["width"] >= 2, seen)
     check(name + " has a ring that stands out", seen["ring"] >= 3, seen)
@@ -896,7 +920,7 @@ def focus_shows(page, name, node, mark=None):
 
 def readable(page, name, selector):
     """Checks the contrast of what a selector finds, and returns the measures."""
-    seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": selector})
+    seen = contrast(page, selector)
     check(name + " is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
     return seen
 
@@ -934,7 +958,11 @@ def control_themes(s, width):
             check(name + " are not white on dark", seen["lightest"] < 0.2, seen["lightest"])
         check(name + " use one font", len(seen["fonts"]) == 1 and "Arial" not in seen["fonts"][0], seen["fonts"])
         readable(page, name + " buttons", u.BUTTONS)
+        readable(page, name + " the merge section", u.MERGE_TEXT)
 
+        focus_shows(page, name + " the open tab", page.locator(u.TAB + "[aria-selected=true]"))
+        page.keyboard.press("ArrowRight")
+        ring_shows(page, name + " a closed tab")
         focus_shows(page, name + " a button", u.button(stock, "test"))
         focus_shows(page, name + " a main button", page.locator(u.SAVE_SETTINGS))
         focus_shows(page, name + " a number", connected.locator(u.NUMBER))
@@ -1186,6 +1214,7 @@ def titles_of(data, name):
 def merge_markup(page, name):
     """The markup of a title: a real emby-checkbox on the line of its short name, with the details outside the label."""
     case = u.merge_case(page, PAIR)
+    u.reveal(case)
     seen = case.locator(u.MERGE_TITLE).first.evaluate("""row => {
       const label = row.querySelector('label');
       const box = label.querySelector('input');
@@ -1593,7 +1622,7 @@ def settings_look(s, width):
         u.shot(page, f"settings-closed-{theme}-{width}")
         u.open_advanced(page)
         readable = ", ".join([u.READABLE, u.ADVANCED_TOGGLE, u.FOLDER_PATH + " code", u.FOLDER_PATH + " span", u.FOLDER_NOTES])
-        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": readable})
+        seen = contrast(page, readable)
         check(name + " text is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
         healthy(page, name)
         u.shot(page, f"settings-open-{theme}-{width}")
@@ -1633,7 +1662,259 @@ def settings_form(s, width):
     settings_look(s, width)
 
 
+TAB_LABELS = ["Overview", "Servers", "Catalog", "Sharing", "Settings"]
+TAB_PARTS = {
+    "overview": [u.STATUS],
+    "servers": [u.SERVERS, u.ADD_FORM],
+    "catalog": [u.SYNC_NOW, u.MERGE_CASES, u.MERGES],
+    "sharing": [u.PEERS],
+    "settings": [u.SETTINGS_FORM],
+}
+HEADINGS = """panel => [...panel.querySelectorAll('h1, h2, h3, h4, h5, h6')].filter(h => h.offsetParent).map(h => h.tagName)"""
+SCROLL = "[document.documentElement.scrollHeight, innerHeight]"
+
+
+def tabs_laid_out(s, width):
+    """The tabs are in order, each holds its part of the page, and each fits the screen."""
+    name = width + " tabs"
+    page = s.open("fresh", width)
+    check(name + " are in order", page.locator(u.TAB).all_inner_texts() == TAB_LABELS, page.locator(u.TAB).all_inner_texts())
+    check(name + " start on Overview", u.shown_tab(page) == "overview", u.shown_tab(page))
+    for box in [page.locator(u.TAB).nth(index).bounding_box() for index in range(5)]:
+        check(name + " are all on the screen", box["x"] >= 0 and box["x"] + box["width"] <= u.VIEWPORTS[width]["width"], box)
+    for index, tab in enumerate(u.TABS):
+        u.show_tab(page, tab)
+        label = f"{name} {tab}"
+        check(label + " is the one panel shown", page.locator(u.PANEL + ":not([hidden])").count() == 1)
+        check(label + " is marked in the header", page.locator(u.TAB + "[aria-selected=true]").inner_text() == TAB_LABELS[index])
+        check(label + " is in the address", page.evaluate("location.hash").endswith("#" + tab), page.evaluate("location.hash"))
+        panel = page.locator(u.PANEL + ":not([hidden])")
+        for part in TAB_PARTS[tab]:
+            check(f"{label} holds {part}", panel.locator(part).count() == 1)
+        levels = panel.evaluate(HEADINGS)
+        check(label + " opens with one heading level", levels[0] == "H3" and set(levels) <= {"H3", "H4"}, levels)
+        check(label + " does not scroll sideways", page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+        sizes = page.evaluate(SCROLL)
+        print(f"INFO {label} is {sizes[0] / sizes[1]:.1f} screens long, {sizes[0]} px", flush=True)
+        u.shot(page, f"tab-{tab}-{width}")
+    u.show_tab(page, "servers")
+    check(name + " Servers says what it reads", "reads from other servers" in page.locator(u.PANEL + ":not([hidden])").inner_text())
+    u.show_tab(page, "sharing")
+    check(name + " Sharing says what others read", "read from this server" in page.locator(u.PANEL + ":not([hidden])").inner_text())
+    healthy(page, name)
+    page.context.close()
+
+
+def tabs_remembered(s, width):
+    """A tab survives a reload, a return and the browser buttons, and can be linked to."""
+    name = width + " tabs"
+    page = s.open("fresh", width)
+    u.show_tab(page, "catalog")
+    page.reload()
+    u.wait_loaded(page)
+    check(name + " a reload keeps the tab", u.shown_tab(page) == "catalog", u.shown_tab(page))
+    check(name + " a reload keeps the mark", page.locator(u.TAB + "[aria-selected=true]").inner_text() == "Catalog")
+
+    page.evaluate("location.hash = '#/dashboard'")
+    page.wait_for_function("() => !location.hash.includes('configurationpage')", timeout=15000)
+    page.wait_for_selector(u.TAB, state="detached", timeout=15000)
+    check(name + " leave the header with the page", page.locator(u.TAB).count() == 0)
+    page.go_back()
+    u.wait_loaded(page)
+    check(name + " Back to the page keeps the tab", u.shown_tab(page) == "catalog", u.shown_tab(page))
+    check(name + " come back with the page", page.locator(u.TAB + "[aria-selected=true]").inner_text() == "Catalog")
+    page.evaluate("location.hash = '#/dashboard'")
+    page.wait_for_function("() => !location.hash.includes('configurationpage')", timeout=15000)
+    page.evaluate("location.hash = '#/configurationpage?name=JellyMesh'")
+    u.wait_loaded(page)
+    page.wait_for_selector(u.TAB + "[aria-selected=true]", timeout=15000)
+    check(name + " a return with a plain link keeps the tab", u.shown_tab(page) == "catalog", u.shown_tab(page))
+    check(name + " the address names the tab again", page.evaluate("location.hash").endswith("#catalog"), page.evaluate("location.hash"))
+
+    page.goto(page.url.split("#/")[0] + "#/configurationpage?name=JellyMesh")
+    page.reload()
+    u.wait_loaded(page)
+    check(name + " a new load of the plain address remembers the tab", u.shown_tab(page) == "catalog", u.shown_tab(page))
+
+    page.evaluate("sessionStorage.setItem('jellymesh-tab', 'nonsense')")
+    page.goto(page.url.split("#/")[0] + "#/configurationpage?name=JellyMesh")
+    page.reload()
+    u.wait_loaded(page)
+    check(name + " an unknown remembered tab is ignored", u.shown_tab(page) in u.TABS, u.shown_tab(page))
+    page.context.close()
+
+    for tab in ["settings", "sharing"]:
+        page = s.open("fresh", width, tab=tab)
+        check(f"{name} a link opens {tab}", u.shown_tab(page) == tab, u.shown_tab(page))
+        check(f"{name} a link marks {tab}", page.locator(u.TAB + "[aria-selected=true]").inner_text().lower() == tab)
+        page.context.close()
+    page = s.open("fresh", width, tab="nonsense")
+    check(name + " an unknown link opens Overview", u.shown_tab(page) == "overview", u.shown_tab(page))
+    page.context.close()
+
+    page = s.open("fresh", width)
+    u.mark(page.locator(u.PAGE))
+    field = page.locator(u.ADD_FIELDS["name"])
+    field.fill("kept")
+    u.show_tab(page, "catalog")
+    u.show_tab(page, "sharing")
+    page.go_back()
+    check(name + " Back goes to the tab before", until(page, lambda: u.shown_tab(page) == "catalog"), u.shown_tab(page))
+    check(name + " Back moves the mark", until(page, lambda: page.locator(u.TAB + "[aria-selected=true]").inner_text() == "Catalog"))
+    page.go_forward()
+    check(name + " Forward goes to the next tab", until(page, lambda: u.shown_tab(page) == "sharing"), u.shown_tab(page))
+    page.locator(u.PAGE).evaluate("""node => { const link = document.createElement('a');
+      link.href = '#/configurationpage?name=JellyMesh#settings'; node.appendChild(link); link.click(); link.remove(); }""")
+    check(name + " a plain link on the page opens a tab", until(page, lambda: u.shown_tab(page) == "settings"), u.shown_tab(page))
+    check(name + " a plain link keeps the page loaded", u.is_marked(page.locator(u.PAGE)) and page.locator(u.PAGE).count() == 1)
+    page.go_back()
+    until(page, lambda: u.shown_tab(page) == "sharing")
+    page.locator(u.NUMBER).first.focus()
+    page.go_back()
+    until(page, lambda: u.shown_tab(page) == "catalog")
+    check(name + " Back from a field keeps the focus on the page", page.evaluate("document.activeElement.getAttribute('role')") == "tabpanel",
+          page.evaluate("document.activeElement.tagName"))
+    check(name + " the browser buttons keep the page loaded", u.is_marked(page.locator(u.PAGE)) and page.locator(u.PAGE).count() == 1)
+    check(name + " the browser buttons keep an edit", field.input_value() == "kept", field.input_value())
+    healthy(page, name)
+    page.context.close()
+
+    page = s.open("fresh", width)
+    u.show_tab(page, "catalog")
+    page.evaluate("location.hash = '#/home'")
+    page.wait_for_selector(".emby-tab-button", state="attached", timeout=15000)
+    check(name + " another page keeps its own tabs", page.locator(u.TAB).count() == 0 and page.locator(".emby-tab-button").count() > 0)
+    check(name + " are not left in the styles of another page", not page.evaluate("document.body.classList.contains('jmTabs')"))
+    page.context.close()
+
+
+def tabs_keyboard(s, width):
+    """The tabs work with arrows, Enter and Space, and show where the keyboard is."""
+    name = width + " tabs keyboard"
+    page = s.open("fresh", width)
+    first_tab = page.locator(u.TAB).first
+    first_tab.focus()
+    check(name + " one tab takes Tab", page.locator(u.TAB + "[tabindex='0']").count() == 1)
+    page.keyboard.press("ArrowRight")
+    check(name + " an arrow moves along the tabs", page.evaluate("document.activeElement.textContent") == "Servers", page.evaluate("document.activeElement.textContent"))
+    check(name + " an arrow alone opens nothing", u.shown_tab(page) == "overview", u.shown_tab(page))
+    page.keyboard.press("Enter")
+    check(name + " Enter opens the tab", until(page, lambda: u.shown_tab(page) == "servers"), u.shown_tab(page))
+    page.keyboard.press("ArrowRight")
+    page.keyboard.press("Space")
+    check(name + " Space opens the tab", until(page, lambda: u.shown_tab(page) == "catalog"), u.shown_tab(page))
+    check(name + " Space does not scroll", page.evaluate("scrollY") == 0, page.evaluate("scrollY"))
+    focus_shows(page, name + " a tab", page.locator(u.TAB).nth(3))
+    u.shot(page, f"tab-focus-{width}", full_page=False)
+    healthy(page, name)
+    page.context.close()
+
+
+def tabs_visible_parts(s, width):
+    """The warning and the outcome show in every tab, and a hidden section goes on updating."""
+    name = width + " tabs"
+    page = s.open("fresh", width, route=warned)
+    u.button(u.server_row(page, "stock"), "test").click()
+    u.wait_message(page)
+    for tab in u.TABS:
+        u.show_tab(page, tab)
+        check(f"{name} {tab} shows the warning", u.in_view(page, u.WARNING))
+        check(f"{name} {tab} shows the outcome", u.in_view(page, u.OUTCOME))
+        page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
+        check(f"{name} {tab} keeps the outcome at the end", u.in_view(page, u.OUTCOME))
+        page.evaluate("scrollTo(0, 0)")
+        u.shot(page, f"tab-warned-{tab}-{width}", full_page=False)
+    u.close(page)
+
+    page = s.open("fresh", width)
+    connected = u.peer_row(page, "jellymesh")
+    stock = u.server_row(page, "stock")
+    fake(page, "Peers", lambda peers: peers[0].update(ActiveStreams=1))
+    fake(page, "Status", lambda status: [server.update(Connection="Offline") for server in status["Servers"] if server["Name"] == "stock"])
+    check(name + " a hidden section updates", until(page, lambda: "Streams in use: 1 of" in connected.inner_text(), 18), connected.inner_text())
+    check(name + " another hidden section updates", until(page, lambda: "offline" in stock.inner_text(), 18), stock.inner_text())
+    check(name + " updating leaves the tab alone", u.shown_tab(page) == "overview", u.shown_tab(page))
+    page.unroute_all(behavior="ignoreErrors")
+    u.close(page)
+
+
+def tabs_keep_edits(s, width):
+    """What the admin was doing in a tab is still there after a walk through the others."""
+    name = width + " tabs"
+    page = s.open("fresh", width)
+    stock = u.server_row(page, "stock")
+    connected = u.peer_row(page, "jellymesh")
+    case = u.merge_case(page, PAIR)
+    page.locator(u.ADD_FIELDS["name"]).fill("kept name")
+    u.button(stock, "libraries").click()
+    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
+    u.tick(stock.locator(u.CHECKBOX).first, False)
+    connected.locator(u.NUMBER).fill("9")
+    u.tick(connected.locator(u.CHECKBOX).first, False)
+    select(case, 2)
+    forecast = result(case)
+    u.open_advanced(page)
+    page.locator(u.SYNC_INTERVAL).fill("777")
+    page.locator(u.FEDERATED_FOLDER).fill("/typed")
+    page.wait_for_timeout(6000)
+    for tab in u.TABS + u.TABS:
+        u.show_tab(page, tab)
+    check(name + " keep the add form", page.locator(u.ADD_FIELDS["name"]).input_value() == "kept name")
+    check(name + " keep the open libraries", stock.locator(u.CHECKBOX).count() == 2, stock.locator(u.CHECKBOX).count())
+    check(name + " keep the library choice", stock.locator(u.CHECKBOX + ":checked").count() == 1)
+    check(name + " keep the stream limit", connected.locator(u.NUMBER).input_value() == "9", connected.locator(u.NUMBER).input_value())
+    check(name + " keep the shared box", connected.locator(u.CHECKBOX + ":checked").count() == 1)
+    check(name + " keep the selection", case.locator(u.CHECKBOX + ":checked").count() == 2)
+    check(name + " keep the forecast", result(case) == forecast, result(case))
+    check(name + " keep the settings", page.locator(u.SYNC_INTERVAL).input_value() == "777" and page.locator(u.FEDERATED_FOLDER).input_value() == "/typed")
+    check(name + " keep the open part", u.advanced_open(page))
+
+    u.button(stock, "remove").click()
+    u.wait_confirm(page)
+    u.answer_confirm(page, False)
+    check(name + " a dialog leaves the tab", u.shown_tab(page) == "servers", u.shown_tab(page))
+    u.open_picker(page)
+    page.locator(u.PICKER_CLOSE).click()
+    page.wait_for_selector(u.CONFIRM, state="detached", timeout=15000)
+    check(name + " the folder browser leaves the tab", u.shown_tab(page) == "settings", u.shown_tab(page))
+    healthy(page, name)
+    page.context.close()
+
+
+def tabs_field_error(s, width):
+    """A wrong field in a tab that is not on screen opens that tab, and its closed part, before taking the focus."""
+    name = width + " tabs field error"
+    page = s.open("fresh", width)
+    policy = page.locator("#jmPolicyCache").input_value()
+    u.open_advanced(page)
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator(u.ADVANCED_TOGGLE).click()
+    u.show_tab(page, "overview")
+    page.locator(u.SETTINGS_FORM).evaluate("form => form.requestSubmit()")
+    outcome(page, name, "Error", "Remember the transcoding rights")
+    check(name + " opens the tab", u.shown_tab(page) == "settings", u.shown_tab(page))
+    check(name + " marks the tab", until(page, lambda: page.locator(u.TAB + "[aria-selected=true]").inner_text() == "Settings"))
+    check(name + " opens the closed part", u.advanced_open(page))
+    check(name + " focuses the field", u.focused(page) == "jmPolicyCache", u.focused(page))
+    check(name + " brings the field into view", u.in_view(page, "#jmPolicyCache"))
+    check(name + " puts the tab in the address", page.evaluate("location.hash").endswith("#settings"), page.evaluate("location.hash"))
+    page.locator("#jmPolicyCache").fill(policy)
+    healthy(page, name)
+    page.context.close()
+
+
+def tabs(s, width):
+    """The tabs of the page, on their own."""
+    tabs_laid_out(s, width)
+    tabs_remembered(s, width)
+    tabs_keyboard(s, width)
+    tabs_visible_parts(s, width)
+    tabs_keep_edits(s, width)
+    tabs_field_error(s, width)
+
+
 SCENARIOS = {
+    "tabs": (tabs, WIDTHS),
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
     "normal": (normal, WIDTHS),

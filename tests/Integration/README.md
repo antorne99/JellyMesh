@@ -230,7 +230,7 @@ bash merge/down.sh                # removes containers, volumes, network and scr
 
 ### `ui/`
 
-Checks the configuration page in real jellyfin-web, on private servers built from the checkout it runs in. `UI_PREFIX` and `UI_PORT` are required and name everything it makes, so several checkouts can run it at once if each has its own values. The ports are `UI_PORT` to `UI_PORT+3`. `MEDIA` defaults to the main checkout, and `WORK` to `$TMPDIR/$UI_PREFIX-work`. It takes about 2 minutes to start and 2 to check, and holds about 1.5 GB of memory while up, so stagger runs on a small Docker.
+Checks the configuration page in real jellyfin-web, on private servers built from the checkout it runs in. `UI_PREFIX` and `UI_PORT` are required and name everything it makes, so several checkouts can run it at once if each has its own values. The ports are `UI_PORT` to `UI_PORT+3`. `MEDIA` defaults to the main checkout, and `WORK` to `$TMPDIR/$UI_PREFIX-work`. It takes about 2 minutes to start and 10 to check, and holds about 1.5 GB of memory while up, so stagger runs on a small Docker.
 
 ```sh
 export UI_PREFIX=jm-ui-811 UI_PORT=18811
@@ -257,6 +257,15 @@ Selectors, button texts and the way to read an outcome live only in `uipage.py`,
 ```sh
 source ui/lib.sh && pw /path/to/script.py
 ```
+
+The page has five tabs, so most of it is hidden at any moment. Reading text or a value works on a hidden tab, while `uipage.py` makes `click`, `fill`, `focus`, `is_visible`, `select_option`, `bounding_box` and `scroll_into_view_if_needed` open the tab of their element first, so a check does not have to name tabs. `page.evaluate` opens nothing: use `u.reveal(node)` or `u.show_tab(page, name)` before measuring what is on screen, and `contrast` in `pagecheck.py` for a selector across all tabs. `Session.open(tab="catalog")` opens the page on a tab, and the `tabs` scenario checks the tabs themselves.
+
+What Jellyfin 12.4 was observed to do with these tabs:
+
+- `LibraryMenu.setTabs` draws them in the Dashboard header at every width, as router links with `role="tab"`, arrow keys and Enter, but not Space. Without `href` a click leaves for `/configurationpage` with no plugin name and ends on Home.
+- An `href` with another query, such as `&tab=catalog`, loads a second copy of the page and hides the first with its edits. A hash after the query, as in `#/configurationpage?name=JellyMesh#catalog`, keeps the page loaded, adds a step to the browser history, and survives a reload and a return.
+- The router pushes that address without an event, while Back and Forward fire `popstate` and `hashchange`.
+- The header empties itself when the next page appears, and tabs must be set again at each `pageshow`. Calling `setTabs(null)` at `pagehide` runs after the next page set its own, and removes the tabs of Home.
 
 ## Not covered here
 

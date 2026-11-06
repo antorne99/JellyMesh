@@ -12,6 +12,39 @@
                 overflow: visible;
             }
 
+            body.jmTabs [role="tab"][data-tab-index]:focus-visible {
+                outline: 2px solid var(--jf-palette-text-primary, #fff);
+                outline-offset: -2px;
+            }
+
+            body.jmTabs [role="tab"][data-tab-index][aria-selected="true"] {
+                color: var(--jf-palette-text-primary, #fff);
+            }
+
+            @media (max-width: 599.95px) {
+                body.jmTabs [role="tab"][data-tab-index] {
+                    flex: 1 1 auto;
+                    min-width: 0;
+                    padding-right: 0.5em;
+                    padding-left: 0.5em;
+                }
+            }
+
+            #JellyMeshConfigPage [role="tabpanel"]:focus {
+                outline: none;
+            }
+
+            .jmColumns {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 22em), 1fr));
+                gap: 0 3em;
+                align-items: start;
+            }
+
+            .jmColumns > * {
+                min-width: 0;
+            }
+
             .jmOutcome {
                 position: sticky;
                 bottom: 1em;
@@ -302,140 +335,155 @@
                 <h2 class="sectionTitle">JellyMesh</h2>
 
                 <div id="jmWarning" role="alert" hidden class="jmAlert"></div>
-
-                <h3 class="sectionTitle">Status</h3>
                 <div id="jmStatusFailure" role="alert" hidden class="jmAlert"></div>
-                <p id="jmStatus"></p>
 
-                <h3 class="sectionTitle">Remote servers</h3>
-                <div id="jmServers"></div>
+                <section data-jm-tab="overview" role="tabpanel" aria-label="Overview">
+                    <h3 class="sectionTitle">Status</h3>
+                    <p id="jmStatus"></p>
+                </section>
 
-                <h3 class="sectionTitle">Catalog</h3>
-                <div id="jmIndexWarning" role="alert" hidden class="jmAlert"></div>
-                <div id="jmSyncFailure" role="alert" hidden class="jmAlert"></div>
-                <p id="jmSyncStatus"></p>
-                <div id="jmSyncServers"></div>
-                <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
-                    <span>Sync now</span>
-                </button>
-
-                <h3 class="sectionTitle">Duplicate films</h3>
-                <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
-                <div id="jmMergeWarning" role="alert" hidden class="jmAlert"></div>
-                <div id="jmMergesFailure" role="alert" hidden class="jmAlert"></div>
-                <div id="jmMergeCases"></div>
-                <h4>Merged films</h4>
-                <div id="jmMerges"></div>
-
-                <h3 class="sectionTitle">Connected JellyMesh servers</h3>
-                <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
-                <div id="jmPeersFailure" role="alert" hidden class="jmAlert"></div>
-                <div id="jmPeers"></div>
-
-                <form id="jmAddServerForm" autocomplete="off">
-                    <h3 class="sectionTitle">Add a server</h3>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerName">Name</label>
-                        <input id="jmServerName" type="text" is="emby-input" required />
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Tailnet URL</label>
-                        <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server.tailnet.ts.net:8096" />
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerUser">User</label>
-                        <input id="jmServerUser" type="text" is="emby-input" required autocomplete="off" />
-                        <div class="fieldDescription">A dedicated non-admin user on the remote. API keys are not used.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerPassword">Password</label>
-                        <input id="jmServerPassword" type="password" is="emby-input" autocomplete="new-password" />
-                        <div class="fieldDescription">Stored encrypted and never shown again.</div>
-                    </div>
-                    <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit block emby-button">
-                        <span>Test and add</span>
-                    </button>
-                </form>
-
-                <form id="jmSettingsForm" novalidate>
-                    <h3 class="sectionTitle">Settings</h3>
-                    <div id="jmSettingsFailure" role="alert" hidden class="jmAlert"></div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
-                        <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
-                        <div class="fieldDescription">At least 300 seconds.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmReconciliationTime">Nightly reconciliation time</label>
-                        <input id="jmReconciliationTime" type="time" is="emby-input" required />
-                    </div>
-                    <div class="inputContainer">
-                        <div class="jmFolderPick">
-                            <div class="jmFolderField">
-                                <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
-                                <input id="jmFederatedFolder" type="text" is="emby-input" />
+                <section data-jm-tab="servers" role="tabpanel" aria-label="Servers" hidden>
+                    <p>What this server reads from other servers. Their films and series appear in the libraries here.</p>
+                    <div class="jmColumns">
+                        <div>
+                            <h3 class="sectionTitle">Remote servers</h3>
+                            <div id="jmServers"></div>
+                        </div>
+                        <form id="jmAddServerForm" autocomplete="off">
+                            <h3 class="sectionTitle">Add a server</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerName">Name</label>
+                                <input id="jmServerName" type="text" is="emby-input" required />
                             </div>
-                            <button id="jmChooseFolder" is="emby-button" type="button" class="raised emby-button">
-                                <span>Choose folder</span>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Tailnet URL</label>
+                                <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server.tailnet.ts.net:8096" />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerUser">User</label>
+                                <input id="jmServerUser" type="text" is="emby-input" required autocomplete="off" />
+                                <div class="fieldDescription">A dedicated non-admin user on the remote. API keys are not used.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerPassword">Password</label>
+                                <input id="jmServerPassword" type="password" is="emby-input" autocomplete="new-password" />
+                                <div class="fieldDescription">Stored encrypted and never shown again.</div>
+                            </div>
+                            <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit block emby-button">
+                                <span>Test and add</span>
                             </button>
-                        </div>
-                        <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
-                        <div id="jmFolderInfo" class="fieldDescription jmFolderInfo">
-                            <div id="jmFolderHint"></div>
-                            <div id="jmFolderPaths"></div>
-                            <div id="jmFolderNotes"></div>
-                        </div>
+                        </form>
                     </div>
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
-                            <span>Protect metadata</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
-                    </div>
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="jmCloseAtExpiry" type="checkbox" is="emby-checkbox" />
-                            <span>Close the transcode of an expired stream</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
-                    </div>
-                    <details id="jmAdvanced" class="jmAdvanced">
-                        <summary>
-                            <h3 class="sectionTitle">Advanced playback times</h3>
-                            <span class="fieldDescription">Most servers can keep these values.</span>
-                            <span class="material-icons expand_more jmAdvancedIcon" aria-hidden="true"></span>
-                        </summary>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
-                            <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
-                            <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.</div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
-                            <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
-                            <div class="fieldDescription">From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.</div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
-                            <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
-                            <div class="fieldDescription">From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.</div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
-                            <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
-                            <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
-                            <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
-                            <div class="fieldDescription">From 1 to 60. A change to these rights on the remote takes up to this long to apply here.</div>
-                        </div>
-                    </details>
-                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                        <span>Save</span>
+                </section>
+
+                <section data-jm-tab="catalog" role="tabpanel" aria-label="Catalog" hidden>
+                    <h3 class="sectionTitle">Sync</h3>
+                    <div id="jmIndexWarning" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmSyncFailure" role="alert" hidden class="jmAlert"></div>
+                    <p id="jmSyncStatus"></p>
+                    <div id="jmSyncServers"></div>
+                    <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
+                        <span>Sync now</span>
                     </button>
-                </form>
+
+                    <h3 class="sectionTitle">Duplicate films</h3>
+                    <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
+                    <div id="jmMergeWarning" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmMergesFailure" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmMergeCases"></div>
+                    <h3 class="sectionTitle">Merged films</h3>
+                    <div id="jmMerges"></div>
+                </section>
+
+                <section data-jm-tab="sharing" role="tabpanel" aria-label="Sharing" hidden>
+                    <p>What other JellyMesh servers read from this server.</p>
+                    <h3 class="sectionTitle">Connected JellyMesh servers</h3>
+                    <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
+                    <div id="jmPeersFailure" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmPeers"></div>
+                </section>
+
+                <section data-jm-tab="settings" role="tabpanel" aria-label="Settings" hidden>
+                    <form id="jmSettingsForm" novalidate>
+                        <h3 class="sectionTitle">Settings</h3>
+                        <div id="jmSettingsFailure" role="alert" hidden class="jmAlert"></div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
+                            <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
+                            <div class="fieldDescription">At least 300 seconds.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmReconciliationTime">Nightly reconciliation time</label>
+                            <input id="jmReconciliationTime" type="time" is="emby-input" required />
+                        </div>
+                        <div class="inputContainer">
+                            <div class="jmFolderPick">
+                                <div class="jmFolderField">
+                                    <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
+                                    <input id="jmFederatedFolder" type="text" is="emby-input" />
+                                </div>
+                                <button id="jmChooseFolder" is="emby-button" type="button" class="raised emby-button">
+                                    <span>Choose folder</span>
+                                </button>
+                            </div>
+                            <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
+                            <div id="jmFolderInfo" class="fieldDescription jmFolderInfo">
+                                <div id="jmFolderHint"></div>
+                                <div id="jmFolderPaths"></div>
+                                <div id="jmFolderNotes"></div>
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
+                                <span>Protect metadata</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input id="jmCloseAtExpiry" type="checkbox" is="emby-checkbox" />
+                                <span>Close the transcode of an expired stream</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
+                        </div>
+                        <details id="jmAdvanced" class="jmAdvanced">
+                            <summary>
+                                <h3 class="sectionTitle">Advanced playback times</h3>
+                                <span class="fieldDescription">Most servers can keep these values.</span>
+                                <span class="material-icons expand_more jmAdvancedIcon" aria-hidden="true"></span>
+                            </summary>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
+                                <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
+                                <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
+                                <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
+                                <div class="fieldDescription">From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
+                                <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
+                                <div class="fieldDescription">From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
+                                <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
+                                <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
+                                <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
+                                <div class="fieldDescription">From 1 to 60. A change to these rights on the remote takes up to this long to apply here.</div>
+                            </div>
+                        </details>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </form>
+                </section>
 
                 <div id="jmOutcome" class="jmOutcome">
                     <div id="jmMessage" role="status"></div>
@@ -486,9 +534,127 @@
                 var nextOptionsRead = 0;
                 var fieldNotes = 0;
                 var noAnswer = 'No answer from this server. Check the network connection and try again.';
+                var pageUrl = '/configurationpage?name=JellyMesh';
+                var tabMemory = 'jellymesh-tab';
+                var panels = Array.prototype.slice.call(page.querySelectorAll('[role="tabpanel"]'));
+                var tabNames = panels.map(function (panel) {
+                    return panel.dataset.jmTab;
+                });
+                var shownTab = tabNames[0];
 
                 function el(selector) {
                     return page.querySelector(selector);
+                }
+
+                // Returns the tab named after the second # of the address, which the router ignores.
+                function tabInUrl() {
+                    var name = location.hash.split('#')[2];
+                    return tabNames.indexOf(name) >= 0 ? name : null;
+                }
+
+                // Returns the tab shown last in this browser tab, when the browser lets the page read it.
+                function rememberedTab() {
+                    try {
+                        var name = sessionStorage.getItem(tabMemory);
+                        return tabNames.indexOf(name) >= 0 ? name : null;
+                    } catch (error) {
+                        return null;
+                    }
+                }
+
+                function rememberTab(name) {
+                    try {
+                        sessionStorage.setItem(tabMemory, name);
+                    } catch (error) {
+                        return;
+                    }
+                }
+
+                // Lists the tabs for the Dashboard header. A hash after the page address keeps the page loaded.
+                function headerTabs() {
+                    return panels.map(function (panel) {
+                        return { name: panel.getAttribute('aria-label'), href: pageUrl + '#' + panel.dataset.jmTab };
+                    });
+                }
+
+                // Shows the panel of a tab and marks it in the header. Without a header every panel stays shown.
+                function selectTab(name) {
+                    var index = tabNames.indexOf(name);
+                    var active = document.activeElement;
+                    var hasHeader = typeof LibraryMenu !== 'undefined';
+                    var changed = name !== shownTab;
+                    shownTab = name;
+                    panels.forEach(function (panel, position) {
+                        panel.hidden = hasHeader && position !== index;
+                    });
+                    var lostFocus = panels.some(function (panel) {
+                        return panel.hidden && panel.contains(active);
+                    });
+                    if (lostFocus) {
+                        panels[index].tabIndex = -1;
+                        panels[index].focus({ preventScroll: true });
+                    }
+
+                    if (changed) {
+                        window.scrollTo(0, 0);
+                    }
+
+                    rememberTab(name);
+                    if (visible && hasHeader) {
+                        LibraryMenu.setTabs('jellymesh', index, headerTabs);
+                    }
+                }
+
+                // Shows a tab by name and puts it in the address, without adding a step to the browser history.
+                function showTab(name) {
+                    if (tabNames.indexOf(name) < 0) {
+                        return;
+                    }
+
+                    selectTab(name);
+                    if (location.hash.indexOf('#' + pageUrl) === 0 && tabInUrl() !== name) {
+                        history.replaceState(history.state, '', '#' + pageUrl + '#' + name);
+                    }
+                }
+
+                // Follows a header tab the router took. The router writes the address on its own.
+                function tabClicked(e) {
+                    var tab = e.target.closest('[role="tab"][data-tab-index]');
+                    if (tab && e.defaultPrevented) {
+                        selectTab(tabNames[tab.dataset.tabIndex]);
+                    }
+                }
+
+                // Lets Space open a header tab, which is a link and takes only Enter.
+                function tabKey(e) {
+                    if (e.key === ' ' && e.target.matches('[role="tab"][data-tab-index]')) {
+                        e.preventDefault();
+                        e.target.click();
+                    }
+                }
+
+                // Follows the Back and Forward buttons between the tabs visited.
+                function addressChanged() {
+                    var name = tabInUrl();
+                    if (name && name !== shownTab) {
+                        selectTab(name);
+                    }
+                }
+
+                // Puts the tabs in the Dashboard header, which empties it by itself for the next page.
+                function showTabs() {
+                    document.body.classList.add('jmTabs');
+                    document.addEventListener('click', tabClicked);
+                    document.addEventListener('keydown', tabKey);
+                    window.addEventListener('hashchange', addressChanged);
+                    showTab(tabInUrl() || shownTab);
+                }
+
+                function hideTabs() {
+                    document.body.classList.remove('jmTabs');
+                    document.removeEventListener('click', tabClicked);
+                    document.removeEventListener('keydown', tabKey);
+                    window.removeEventListener('hashchange', addressChanged);
                 }
 
                 // Names come from remote servers, so everything goes through textContent.
@@ -551,8 +717,9 @@
                     input.removeAttribute('aria-describedby');
                 }
 
-                // Brings a wrong field to the middle of the screen, clear of the outcome, and focuses it.
+                // Opens the tab of a wrong field, brings it to the middle of the screen, clear of the outcome, and focuses it.
                 function focusField(input) {
+                    showTab(input.closest('[role="tabpanel"]').dataset.jmTab);
                     input.scrollIntoView({ block: 'center' });
                     input.focus({ preventScroll: true });
                 }
@@ -938,9 +1105,14 @@
                     setText(el('#jmStatus'), (status.Suspended ? 'Suspended' : 'Active') + '. Servers configured: ' + status.Servers.length + '.');
                     el('#jmAddServer').disabled = suspended;
                     updateSyncButton();
-                    updateRows(el('#jmServers'), status.Servers.map(function (server) {
+                    var servers = status.Servers.map(function (server) {
                         return { key: server.Id, build: renderServer, args: [server] };
-                    }));
+                    });
+                    if (servers.length === 0) {
+                        servers.push({ key: 'none', build: create, args: ['p', 'No remote servers yet.'] });
+                    }
+
+                    updateRows(el('#jmServers'), servers);
                     renderFolder(status.FederatedFolder);
                 }
 
@@ -1649,8 +1821,11 @@
                         : 'Settings not saved: the server answered with error ' + error.status + '.';
                 }
 
+                selectTab(tabInUrl() || rememberedTab() || shownTab);
+
                 page.addEventListener('pageshow', function () {
                     visible = true;
+                    showTabs();
                     nextOptionsRead = 0;
                     document.addEventListener('visibilitychange', tabChanged);
                     act(Promise.all([refresh(settingsSection), load()]).then(function (results) {
@@ -1666,6 +1841,7 @@
 
                 page.addEventListener('pagehide', function () {
                     visible = false;
+                    hideTabs();
                     document.removeEventListener('visibilitychange', tabChanged);
                     schedule();
                 });
