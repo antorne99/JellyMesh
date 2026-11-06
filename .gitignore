@@ -12,3 +12,6 @@ docs/
 PRODUCT.md
 DESIGN.md
 HANDOFF.md
+.mcp.json
+.agents/
+skills-lock.json
