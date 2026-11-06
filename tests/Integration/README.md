@@ -230,7 +230,7 @@ bash merge/down.sh                # removes containers, volumes, network and scr
 
 ### `ui/`
 
-Checks the configuration page in real jellyfin-web, on private servers built from the checkout it runs in. `UI_PREFIX` and `UI_PORT` are required and name everything it makes, so several checkouts can run it at once if each has its own values. The ports are `UI_PORT` to `UI_PORT+3`. `MEDIA` defaults to the main checkout, and `WORK` to `$TMPDIR/$UI_PREFIX-work`. It takes about 2 minutes to start and 10 to check, and holds about 1.5 GB of memory while up, so stagger runs on a small Docker.
+Checks the configuration page in real jellyfin-web, on private servers built from the checkout it runs in. `UI_PREFIX` and `UI_PORT` are required and name everything it makes, so several checkouts can run it at once if each has its own values. The ports are `UI_PORT` to `UI_PORT+3`. `MEDIA` defaults to the main checkout, and `WORK` to `$TMPDIR/$UI_PREFIX-work`. It takes about 2 minutes to start and 15 to check, and holds about 1.5 GB of memory while up, so stagger runs on a small Docker.
 
 ```sh
 export UI_PREFIX=jm-ui-811 UI_PORT=18811
