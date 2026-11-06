@@ -176,7 +176,7 @@ public class FederationAdminController : ControllerBase
         return _registry.SetImportedLibraries(serverId, request.LibraryIds) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
 
-    private static string? KeyWarning(KeyState state)
+    internal static string? KeyWarning(KeyState state)
     {
         const string Consequence = "Remote credentials cannot be saved or used, and sync and remote playback are suspended.";
         return state switch

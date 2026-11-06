@@ -774,7 +774,7 @@
 
             .jmCardFacts {
                 display: grid;
-                grid-template-columns: max-content minmax(0, 1fr);
+                grid-template-columns: fit-content(45%) minmax(0, 1fr);
                 gap: 0.3em 1.5em;
                 margin: 0 0 1em;
             }
@@ -1297,47 +1297,397 @@
                 </div>
             </div>
         </div>
+        <script type="application/json" id="jmTranslations">
+            {
+                "it": {
+                    "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Librerie e salva di nuovo la selezione.",
+                    "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
+                    "A dedicated non-admin user on the remote. API keys are not used.": "Un utente dedicato non amministratore sul remoto. Le chiavi API non vengono usate.",
+                    "A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.": "Una cartella di questo server in cui Jellyfin può scrivere. JellyMesh scrive solo lì dentro.",
+                    "A library of {server} came back empty. Its {count} titles are kept.": "Una libreria di {server} è risultata vuota. I suoi {count} titoli restano.",
+                    "A series in two folders stays split in {libraries}.": "Una serie presente in due cartelle resta divisa in {libraries}.",
+                    "A sync is already running.": "Una sincronizzazione è già in corso.",
+                    "A user no longer on this server": "Un utente non più presente su questo server",
+                    "Absolute path on the server. JellyMesh writes only inside this folder.": "Percorso assoluto sul server. JellyMesh scrive solo dentro questa cartella.",
+                    "Active.": "Attivo.",
+                    "Active. All is well.": "Attivo. Va tutto bene.",
+                    "Active. Setup is not finished: {steps} to do.": "Attivo. La configurazione non è finita: {steps} da fare.",
+                    "Active. {problems}, and setup is not finished.": "Attivo. {problems}, e la configurazione non è finita.",
+                    "Active. {problems}.": "Attivo. {problems}.",
+                    "Add a remote server": "Aggiungi un server remoto",
+                    "Add a server": "Aggiungi un server",
+                    "Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.": "Aggiungili a mano nel Pannello di controllo > Librerie, uno a una libreria di film e uno a una libreria di serie. JellyMesh non modifica mai le librerie.",
+                    "Add these paths by hand in Dashboard > Libraries.": "Aggiungi questi percorsi a mano nel Pannello di controllo > Librerie.",
+                    "Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Librerie nella sua scheda per riprovare.",
+                    "Added {server}. Choose its libraries.": "{server} è stato aggiunto. Scegli le sue librerie.",
+                    "Added {server}. Open Libraries on its card to choose what to import.": "{server} è stato aggiunto. Apri Librerie nella sua scheda per scegliere cosa importare.",
+                    "Adding the server back brings the same titles and watch state.": "Aggiungendo di nuovo il server tornano gli stessi titoli e lo stato di visione.",
+                    "Advanced playback times": "Tempi di riproduzione avanzati",
+                    "Already merged.": "Già uniti.",
+                    "Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.": "Un altro server JellyMesh accede qui con un utente dedicato non amministratore di questo server. Scegli quell'utente, cosa può leggere e quanti stream può tenere insieme. Un utente così non può raggiungere nient'altro su questo server.",
+                    "Apply it": "Applicala",
+                    "At least 300 seconds.": "Almeno 300 secondi.",
+                    "Best version first.": "Prima la versione migliore.",
+                    "Best version: {quality}": "Versione migliore: {quality}",
+                    "Bitrate": "Bitrate",
+                    "Both paths are linked.": "Entrambi i percorsi sono collegati.",
+                    "Catalog": "Catalogo",
+                    "Check that the URL leads to a Jellyfin server, then test the connection.": "Controlla che l'URL porti a un server Jellyfin, poi prova la connessione.",
+                    "Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.": "Controlla che l'URL porti a un server Jellyfin. Se non è così, rimuovi questo server e aggiungilo di nuovo.",
+                    "Check that the server is running and reachable on the tailnet, then test the connection.": "Controlla che il server sia acceso e raggiungibile sulla tailnet, poi prova la connessione.",
+                    "Check the log of that server, then test the connection.": "Controlla il log di quel server, poi prova la connessione.",
+                    "Checking which copy would play.": "Controllo di quale copia verrebbe riprodotta.",
+                    "Choose a folder to see the paths to link.": "Scegli una cartella per vedere i percorsi da collegare.",
+                    "Choose folder": "Scegli cartella",
+                    "Choose libraries to import": "Scegli le librerie da importare",
+                    "Choose the federated folder": "Scegli la cartella federata",
+                    "Close an idle remote transcode after (seconds)": "Chiudi una transcodifica remota inattiva dopo (secondi)",
+                    "Close the transcode of an expired stream": "Chiudi la transcodifica di uno stream scaduto",
+                    "Codec": "Codec",
+                    "Connect": "Connetti",
+                    "Connect a server": "Connetti un server",
+                    "Connect and choose libraries": "Connetti e scegli le librerie",
+                    "Connected JellyMesh servers": "Server JellyMesh connessi",
+                    "Connected.": "Connesso.",
+                    "Connecting a server waits for the secret key. The Overview says what to do.": "Per connettere un server serve la chiave segreta. La Panoramica spiega cosa fare.",
+                    "Copied {value}.": "Copiato {value}.",
+                    "Copy": "Copia",
+                    "Copy {library} path": "Copia il percorso di {library}",
+                    "Copy: {label}": "Copia: {label}",
+                    "Could not read {what}. {next} Reason: {reason}": "Impossibile leggere {what}. {next} Motivo: {reason}",
+                    "Could not tell which copy would play. {reason}": "Impossibile dire quale copia verrebbe riprodotta. {reason}",
+                    "Create a non-admin user for the other server first.": "Prima crea un utente non amministratore per l'altro server.",
+                    "Disconnect": "Disconnetti",
+                    "Disconnect this server?": "Disconnettere questo server?",
+                    "Disconnected {name}.": "{name} è stato disconnesso.",
+                    "Dismiss": "Chiudi",
+                    "Done": "Fatto",
+                    "Duplicate films": "Film duplicati",
+                    "Duplicates to review": "Duplicati da rivedere",
+                    "Enter a name, a user and an http or https URL with no credentials, query or fragment.": "Inserisci un nome, un utente e un URL http o https senza credenziali, query o frammento.",
+                    "Enter a time as hours and minutes.": "Inserisci un orario in ore e minuti.",
+                    "Enter a whole number from {min} to {max}.": "Inserisci un numero intero da {min} a {max}.",
+                    "Enter a whole number of at least {min}.": "Inserisci un numero intero di almeno {min}.",
+                    "Enter an absolute path other than the filesystem root, without \"..\".": "Inserisci un percorso assoluto diverso dalla radice del filesystem, senza \"..\".",
+                    "Error": "Errore",
+                    "Federated folder": "Cartella federata",
+                    "Film library": "Libreria film",
+                    "Fix the login on that server, or remove this server and add it again with a working one.": "Sistema l'accesso su quel server, oppure rimuovi questo server e aggiungilo di nuovo con un accesso funzionante.",
+                    "Folder": "Cartella",
+                    "For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.": "Per i server connessi a questo. Uno stream senza attività per 2 minuti libera il suo posto, e questa opzione ne chiude anche la transcodifica. Se disattivata, la chiude il timer di Jellyfin. Una connessione caduta chiude comunque la transcodifica.",
+                    "From 1 to 168. After this a paused player has to start the title again.": "Da 1 a 168. Passato questo tempo, un player in pausa deve far ripartire il titolo.",
+                    "From 1 to 60. A change to these rights on the remote takes up to this long to apply here.": "Da 1 a 60. Una modifica di questi diritti sul remoto può metterci fino a questo tempo per valere qui.",
+                    "From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.": "Da 3 a 60. Aumentalo per un remoto lento. Uno spettatore aspetta questo tempo su ogni sorgente prima che si provi la successiva.",
+                    "From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.": "Da 30 a 109. Abbassalo per liberare prima un remoto. Un player in pausa riprende da solo.",
+                    "From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.": "Da 5 a 60. Aumentalo se un remoto è lento ad avviare una transcodifica. L'apertura può richiedere fino a tre fasi per ogni sorgente.",
+                    "Generate a key": "Genera una chiave",
+                    "Give the dedicated user access on that server, then test the connection.": "Dai accesso all'utente dedicato su quel server, poi prova la connessione.",
+                    "HDR unknown": "HDR sconosciuto",
+                    "IDs": "ID",
+                    "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
+                    "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
+                    "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
+                    "It waits for the secret key.": "Aspetta la chiave segreta.",
+                    "JELLYMESH_SECRET_KEY does not decrypt the stored credentials: it changed, or they were altered. Remote credentials cannot be saved or used, and sync and remote playback are suspended. Restore the original key, or remove the servers and add them again.": "JELLYMESH_SECRET_KEY non decifra le credenziali salvate: è cambiata, oppure sono state alterate. Le credenziali remote non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese. Ripristina la chiave originale, oppure rimuovi i server e aggiungili di nuovo.",
+                    "JELLYMESH_SECRET_KEY does not decrypt the stored logins: it changed, or they were altered. It is set on the server, outside this plugin. Restore the original key, or remove the servers and add them again.": "JELLYMESH_SECRET_KEY non decifra gli accessi salvati: è cambiata, oppure sono stati alterati. Si imposta sul server, fuori da questo plugin. Ripristina la chiave originale, oppure rimuovi i server e aggiungili di nuovo.",
+                    "JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. It is not set yet. Set it on the server, outside this plugin, with at least 32 characters.": "JELLYMESH_SECRET_KEY cifra gli accessi salvati, quindi senza di essa non si può connettere nessun server. Non è ancora impostata. Impostala sul server, fuori da questo plugin, con almeno 32 caratteri.",
+                    "JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. The one set is too short. Set it on the server, outside this plugin, with at least 32 characters.": "JELLYMESH_SECRET_KEY cifra gli accessi salvati, quindi senza di essa non si può connettere nessun server. Quella impostata è troppo corta. Impostala sul server, fuori da questo plugin, con almeno 32 caratteri.",
+                    "JELLYMESH_SECRET_KEY encrypts the stored logins. It is set on the server, outside this plugin.": "JELLYMESH_SECRET_KEY cifra gli accessi salvati. Si imposta sul server, fuori da questo plugin.",
+                    "JELLYMESH_SECRET_KEY is not set. Remote credentials cannot be saved or used, and sync and remote playback are suspended.": "JELLYMESH_SECRET_KEY non è impostata. Le credenziali remote non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese.",
+                    "JELLYMESH_SECRET_KEY must have at least 32 characters. Remote credentials cannot be saved or used, and sync and remote playback are suspended.": "JELLYMESH_SECRET_KEY deve avere almeno 32 caratteri. Le credenziali remote non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese.",
+                    "JELLYMESH_SECRET_KEY=<the generated key>": "JELLYMESH_SECRET_KEY=<la chiave generata>",
+                    "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
+                    "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
+                    "JellyMesh server": "server JellyMesh",
+                    "Keep paused sessions (hours)": "Mantieni le sessioni in pausa (ore)",
+                    "Last check": "Ultimo controllo",
+                    "Last complete sync": "Ultima sincronizzazione completa",
+                    "Last sync": "Ultima sincronizzazione",
+                    "Last sync failed ({failure}): these entries are kept as they were.": "L'ultima sincronizzazione non è riuscita ({failure}): questi elementi restano com'erano.",
+                    "Last sync: {date}.": "Ultima sincronizzazione: {date}.",
+                    "Length": "Durata",
+                    "Libraries": "Librerie",
+                    "Libraries saved for {server}. The next sync reads them.": "Librerie salvate per {server}. La prossima sincronizzazione le legge.",
+                    "Libraries to import": "Librerie da importare",
+                    "Libraries to import from {server}": "Librerie da importare da {server}",
+                    "Link the two paths": "Collega i due percorsi",
+                    "Linked": "Collegata",
+                    "Locks federated items, so metadata fetchers and \"Replace all metadata\" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.": "Blocca gli elementi federati, così i recuperi di metadati e \"Sostituisci tutti i metadati\" non li toccano. Se disattivata, i recuperi completano i metadati e i titoli senza ID provider possono essere abbinati al film sbagliato.",
+                    "Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.": "Accedi con un utente dedicato non amministratore di quel server, al suo indirizzo tailnet. Subito dopo compaiono le sue librerie.",
+                    "Merge selected": "Unisci selezionati",
+                    "Merge the ones that are one film.": "Unisci quelli che sono un solo film.",
+                    "Merge undone. The film list changes after the library scan that was queued.": "Unione annullata. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
+                    "Merged films": "Film uniti",
+                    "Merged on {date}": "Uniti il {date}",
+                    "Merged. The film list changes after the library scan that was queued.": "Uniti. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
+                    "Metadata": "Metadati",
+                    "Mode": "Modalità",
+                    "Most servers can keep these values.": "La maggior parte dei server può tenere questi valori.",
+                    "Name": "Nome",
+                    "Never": "Mai",
+                    "Nightly reconciliation time": "Orario della riconciliazione notturna",
+                    "No answer from this server. Check the network connection and try again.": "Nessuna risposta da questo server. Controlla la connessione di rete e riprova.",
+                    "No connected servers": "Nessun server connesso",
+                    "No connected servers yet.": "Ancora nessun server connesso.",
+                    "No doubtful films.": "Nessun film dubbio.",
+                    "No libraries chosen, so nothing is imported from this server yet.": "Nessuna libreria scelta, quindi per ora da questo server non si importa nulla.",
+                    "No remote servers yet.": "Ancora nessun server remoto.",
+                    "None": "Nessuno",
+                    "None yet": "Ancora nessuno",
+                    "Not checked": "Non controllata",
+                    "Not chosen": "Non scelta",
+                    "Not in effect: a copy is missing, or the IDs already make these one film.": "Non attiva: manca una copia, oppure gli ID li rendono già un solo film.",
+                    "Not known": "Non noto",
+                    "Not linked": "Non collegata",
+                    "Not read yet": "Non ancora letto",
+                    "Not since this server started": "Non dall'avvio di questo server",
+                    "Nothing is imported from a server until you choose its libraries.": "Da un server non si importa nulla finché non scegli le sue librerie.",
+                    "Nothing is imported from a server until you choose its libraries. Still to choose: {servers}.": "Da un server non si importa nulla finché non scegli le sue librerie. Ancora da scegliere: {servers}.",
+                    "Nothing is imported from this server until you choose its libraries and save.": "Da questo server non si importa nulla finché non scegli le sue librerie e salvi.",
+                    "Nothing merged.": "Nessuna unione.",
+                    "Open Libraries and save the selection again.": "Apri Librerie e salva di nuovo la selezione.",
+                    "Open {tab}": "Apri {tab}",
+                    "Other version: {quality}": "Altra versione: {quality}",
+                    "Overview": "Panoramica",
+                    "Part of this page could not be loaded, and each part says so. {reason}": "Una parte di questa pagina non si è caricata, e ogni parte lo segnala. {reason}",
+                    "Password": "Password",
+                    "Playback already running may not stop right away.": "Una riproduzione già in corso potrebbe non fermarsi subito.",
+                    "Protect metadata": "Proteggi i metadati",
+                    "Put it in .env": "Mettila in .env",
+                    "Quality not read: a local copy plays whatever its quality.": "Qualità non letta: una copia locale viene riprodotta qualunque sia la sua qualità.",
+                    "Quality unknown": "Qualità sconosciuta",
+                    "Range": "Gamma",
+                    "Reading...": "Lettura...",
+                    "Reload the page before saving.": "Ricarica la pagina prima di salvare.",
+                    "Remember the transcoding rights of a remote (minutes)": "Ricorda i diritti di transcodifica di un remoto (minuti)",
+                    "Remote servers": "Server remoti",
+                    "Remote servers are suspended until the secret key is fixed.": "I server remoti sono sospesi finché la chiave segreta non viene sistemata.",
+                    "Remove": "Rimuovi",
+                    "Remove this server and add it again with a dedicated non-admin user.": "Rimuovi questo server e aggiungilo di nuovo con un utente dedicato non amministratore.",
+                    "Remove this server and add it again with the URL it answers on.": "Rimuovi questo server e aggiungilo di nuovo con l'URL su cui risponde.",
+                    "Remove this server?": "Rimuovere questo server?",
+                    "Removed {server}. Its titles are leaving the libraries.": "{server} è stato rimosso. I suoi titoli stanno uscendo dalle librerie.",
+                    "Resolution": "Risoluzione",
+                    "Run the first sync": "Esegui la prima sincronizzazione",
+                    "Running now": "In corso",
+                    "Save": "Salva",
+                    "Save libraries": "Salva le librerie",
+                    "Saved {name}.": "{name} è stato salvato.",
+                    "Select at least two titles of one group.": "Seleziona almeno due titoli di un gruppo.",
+                    "Select at least two titles to merge them.": "Seleziona almeno due titoli per unirli.",
+                    "Select at most one title with a local copy: two local films cannot be merged.": "Seleziona al massimo un titolo con una copia locale: due film locali non si possono unire.",
+                    "Series library": "Libreria serie",
+                    "Server": "Server",
+                    "Servers": "Server",
+                    "Set by JELLYMESH_FEDERATED_ROOT on the server. To choose it here, remove the variable and restart.": "Impostata da JELLYMESH_FEDERATED_ROOT sul server. Per sceglierla qui, rimuovi la variabile e riavvia.",
+                    "Set the secret key": "Imposta la chiave segreta",
+                    "Settings": "Impostazioni",
+                    "Settings not saved. {reason}": "Impostazioni non salvate. {reason}",
+                    "Settings not saved: the server answered with error {status}.": "Impostazioni non salvate: il server ha risposto con l'errore {status}.",
+                    "Setup": "Configurazione",
+                    "Shared libraries": "Librerie condivise",
+                    "Sharing": "Condivisione",
+                    "Status": "Stato",
+                    "Status unknown.": "Stato sconosciuto.",
+                    "Stored encrypted and never shown again.": "Salvata cifrata e mai più mostrata.",
+                    "Stream limit": "Limite di stream",
+                    "Streams": "Stream",
+                    "Streams in use": "Stream in uso",
+                    "Suspended. Sync and remote playback are stopped until the secret key is fixed.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché la chiave segreta non viene sistemata.",
+                    "Sync": "Sincronizzazione",
+                    "Sync and remote playback are suspended until the secret key is fixed. {problem}": "Sincronizzazione e riproduzione remota sono sospese finché la chiave segreta non viene sistemata. {problem}",
+                    "Sync interval (seconds)": "Intervallo di sincronizzazione (secondi)",
+                    "Sync now": "Sincronizza ora",
+                    "Sync running...": "Sincronizzazione in corso...",
+                    "Sync state unknown.": "Stato della sincronizzazione sconosciuto.",
+                    "Tailnet URL": "URL tailnet",
+                    "Test connection": "Prova la connessione",
+                    "Test the connection to see what is wrong.": "Prova la connessione per vedere cosa non va.",
+                    "That recreates the container, and a plain restart would not. Without Docker, set the variable in the environment of the Jellyfin service and restart it. Each server has its own key.": "Così il container viene ricreato, cosa che un semplice riavvio non fa. Senza Docker, imposta la variabile nell'ambiente del servizio Jellyfin e riavvialo. Ogni server ha la sua chiave.",
+                    "The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.": "L'utente Jellyfin resta e può ancora accedere, quindi quel server può continuare a leggere e riprodurre in modalità standard, con tutti gli accessi che questo utente ha in Jellyfin e senza limite di stream. Per tenerlo fuori, disattiva l'utente nel Pannello di controllo > Utenti.",
+                    "The answer does not look like a Jellyfin server.": "La risposta non sembra quella di un server Jellyfin.",
+                    "The browser did not allow copying. {value} is selected, so copy it by hand.": "Il browser non ha permesso di copiare. {value} è selezionato: copialo a mano.",
+                    "The catalog kept changing while it was read. Try again.": "Il catalogo continuava a cambiare durante la lettura. Riprova.",
+                    "The connected servers could not be read. The page keeps trying.": "Non è stato possibile leggere i server connessi. La pagina continua a provare.",
+                    "The duplicate and merged films could not be read. The page keeps trying.": "Non è stato possibile leggere i film duplicati e uniti. La pagina continua a provare.",
+                    "The federation index was damaged and is empty until a sync fills it.": "L'indice della federazione era danneggiato ed è vuoto finché una sincronizzazione non lo riempie.",
+                    "The federation index was damaged and no copy could be read. It is empty until a sync fills it again.": "L'indice della federazione era danneggiato e non è stato possibile leggerne una copia. È vuoto finché una sincronizzazione non lo riempie di nuovo.",
+                    "The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.": "L'indice della federazione era danneggiato ed è stata caricata la copia precedente. Esegui una sincronizzazione per aggiornarlo.",
+                    "The federation index was restored from its previous copy. Run a sync.": "L'indice della federazione è stato ripristinato dalla copia precedente. Esegui una sincronizzazione.",
+                    "The file of merges could not be read, so earlier merges are not applied.": "Non è stato possibile leggere il file delle unioni, quindi le unioni precedenti non sono applicate.",
+                    "The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.": "Non è stato possibile leggere il file delle unioni, quindi le unioni precedenti non sono applicate. Ripetile qui sotto; una copia del file resta accanto a esso.",
+                    "The last sync could not save the federation index. Check the disk.": "L'ultima sincronizzazione non ha potuto salvare l'indice della federazione. Controlla il disco.",
+                    "The libraries could not be read to check the paths.": "Non è stato possibile leggere le librerie per controllare i percorsi.",
+                    "The libraries could not be read to check these paths.": "Non è stato possibile leggere le librerie per controllare questi percorsi.",
+                    "The list changed. Check it again, then merge.": "L'elenco è cambiato. Ricontrollalo, poi unisci.",
+                    "The next sync tries again.": "La prossima sincronizzazione riprova.",
+                    "The operation failed.": "L'operazione non è riuscita.",
+                    "The server answered with an error.": "Il server ha risposto con un errore.",
+                    "The server answered with error {status} and gave no reason.": "Il server ha risposto con l'errore {status} senza dare un motivo.",
+                    "The server cannot be reached.": "Il server non è raggiungibile.",
+                    "The server did not answer in time.": "Il server non ha risposto in tempo.",
+                    "The server does not allow this for the dedicated user.": "Il server non lo consente all'utente dedicato.",
+                    "The server redirected somewhere that is not followed. Check the URL.": "Il server ha reindirizzato verso un indirizzo che non viene seguito. Controlla l'URL.",
+                    "The server refused the login.": "Il server ha rifiutato l'accesso.",
+                    "The server refused the settings and gave no reason, so nothing was saved.": "Il server ha rifiutato le impostazioni senza dare un motivo, quindi non è stato salvato nulla.",
+                    "The server sent an answer too large to accept.": "Il server ha inviato una risposta troppo grande per essere accettata.",
+                    "The settings could not be read. Reload the page before saving.": "Non è stato possibile leggere le impostazioni. Ricarica la pagina prima di salvare.",
+                    "The state of the sync could not be read. The page keeps trying.": "Non è stato possibile leggere lo stato della sincronizzazione. La pagina continua a provare.",
+                    "The sync of {date} could not reach it. These entries are kept as they were, and a full read runs when it answers again.": "La sincronizzazione del {date} non è riuscita a raggiungerlo. Questi elementi restano com'erano, e quando risponderà di nuovo partirà una lettura completa.",
+                    "The title that stays keeps its watch state. The others usually get theirs back, but can start again without it. Local files are not changed.": "Il titolo che resta mantiene il suo stato di visione. Gli altri di solito recuperano il proprio, ma possono ripartire senza. I file locali non vengono modificati.",
+                    "The {kind} path is linked to {libraries}, which is not a {kind} library.": "Il percorso di {kind} è collegato a {libraries}, che non è una libreria di {kind}.",
+                    "The {kind} path is not linked to a library.": "Il percorso di {kind} non è collegato a una libreria.",
+                    "These are the folders of the server. JellyMesh writes only inside the one you choose.": "Queste sono le cartelle del server. JellyMesh scrive solo dentro quella che scegli.",
+                    "These copies become separate titles again after the library scan that follows.": "Queste copie tornano titoli separati dopo la scansione della libreria che segue.",
+                    "These entries are kept as they were.": "Questi elementi restano com'erano.",
+                    "These titles are linked by shared provider IDs, but some of those IDs contradict each other.": "Questi titoli sono legati da ID provider in comune, ma alcuni di quegli ID si contraddicono.",
+                    "These titles have the same name and year, but nothing confirms they are one film.": "Questi titoli hanno lo stesso nome e lo stesso anno, ma nulla conferma che siano un solo film.",
+                    "This account is an administrator. Use a dedicated non-admin user.": "Questo account è un amministratore. Usa un utente dedicato non amministratore.",
+                    "This list follows the real state of the server and goes away when setup is complete.": "Questo elenco segue lo stato reale del server e sparisce quando la configurazione è completa.",
+                    "This merge no longer exists.": "Questa unione non esiste più.",
+                    "This server is at its stream limit on that remote.": "Questo server ha raggiunto il suo limite di stream su quel remoto.",
+                    "This server is not configured.": "Questo server non è configurato.",
+                    "This user sees no film or series libraries. Give it access on that server, then open Libraries again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Librerie.",
+                    "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I film dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
+                    "To do": "Da fare",
+                    "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.": "Due film locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo un titolo con una copia locale.",
+                    "URL": "URL",
+                    "Undo merge": "Annulla unione",
+                    "Undo this merge?": "Annullare questa unione?",
+                    "Unknown": "Sconosciuto",
+                    "Unsaved changes": "Modifiche non salvate",
+                    "Untitled": "Senza titolo",
+                    "User": "Utente",
+                    "Version {version}": "Versione {version}",
+                    "Wait for a remote to answer (seconds)": "Attesa della risposta di un remoto (secondi)",
+                    "Wait for each step of opening a stream (seconds)": "Attesa di ogni fase di apertura di uno stream (secondi)",
+                    "Warning: \"Automatically merge series that are spread across multiple folders\" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.": "Attenzione: \"Unisci automaticamente le serie distribuite su più cartelle\" è disattivato in {libraries}, quindi una serie presente in due cartelle resta divisa. Attivalo nelle opzioni della libreria.",
+                    "Warning: {libraries} has this path with different capitals, which is another folder here. Add exactly {path}.": "Attenzione: {libraries} ha questo percorso con maiuscole diverse, che qui è un'altra cartella. Aggiungi esattamente {path}.",
+                    "Warning: {path} is linked to {libraries}, which is not a {kind} library.": "Attenzione: {path} è collegato a {libraries}, che non è una libreria di {kind}.",
+                    "Warning: {path} is not linked to a library yet.": "Attenzione: {path} non è ancora collegato a una libreria.",
+                    "What is shown here may be out of date, and the page keeps trying.": "Quello che vedi qui potrebbe non essere aggiornato, e la pagina continua a provare.",
+                    "What other JellyMesh servers read from this server.": "Cosa leggono da questo server gli altri server JellyMesh.",
+                    "What this server reads from other servers. Their films and series appear in the libraries here.": "Cosa legge questo server dagli altri server. I loro film e le loro serie compaiono nelle librerie di qui.",
+                    "Which copy would play cannot be known for sure, because some quality values are unknown. As the catalog stands, {name} would be chosen.": "Non si può sapere con certezza quale copia verrebbe riprodotta, perché alcuni valori di qualità sono sconosciuti. Con il catalogo di ora verrebbe scelto {name}.",
+                    "Which copy would play cannot be known: no copy has any quality data.": "Non si può sapere quale copia verrebbe riprodotta: nessuna copia ha dati sulla qualità.",
+                    "a chosen library is gone": "una libreria scelta non c'è più",
+                    "a server no longer configured": "un server non più configurato",
+                    "administrator account refused": "account amministratore rifiutato",
+                    "answer too large": "risposta troppo grande",
+                    "bitrate unknown": "bitrate sconosciuto",
+                    "codec unknown": "codec sconosciuto",
+                    "could not be reached": "non raggiungibile",
+                    "episode": "episodio",
+                    "episodes": "episodi",
+                    "film": "film",
+                    "films": "film",
+                    "last sync failed ({failure}), entries kept. See the Servers tab": "ultima sincronizzazione non riuscita ({failure}), elementi mantenuti. Vedi la scheda Server",
+                    "login refused": "accesso rifiutato",
+                    "mode not known yet": "modalità non ancora nota",
+                    "more field": "altro campo",
+                    "more fields": "altri campi",
+                    "never": "mai",
+                    "no answer in time": "nessuna risposta in tempo",
+                    "not allowed for the dedicated user": "non consentito all'utente dedicato",
+                    "not checked yet": "non ancora controllato",
+                    "not in the catalog now": "ora non è nel catalogo",
+                    "not synced yet": "non ancora sincronizzato",
+                    "offline": "offline",
+                    "offline, entries kept. See the Servers tab": "offline, elementi mantenuti. Vedi la scheda Server",
+                    "online": "online",
+                    "online, last sync failed": "online, ultima sincronizzazione non riuscita",
+                    "redirect refused": "reindirizzamento rifiutato",
+                    "resolution unknown": "risoluzione sconosciuta",
+                    "series": "serie",
+                    "server": "server",
+                    "server error": "errore del server",
+                    "servers": "server",
+                    "standard Jellyfin server": "server Jellyfin standard",
+                    "step": "passaggio",
+                    "steps": "passaggi",
+                    "suspended": "sospeso",
+                    "synced": "sincronizzato",
+                    "the catalog kept changing": "il catalogo continuava a cambiare",
+                    "the connected servers": "i server connessi",
+                    "the duplicate and merged films": "i film duplicati e uniti",
+                    "the settings": "le impostazioni",
+                    "the state of the sync": "lo stato della sincronizzazione",
+                    "the status": "lo stato",
+                    "thing needs attention": "cosa richiede attenzione",
+                    "things need attention": "cose richiedono attenzione",
+                    "this server": "questo server",
+                    "unexpected answer": "risposta inattesa",
+                    "unknown problem": "problema sconosciuto",
+                    "{count} min": "{count} min",
+                    "{field} was refused, so nothing was saved. {rule}": "{field} è stato rifiutato, quindi non è stato salvato nulla. {rule}",
+                    "{films}, {series} series, {episodes}": "{films}, {series} serie, {episodes}",
+                    "{first} Also marked: {more}.": "{first} Segnalati anche: {more}.",
+                    "{libraries} has the {kind} path with different capitals.": "{libraries} ha il percorso di {kind} con maiuscole diverse.",
+                    "{line}, {count} not checked yet": "{line}, {count} non ancora controllati",
+                    "{name} and {count} more": "{name} e altri {count}",
+                    "{name} stops being a connected server now. Its streams here are closed, and its shared libraries and stream limit no longer apply.": "{name} smette subito di essere un server connesso. I suoi stream qui vengono chiusi, e le librerie condivise e il limite di stream non valgono più.",
+                    "{online} of {total} online": "{online} di {total} online",
+                    "{path} is in the field. Save the settings to use it.": "{path} è nel campo. Salva le impostazioni per usarlo.",
+                    "{place}, not in the catalog now": "{place}, ora non è nel catalogo",
+                    "{problems} Fix this by hand in Dashboard > Libraries.": "{problems} Sistemalo a mano nel Pannello di controllo > Librerie.",
+                    "{servers}, suspended": "{servers}, sospesi",
+                    "{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.": "{server} e il suo accesso salvato escono subito da JellyMesh. Su quel server l'accesso non viene revocato: il suo dispositivo JellyMesh resta in elenco.",
+                    "{server} is offline. Titles found only there do not play until it answers.": "{server} è offline. I titoli presenti solo lì non si riproducono finché non risponde.",
+                    "{server}: connected, {mode}, importable libraries: {count}.": "{server}: connesso, {mode}, librerie importabili: {count}.",
+                    "{server}: the last sync failed ({failure}). Its titles are kept as they were.": "{server}: l'ultima sincronizzazione non è riuscita ({failure}). I suoi titoli restano com'erano.",
+                    "{server}: the last sync failed. Its titles are kept as they were.": "{server}: l'ultima sincronizzazione non è riuscita. I suoi titoli restano com'erano.",
+                    "{server}: {outcome}.": "{server}: {outcome}.",
+                    "{title} on {place}": "{title} su {place}",
+                    "{used} of {total}": "{used} di {total}",
+                    "{used} of {total} by connected servers": "{used} di {total} dai server connessi",
+                    "{used} of {total} streams, {shared} of {libraries} libraries": "{used} di {total} stream, {shared} di {libraries} librerie"
+                }
+            }
+        </script>
         <script type="text/javascript">
             (function () {
                 var pluginId = '28c43ea1-fb5a-4b3a-8e6e-30aa3245c653';
                 var page = document.querySelector('#JellyMeshConfigPage');
+                var translations = JSON.parse(page.querySelector('#jmTranslations').textContent);
+                var pageLanguage = languageOf(document.documentElement.lang);
+                translateStatic();
                 var connectionLabels = {
-                    NotChecked: 'not checked yet',
-                    Online: 'online',
-                    Offline: 'offline',
-                    AuthenticationFailed: 'login refused',
-                    Forbidden: 'not allowed for the dedicated user',
-                    AdministratorAccount: 'administrator account refused',
-                    RedirectRefused: 'redirect refused',
-                    ServerError: 'server error',
-                    InvalidResponse: 'unexpected answer',
-                    ResponseTooLarge: 'answer too large',
-                    LibraryUnavailable: 'a chosen library is gone',
-                    CatalogChanged: 'the catalog kept changing',
-                    Suspended: 'suspended',
-                    Unreachable: 'could not be reached',
-                    Timeout: 'no answer in time'
+                    NotChecked: t('not checked yet'),
+                    Online: t('online'),
+                    Offline: t('offline'),
+                    AuthenticationFailed: t('login refused'),
+                    Forbidden: t('not allowed for the dedicated user'),
+                    AdministratorAccount: t('administrator account refused'),
+                    RedirectRefused: t('redirect refused'),
+                    ServerError: t('server error'),
+                    InvalidResponse: t('unexpected answer'),
+                    ResponseTooLarge: t('answer too large'),
+                    LibraryUnavailable: t('a chosen library is gone'),
+                    CatalogChanged: t('the catalog kept changing'),
+                    Suspended: t('suspended'),
+                    Unreachable: t('could not be reached'),
+                    Timeout: t('no answer in time')
                 };
                 var connectionSteps = {
-                    Offline: 'Check that the server is running and reachable on the tailnet, then test the connection.',
-                    AuthenticationFailed: 'Fix the login on that server, or remove this server and add it again with a working one.',
-                    Forbidden: 'Give the dedicated user access on that server, then test the connection.',
-                    AdministratorAccount: 'Remove this server and add it again with a dedicated non-admin user.',
-                    RedirectRefused: 'Remove this server and add it again with the URL it answers on.',
-                    ServerError: 'Check the log of that server, then test the connection.',
-                    InvalidResponse: 'Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.',
-                    ResponseTooLarge: 'Check that the URL leads to a Jellyfin server, then test the connection.',
-                    LibraryUnavailable: 'Open Libraries and save the selection again.',
-                    CatalogChanged: 'The next sync tries again.'
+                    Offline: t('Check that the server is running and reachable on the tailnet, then test the connection.'),
+                    AuthenticationFailed: t('Fix the login on that server, or remove this server and add it again with a working one.'),
+                    Forbidden: t('Give the dedicated user access on that server, then test the connection.'),
+                    AdministratorAccount: t('Remove this server and add it again with a dedicated non-admin user.'),
+                    RedirectRefused: t('Remove this server and add it again with the URL it answers on.'),
+                    ServerError: t('Check the log of that server, then test the connection.'),
+                    InvalidResponse: t('Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.'),
+                    ResponseTooLarge: t('Check that the URL leads to a Jellyfin server, then test the connection.'),
+                    LibraryUnavailable: t('Open Libraries and save the selection again.'),
+                    CatalogChanged: t('The next sync tries again.')
                 };
-                var unknownProblem = 'unknown problem';
-                var unknownProblemStep = 'Test the connection to see what is wrong.';
-                var libraryKinds = { movies: 'films', tvshows: 'series' };
-                var modeLabels = { Unknown: 'mode not known yet', Standard: 'standard Jellyfin server', JellyMesh: 'JellyMesh server' };
+                var unknownProblem = t('unknown problem');
+                var unknownProblemStep = t('Test the connection to see what is wrong.');
+                var libraryKinds = { movies: t('films'), tvshows: t('series') };
+                var modeLabels = { Unknown: t('mode not known yet'), Standard: t('standard Jellyfin server'), JellyMesh: t('JellyMesh server') };
                 var defaultStreamLimit = 2;
                 var mergeReasons = {
-                    ConflictingProviderIds: 'These titles are linked by shared provider IDs, but some of those IDs contradict each other.',
-                    PossibleDuplicate: 'These titles have the same name and year, but nothing confirms they are one film.'
+                    ConflictingProviderIds: t('These titles are linked by shared provider IDs, but some of those IDs contradict each other.'),
+                    PossibleDuplicate: t('These titles have the same name and year, but nothing confirms they are one film.')
                 };
                 var ticksPerMinute = 600000000;
                 var syncPollMilliseconds = 2000;
@@ -1345,7 +1695,7 @@
                 var statusPollMilliseconds = 15000;
                 var optionsPollMilliseconds = 60000;
                 var readTimeoutMilliseconds = 15000;
-                var keepsTrying = 'What is shown here may be out of date, and the page keeps trying.';
+                var keepsTrying = t('What is shown here may be out of date, and the page keeps trying.');
                 var suspended = false;
                 var syncRunning = false;
                 var lastFinished;
@@ -1357,22 +1707,71 @@
                 var peerOptions = null;
                 var nextOptionsRead = 0;
                 var fieldNotes = 0;
-                var noAnswer = 'No answer from this server. Check the network connection and try again.';
+                var noAnswer = t('No answer from this server. Check the network connection and try again.');
                 var pageUrl = '/configurationpage?name=JellyMesh';
                 var tabMemory = 'jellymesh-tab';
                 var panels = Array.prototype.slice.call(page.querySelectorAll('[role="tabpanel"]'));
                 var tabNames = panels.map(function (panel) {
                     return panel.dataset.jmTab;
                 });
-                var stepStates = { done: 'Done', todo: 'To do', unknown: 'Not known' };
+                var stepStates = { done: t('Done'), todo: t('To do'), unknown: t('Not known') };
                 var stepIcons = { done: 'check_circle', todo: 'radio_button_unchecked', unknown: 'help_outline' };
                 var shownTab = tabNames[0];
                 var compareRows = ['Server', 'Length', 'Resolution', 'Range', 'Bitrate', 'Codec', 'IDs'];
+                var compareLabels = { Server: t('Server'), Length: t('Length'), Resolution: t('Resolution'), Range: t('Range'), Bitrate: t('Bitrate'), Codec: t('Codec'), IDs: t('IDs') };
+                var outcomeKinds = { Done: t('Done'), Error: t('Error') };
+                var reading = t('Reading...');
                 var savedSettings = null;
                 var serverCount = null;
 
                 function el(selector) {
                     return page.querySelector(selector);
+                }
+
+                // Picks the language Jellyfin set on the document, whole or without its region. English is the code itself.
+                function languageOf(tag) {
+                    var name = (tag || '').toLowerCase();
+                    return [name, name.split('-')[0]].filter(function (candidate) {
+                        return Object.prototype.hasOwnProperty.call(translations, candidate);
+                    })[0] || '';
+                }
+
+                // Translates an English text, or keeps it when it has no translation, and fills its {names}.
+                function t(text, values) {
+                    var strings = translations[pageLanguage] || {};
+                    var shown = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text;
+                    return shown.replace(/\{(\w+)\}/g, function (whole, name) {
+                        return values && values[name] !== undefined ? values[name] : whole;
+                    });
+                }
+
+                // Translates the text and the labels written in the page, which stay in English in its source.
+                function translateStatic() {
+                    if (!pageLanguage) {
+                        return;
+                    }
+
+                    var walker = document.createTreeWalker(page, NodeFilter.SHOW_TEXT);
+                    while (walker.nextNode()) {
+                        var node = walker.currentNode;
+                        var text = node.nodeValue.trim();
+                        if (text && !node.parentNode.closest('script, style')) {
+                            node.nodeValue = node.nodeValue.replace(text, function () {
+                                return t(text);
+                            });
+                        }
+                    }
+
+                    Array.prototype.forEach.call(page.querySelectorAll('[aria-label]'), function (node) {
+                        node.setAttribute('aria-label', t(node.getAttribute('aria-label')));
+                    });
+                }
+
+                // Loads the page again when the language of Jellyfin changed while it was kept open in the background.
+                function followLanguage() {
+                    if (languageOf(document.documentElement.lang) !== pageLanguage) {
+                        location.reload();
+                    }
                 }
 
                 // Picks the dark or light look from the background of the Jellyfin theme, which names no scheme of its own.
@@ -1390,7 +1789,7 @@
                             return candidate.Id.replace(/-/g, '') === pluginId.replace(/-/g, '');
                         })[0];
                         var version = el('#jmVersion');
-                        version.textContent = plugin ? 'Version ' + plugin.Version : '';
+                        version.textContent = plugin ? t('Version {version}', { version: plugin.Version }) : '';
                         version.hidden = !plugin;
                     }).catch(function () {
                         el('#jmVersion').hidden = true;
@@ -1527,7 +1926,7 @@
                     el('#jmDismiss').hidden = !text;
                     message.textContent = '';
                     if (text) {
-                        var label = create('span', kind + ': ');
+                        var label = create('span', outcomeKinds[kind] + ': ');
                         label.className = 'jmOutcomeKind';
                         message.appendChild(label);
                         message.appendChild(document.createTextNode(text));
@@ -1577,11 +1976,11 @@
                 }
 
                 function refusedText(fieldName, rule) {
-                    return fieldName + ' was refused, so nothing was saved. ' + rule;
+                    return t('{field} was refused, so nothing was saved. {rule}', { field: fieldName, rule: rule });
                 }
 
                 function numberRule(input) {
-                    return 'Enter a whole number ' + (input.max ? 'from ' + input.min + ' to ' + input.max : 'of at least ' + input.min) + '.';
+                    return input.max ? t('Enter a whole number from {min} to {max}.', { min: input.min, max: input.max }) : t('Enter a whole number of at least {min}.', { min: input.min });
                 }
 
                 // Writes a text only when it differs, so that polling keeps selections and does not repeat alerts.
@@ -1613,7 +2012,7 @@
                             return {};
                         }).then(function (data) {
                             if (!response.ok) {
-                                throw new Error(data.Message || 'The server answered with error ' + response.status + ' and gave no reason.');
+                                throw new Error(data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status }));
                             }
 
                             return data;
@@ -1682,7 +2081,7 @@
 
                 function showFailure(selector, what, next, reason) {
                     var note = el(selector);
-                    setText(note, reason ? 'Could not read ' + what + '. ' + next + ' Reason: ' + reason : '');
+                    setText(note, reason ? t('Could not read {what}. {next} Reason: {reason}', { what: what, next: next, reason: reason }) : '');
                     note.hidden = !reason;
                 }
 
@@ -1800,12 +2199,12 @@
 
                 function renderLibraries(container, server, libraries) {
                     container.textContent = '';
-                    var title = create('p', 'Libraries to import from ' + server.Name);
+                    var title = create('p', t('Libraries to import from {server}', { server: server.Name }));
                     title.className = 'jmLibrariesTitle';
                     container.appendChild(title);
                     var note = create('p', libraries.length === 0
-                        ? 'This user sees no film or series libraries. Give it access on that server, then open Libraries again.'
-                        : 'Nothing is imported from this server until you choose its libraries and save.');
+                        ? t('This user sees no film or series libraries. Give it access on that server, then open Libraries again.')
+                        : t('Nothing is imported from this server until you choose its libraries and save.'));
                     note.className = 'jmLibrariesNote';
                     note.tabIndex = -1;
                     container.appendChild(note);
@@ -1822,14 +2221,14 @@
                         return box;
                     });
 
-                    container.appendChild(button('Save libraries', function () {
+                    container.appendChild(button(t('Save libraries'), function () {
                         var ids = boxes.filter(function (box) {
                             return box.checked;
                         }).map(function (box) {
                             return box.value;
                         });
                         act(api('POST', 'Servers/' + server.Id + '/Libraries', { LibraryIds: ids }).then(function () {
-                            showMessage('Libraries saved for ' + server.Name + '. The next sync reads them.');
+                            showMessage(t('Libraries saved for {server}. The next sync reads them.', { server: server.Name }));
                             return loadStatus();
                         }));
                     }));
@@ -1870,10 +2269,10 @@
                 // Says why the entries of a server may be out of date, or returns an empty text.
                 function syncProblem(report) {
                     if (report.IsOffline) {
-                        return 'The sync of ' + formatDate(report.LastAttemptUtc) + ' could not reach it. These entries are kept as they were, and a full read runs when it answers again.';
+                        return t('The sync of {date} could not reach it. These entries are kept as they were, and a full read runs when it answers again.', { date: formatDate(report.LastAttemptUtc) });
                     }
 
-                    return report.State === 'Stale' ? 'Last sync failed (' + connectionLabel(report.Failure) + '): these entries are kept as they were.' : '';
+                    return report.State === 'Stale' ? t('Last sync failed ({failure}): these entries are kept as they were.', { failure: connectionLabel(report.Failure) }) : '';
                 }
 
                 // Returns the failure a server shows: the one of the connection, or else the one of its last sync.
@@ -1897,7 +2296,7 @@
                             state: connectionLabels.Suspended,
                             tone: 'jmStateQuiet',
                             icon: 'pause_circle_outline',
-                            cause: 'Sync and remote playback are suspended until the secret key is fixed. ' + (problem || 'These entries are kept as they were.')
+                            cause: t('Sync and remote playback are suspended until the secret key is fixed. {problem}', { problem: problem || t('These entries are kept as they were.') })
                         };
                     }
 
@@ -1914,7 +2313,7 @@
                     var step = connectionSteps[failure] || unknownProblemStep;
                     if (server.Connection === 'Online') {
                         return {
-                            state: 'online, last sync failed',
+                            state: t('online, last sync failed'),
                             tone: 'jmStateWarn',
                             icon: 'warning',
                             cause: report.IsOffline ? problem : problem + ' ' + step
@@ -1941,19 +2340,22 @@
                     var body = rowBody();
                     row.appendChild(body);
                     var facts = factList();
-                    var url = addFact(facts, 'URL');
-                    var mode = addFact(facts, 'Mode');
-                    var imported = addFact(facts, 'Libraries to import');
-                    var catalog = addFact(facts, 'Catalog');
-                    var checked = addFact(facts, 'Last check');
-                    var synced = addFact(facts, 'Last complete sync');
+                    var url = addFact(facts, t('URL'));
+                    var mode = addFact(facts, t('Mode'));
+                    var imported = addFact(facts, t('Libraries to import'));
+                    var catalog = addFact(facts, t('Catalog'));
+                    var checked = addFact(facts, t('Last check'));
+                    var synced = addFact(facts, t('Last complete sync'));
                     body.appendChild(facts);
                     var problemShown = '';
                     row.jmUpdate = function (current, currentReport) {
                         server = current;
                         var health = serverHealth(server, currentReport);
-                        var catalogText = currentReport ? count(currentReport.Movies, 'film', 'films') + ', ' + currentReport.Series + ' series, '
-                            + count(currentReport.Episodes, 'episode', 'episodes') : 'Not read yet';
+                        var catalogText = currentReport ? t('{films}, {series} series, {episodes}', {
+                            films: count(currentReport.Movies, 'film', 'films'),
+                            series: currentReport.Series,
+                            episodes: count(currentReport.Episodes, 'episode', 'episodes')
+                        }) : t('Not read yet');
                         var problem = health.tone === 'jmStateBad' || health.tone === 'jmStateWarn' ? health.state : '';
                         if (problem !== problemShown) {
                             problemShown = problem;
@@ -1965,15 +2367,15 @@
                         state.className = 'jmState ' + health.tone;
                         icon.className = 'material-icons jmStateIcon ' + health.icon;
                         var nothingChosen = !health.cause && server.ImportedLibraryIds.length === 0;
-                        setText(cause, nothingChosen ? 'No libraries chosen, so nothing is imported from this server yet.' : health.cause);
+                        setText(cause, nothingChosen ? t('No libraries chosen, so nothing is imported from this server yet.') : health.cause);
                         cause.hidden = !health.cause && !nothingChosen;
                         setText(meta, sentence(modeLabel(server.Mode)) + (currentReport ? ', ' + catalogText : ''));
                         setText(url, server.Url);
                         setText(mode, sentence(modeLabel(server.Mode)));
                         setText(imported, String(server.ImportedLibraryIds.length));
                         setText(catalog, catalogText);
-                        setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : 'Not since this server started');
-                        setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : 'Not read yet');
+                        setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : t('Not since this server started'));
+                        setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : t('Not read yet'));
                     };
                     row.jmUpdate(server, report);
 
@@ -1985,25 +2387,28 @@
                         });
                     };
                     var actions = actionRow();
-                    actions.appendChild(button('Test connection', function () {
+                    actions.appendChild(button(t('Test connection'), function () {
                         act(api('POST', 'Servers/' + server.Id + '/Test').then(function (result) {
-                            showMessage(server.Name + ': connected, ' + modeLabel(result.Capabilities.Mode)
-                                + ', importable libraries: ' + result.LibraryCount + '.');
+                            showMessage(t('{server}: connected, {mode}, importable libraries: {count}.', {
+                                server: server.Name,
+                                mode: modeLabel(result.Capabilities.Mode),
+                                count: result.LibraryCount
+                            }));
                             return loadStatus();
                         }));
                     }));
-                    actions.appendChild(button('Libraries', function () {
+                    actions.appendChild(button(t('Libraries'), function () {
                         act(row.jmShowLibraries());
                     }));
-                    actions.appendChild(button('Remove', function () {
-                        confirmAction('Remove this server?', [
-                            escapeHtml(server.Name) + ' and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.',
-                            'Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.',
-                            'Playback already running may not stop right away.',
-                            'Adding the server back brings the same titles and watch state.'
+                    actions.appendChild(button(t('Remove'), function () {
+                        confirmAction(t('Remove this server?'), [
+                            t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
+                            t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
+                            t('Playback already running may not stop right away.'),
+                            t('Adding the server back brings the same titles and watch state.')
                         ], function () {
                             act(api('DELETE', 'Servers/' + server.Id).then(function () {
-                                showMessage('Removed ' + server.Name + '. Its titles are leaving the libraries.');
+                                showMessage(t('Removed {server}. Its titles are leaving the libraries.', { server: server.Name }));
                                 return load();
                             }));
                         });
@@ -2057,15 +2462,15 @@
                     var value = create('code', shown);
                     value.className = 'jmPathValue';
                     row.appendChild(value);
-                    var copy = button('Copy', function () {
+                    var copy = button(t('Copy'), function () {
                         copyText(shown).then(function (copied) {
                             if (copied) {
-                                showMessage('Copied ' + shown + '.');
+                                showMessage(t('Copied {value}.', { value: shown }));
                                 return;
                             }
 
                             window.getSelection().selectAllChildren(value);
-                            showError('The browser did not allow copying. ' + shown + ' is selected, so copy it by hand.');
+                            showError(t('The browser did not allow copying. {value} is selected, so copy it by hand.', { value: shown }));
                         });
                     });
                     copy.setAttribute('aria-label', copyLabel);
@@ -2074,11 +2479,11 @@
                 }
 
                 function renderPath(library, path) {
-                    return renderCopyRow(library, path, 'Copy ' + library + ' path');
+                    return renderCopyRow(library, path, t('Copy {library} path', { library: library }));
                 }
 
                 function renderCommand(command) {
-                    return renderCopyRow(command.label, command.value, 'Copy: ' + command.label);
+                    return renderCopyRow(command.label, command.value, t('Copy: {label}', { label: command.label }));
                 }
 
                 function renderFolder(folder) {
@@ -2095,31 +2500,30 @@
                     var notes = el('#jmFolderNotes');
                     notes.textContent = '';
                     updateRows(el('#jmFolderPaths'), folder.Path ? [
-                        { key: 'film' + folder.MoviesPath, build: renderPath, args: ['Film library', folder.MoviesPath] },
-                        { key: 'series' + folder.SeriesPath, build: renderPath, args: ['Series library', folder.SeriesPath] }
+                        { key: 'film' + folder.MoviesPath, build: renderPath, args: [t('Film library'), folder.MoviesPath] },
+                        { key: 'series' + folder.SeriesPath, build: renderPath, args: [t('Series library'), folder.SeriesPath] }
                     ] : []);
                     if (!folder.Path) {
-                        el('#jmFolderHint').textContent = 'Choose a folder to see the paths to link.';
+                        el('#jmFolderHint').textContent = t('Choose a folder to see the paths to link.');
                         return;
                     }
 
-                    el('#jmFolderHint').textContent = 'Add these paths by hand in Dashboard > Libraries.';
+                    el('#jmFolderHint').textContent = t('Add these paths by hand in Dashboard > Libraries.');
                     if (folder.Link === 'NotChecked') {
-                        notes.appendChild(create('div', 'The libraries could not be read to check these paths.'));
+                        notes.appendChild(create('div', t('The libraries could not be read to check these paths.')));
                         return;
                     }
 
                     if (folder.Link === 'Linked') {
-                        notes.appendChild(create('div', 'Both paths are linked.'));
+                        notes.appendChild(create('div', t('Both paths are linked.')));
                     }
 
                     var warnings = [
-                        pathWarning(folder.MoviesPath, 'a film', folder.Movies),
-                        pathWarning(folder.SeriesPath, 'a series', folder.Series)
+                        pathWarning(folder.MoviesPath, t('film'), folder.Movies),
+                        pathWarning(folder.SeriesPath, t('series'), folder.Series)
                     ];
                     if (folder.SeriesGroupingOff.length > 0) {
-                        warnings.push('Warning: "Automatically merge series that are spread across multiple folders" is off in '
-                            + folder.SeriesGroupingOff.join(', ') + ', so a series present in two folders stays split. Turn it on in the library options.');
+                        warnings.push(t('Warning: "Automatically merge series that are spread across multiple folders" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.', { libraries: folder.SeriesGroupingOff.join(', ') }));
                     }
 
                     warnings.filter(Boolean).forEach(function (text) {
@@ -2133,11 +2537,11 @@
                     var libraries = status.Libraries.join(', ');
                     switch (status.Link) {
                         case 'NotLinked':
-                            return 'Warning: ' + path + ' is not linked to a library yet.';
+                            return t('Warning: {path} is not linked to a library yet.', { path: path });
                         case 'DifferentCase':
-                            return 'Warning: ' + libraries + ' has this path with different capitals, which is another folder here. Add exactly ' + path + '.';
+                            return t('Warning: {libraries} has this path with different capitals, which is another folder here. Add exactly {path}.', { libraries: libraries, path: path });
                         case 'WrongLibraryType':
-                            return 'Warning: ' + path + ' is linked to ' + libraries + ', which is not ' + kind + ' library.';
+                            return t('Warning: {path} is linked to {libraries}, which is not a {kind} library.', { path: path, libraries: libraries, kind: kind });
                         default:
                             return '';
                     }
@@ -2146,7 +2550,7 @@
                 function render(status) {
                     suspended = status.Suspended;
                     var warning = el('#jmWarning');
-                    setText(warning, status.Warning || '');
+                    setText(warning, status.Warning ? t(status.Warning) : '');
                     warning.hidden = !status.Warning;
                     el('#jmAddServer').disabled = suspended;
                     el('#jmAddBlocked').hidden = !suspended;
@@ -2156,25 +2560,25 @@
                 }
 
                 function statusFailed(reason) {
-                    showFailure('#jmStatusFailure', 'the status', keepsTrying, reason);
+                    showFailure('#jmStatusFailure', t('the status'), keepsTrying, reason);
                 }
 
                 function formatDate(value) {
-                    return value ? new Date(value).toLocaleString() : 'never';
+                    return value ? new Date(value).toLocaleString(document.documentElement.lang || undefined) : t('never');
                 }
 
                 // Gives the outcome of the last sync of a server in a few words. Its counts and dates are on its card.
                 function syncLine(server) {
-                    var outcome = server.State ? 'synced' : 'not synced yet';
+                    var outcome = server.State ? t('synced') : t('not synced yet');
                     if (suspended) {
                         outcome = connectionLabels.Suspended;
                     } else if (server.IsOffline) {
-                        outcome = 'offline, entries kept. See the Servers tab';
+                        outcome = t('offline, entries kept. See the Servers tab');
                     } else if (server.State === 'Stale') {
-                        outcome = 'last sync failed (' + connectionLabel(server.Failure) + '), entries kept. See the Servers tab';
+                        outcome = t('last sync failed ({failure}), entries kept. See the Servers tab', { failure: connectionLabel(server.Failure) });
                     }
 
-                    return server.ServerName + ': ' + outcome + '.';
+                    return t('{server}: {outcome}.', { server: server.ServerName, outcome: outcome });
                 }
 
                 // Returns the most recent date a sync left, in the run in memory or in the catalogs.
@@ -2207,7 +2611,7 @@
                     });
                     showAddServer(statusSection.data.Servers.length);
                     if (servers.length === 0) {
-                        servers.push({ key: 'none', build: create, args: ['p', 'No remote servers yet.'] });
+                        servers.push({ key: 'none', build: create, args: ['p', t('No remote servers yet.')] });
                     }
 
                     updateRows(el('#jmServers'), servers);
@@ -2217,13 +2621,13 @@
                 function chooseLibraries(server) {
                     var row = (el('#jmServers').jmRows || {})[server.Id];
                     if (!row) {
-                        showMessage('Added ' + server.Name + '. Open Libraries on its card to choose what to import.');
+                        showMessage(t('Added {server}. Open Libraries on its card to choose what to import.', { server: server.Name }));
                         return Promise.resolve();
                     }
 
                     row.open = true;
                     return row.jmShowLibraries().then(function () {
-                        showMessage('Added ' + server.Name + '. Choose its libraries.');
+                        showMessage(t('Added {server}. Choose its libraries.', { server: server.Name }));
                         var target = row.querySelector('.jmLibraries input') || row.querySelector('.jmLibrariesNote');
                         target.focus({ preventScroll: true });
                         target.scrollIntoView({ block: 'center' });
@@ -2246,20 +2650,19 @@
 
                 function indexWarning(status) {
                     if (status.Health === 'Corrupt') {
-                        return 'The federation index was damaged and no copy could be read. It is empty until a sync fills it again.';
+                        return t('The federation index was damaged and no copy could be read. It is empty until a sync fills it again.');
                     }
 
                     if (status.Health === 'RestoredFromBackup') {
-                        return 'The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.';
+                        return t('The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.');
                     }
 
                     if (status.IndexSaveFailed) {
-                        return 'The last sync could not save the federation index. Check the disk.';
+                        return t('The last sync could not save the federation index. Check the disk.');
                     }
 
                     return status.HeldLibraries.map(function (held) {
-                        return 'A complete read of a library of ' + held.ServerName + ' came back empty. Its ' + held.Stubs
-                            + ' titles are kept until it has items again. If it is really empty, deselect it.';
+                        return t('A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.', { server: held.ServerName, count: held.Stubs });
                     }).join(' ');
                 }
 
@@ -2268,8 +2671,8 @@
                     setText(warning, indexWarning(status));
                     warning.hidden = !warning.textContent;
                     setText(el('#jmSyncStatus'), status.IsRunning
-                        ? 'Sync running...'
-                        : 'Last sync: ' + formatDate(lastSyncDate(status)) + '.');
+                        ? t('Sync running...')
+                        : t('Last sync: {date}.', { date: formatDate(lastSyncDate(status)) }));
                     setSyncRunning(status.IsRunning);
                     updateSyncButton();
                     showServers();
@@ -2295,11 +2698,11 @@
                 }
 
                 function syncFailed(reason) {
-                    showFailure('#jmSyncFailure', 'the state of the sync', keepsTrying, reason);
-                    showFailure('#jmServersSyncFailure', 'the state of the sync', keepsTrying, reason);
+                    showFailure('#jmSyncFailure', t('the state of the sync'), keepsTrying, reason);
+                    showFailure('#jmServersSyncFailure', t('the state of the sync'), keepsTrying, reason);
                     if (reason) {
                         setSyncRunning(false);
-                        setText(el('#jmSyncStatus'), 'Sync state unknown.');
+                        setText(el('#jmSyncStatus'), t('Sync state unknown.'));
                         updateSyncButton();
                     }
                 }
@@ -2341,7 +2744,7 @@
 
                     var limit = create('input');
                     limit.setAttribute('is', 'emby-input');
-                    limit.setAttribute('label', 'Stream limit');
+                    limit.setAttribute('label', t('Stream limit'));
                     limit.type = 'number';
                     limit.min = '1';
                     limit.required = true;
@@ -2355,7 +2758,7 @@
                             if (!limit.validity.valid) {
                                 markField(limit, numberRule(limit));
                                 focusField(limit);
-                                return Promise.reject(new Error(refusedText('Stream limit', numberRule(limit))));
+                                return Promise.reject(new Error(refusedText(t('Stream limit'), numberRule(limit))));
                             }
 
                             var ids = boxes.filter(function (box) {
@@ -2383,7 +2786,7 @@
 
                 // Names a connected server, whose user can be deleted in the Dashboard while it stays connected.
                 function peerName(peer) {
-                    return peer.UserName || 'A user no longer on this server';
+                    return peer.UserName || t('A user no longer on this server');
                 }
 
                 function renderPeer(peer, libraries) {
@@ -2395,8 +2798,8 @@
                     var body = rowBody();
                     row.appendChild(body);
                     var facts = factList();
-                    var streams = addFact(facts, 'Streams in use');
-                    var shared = addFact(facts, 'Shared libraries');
+                    var streams = addFact(facts, t('Streams in use'));
+                    var shared = addFact(facts, t('Shared libraries'));
                     body.appendChild(facts);
                     var editor = renderPeerEditor(body, function () {
                         return peer.UserId;
@@ -2407,26 +2810,26 @@
                             return peer.SharedLibraryIds.indexOf(library.Id) >= 0;
                         });
                         setText(title, peerName(peer));
-                        setText(streams, peer.ActiveStreams + ' of ' + peer.MaxStreams);
-                        setText(shared, inUse.length + ' of ' + currentLibraries.length);
-                        setText(meta, peer.ActiveStreams + ' of ' + peer.MaxStreams + ' streams, ' + inUse.length + ' of ' + currentLibraries.length + ' libraries');
+                        setText(streams, t('{used} of {total}', { used: peer.ActiveStreams, total: peer.MaxStreams }));
+                        setText(shared, t('{used} of {total}', { used: inUse.length, total: currentLibraries.length }));
+                        setText(meta, t('{used} of {total} streams, {shared} of {libraries} libraries', { used: peer.ActiveStreams, total: peer.MaxStreams, shared: inUse.length, libraries: currentLibraries.length }));
                         editor.update(currentLibraries, peer.SharedLibraryIds, peer.MaxStreams);
                     };
                     row.jmUpdate(peer, libraries);
                     var actions = actionRow();
-                    actions.appendChild(button('Save', function () {
+                    actions.appendChild(button(t('Save'), function () {
                         act(editor.save().then(function () {
-                            showMessage('Saved ' + peerName(peer) + '.');
+                            showMessage(t('Saved {name}.', { name: peerName(peer) }));
                             return loadPeers();
                         }));
                     }));
-                    actions.appendChild(button('Disconnect', function () {
-                        confirmAction('Disconnect this server?', [
-                            escapeHtml(peerName(peer)) + ' stops being a connected server now. Its streams here are closed, and its shared libraries and stream limit no longer apply.',
-                            'The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.'
+                    actions.appendChild(button(t('Disconnect'), function () {
+                        confirmAction(t('Disconnect this server?'), [
+                            t('{name} stops being a connected server now. Its streams here are closed, and its shared libraries and stream limit no longer apply.', { name: escapeHtml(peerName(peer)) }),
+                            t('The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.')
                         ], function () {
                             act(api('DELETE', 'Peers/' + peer.UserId).then(function () {
-                                showMessage('Disconnected ' + peerName(peer) + '.');
+                                showMessage(t('Disconnected {name}.', { name: peerName(peer) }));
                                 return loadPeers();
                             }));
                         });
@@ -2439,12 +2842,12 @@
                     var row = create('details');
                     row.className = 'jmConnect';
                     row.open = open;
-                    row.appendChild(rowHead(create('h4', 'Connect a server'), []));
+                    row.appendChild(rowHead(create('h4', t('Connect a server')), []));
                     var body = rowBody();
                     row.appendChild(body);
                     var select = create('select');
                     select.setAttribute('is', 'emby-select');
-                    select.setAttribute('label', 'User');
+                    select.setAttribute('label', t('User'));
                     var usersShown = '';
 
                     // Lists the free users and keeps the one chosen while it is still free.
@@ -2478,9 +2881,9 @@
                         editor.update(currentLibraries, [], defaultStreamLimit);
                     };
                     var actions = actionRow();
-                    actions.appendChild(button('Connect', function () {
+                    actions.appendChild(button(t('Connect'), function () {
                         act(editor.save().then(function () {
-                            showMessage('Connected.');
+                            showMessage(t('Connected.'));
                             editor.reset();
                             return loadPeers();
                         }));
@@ -2502,14 +2905,14 @@
                         });
                     });
                     if (rows.length === 0) {
-                        rows.push({ key: 'none', build: create, args: ['p', 'No connected servers yet.'] });
+                        rows.push({ key: 'none', build: create, args: ['p', t('No connected servers yet.')] });
                     }
 
                     var connect = [];
                     if (free.length > 0) {
                         connect.push({ key: 'new', build: renderNewPeer, args: [free, options.Libraries, peers.length === 0] });
                     } else if (peers.length === 0) {
-                        connect.push({ key: 'none', build: create, args: ['p', 'Create a non-admin user for the other server first.'] });
+                        connect.push({ key: 'none', build: create, args: ['p', t('Create a non-admin user for the other server first.')] });
                     }
 
                     updateRows(el('#jmPeerList'), rows);
@@ -2519,26 +2922,30 @@
                 var mergeDetails = 0;
 
                 function copyTitle(copy) {
-                    return (copy.Copy.Title || 'Untitled') + (copy.Copy.Year ? ' (' + copy.Copy.Year + ')' : '');
+                    return (copy.Copy.Title || t('Untitled')) + (copy.Copy.Year ? ' (' + copy.Copy.Year + ')' : '');
                 }
 
                 function copyPlace(copy) {
-                    return copy.Copy.IsLocal ? 'this server' : (copy.ServerName || 'a server no longer configured');
+                    return copy.Copy.IsLocal ? t('this server') : (copy.ServerName || t('a server no longer configured'));
+                }
+
+                function minutes(ticks) {
+                    return t('{count} min', { count: Math.round(ticks / ticksPerMinute) });
                 }
 
                 // Describes a merged copy on one line.
                 function describeCopy(copy) {
                     var parts = [copyTitle(copy)];
                     if (copy.RunTimeTicks) {
-                        parts.push(Math.round(copy.RunTimeTicks / ticksPerMinute) + ' min');
+                        parts.push(minutes(copy.RunTimeTicks));
                     }
 
                     parts.push(copyPlace(copy));
                     parts = parts.concat(idsOf(copy).filter(function (id) {
-                        return id !== 'None';
+                        return id !== t('None');
                     }));
                     if (!copy.IsFound) {
-                        parts.push('not in the catalog now');
+                        parts.push(t('not in the catalog now'));
                     }
 
                     return parts.join(' - ');
@@ -2550,21 +2957,21 @@
 
                 function describeQuality(quality) {
                     if (!quality.Height && !quality.IsRangeKnown && !quality.BitRate && !quality.Codec) {
-                        return 'Quality unknown';
+                        return t('Quality unknown');
                     }
 
                     return [
-                        quality.Height ? quality.Height + 'p' : 'resolution unknown',
-                        quality.IsRangeKnown ? (quality.IsHdr ? 'HDR' : 'SDR') : 'HDR unknown',
-                        quality.BitRate ? formatBitRate(quality.BitRate) : 'bitrate unknown',
-                        quality.Codec ? quality.Codec.toUpperCase() : 'codec unknown'
+                        quality.Height ? quality.Height + 'p' : t('resolution unknown'),
+                        quality.IsRangeKnown ? (quality.IsHdr ? 'HDR' : 'SDR') : t('HDR unknown'),
+                        quality.BitRate ? formatBitRate(quality.BitRate) : t('bitrate unknown'),
+                        quality.Codec ? quality.Codec.toUpperCase() : t('codec unknown')
                     ].join(' - ');
                 }
 
                 // Gives one line per version, best first.
                 function qualityLines(copy) {
                     if (copy.Versions.length === 0) {
-                        return [copy.Copy.IsLocal && copy.IsFound ? 'Quality not read: a local copy plays whatever its quality.' : 'Quality unknown'];
+                        return [copy.Copy.IsLocal && copy.IsFound ? t('Quality not read: a local copy plays whatever its quality.') : t('Quality unknown')];
                     }
 
                     return copy.Versions.map(function (version, index) {
@@ -2573,7 +2980,7 @@
                             return line;
                         }
 
-                        return (index === 0 ? 'Best version: ' : 'Other version: ') + line;
+                        return index === 0 ? t('Best version: {quality}', { quality: line }) : t('Other version: {quality}', { quality: line });
                     });
                 }
 
@@ -2592,7 +2999,8 @@
                 function titleName(title) {
                     var first = title.Copies[0];
                     var more = title.Copies.length - 1;
-                    return copyTitle(first) + ', ' + copyPlace(first) + (more > 0 ? ' and ' + more + ' more' : '');
+                    var name = copyTitle(first) + ', ' + copyPlace(first);
+                    return more > 0 ? t('{name} and {count} more', { name: name, count: more }) : name;
                 }
 
                 function idsOf(copy) {
@@ -2605,35 +3013,35 @@
                         ids.push('IMDb ' + copy.Copy.Imdb);
                     }
 
-                    return ids.length > 0 ? ids : ['None'];
+                    return ids.length > 0 ? ids : [t('None')];
                 }
 
                 function resolutionOf(quality) {
-                    return quality.Height ? quality.Height + 'p' : 'Unknown';
+                    return quality.Height ? quality.Height + 'p' : t('Unknown');
                 }
 
                 function rangeOf(quality) {
                     if (!quality.IsRangeKnown) {
-                        return 'Unknown';
+                        return t('Unknown');
                     }
 
                     return quality.IsHdr ? 'HDR' : 'SDR';
                 }
 
                 function bitRateOf(quality) {
-                    return quality.BitRate ? formatBitRate(quality.BitRate) : 'Unknown';
+                    return quality.BitRate ? formatBitRate(quality.BitRate) : t('Unknown');
                 }
 
                 function codecOf(quality) {
-                    return quality.Codec ? quality.Codec.toUpperCase() : 'Unknown';
+                    return quality.Codec ? quality.Codec.toUpperCase() : t('Unknown');
                 }
 
                 // Gives the lines of each row of the comparison, one per copy or version, in the order of compareRows.
                 function compareValues(title) {
                     var values = { Server: [], Length: [], Resolution: [], Range: [], Bitrate: [], Codec: [], IDs: [] };
                     title.Copies.forEach(function (copy) {
-                        values.Server.push(copyPlace(copy) + (copy.IsFound ? '' : ', not in the catalog now'));
-                        values.Length.push(copy.RunTimeTicks ? Math.round(copy.RunTimeTicks / ticksPerMinute) + ' min' : 'Unknown');
+                        values.Server.push(copy.IsFound ? copyPlace(copy) : t('{place}, not in the catalog now', { place: copyPlace(copy) }));
+                        values.Length.push(copy.RunTimeTicks ? minutes(copy.RunTimeTicks) : t('Unknown'));
                         values.IDs = values.IDs.concat(idsOf(copy));
                         copy.Versions.forEach(function (version) {
                             values.Resolution.push(resolutionOf(version.Quality));
@@ -2643,18 +3051,18 @@
                         });
                     });
                     return compareRows.map(function (name) {
-                        return { name: name, lines: values[name].length > 0 ? values[name] : ['Unknown'] };
+                        return { name: compareLabels[name], lines: values[name].length > 0 ? values[name] : [t('Unknown')] };
                     });
                 }
 
                 // Says what the rows cannot: a merge already made, the order of versions, and quality not read.
                 function compareNotes(title) {
-                    var notes = title.MergeIds.length > 0 ? ['Already merged.'] : [];
+                    var notes = title.MergeIds.length > 0 ? [t('Already merged.')] : [];
                     title.Copies.forEach(function (copy) {
                         if (copy.Versions.length > 1) {
-                            notes.push('Best version first.');
+                            notes.push(t('Best version first.'));
                         } else if (copy.Versions.length === 0 && copy.Copy.IsLocal && copy.IsFound) {
-                            notes.push('Quality not read: a local copy plays whatever its quality.');
+                            notes.push(t('Quality not read: a local copy plays whatever its quality.'));
                         }
                     });
                     return notes.filter(function (note, index) {
@@ -2723,19 +3131,19 @@
 
                 function describeForecast(forecast) {
                     if (!forecast.Copy) {
-                        return 'Which copy would play cannot be known: no copy has any quality data.';
+                        return t('Which copy would play cannot be known: no copy has any quality data.');
                     }
 
-                    var name = copyTitle(forecast.Copy) + ' on ' + copyPlace(forecast.Copy);
+                    var name = t('{title} on {place}', { title: copyTitle(forecast.Copy), place: copyPlace(forecast.Copy) });
                     if (forecast.Copy.Copy.IsLocal) {
-                        return 'If merged, ' + name + ' plays, because a local copy always wins.';
+                        return t('If merged, {name} plays, because a local copy always wins.', { name: name });
                     }
 
                     if (!forecast.IsCertain) {
-                        return 'Which copy would play cannot be known for sure, because some quality values are unknown. As the catalog stands, ' + name + ' would be chosen.';
+                        return t('Which copy would play cannot be known for sure, because some quality values are unknown. As the catalog stands, {name} would be chosen.', { name: name });
                     }
 
-                    return 'If merged, ' + name + ' plays: ' + describeQuality(forecast.Version.Quality) + '. The others stay as backups.';
+                    return t('If merged, {name} plays: {quality}. The others stay as backups.', { name: name, quality: describeQuality(forecast.Version.Quality) });
                 }
 
                 function renderMergeCase(group) {
@@ -2781,9 +3189,9 @@
                         });
                         var hint = '';
                         if (chosen.length < 2) {
-                            hint = 'Select at least two titles to merge them.';
+                            hint = t('Select at least two titles to merge them.');
                         } else if (locals.length > 1) {
-                            hint = 'Select at most one title with a local copy: two local films cannot be merged.';
+                            hint = t('Select at most one title with a local copy: two local films cannot be merged.');
                         }
 
                         merge.disabled = hint !== '';
@@ -2794,21 +3202,21 @@
                             return;
                         }
 
-                        showResult('Checking which copy would play.', true);
+                        showResult(t('Checking which copy would play.'), true);
                         api('POST', 'Merges/Preview', { WorkKeys: keys() }, AbortSignal.timeout(readTimeoutMilliseconds)).then(function (forecast) {
                             if (current === ticket) {
                                 showResult(describeForecast(forecast), false);
                             }
                         }).catch(function (error) {
                             if (current === ticket) {
-                                showResult('Could not tell which copy would play. ' + error.message, false);
+                                showResult(t('Could not tell which copy would play. {reason}', { reason: error.message }), false);
                             }
                         });
                     }
 
-                    var merge = button('Merge selected', function () {
+                    var merge = button(t('Merge selected'), function () {
                         act(api('POST', 'Merges', { WorkKeys: keys() }).then(function () {
-                            showMessage('Merged. The film list changes after the library scan that was queued.');
+                            showMessage(t('Merged. The film list changes after the library scan that was queued.'));
                             return loadMerges();
                         }));
                     }, 'button-submit');
@@ -2832,30 +3240,33 @@
                     row.appendChild(details);
                     row.jmUpdate = function (current) {
                         details.textContent = '';
-                        var date = create('p', 'Merged on ');
+                        var date = create('p');
                         date.className = 'jmMergeDate';
                         var time = create('time', formatDate(current.CreatedUtc));
                         time.setAttribute('datetime', current.CreatedUtc);
+                        var around = t('Merged on {date}').split('{date}');
+                        date.appendChild(document.createTextNode(around[0]));
                         date.appendChild(time);
+                        date.appendChild(document.createTextNode(around[1] || ''));
                         details.appendChild(date);
                         current.Copies.forEach(function (copy) {
                             details.appendChild(renderCopy(copy));
                         });
 
                         if (!current.IsInEffect) {
-                            var unused = create('div', 'Not in effect: a copy is missing, or the IDs already make these one film.');
+                            var unused = create('div', t('Not in effect: a copy is missing, or the IDs already make these one film.'));
                             unused.className = 'jmMergeUnused';
                             details.appendChild(unused);
                         }
                     };
                     row.jmUpdate(merge);
-                    row.appendChild(button('Undo merge', function () {
-                        confirmAction('Undo this merge?', [
-                            'These copies become separate titles again after the library scan that follows.',
-                            'The title that stays keeps its watch state. The others usually get theirs back, but can start again without it. Local files are not changed.'
+                    row.appendChild(button(t('Undo merge'), function () {
+                        confirmAction(t('Undo this merge?'), [
+                            t('These copies become separate titles again after the library scan that follows.'),
+                            t('The title that stays keeps its watch state. The others usually get theirs back, but can start again without it. Local files are not changed.')
                         ], function () {
                             act(api('DELETE', 'Merges/' + merge.Id).then(function () {
-                                showMessage('Merge undone. The film list changes after the library scan that was queued.');
+                                showMessage(t('Merge undone. The film list changes after the library scan that was queued.'));
                                 return loadMerges();
                             }));
                         });
@@ -2865,7 +3276,7 @@
 
                 function renderMerges(list) {
                     var warning = el('#jmMergeWarning');
-                    warning.textContent = list.IsStoreDamaged ? 'The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.' : '';
+                    warning.textContent = list.IsStoreDamaged ? t('The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.') : '';
                     warning.hidden = !list.IsStoreDamaged;
 
                     // Keys a case by its first title and a merge by its ID, which stay while their data changes.
@@ -2873,7 +3284,7 @@
                         return { key: group.Titles[0].WorkKey, build: renderMergeCase, args: [group] };
                     });
                     if (list.Cases.length === 0) {
-                        cases.push({ key: 'none', build: create, args: ['p', 'No doubtful films.'] });
+                        cases.push({ key: 'none', build: create, args: ['p', t('No doubtful films.')] });
                     }
 
                     updateRows(el('#jmMergeCases'), cases);
@@ -2882,7 +3293,7 @@
                         return { key: merge.Id, build: renderMerge, args: [merge] };
                     });
                     if (list.Merges.length === 0) {
-                        merges.push({ key: 'none', build: create, args: ['p', 'Nothing merged.'] });
+                        merges.push({ key: 'none', build: create, args: ['p', t('Nothing merged.')] });
                     }
 
                     updateRows(el('#jmMerges'), merges);
@@ -2942,7 +3353,7 @@
                 // Makes a link to a tab, which also works as a plain link in a new browser tab.
                 function tabLink(name) {
                     var label = panels[tabNames.indexOf(name)].getAttribute('aria-label');
-                    var link = create('a', 'Open ' + label);
+                    var link = create('a', t('Open {tab}', { tab: label }));
                     link.className = 'jmTabLink';
                     link.href = '#' + pageUrl + '#' + name;
                     link.addEventListener('click', function (e) {
@@ -2988,7 +3399,7 @@
                     row.appendChild(notes);
                     row.jmUpdate = function (current) {
                         setText(value, current.value);
-                        value.classList.toggle('jmPending', current.value === 'Reading...');
+                        value.classList.toggle('jmPending', current.value === reading);
                         updateRows(notes, current.notes.map(function (note) {
                             return { key: note.key, build: renderNote, args: [note] };
                         }));
@@ -3052,14 +3463,14 @@
                 // Gives the value of a fact, or says that it cannot be told yet.
                 function factValue(part, describe) {
                     if (part.failure) {
-                        return 'Unknown';
+                        return t('Unknown');
                     }
 
-                    return part.data ? describe(part.data) : 'Reading...';
+                    return part.data ? describe(part.data) : reading;
                 }
 
                 function count(number, one, many) {
-                    return number + ' ' + (number === 1 ? one : many);
+                    return number + ' ' + t(number === 1 ? one : many);
                 }
 
                 function reportOf(sync, server) {
@@ -3077,10 +3488,10 @@
                 function serverProblem(server) {
                     var health = healthOf(server);
                     if (health.failure === 'Offline') {
-                        return server.Name + ' is offline. Titles found only there do not play until it answers.';
+                        return t('{server} is offline. Titles found only there do not play until it answers.', { server: server.Name });
                     }
 
-                    return health.failure === server.Connection ? server.Name + ': ' + health.state + '.' : '';
+                    return health.failure === server.Connection ? t('{server}: {outcome}.', { server: server.Name, outcome: health.state }) : '';
                 }
 
                 function serversFact(status) {
@@ -3091,16 +3502,16 @@
                     });
                     return {
                         key: 'servers',
-                        label: 'Servers',
+                        label: t('Servers'),
                         notes: notes,
                         value: factValue(statusSection, function (data) {
                             var total = data.Servers.length;
                             if (total === 0) {
-                                return 'None yet';
+                                return t('None yet');
                             }
 
                             if (data.Suspended) {
-                                return count(total, 'server', 'servers') + ', suspended';
+                                return t('{servers}, suspended', { servers: count(total, 'server', 'servers') });
                             }
 
                             var online = data.Servers.filter(function (server) {
@@ -3109,21 +3520,22 @@
                             var unchecked = data.Servers.filter(function (server) {
                                 return server.Connection === 'NotChecked' && !healthOf(server).failure;
                             }).length;
-                            return online + ' of ' + total + ' online' + (unchecked > 0 ? ', ' + unchecked + ' not checked yet' : '');
+                            var line = t('{online} of {total} online', { online: online, total: total });
+                            return unchecked > 0 ? t('{line}, {count} not checked yet', { line: line, count: unchecked }) : line;
                         })
                     };
                 }
 
                 function indexProblem(sync) {
                     if (sync.Health === 'Corrupt') {
-                        return 'The federation index was damaged and is empty until a sync fills it.';
+                        return t('The federation index was damaged and is empty until a sync fills it.');
                     }
 
                     if (sync.Health === 'RestoredFromBackup') {
-                        return 'The federation index was restored from its previous copy. Run a sync.';
+                        return t('The federation index was restored from its previous copy. Run a sync.');
                     }
 
-                    return sync.IndexSaveFailed ? 'The last sync could not save the federation index. Check the disk.' : '';
+                    return sync.IndexSaveFailed ? t('The last sync could not save the federation index. Check the disk.') : '';
                 }
 
                 // Lists the servers whose last sync failed, when the row of the server does not already say why.
@@ -3139,7 +3551,9 @@
                         var failure = reportOf(sync, server).Failure;
                         return {
                             key: 'stale' + server.Id,
-                            text: server.Name + ': the last sync failed' + (failure ? ' (' + connectionLabel(failure) + ')' : '') + '. Its titles are kept as they were.',
+                            text: failure
+                                ? t('{server}: the last sync failed ({failure}). Its titles are kept as they were.', { server: server.Name, failure: connectionLabel(failure) })
+                                : t('{server}: the last sync failed. Its titles are kept as they were.', { server: server.Name }),
                             tab: 'servers'
                         };
                     });
@@ -3147,7 +3561,7 @@
 
                 function syncNotes(status, sync) {
                     if (syncSection.failure) {
-                        return [{ key: 'failed', text: 'The state of the sync could not be read. The page keeps trying.', tab: 'catalog' }];
+                        return [{ key: 'failed', text: t('The state of the sync could not be read. The page keeps trying.'), tab: 'catalog' }];
                     }
 
                     if (!sync) {
@@ -3157,7 +3571,7 @@
                     var notes = sync.HeldLibraries.map(function (held) {
                         return {
                             key: 'held' + held.ServerId + held.LibraryId,
-                            text: 'A library of ' + held.ServerName + ' came back empty. Its ' + held.Stubs + ' titles are kept.',
+                            text: t('A library of {server} came back empty. Its {count} titles are kept.', { server: held.ServerName, count: held.Stubs }),
                             tab: 'catalog'
                         };
                     });
@@ -3171,15 +3585,15 @@
                 function syncFact(status, sync) {
                     return {
                         key: 'sync',
-                        label: 'Last sync',
+                        label: t('Last sync'),
                         notes: syncNotes(status, sync),
                         value: factValue(syncSection, function (data) {
                             if (data.IsRunning) {
-                                return 'Running now';
+                                return t('Running now');
                             }
 
                             var date = lastSyncDate(data);
-                            return date ? formatDate(date) : 'Never';
+                            return date ? formatDate(date) : t('Never');
                         })
                     };
                 }
@@ -3189,11 +3603,11 @@
                     var libraries = path.Libraries.join(', ');
                     switch (path.Link) {
                         case 'NotLinked':
-                            return 'The ' + kind + ' path is not linked to a library.';
+                            return t('The {kind} path is not linked to a library.', { kind: kind });
                         case 'DifferentCase':
-                            return libraries + ' has the ' + kind + ' path with different capitals.';
+                            return t('{libraries} has the {kind} path with different capitals.', { libraries: libraries, kind: kind });
                         case 'WrongLibraryType':
-                            return 'The ' + kind + ' path is linked to ' + libraries + ', which is not a ' + kind + ' library.';
+                            return t('The {kind} path is linked to {libraries}, which is not a {kind} library.', { kind: kind, libraries: libraries });
                         default:
                             return '';
                     }
@@ -3203,18 +3617,18 @@
                     var notes = [];
                     var folder = status && status.FederatedFolder;
                     if (folder && folder.Path && folder.Link === 'NotChecked') {
-                        notes.push({ key: 'unchecked', text: 'The libraries could not be read to check the paths.', tab: 'settings' });
+                        notes.push({ key: 'unchecked', text: t('The libraries could not be read to check the paths.'), tab: 'settings' });
                     } else if (folder && folder.Path && folder.Link === 'NotLinked') {
-                        var problems = [pathProblem(folder.Movies, 'film'), pathProblem(folder.Series, 'series')].filter(Boolean);
-                        notes.push({ key: 'link', text: problems.join(' ') + ' Fix this by hand in Dashboard > Libraries.', tab: 'settings' });
+                        var problems = [pathProblem(folder.Movies, t('film')), pathProblem(folder.Series, t('series'))].filter(Boolean);
+                        notes.push({ key: 'link', text: t('{problems} Fix this by hand in Dashboard > Libraries.', { problems: problems.join(' ') }), tab: 'settings' });
                     }
 
                     if (folder && folder.SeriesGroupingOff.length > 0) {
-                        notes.push({ key: 'grouping', text: 'A series in two folders stays split in ' + folder.SeriesGroupingOff.join(', ') + '.', tab: 'settings' });
+                        notes.push({ key: 'grouping', text: t('A series in two folders stays split in {libraries}.', { libraries: folder.SeriesGroupingOff.join(', ') }), tab: 'settings' });
                     }
 
                     if (settingsSection.failure) {
-                        notes.push({ key: 'failed', text: 'The settings could not be read. Reload the page before saving.', tab: 'settings' });
+                        notes.push({ key: 'failed', text: t('The settings could not be read. Reload the page before saving.'), tab: 'settings' });
                     }
 
                     return notes;
@@ -3223,15 +3637,15 @@
                 function folderFact(status) {
                     return {
                         key: 'folder',
-                        label: 'Federated folder',
+                        label: t('Federated folder'),
                         notes: folderNotes(status),
                         value: factValue(statusSection, function (data) {
                             var folder = data.FederatedFolder;
                             if (!folder.Path) {
-                                return 'Not chosen';
+                                return t('Not chosen');
                             }
 
-                            return { Linked: 'Linked', NotLinked: 'Not linked' }[folder.Link] || 'Not checked';
+                            return { Linked: t('Linked'), NotLinked: t('Not linked') }[folder.Link] || t('Not checked');
                         })
                     };
                 }
@@ -3240,23 +3654,23 @@
                     var merges = current(mergesSection);
                     var notes = [];
                     if (mergesSection.failure) {
-                        notes.push({ key: 'failed', text: 'The duplicate and merged films could not be read. The page keeps trying.', tab: 'catalog' });
+                        notes.push({ key: 'failed', text: t('The duplicate and merged films could not be read. The page keeps trying.'), tab: 'catalog' });
                     }
 
                     if (merges && merges.IsStoreDamaged) {
-                        notes.push({ key: 'damaged', text: 'The file of merges could not be read, so earlier merges are not applied.', tab: 'catalog' });
+                        notes.push({ key: 'damaged', text: t('The file of merges could not be read, so earlier merges are not applied.'), tab: 'catalog' });
                     }
 
                     if (merges && merges.Cases.length > 0) {
-                        notes.push({ key: 'review', text: 'Merge the ones that are one film.', tab: 'catalog', calm: true });
+                        notes.push({ key: 'review', text: t('Merge the ones that are one film.'), tab: 'catalog', calm: true });
                     }
 
                     return {
                         key: 'duplicates',
-                        label: 'Duplicates to review',
+                        label: t('Duplicates to review'),
                         notes: notes,
                         value: factValue(mergesSection, function (data) {
-                            return data.Cases.length === 0 ? 'None' : String(data.Cases.length);
+                            return data.Cases.length === 0 ? t('None') : String(data.Cases.length);
                         })
                     };
                 }
@@ -3264,12 +3678,12 @@
                 function streamsFact() {
                     return {
                         key: 'streams',
-                        label: 'Streams in use',
-                        notes: peersSection.failure ? [{ key: 'failed', text: 'The connected servers could not be read. The page keeps trying.', tab: 'sharing' }] : [],
+                        label: t('Streams in use'),
+                        notes: peersSection.failure ? [{ key: 'failed', text: t('The connected servers could not be read. The page keeps trying.'), tab: 'sharing' }] : [],
                         value: factValue(peersSection, function (data) {
                             var peers = data[0];
                             if (peers.length === 0) {
-                                return 'No connected servers';
+                                return t('No connected servers');
                             }
 
                             var total = function (name) {
@@ -3277,7 +3691,7 @@
                                     return sum + peer[name];
                                 }, 0);
                             };
-                            return total('ActiveStreams') + ' of ' + total('MaxStreams') + ' by connected servers';
+                            return t('{used} of {total} by connected servers', { used: total('ActiveStreams'), total: total('MaxStreams') });
                         })
                     };
                 }
@@ -3311,23 +3725,22 @@
 
                 // Says what the key is for and what to do about its state, with the commands to copy when one has to be made.
                 function keyStep(status) {
-                    var purpose = 'JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. ';
-                    var make = {
+                                        var make = {
                         commands: [
-                            { label: 'Generate a key', value: 'openssl rand -base64 32' },
-                            { label: 'Put it in .env', value: 'JELLYMESH_SECRET_KEY=<the generated key>' },
-                            { label: 'Apply it', value: 'docker compose up -d' }
+                            { label: t('Generate a key'), value: 'openssl rand -base64 32' },
+                            { label: t('Put it in .env'), value: t('JELLYMESH_SECRET_KEY=<the generated key>') },
+                            { label: t('Apply it'), value: 'docker compose up -d' }
                         ],
-                        after: 'That recreates the container, and a plain restart would not. Without Docker, set the variable in the environment of the Jellyfin service and restart it. Each server has its own key.'
+                        after: t('That recreates the container, and a plain restart would not. Without Docker, set the variable in the environment of the Jellyfin service and restart it. Each server has its own key.')
                     };
                     var steps = {
-                        Ok: { text: 'JELLYMESH_SECRET_KEY encrypts the stored logins. It is set on the server, outside this plugin.' },
-                        Missing: { text: purpose + 'It is not set yet. Set it on the server, outside this plugin, with at least 32 characters.', commands: make.commands, after: make.after },
-                        TooShort: { text: purpose + 'The one set is too short. Set it on the server, outside this plugin, with at least 32 characters.', commands: make.commands, after: make.after },
-                        Wrong: { text: 'JELLYMESH_SECRET_KEY does not decrypt the stored logins: it changed, or they were altered. It is set on the server, outside this plugin. Restore the original key, or remove the servers and add them again.' }
+                        Ok: { text: t('JELLYMESH_SECRET_KEY encrypts the stored logins. It is set on the server, outside this plugin.') },
+                        Missing: { text: t('JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. It is not set yet. Set it on the server, outside this plugin, with at least 32 characters.'), commands: make.commands, after: make.after },
+                        TooShort: { text: t('JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. The one set is too short. Set it on the server, outside this plugin, with at least 32 characters.'), commands: make.commands, after: make.after },
+                        Wrong: { text: t('JELLYMESH_SECRET_KEY does not decrypt the stored logins: it changed, or they were altered. It is set on the server, outside this plugin. Restore the original key, or remove the servers and add them again.') }
                     };
                     var step = steps[status.KeyState] || steps.Wrong;
-                    return { key: 'key', name: 'Set the secret key', state: stateOf(status.KeyState === 'Ok'), text: step.text, commands: step.commands, after: step.after };
+                    return { key: 'key', name: t('Set the secret key'), state: stateOf(status.KeyState === 'Ok'), text: step.text, commands: step.commands, after: step.after };
                 }
 
                 // Derives the steps of the first setup from the state of the server.
@@ -3341,33 +3754,35 @@
                     });
                     return [keyStep(status), {
                         key: 'server',
-                        name: 'Add a remote server',
+                        name: t('Add a remote server'),
                         state: stateOf(status.Servers.length > 0),
-                        text: 'Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.',
+                        text: t('Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.'),
                         tab: 'servers'
                     }, {
                         key: 'libraries',
-                        name: 'Choose libraries to import',
+                        name: t('Choose libraries to import'),
                         state: stateOf(status.Servers.length > 0 && waiting.length === 0),
-                        text: 'Nothing is imported from a server until you choose its libraries.' + (waiting.length > 0 ? ' Still to choose: ' + waiting.join(', ') + '.' : ''),
+                        text: waiting.length > 0
+                            ? t('Nothing is imported from a server until you choose its libraries. Still to choose: {servers}.', { servers: waiting.join(', ') })
+                            : t('Nothing is imported from a server until you choose its libraries.'),
                         tab: 'servers'
                     }, {
                         key: 'folder',
-                        name: 'Choose the federated folder',
+                        name: t('Choose the federated folder'),
                         state: stateOf(folder.Path),
-                        text: 'A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.',
+                        text: t('A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.'),
                         tab: 'settings'
                     }, {
                         key: 'sync',
-                        name: 'Run the first sync',
+                        name: t('Run the first sync'),
                         state: firstSync,
-                        text: status.Suspended && firstSync !== 'done' ? 'It waits for the secret key.' : 'It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.',
+                        text: status.Suspended && firstSync !== 'done' ? t('It waits for the secret key.') : t('It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.'),
                         tab: 'catalog'
                     }, {
                         key: 'link',
-                        name: 'Link the two paths',
+                        name: t('Link the two paths'),
                         state: linkState(folder),
-                        text: 'Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.',
+                        text: t('Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.'),
                         tab: 'settings'
                     }];
                 }
@@ -3389,25 +3804,26 @@
 
                 function headline(status, problems, unfinished) {
                     if (!status) {
-                        return statusSection.failure ? 'Status unknown.' : '';
+                        return statusSection.failure ? t('Status unknown.') : '';
                     }
 
                     if (status.Suspended) {
-                        return 'Suspended. Sync and remote playback are stopped until the secret key is fixed.';
+                        return t('Suspended. Sync and remote playback are stopped until the secret key is fixed.');
                     }
 
                     var waiting = [syncSection, peersSection, mergesSection].some(function (part) {
                         return !part.data && !part.failure;
                     });
                     if (waiting) {
-                        return 'Active.';
+                        return t('Active.');
                     }
 
                     if (problems > 0) {
-                        return 'Active. ' + count(problems, 'thing needs', 'things need') + ' attention' + (unfinished > 0 ? ', and setup is not finished.' : '.');
+                        var needs = count(problems, 'thing needs attention', 'things need attention');
+                        return unfinished > 0 ? t('Active. {problems}, and setup is not finished.', { problems: needs }) : t('Active. {problems}.', { problems: needs });
                     }
 
-                    return unfinished > 0 ? 'Active. Setup is not finished: ' + count(unfinished, 'step', 'steps') + ' to do.' : 'Active. All is well.';
+                    return unfinished > 0 ? t('Active. Setup is not finished: {steps} to do.', { steps: count(unfinished, 'step', 'steps') }) : t('Active. All is well.');
                 }
 
                 // Gives the color of the banner, which follows what its sentence says.
@@ -3488,22 +3904,22 @@
                 var peersSection = section(function () {
                     return Promise.all([read('Peers'), readPeerOptions()]);
                 }, renderPeers, function (reason) {
-                    showFailure('#jmPeersFailure', 'the connected servers', keepsTrying, reason);
+                    showFailure('#jmPeersFailure', t('the connected servers'), keepsTrying, reason);
                 });
 
                 var mergesSection = section(function () {
                     return read('Merges');
                 }, renderMerges, function (reason) {
-                    showFailure('#jmMergesFailure', 'the duplicate and merged films', keepsTrying, reason);
+                    showFailure('#jmMergesFailure', t('the duplicate and merged films'), keepsTrying, reason);
                 });
 
                 var settingsSection = section(function () {
                     settingFields().forEach(clearField);
                     return ApiClient.getPluginConfiguration(pluginId).catch(function (error) {
-                        throw new Error(error && error.status ? 'The server answered with error ' + error.status + ' and gave no reason.' : noAnswer);
+                        throw new Error(error && error.status ? t('The server answered with error {status} and gave no reason.', { status: error.status }) : noAnswer);
                     });
                 }, renderSettings, function (reason) {
-                    showFailure('#jmSettingsFailure', 'the settings', 'Reload the page before saving.', reason);
+                    showFailure('#jmSettingsFailure', t('the settings'), t('Reload the page before saving.'), reason);
                 });
 
                 function loadStatus() {
@@ -3578,14 +3994,14 @@
                 // Returns the rule a Settings field breaks, or an empty text.
                 function settingRule(input) {
                     if (input.id === 'jmFederatedFolder') {
-                        return isUsableFolder(input.value.trim()) ? '' : 'Enter an absolute path other than the filesystem root, without "..".';
+                        return isUsableFolder(input.value.trim()) ? '' : t('Enter an absolute path other than the filesystem root, without "..".');
                     }
 
                     if (input.validity.valid) {
                         return '';
                     }
 
-                    return input.type === 'time' ? 'Enter a time as hours and minutes.' : numberRule(input);
+                    return input.type === 'time' ? t('Enter a time as hours and minutes.') : numberRule(input);
                 }
 
                 // Marks every wrong field, focuses the first and reports it. Returns whether all are right.
@@ -3602,25 +4018,26 @@
                         markField(input, settingRule(input));
                     });
                     var others = wrong.length - 1;
-                    showError(refusedText(el('label[for="' + wrong[0].id + '"]').textContent, settingRule(wrong[0]))
-                        + (others > 0 ? ' Also marked: ' + others + (others === 1 ? ' more field.' : ' more fields.') : ''));
+                    var first = refusedText(el('label[for="' + wrong[0].id + '"]').textContent, settingRule(wrong[0]));
+                    showError(others > 0 ? t('{first} Also marked: {more}.', { first: first, more: count(others, 'more field', 'more fields') }) : first);
                     focusField(wrong[0]);
                     return false;
                 }
 
                 function settingsFailure(error) {
                     if (!error || !error.status) {
-                        return 'Settings not saved. ' + noAnswer;
+                        return t('Settings not saved. {reason}', { reason: noAnswer });
                     }
 
                     return error.status === 400
-                        ? 'The server refused the settings and gave no reason, so nothing was saved.'
-                        : 'Settings not saved: the server answered with error ' + error.status + '.';
+                        ? t('The server refused the settings and gave no reason, so nothing was saved.')
+                        : t('Settings not saved: the server answered with error {status}.', { status: error.status });
                 }
 
                 selectTab(tabInUrl() || rememberedTab() || shownTab);
 
                 page.addEventListener('pageshow', function () {
+                    followLanguage();
                     visible = true;
                     matchTheme();
                     showTabs();
@@ -3630,7 +4047,7 @@
                     act(Promise.all([refresh(settingsSection), load()]).then(function (results) {
                         var failure = [results[0]].concat(results[1]).filter(Boolean)[0];
                         if (failure) {
-                            showError('Part of this page could not be loaded, and each part says so. ' + failure.message);
+                            showError(t('Part of this page could not be loaded, and each part says so. {reason}', { reason: failure.message }));
                         }
 
                         nextStatusPoll = Date.now() + statusPollMilliseconds;
@@ -3673,7 +4090,7 @@
                         return Promise.all([loadStatus(), loadSync()]).then(function () {
                             return chooseLibraries(server);
                         }).catch(function (error) {
-                            throw new Error('Added ' + server.Name + ', but its libraries could not be read. ' + error.message + ' Open Libraries on its card to try again.');
+                            throw new Error(t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
                         });
                     }));
                 });
@@ -3681,8 +4098,8 @@
                 el('#jmChooseFolder').addEventListener('click', function () {
                     var picker = new Dashboard.DirectoryBrowser();
                     picker.show({
-                        header: 'Choose the federated folder',
-                        instruction: 'These are the folders of the server. JellyMesh writes only inside the one you choose.',
+                        header: t('Choose the federated folder'),
+                        instruction: t('These are the folders of the server. JellyMesh writes only inside the one you choose.'),
                         includeFiles: false,
                         callback: function (path) {
                             var field = el('#jmFederatedFolder');
@@ -3691,7 +4108,7 @@
                             showSaveBar();
                             picker.close();
                             el('#jmChooseFolder').focus();
-                            showMessage(path + ' is in the field. Save the settings to use it.');
+                            showMessage(t('{path} is in the field. Save the settings to use it.', { path: path }));
                         }
                     });
                 });
