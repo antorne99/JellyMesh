@@ -15,6 +15,7 @@ description: >
   safely.
 category: "General"
 owner: "antorne99"
+image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: >
