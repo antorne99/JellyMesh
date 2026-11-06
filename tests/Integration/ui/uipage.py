@@ -81,7 +81,16 @@ CONFIRM_OK = CONFIRM + " [data-id=ok]"
 CONFIRM_CANCEL = CONFIRM + " [data-id=cancel]"
 CHECKBOX = "input[type=checkbox]"
 NUMBER = "input[type=number]"
-SAVE_SETTINGS = "#jmSettingsForm button[type=submit]"
+SAVE_SETTINGS = "#jmSaveSettings"
+SAVE_BAR = "#jmSaveBar"
+VERSION = "#jmVersion"
+BANNER = "#jmBanner"
+ADD_PART = "#jmAddServerPart"
+ADD_BLOCKED = "#jmAddBlocked"
+LIBRARIES_NOTE = ".jmLibrariesNote"
+STEP_COMMAND = ".jmStepCommands .jmPath"
+STEP_AFTER = ".jmStepAfter"
+COMPARE_ROW = ".jmCompareRow"
 SYNC_INTERVAL = "#jmSyncInterval"
 FEDERATED_FOLDER = "#jmFederatedFolder"
 METADATA_PROTECTION = "#jmMetadataProtection"
@@ -153,23 +162,44 @@ def reveal(node):
     """Opens the tab that holds an element, as a person has to before using it."""
     tab = node.evaluate_all("""(nodes, panel) => {
       const holder = nodes[0] && nodes[0].closest(panel);
+      if (nodes[0] && nodes[0].closest('#jmSaveBar') && !document.querySelector('[data-jm-tab=settings]').checkVisibility()) {
+        return 'settings';
+      }
       return holder && holder.hidden ? holder.dataset.jmTab : null;
     }""", "[role=tabpanel]")
     if tab:
         show_tab(node.page, tab)
 
 
-def opens_tab(action):
+def open_parts(node):
+    """Opens the rows and parts that hold an element, but not the one whose own head it is."""
+    node.evaluate_all("""nodes => {
+      const first = nodes[0];
+      let part = first && first.closest('details');
+      if (part && first.closest('summary')) {
+        part = part.parentElement.closest('details');
+      }
+      while (part) {
+        part.open = true;
+        part = part.parentElement.closest('details');
+      }
+    }""")
+
+
+def opens_tab(action, parts=True):
     """Makes a Playwright action open the tab of its element first. Reading text or values needs no open tab."""
     def run(self, *args, **kwargs):
         reveal(self)
+        if parts:
+            open_parts(self)
         return action(self, *args, **kwargs)
 
     return run
 
 
-for _name in ["click", "fill", "focus", "select_option", "is_visible", "bounding_box", "scroll_into_view_if_needed"]:
+for _name in ["click", "fill", "focus", "select_option", "bounding_box", "scroll_into_view_if_needed"]:
     setattr(Locator, _name, opens_tab(getattr(Locator, _name)))
+Locator.is_visible = opens_tab(Locator.is_visible, parts=False)
 
 
 def targets():
@@ -238,8 +268,9 @@ class Session:
         self._browser.close()
         self._playwright.stop()
 
-    def open(self, server, viewport="1280", theme="dark", route=None, wait=True, tab=""):
-        """Opens the page, on a tab if named. route gets the Playwright context before the page loads, to fake or delay answers."""
+    def open(self, server, viewport="1280", theme="dark", route=None, wait=True, tab="", language=None):
+        """Opens the page, on a tab if named, in a Jellyfin display language if named.
+        route gets the Playwright context before the page loads, to fake or delay answers."""
         set_theme(server, theme)
         target = targets()[server]
         credentials = {"Servers": [{
@@ -250,6 +281,9 @@ class Session:
         context.add_init_script(
             "localStorage.setItem('jellyfin_credentials', " + json.dumps(json.dumps(credentials)) + ");"
             "localStorage.setItem('enableAutoLogin', 'true');")
+        if language:
+            context.add_init_script("localStorage.setItem(" + json.dumps(target["user"] + "-language") + ", " + json.dumps(language) + ");")
+
         if route:
             route(context)
 
@@ -273,6 +307,14 @@ def wait_loaded(page):
     wait_idle(page)
 
 
+def change_settings(page):
+    """Changes a setting without saving it, so that Save appears, and returns the value it had."""
+    field = page.locator(SYNC_INTERVAL)
+    value = field.input_value()
+    field.fill(str(int(value) + 1))
+    return value
+
+
 def wait_idle(page):
     """Waits until the page has finished what it was doing."""
     page.wait_for_selector(LOADING, state="detached", timeout=30000)
@@ -285,7 +327,7 @@ def server_row(page, name):
 
 def peer_row(page, name):
     """Finds the row of a connected server."""
-    return page.locator(PEERS + " > div > div").filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
+    return page.locator(PEERS + " > div > *").filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
 
 
 def state_of(row):

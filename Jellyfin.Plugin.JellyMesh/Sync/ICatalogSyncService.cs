@@ -32,6 +32,12 @@ public interface ICatalogSyncService
     Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Starts deleting in the background what removed servers left: their catalogs and the stubs only they served. Titles
+    /// that another server also has stay, and move to that server.
+    /// </summary>
+    void StartRemovalCleanup();
+
+    /// <summary>
     /// Gets the state of the sync.
     /// </summary>
     /// <returns>The state.</returns>

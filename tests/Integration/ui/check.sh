@@ -31,7 +31,8 @@ if [ $# -gt 0 ]; then
   run "$@"
 else
   run tabs
-  run first normal loading errors keyboard themes actions
+  run first normal loading errors keyboard themes design rows save-bar actions
+  run connect-flow connect-failure language
   run overview overview-themes
   run edits quiet polling sections
   run outcomes outcome-themes

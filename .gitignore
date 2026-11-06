@@ -10,4 +10,8 @@ CLAUDE.md
 docs/
 .claude/
 PRODUCT.md
+DESIGN.md
+HANDOFF.md
 .mcp.json
+.agents/
+skills-lock.json
