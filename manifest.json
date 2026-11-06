@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.2.1.0",
+        "changelog": "Loads on every Jellyfin 12.x. Earlier versions were built against the 12.4 packages, so older 12.x servers installed them and then showed them as NotSupported. The plugin page is checked on Jellyfin 12.2 and 12.4, and remote playback only on 12.4, with jellyfin-web only: real Android and TV clients and QSV are not yet tested.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/antorne99/JellyMesh/releases/download/v0.2.1.0/jellymesh_0.2.1.0.zip",
+        "checksum": "a8d50cb4beada8288534570f1781b3dd",
+        "timestamp": "2026-11-06T11:38:31Z"
+      },
+      {
         "version": "0.2.0.0",
         "changelog": "A redesigned plugin page, split into five tabs and built from Jellyfin's own controls. It adds a health summary, first-run steps and status cards for servers, says how each action ended and what a removal will do, and picks the federated folder in Jellyfin's folder browser. Doubtful films now show the quality of each copy and what a merge would play. Tested on Jellyfin 12.4 with jellyfin-web only: real Android and TV clients and QSV are not yet tested.",
         "targetAbi": "12.0.0.0",
