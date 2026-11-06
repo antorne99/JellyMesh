@@ -954,6 +954,129 @@ def confirm_keyboard(s, width):
     page.context.close()
 
 
+ADVANCED_RANGES = {
+    "#jmRemotePlaybackInfoTimeout": "From 3 to 60",
+    "#jmStreamOpenTimeout": "From 5 to 60",
+    "#jmPlaybackIdle": "From 30 to 109",
+    "#jmSessionRetention": "From 1 to 168",
+    "#jmPolicyCache": "From 1 to 60",
+}
+
+
+def advanced_closed(page, name):
+    """The playback times start closed, and the keyboard opens them."""
+    check(name + " starts closed", not u.advanced_open(page))
+    for selector in ADVANCED_RANGES:
+        check(f"{name} hides {selector}", not page.locator(selector).is_visible())
+    for selector in [u.SYNC_INTERVAL, u.FEDERATED_FOLDER, u.METADATA_PROTECTION, u.SAVE_SETTINGS]:
+        check(f"{name} leaves {selector} in reach", page.locator(selector).is_visible())
+
+    toggle = page.locator(u.ADVANCED_TOGGLE)
+    toggle.focus()
+    page.keyboard.press("Enter")
+    check(name + " Enter opens it", u.advanced_open(page))
+    page.keyboard.press("Enter")
+    check(name + " Enter closes it", not u.advanced_open(page))
+    page.keyboard.press("Space")
+    check(name + " Space opens it", u.advanced_open(page))
+    for selector, rule in ADVANCED_RANGES.items():
+        check(f"{name} shows {selector}", page.locator(selector).is_visible())
+        said = page.locator(selector).evaluate("input => input.parentElement.querySelector('.fieldDescription').textContent")
+        check(f"{name} gives the range of {selector}", said.startswith(rule), said)
+
+
+def advanced_opens(page, name):
+    """A wrong value left in the closed part opens it, so the field can be seen and focused."""
+    policy = page.locator("#jmPolicyCache").input_value()
+    interval = page.locator(u.SYNC_INTERVAL).input_value()
+    u.open_advanced(page)
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator(u.ADVANCED_TOGGLE).click()
+    check(name + " the wrong value is hidden", not page.locator("#jmPolicyCache").is_visible())
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a hidden field", "Error", "Remember the transcoding rights")
+    check(name + " a hidden field opens the part", u.advanced_open(page))
+    check(name + " a hidden field is focused", u.focused(page) == "jmPolicyCache", u.focused(page))
+    check(name + " a hidden field is in view", u.in_view(page, "#jmPolicyCache"))
+    check(name + " a hidden field is marked", "from 1 to 60" in u.field_error(page, "#jmPolicyCache"))
+    page.locator("#jmPolicyCache").fill(policy)
+    page.locator(u.ADVANCED_TOGGLE).click()
+
+    page.locator(u.SYNC_INTERVAL).fill("60")
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a common field", "Error", "Sync interval")
+    check(name + " a common field leaves the part closed", not u.advanced_open(page))
+    check(name + " a common field is focused", "#" + u.focused(page) == u.SYNC_INTERVAL, u.focused(page))
+
+    u.open_advanced(page)
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator(u.ADVANCED_TOGGLE).click()
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " both", "Error", "1 more field")
+    check(name + " both focuses the first", "#" + u.focused(page) == u.SYNC_INTERVAL, u.focused(page))
+    check(name + " both shows the other", u.advanced_open(page) and page.locator("#jmPolicyCache").is_visible())
+    page.locator("#jmPolicyCache").fill(policy)
+    page.locator(u.SYNC_INTERVAL).fill(interval)
+    u.clear_message(page)
+
+
+def folder_chosen(page, name):
+    """The folder browser fills the field, and nothing is saved until the admin saves."""
+    field = page.locator(u.FEDERATED_FOLDER)
+    field.fill("relative/path")
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a wrong path", "Error", "absolute path")
+
+    u.open_picker(page)
+    check(name + " lists the folders of the server", page.locator(u.PICKER_ROW + '[data-path="/federata"]').count() == 1)
+    page.locator(u.PICKER_CLOSE).click()
+    page.wait_for_selector(u.CONFIRM, state="detached", timeout=15000)
+    check(name + " cancelling keeps the field", field.input_value() == "relative/path", field.input_value())
+
+    u.open_picker(page)
+    u.shot(page, f"folder-browser-{page.viewport_size['width']}", full_page=False)
+    u.choose_folder(page, "/federata")
+    check(name + " the choice fills the field", field.input_value() == "/federata", field.input_value())
+    check(name + " the choice clears the old error", u.field_error(page, u.FEDERATED_FOLDER) == "")
+    check(name + " the focus returns to the button", "#" + u.focused(page) == u.CHOOSE_FOLDER, u.focused(page))
+    outcome(page, name + " the choice", "Done", "Save the settings")
+    check(name + " the choice is not saved yet", u.config("first")["FederatedFolderPath"] == "")
+    page.wait_for_timeout(6000)
+    check(name + " reading again keeps the choice", field.input_value() == "/federata", field.input_value())
+
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " the choice saves", until(page, lambda: u.config("first")["FederatedFolderPath"] == "/federata"))
+    u.wait_idle(page)
+
+    field.fill("/typed/by/hand")
+    check(name + " the field stays usable", field.input_value() == "/typed/by/hand")
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " a typed path saves", until(page, lambda: u.config("first")["FederatedFolderPath"] == "/typed/by/hand"))
+    u.wait_idle(page)
+
+
+def settings_form(s, width):
+    """The Settings form: what stays closed, and how the folder is chosen."""
+    name = width + " settings form"
+    page = s.open("fresh", width)
+    advanced_closed(page, name + " advanced")
+    healthy(page, name + " advanced")
+    page.context.close()
+
+    page = s.open("fresh", width)
+    advanced_opens(page, name)
+    healthy(page, name)
+    page.context.close()
+
+    page = s.open("first", width)
+    try:
+        folder_chosen(page, name + " folder")
+        healthy(page, name + " folder")
+    finally:
+        u.settings("first", lambda config: config.update(FederatedFolderPath=""))
+    page.context.close()
+
+
 SCENARIOS = {
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
@@ -973,6 +1096,7 @@ SCENARIOS = {
     "sections": (sections, ["1280"]),
     "outcomes": (outcomes, WIDTHS),
     "outcome-themes": (outcome_themes, WIDTHS),
+    "settings-form": (settings_form, WIDTHS),
 }
 
 with u.Session() as session:

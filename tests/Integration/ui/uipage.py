@@ -50,6 +50,10 @@ SAVE_SETTINGS = "#jmSettingsForm button[type=submit]"
 SYNC_INTERVAL = "#jmSyncInterval"
 FEDERATED_FOLDER = "#jmFederatedFolder"
 METADATA_PROTECTION = "#jmMetadataProtection"
+CHOOSE_FOLDER = "#jmChooseFolder"
+PICKER_ROW = CONFIRM + " .lnkPath"
+PICKER_OK = CONFIRM + " button[type=submit]"
+PICKER_CLOSE = CONFIRM + " .btnCloseDialog"
 ADD_FIELDS = {"name": "#jmServerName", "url": "#jmServerUrl", "user": "#jmServerUser", "password": "#jmServerPassword"}
 SETTINGS = {
     SYNC_INTERVAL: "SyncIntervalSeconds",
@@ -236,6 +240,22 @@ def open_advanced(page):
     """Opens the advanced part of the settings, where the playback times are."""
     if not advanced_open(page):
         page.locator(ADVANCED_TOGGLE).click()
+
+
+def open_picker(page):
+    """Opens the folder browser of Jellyfin and waits for its list of server folders."""
+    page.locator(CHOOSE_FOLDER).click()
+    page.wait_for_selector(PICKER_ROW, state="visible", timeout=15000)
+
+
+def choose_folder(page, path):
+    """Walks into a folder in the folder browser, accepts it and waits until the dialog has gone."""
+    page.locator(PICKER_ROW + '[data-path="%s"]' % path).click()
+    page.wait_for_selector(PICKER_ROW + ':has-text("...")', state="visible", timeout=15000)
+    page.locator(PICKER_OK).click()
+    page.wait_for_selector(CONFIRM, state="detached", timeout=15000)
+    page.wait_for_selector(CONFIRM_BACKDROP, state="detached", timeout=15000)
+    wait_idle(page)
 
 
 def has_focus(node):
