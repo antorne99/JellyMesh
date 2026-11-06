@@ -22,6 +22,7 @@ with sync_playwright() as p:
     page.goto(f"{BASE}/web/index.html#/configurationpage?name=JellyMesh")
     page.wait_for_selector("#jmPlaybackIdle", state="attached", timeout=30000)
     page.wait_for_function("document.querySelector('#jmSyncInterval').value !== ''", timeout=15000)
+    page.locator("[role=tab][data-tab-index]", has_text="Settings").click()
 
     def read():
         return page.evaluate("""f => Object.fromEntries(f.map(id => { const e = document.getElementById(id);

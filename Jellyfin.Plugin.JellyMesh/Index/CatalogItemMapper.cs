@@ -11,6 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Index;
 public static class CatalogItemMapper
 {
     private const string HdrRange = "HDR";
+    private const string SdrRange = "SDR";
 
     /// <summary>
     /// Gets the films and episodes of a server. An episode takes title, year and IDs from its series, because Jellyfin
@@ -79,6 +80,9 @@ public static class CatalogItemMapper
     private static MediaVersion ToMediaVersion(IndexedVersion version)
     {
         var isHdr = string.Equals(version.VideoRange, HdrRange, StringComparison.OrdinalIgnoreCase);
-        return new MediaVersion(version.MediaSourceId, new SourceQuality(version.Height, isHdr, version.BitRate, version.Codec));
+        var isSdr = string.Equals(version.VideoRange, SdrRange, StringComparison.OrdinalIgnoreCase);
+        return new MediaVersion(
+            version.MediaSourceId,
+            new SourceQuality(version.Height, isHdr, version.BitRate, version.Codec) { IsRangeKnown = isHdr || isSdr });
     }
 }

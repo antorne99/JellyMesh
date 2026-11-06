@@ -53,13 +53,25 @@ public class FederationMergeController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        return await _merges.MergeAsync(request.WorkKeys, cancellationToken).ConfigureAwait(false) switch
-        {
-            ManualMergeOutcome.Merged => NoContent(),
-            ManualMergeOutcome.TooFewTitles => BadRequest(Failure("Select at least two titles of one group.")),
-            ManualMergeOutcome.TwoLocalTitles => BadRequest(Failure("Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.")),
-            _ => Conflict(Failure("The list changed. Check it again, then merge."))
-        };
+        var outcome = await _merges.MergeAsync(request.WorkKeys, cancellationToken).ConfigureAwait(false);
+        return outcome == ManualMergeOutcome.Merged ? NoContent() : Refusal(outcome);
+    }
+
+    /// <summary>
+    /// Tells what would play if titles of one case were merged, changing nothing. It refuses what a merge would refuse.
+    /// </summary>
+    /// <param name="request">The titles.</param>
+    /// <returns>The forecast.</returns>
+    [HttpPost("Preview")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<MergeForecast> Preview([FromBody] MergeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var preview = _merges.Preview(request.WorkKeys);
+        return preview.Forecast is { } forecast ? forecast : Refusal(preview.Outcome);
     }
 
     /// <summary>
@@ -77,6 +89,13 @@ public class FederationMergeController : ControllerBase
             ? NoContent()
             : NotFound(Failure("This merge no longer exists."));
     }
+
+    private ObjectResult Refusal(ManualMergeOutcome outcome) => outcome switch
+    {
+        ManualMergeOutcome.TooFewTitles => BadRequest(Failure("Select at least two titles of one group.")),
+        ManualMergeOutcome.TwoLocalTitles => BadRequest(Failure("Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.")),
+        _ => Conflict(Failure("The list changed. Check it again, then merge."))
+    };
 
     private static FailureResponse Failure(string message) => new(RemoteFailure.None, message);
 }

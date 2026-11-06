@@ -19,9 +19,9 @@ with sync_playwright() as p:
     context = browser.new_context(viewport={"width": 1000, "height": 1800})
     context.add_init_script("localStorage.setItem('jellyfin_credentials', " + json.dumps(json.dumps(CRED)) + ");localStorage.setItem('enableAutoLogin','true');")
     page = context.new_page()
-    page.on("dialog", lambda dialog: dialog.accept())
     page.goto(f"{BASE}/web/index.html#/configurationpage?name=JellyMesh")
     page.wait_for_selector(".jmMergeCase", state="attached", timeout=30000)
+    page.locator("[role=tab][data-tab-index]", has_text="Catalog").click()
 
     group = page.locator(".jmMergeCase", has_text=TITLE)
     print("CASES", page.locator(".jmMergeCase").count(), flush=True)
@@ -29,14 +29,16 @@ with sync_playwright() as p:
     page.locator("#jmMergeCases").scroll_into_view_if_needed()
     page.screenshot(path=CAP + "-list.png", full_page=True)
 
-    # One title only: the server refuses, and the page says so.
-    group.locator("input[type=checkbox]").first.check()
-    group.get_by_text("Merge selected").click()
-    page.wait_for_function("document.getElementById('jmMessage').textContent !== ''", timeout=15000)
-    print("REFUSED", json.dumps(page.locator("#jmMessage").inner_text()), flush=True)
+    # One title only: the page does not offer the merge, and says why.
+    group.locator("label").first.click()
+    state = "disabled" if group.get_by_text("Merge selected").is_disabled() else "enabled"
+    print("REFUSED", json.dumps(state + ": " + group.locator(".jmMergeResult").inner_text()), flush=True)
 
     for box in group.locator("input[type=checkbox]").all():
-        box.check()
+        if not box.is_checked():
+            box.locator("..").click()
+    page.wait_for_function("t => [...document.querySelectorAll('.jmMergeCase')].some(c => c.textContent.includes(t) && c.querySelector('.jmMergeResult').textContent.includes('If merged'))", arg=TITLE, timeout=15000)
+    print("FORECAST", json.dumps(group.locator(".jmMergeResult").inner_text()), flush=True)
     group.get_by_text("Merge selected").click()
     page.wait_for_selector(".jmMerge:has-text('" + TITLE + "')", state="attached", timeout=30000)
     merged = page.locator(".jmMerge", has_text=TITLE)
@@ -45,6 +47,7 @@ with sync_playwright() as p:
     page.screenshot(path=CAP + "-merged.png", full_page=True)
 
     merged.get_by_text("Undo merge").click()
+    page.locator(".dialogContainer .dialog [data-id=ok]").click()
     page.wait_for_selector(".jmMergeCase:has-text('" + TITLE + "')", state="attached", timeout=30000)
     print("UNDONE", json.dumps(page.locator("#jmMessage").inner_text()), flush=True)
     browser.close()

@@ -6,124 +6,706 @@
 </head>
 <body>
     <div id="JellyMeshConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+        <style>
+            #JellyMeshConfigPage [data-role="content"] {
+                display: flow-root;
+                overflow: visible;
+            }
+
+            body.jmTabs [role="tab"][data-tab-index]:focus-visible {
+                outline: 2px solid var(--jf-palette-text-primary, #fff);
+                outline-offset: -2px;
+            }
+
+            body.jmTabs [role="tab"][data-tab-index][aria-selected="true"] {
+                color: var(--jf-palette-text-primary, #fff);
+            }
+
+            @media (max-width: 599.95px) {
+                body.jmTabs [role="tab"][data-tab-index] {
+                    flex: 1 1 auto;
+                    min-width: 0;
+                    padding-right: 0.5em;
+                    padding-left: 0.5em;
+                }
+            }
+
+            #JellyMeshConfigPage [role="tabpanel"]:focus {
+                outline: none;
+            }
+
+            .jmColumns {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 22em), 1fr));
+                gap: 0 3em;
+                align-items: start;
+            }
+
+            .jmColumns > * {
+                min-width: 0;
+            }
+
+            .jmHidden {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                overflow: hidden;
+                clip-path: inset(50%);
+                white-space: nowrap;
+            }
+
+            .jmHeadline {
+                margin: 0 0 1em;
+                font-size: 1.15em;
+                font-weight: 500;
+            }
+
+            .jmFacts,
+            .jmSteps {
+                margin: 0 0 1.5em;
+                padding: 0;
+                list-style: none;
+                border-bottom: 1px solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+            }
+
+            .jmFact {
+                display: grid;
+                grid-template-columns: minmax(0, 10em) minmax(0, 1fr);
+                column-gap: 1em;
+                padding: 0.6em 0;
+                border-top: 1px solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+            }
+
+            .jmFact dt,
+            .jmStepText {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmFact dd {
+                min-width: 0;
+                margin: 0;
+                font-variant-numeric: tabular-nums;
+                overflow-wrap: anywhere;
+            }
+
+            .jmFact .jmNotes {
+                grid-column: 1 / -1;
+            }
+
+            .jmNote {
+                display: grid;
+                grid-template-columns: 1.5em minmax(0, 1fr);
+                column-gap: 0.25em;
+                margin-top: 0.4em;
+            }
+
+            .jmNoteIcon {
+                color: var(--jf-palette-warning-main, #ed6c02);
+                color: color-mix(in srgb, var(--jf-palette-warning-main, #ed6c02) 70%, var(--jf-palette-text-primary, #fff));
+                font-size: 1.2em;
+                line-height: 1.25;
+            }
+
+            .jmTabLink {
+                display: inline-block;
+                min-height: 24px;
+                color: inherit;
+                text-decoration: underline;
+                text-underline-offset: 0.15em;
+            }
+
+            .jmTabLink:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmStep {
+                display: grid;
+                grid-template-columns: 1.75em minmax(0, 1fr) auto;
+                column-gap: 0.25em;
+                padding: 0.6em 0;
+                border-top: 1px solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+            }
+
+            .jmStepIcon {
+                grid-row: 1 / span 2;
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+                font-size: 1.25em;
+                line-height: 1.2;
+            }
+
+            .jmStepName {
+                min-width: 0;
+                font-weight: 500;
+                overflow-wrap: anywhere;
+            }
+
+            .jmStepText {
+                grid-column: 2 / -1;
+                overflow-wrap: anywhere;
+            }
+
+            .jmStepDone .jmStepName {
+                font-weight: normal;
+            }
+
+            .jmStepDone .jmStepIcon {
+                color: var(--jf-palette-success-main, #2e7d32);
+            }
+
+            .jmOutcome {
+                position: sticky;
+                bottom: 1em;
+                z-index: 1;
+            }
+
+            .jmOutcome.jmOutcomeDone,
+            .jmOutcome.jmOutcomeError {
+                display: flex;
+                align-items: baseline;
+                justify-content: space-between;
+                gap: 1em;
+                margin-top: 1.5em;
+                padding: 0.75em 1em;
+                border-radius: 4px;
+                box-shadow: 0 0.25em 1em rgba(0, 0, 0, 0.4);
+            }
+
+            .jmOutcome.jmOutcomeDone {
+                background: var(--jf-palette-success-main, #2e7d32);
+                color: var(--jf-palette-success-contrastText, #fff);
+            }
+
+            .jmOutcome.jmOutcomeError {
+                background: var(--jf-palette-error-main, #c62828);
+                color: var(--jf-palette-error-contrastText, #fff);
+            }
+
+            .jmOutcomeKind {
+                font-weight: bold;
+            }
+
+            .jmOutcome button {
+                flex: none;
+                min-height: 24px;
+                padding: 0;
+                border: 0;
+                background: none;
+                color: inherit;
+                font: inherit;
+                text-decoration: underline;
+                cursor: pointer;
+            }
+
+            .jmOutcome button:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmAdvanced {
+                margin-bottom: 1.8em;
+            }
+
+            .jmAdvanced > summary {
+                display: grid;
+                grid-template-columns: 1fr auto;
+                column-gap: 1em;
+                align-items: center;
+                margin-bottom: 1.5em;
+                padding-bottom: 0.5em;
+                border-bottom: 0.1em solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+                list-style: none;
+                cursor: pointer;
+            }
+
+            .jmAdvanced > summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .jmAdvanced > summary:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmAdvanced > summary .sectionTitle {
+                margin: 0 0 0.25em;
+            }
+
+            .jmAdvancedIcon {
+                grid-column: 2;
+                grid-row: 1 / span 2;
+                transition: transform 180ms ease-out;
+            }
+
+            .jmAdvanced[open] .jmAdvancedIcon {
+                transform: rotate(180deg);
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .jmAdvancedIcon {
+                    transition: none;
+                }
+            }
+
+            .jmFolderPick {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: flex-end;
+                gap: 0.5em 1em;
+            }
+
+            .jmFolderField {
+                flex: 1 1 14em;
+                min-width: 0;
+            }
+
+            .jmFolderPick .emby-button {
+                flex: none;
+                margin: 0;
+                padding-top: 0.64em;
+                padding-bottom: 0.64em;
+            }
+
+            .fieldDescription.jmFolderInfo {
+                margin-top: 0.75em;
+            }
+
+            .jmPath {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 0.25em 1em;
+                margin-top: 0.5em;
+            }
+
+            .jmPathName {
+                flex: none;
+                width: 7em;
+            }
+
+            .jmPathValue {
+                flex: 1 1 12em;
+                min-width: 0;
+                font-size: 1em;
+                overflow-wrap: anywhere;
+            }
+
+            .jmPath .emby-button {
+                flex: none;
+                margin: 0;
+                padding: 0.4em 0.9em;
+            }
+
+            #jmFolderNotes {
+                margin-top: 0.5em;
+            }
+
+            .jmFolderWarning {
+                margin-top: 0.5em;
+                font-weight: bold;
+            }
+
+            .jmCopyField {
+                position: fixed;
+                top: 0;
+                left: 0;
+                opacity: 0;
+            }
+
+            .jmFieldError {
+                margin-top: 0.25em;
+                padding: 0.25em 0.5em;
+                border-radius: 4px;
+                background: var(--jf-palette-error-main, #c62828);
+                color: var(--jf-palette-error-contrastText, #fff);
+            }
+
+            #JellyMeshConfigPage input[aria-invalid="true"] {
+                border-color: var(--jf-palette-error-main, #c62828);
+            }
+
+            .jmAlert {
+                margin-bottom: 1em;
+                padding: 1em;
+                border: 1px solid var(--jf-palette-warning-main, #ed6c02);
+                border-radius: 4px;
+                background: var(--jf-palette-background-paper, #202020);
+                background: color-mix(in srgb, var(--jf-palette-warning-main, #ed6c02) 16%, var(--jf-palette-background-paper, #202020));
+                color: var(--jf-palette-text-primary, #fff);
+            }
+
+            .jmFolderInfo {
+                margin-bottom: 1.5em;
+            }
+
+            .jmFolderWarning {
+                font-weight: bold;
+            }
+
+            .jmServer,
+            .jmPeer {
+                margin: 0 0 1em;
+                padding: 1em;
+                overflow-wrap: anywhere;
+            }
+
+            .jmServer h4,
+            .jmPeer h4 {
+                margin: 0;
+            }
+
+            .jmCardHead {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                justify-content: space-between;
+                gap: 0.25em 1em;
+            }
+
+            .jmCardHead h4 {
+                flex: 1 1 8em;
+                min-width: 0;
+            }
+
+            .jmState {
+                display: flex;
+                align-items: center;
+                gap: 0.35em;
+                min-width: 0;
+                font-weight: 500;
+            }
+
+            .jmStateIcon {
+                flex: none;
+                font-size: 1.2em;
+            }
+
+            .jmStateGood .jmStateIcon {
+                color: var(--jf-palette-success-main, #2e7d32);
+            }
+
+            .jmStateWarn .jmStateIcon {
+                color: var(--jf-palette-warning-main, #ed6c02);
+            }
+
+            .jmStateBad .jmStateIcon {
+                color: var(--jf-palette-error-main, #c62828);
+            }
+
+            .jmStateQuiet .jmStateIcon {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmCause {
+                margin: 0.5em 0 0;
+            }
+
+            .jmCardFacts {
+                display: grid;
+                grid-template-columns: max-content minmax(0, 1fr);
+                gap: 0.25em 1.5em;
+                margin: 0.75em 0 1em;
+            }
+
+            .jmCardFacts dt {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmCardFacts dd {
+                margin: 0;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .jmActions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5em;
+            }
+
+            .jmActions .emby-button,
+            .jmLibraries .emby-button {
+                margin: 0;
+            }
+
+            #jmSyncServers > p {
+                margin: 0.25em 0;
+            }
+
+            .jmLibraries:not(:empty) {
+                margin-top: 1em;
+            }
+
+            #jmPeerNew:empty {
+                display: none;
+            }
+
+            #jmPeerNew h4 {
+                margin-top: 1em;
+            }
+
+            #jmPeers input[type="number"] {
+                max-width: 8em;
+            }
+
+            #JellyMeshConfigPage .emby-button:focus-visible,
+            #JellyMeshConfigPage .emby-input:focus-visible,
+            #JellyMeshConfigPage .emby-select:focus-visible,
+            #JellyMeshConfigPage .emby-checkbox:focus-visible + span + .checkboxOutline {
+                outline: 2px solid var(--jf-palette-text-primary, #fff) !important;
+                outline-offset: 2px;
+            }
+
+            #JellyMeshConfigPage .raised:not(.button-submit):focus {
+                background: var(--jf-palette-Button-inheritContainedBg, #424242);
+            }
+
+            #JellyMeshConfigPage .button-submit:not(:hover) {
+                color: rgba(0, 0, 0, 0.87);
+            }
+
+            #JellyMeshConfigPage .emby-checkbox-label {
+                height: auto;
+                min-height: 2.35em;
+            }
+
+            #JellyMeshConfigPage .checkboxLabel {
+                min-width: 0;
+                overflow-wrap: anywhere;
+            }
+
+            .jmMergeCase,
+            .jmMerge {
+                margin-bottom: 1.5em;
+                padding-top: 1em;
+                border-top: 1px solid var(--jf-palette-divider, rgba(255, 255, 255, 0.12));
+                overflow-wrap: anywhere;
+            }
+
+            .jmMergeReason {
+                margin: 0 0 0.75em;
+            }
+
+            .jmMergeTitle {
+                margin-bottom: 0.75em;
+            }
+
+            .jmMergeTitle .checkboxLabel {
+                font-weight: 500;
+            }
+
+            .jmMergeDetails {
+                padding-left: 2.4em;
+            }
+
+            .jmMergeDetails,
+            .jmMergeQuality,
+            .jmMergeDate {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+                font-variant-numeric: tabular-nums;
+            }
+
+            .jmMergeCopy + .jmMergeCopy {
+                margin-top: 0.5em;
+            }
+
+            .jmMergeResult {
+                margin: 1em 0 0.75em;
+            }
+
+            .jmMergeResult.jmMergeHint {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmMergeCase .emby-button[hidden] {
+                display: none;
+            }
+
+            .jmMergeDate {
+                margin: 0 0 0.5em;
+            }
+
+            .jmMergeUnused {
+                margin-top: 0.5em;
+            }
+
+            .jmMerge .emby-button {
+                margin-top: 0.75em;
+            }
+        </style>
         <div data-role="content">
             <div class="content-primary">
                 <h2 class="sectionTitle">JellyMesh</h2>
 
-                <div id="jmWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <div id="jmMessage" role="status" hidden style="padding:0.5em 0;font-weight:bold;"></div>
+                <div id="jmWarning" role="alert" hidden class="jmAlert"></div>
+                <div id="jmStatusFailure" role="alert" hidden class="jmAlert"></div>
+                <div id="jmAnnounce" role="status" class="jmHidden"></div>
 
-                <h3 class="sectionTitle">Status</h3>
-                <p id="jmStatus"></p>
-
-                <h3 class="sectionTitle">Remote servers</h3>
-                <div id="jmServers"></div>
-
-                <h3 class="sectionTitle">Catalog</h3>
-                <div id="jmIndexWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <p id="jmSyncStatus"></p>
-                <div id="jmSyncServers"></div>
-                <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
-                    <span>Sync now</span>
-                </button>
-
-                <h3 class="sectionTitle">Duplicate films</h3>
-                <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
-                <div id="jmMergeWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <div id="jmMergeCases"></div>
-                <h4>Merged films</h4>
-                <div id="jmMerges"></div>
-
-                <h3 class="sectionTitle">Connected JellyMesh servers</h3>
-                <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
-                <div id="jmPeers"></div>
-
-                <form id="jmAddServerForm" autocomplete="off">
-                    <h3 class="sectionTitle">Add a server</h3>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerName">Name</label>
-                        <input id="jmServerName" type="text" is="emby-input" required />
+                <section data-jm-tab="overview" role="tabpanel" aria-label="Overview">
+                    <div class="jmColumns">
+                        <div>
+                            <h3 class="sectionTitle">Status</h3>
+                            <p id="jmStatus" class="jmHeadline"></p>
+                            <dl id="jmSummary" class="jmFacts"></dl>
+                        </div>
+                        <div id="jmSetup" hidden>
+                            <h3 class="sectionTitle">Setup</h3>
+                            <p>This list follows the real state of the server and goes away when setup is complete.</p>
+                            <ol id="jmSetupSteps" class="jmSteps"></ol>
+                        </div>
                     </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Tailnet URL</label>
-                        <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server.tailnet.ts.net:8096" />
+                </section>
+
+                <section data-jm-tab="servers" role="tabpanel" aria-label="Servers" hidden>
+                    <p>What this server reads from other servers. Their films and series appear in the libraries here.</p>
+                    <div class="jmColumns">
+                        <div>
+                            <h3 class="sectionTitle">Remote servers</h3>
+                            <div id="jmServersSyncFailure" hidden class="jmAlert"></div>
+                            <div id="jmServers"></div>
+                        </div>
+                        <form id="jmAddServerForm" autocomplete="off">
+                            <h3 class="sectionTitle">Add a server</h3>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerName">Name</label>
+                                <input id="jmServerName" type="text" is="emby-input" required />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Tailnet URL</label>
+                                <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server.tailnet.ts.net:8096" />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerUser">User</label>
+                                <input id="jmServerUser" type="text" is="emby-input" required autocomplete="off" />
+                                <div class="fieldDescription">A dedicated non-admin user on the remote. API keys are not used.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmServerPassword">Password</label>
+                                <input id="jmServerPassword" type="password" is="emby-input" autocomplete="new-password" />
+                                <div class="fieldDescription">Stored encrypted and never shown again.</div>
+                            </div>
+                            <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit block emby-button">
+                                <span>Test and add</span>
+                            </button>
+                        </form>
                     </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerUser">User</label>
-                        <input id="jmServerUser" type="text" is="emby-input" required autocomplete="off" />
-                        <div class="fieldDescription">A dedicated non-admin user on the remote. API keys are not used.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmServerPassword">Password</label>
-                        <input id="jmServerPassword" type="password" is="emby-input" autocomplete="new-password" />
-                        <div class="fieldDescription">Stored encrypted and never shown again.</div>
-                    </div>
-                    <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit block emby-button">
-                        <span>Test and add</span>
+                </section>
+
+                <section data-jm-tab="catalog" role="tabpanel" aria-label="Catalog" hidden>
+                    <h3 class="sectionTitle">Sync</h3>
+                    <div id="jmIndexWarning" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmSyncFailure" role="alert" hidden class="jmAlert"></div>
+                    <p id="jmSyncStatus"></p>
+                    <div id="jmSyncServers"></div>
+                    <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
+                        <span>Sync now</span>
                     </button>
-                </form>
 
-                <form id="jmSettingsForm">
-                    <h3 class="sectionTitle">Settings</h3>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
-                        <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
-                        <div class="fieldDescription">At least 300 seconds.</div>
+                    <h3 class="sectionTitle">Duplicate films</h3>
+                    <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
+                    <div id="jmMergeWarning" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmMergesFailure" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmMergeCases"></div>
+                    <h3 class="sectionTitle">Merged films</h3>
+                    <div id="jmMerges"></div>
+                </section>
+
+                <section data-jm-tab="sharing" role="tabpanel" aria-label="Sharing" hidden>
+                    <p>What other JellyMesh servers read from this server.</p>
+                    <h3 class="sectionTitle">Connected JellyMesh servers</h3>
+                    <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
+                    <div id="jmPeersFailure" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmPeers" class="jmColumns">
+                        <div id="jmPeerList"></div>
+                        <div id="jmPeerNew"></div>
                     </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmReconciliationTime">Nightly reconciliation time</label>
-                        <input id="jmReconciliationTime" type="time" is="emby-input" required />
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
-                        <input id="jmFederatedFolder" type="text" is="emby-input" />
-                        <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
-                    </div>
-                    <div id="jmFolderInfo" class="fieldDescription" style="margin-bottom:1.5em;"></div>
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
-                            <span>Protect metadata</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
-                    </div>
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="jmCloseAtExpiry" type="checkbox" is="emby-checkbox" />
-                            <span>Close the transcode of an expired stream</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
-                    </div>
-                    <h3 class="sectionTitle">Playback times</h3>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
-                        <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
-                        <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A client waits this long on each source before the next one is tried.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
-                        <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
-                        <div class="fieldDescription">From 5 to 60. Opening takes up to three steps per source. Raise it if a remote is slow to start a transcode.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
-                        <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
-                        <div class="fieldDescription">From 30 to 109: a JellyMesh remote frees an unused stream after 120 seconds, and this must end first. A paused player resumes by itself.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
-                        <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
-                        <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
-                        <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
-                        <div class="fieldDescription">From 1 to 60.</div>
-                    </div>
-                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                        <span>Save</span>
-                    </button>
-                </form>
+                </section>
+
+                <section data-jm-tab="settings" role="tabpanel" aria-label="Settings" hidden>
+                    <form id="jmSettingsForm" novalidate>
+                        <h3 class="sectionTitle">Settings</h3>
+                        <div id="jmSettingsFailure" role="alert" hidden class="jmAlert"></div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
+                            <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
+                            <div class="fieldDescription">At least 300 seconds.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmReconciliationTime">Nightly reconciliation time</label>
+                            <input id="jmReconciliationTime" type="time" is="emby-input" required />
+                        </div>
+                        <div class="inputContainer">
+                            <div class="jmFolderPick">
+                                <div class="jmFolderField">
+                                    <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
+                                    <input id="jmFederatedFolder" type="text" is="emby-input" />
+                                </div>
+                                <button id="jmChooseFolder" is="emby-button" type="button" class="raised emby-button">
+                                    <span>Choose folder</span>
+                                </button>
+                            </div>
+                            <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
+                            <div id="jmFolderInfo" class="fieldDescription jmFolderInfo">
+                                <div id="jmFolderHint"></div>
+                                <div id="jmFolderPaths"></div>
+                                <div id="jmFolderNotes"></div>
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
+                                <span>Protect metadata</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input id="jmCloseAtExpiry" type="checkbox" is="emby-checkbox" />
+                                <span>Close the transcode of an expired stream</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
+                        </div>
+                        <details id="jmAdvanced" class="jmAdvanced">
+                            <summary>
+                                <h3 class="sectionTitle">Advanced playback times</h3>
+                                <span class="fieldDescription">Most servers can keep these values.</span>
+                                <span class="material-icons expand_more jmAdvancedIcon" aria-hidden="true"></span>
+                            </summary>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
+                                <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
+                                <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
+                                <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
+                                <div class="fieldDescription">From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
+                                <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
+                                <div class="fieldDescription">From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
+                                <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
+                                <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
+                                <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
+                                <div class="fieldDescription">From 1 to 60. A change to these rights on the remote takes up to this long to apply here.</div>
+                            </div>
+                        </details>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </form>
+                </section>
+
+                <div id="jmOutcome" class="jmOutcome">
+                    <div id="jmMessage" role="status"></div>
+                    <button id="jmDismiss" type="button" hidden>Dismiss</button>
+                </div>
             </div>
         </div>
         <script type="text/javascript">
@@ -141,22 +723,174 @@
                     ServerError: 'server error',
                     InvalidResponse: 'unexpected answer',
                     ResponseTooLarge: 'answer too large',
-                    LibraryUnavailable: 'a chosen library is gone: open Libraries and save again',
-                    CatalogChanged: 'the catalog kept changing, try again',
-                    Suspended: 'suspended'
+                    LibraryUnavailable: 'a chosen library is gone',
+                    CatalogChanged: 'the catalog kept changing',
+                    Suspended: 'suspended',
+                    Unreachable: 'could not be reached',
+                    Timeout: 'no answer in time'
                 };
-                var modeLabels = { Unknown: 'mode unknown', Standard: 'standard', JellyMesh: 'JellyMesh' };
+                var connectionSteps = {
+                    Offline: 'Check that the server is running and reachable on the tailnet, then test the connection.',
+                    AuthenticationFailed: 'Fix the login on that server, or remove this server and add it again with a working one.',
+                    Forbidden: 'Give the dedicated user access on that server, then test the connection.',
+                    AdministratorAccount: 'Remove this server and add it again with a dedicated non-admin user.',
+                    RedirectRefused: 'Remove this server and add it again with the URL it answers on.',
+                    ServerError: 'Check the log of that server, then test the connection.',
+                    InvalidResponse: 'Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.',
+                    ResponseTooLarge: 'Check that the URL leads to a Jellyfin server, then test the connection.',
+                    LibraryUnavailable: 'Open Libraries and save the selection again.',
+                    CatalogChanged: 'The next sync tries again.'
+                };
+                var unknownProblem = 'unknown problem';
+                var unknownProblemStep = 'Test the connection to see what is wrong.';
+                var modeLabels = { Unknown: 'mode not known yet', Standard: 'standard Jellyfin server', JellyMesh: 'JellyMesh server' };
+                var defaultStreamLimit = 2;
                 var mergeReasons = {
                     ConflictingProviderIds: 'These titles are linked by shared provider IDs, but some of those IDs contradict each other.',
                     PossibleDuplicate: 'These titles have the same name and year, but nothing confirms they are one film.'
                 };
                 var ticksPerMinute = 600000000;
                 var syncPollMilliseconds = 2000;
+                var idlePollMilliseconds = 5000;
+                var statusPollMilliseconds = 15000;
+                var optionsPollMilliseconds = 60000;
+                var readTimeoutMilliseconds = 15000;
+                var keepsTrying = 'What is shown here may be out of date, and the page keeps trying.';
                 var suspended = false;
-                var syncTimer = null;
+                var syncRunning = false;
+                var lastFinished;
+                var folderShown = '';
+                var visible = false;
+                var polling = false;
+                var pollTimer = null;
+                var nextStatusPoll = 0;
+                var peerOptions = null;
+                var nextOptionsRead = 0;
+                var fieldNotes = 0;
+                var noAnswer = 'No answer from this server. Check the network connection and try again.';
+                var pageUrl = '/configurationpage?name=JellyMesh';
+                var tabMemory = 'jellymesh-tab';
+                var panels = Array.prototype.slice.call(page.querySelectorAll('[role="tabpanel"]'));
+                var tabNames = panels.map(function (panel) {
+                    return panel.dataset.jmTab;
+                });
+                var stepStates = { done: 'Done', todo: 'To do', unknown: 'Not known' };
+                var stepIcons = { done: 'check_circle', todo: 'radio_button_unchecked', unknown: 'help_outline' };
+                var shownTab = tabNames[0];
 
                 function el(selector) {
                     return page.querySelector(selector);
+                }
+
+                // Returns the tab named after the second # of the address, which the router ignores.
+                function tabInUrl() {
+                    var name = location.hash.split('#')[2];
+                    return tabNames.indexOf(name) >= 0 ? name : null;
+                }
+
+                // Returns the tab shown last in this browser tab, when the browser lets the page read it.
+                function rememberedTab() {
+                    try {
+                        var name = sessionStorage.getItem(tabMemory);
+                        return tabNames.indexOf(name) >= 0 ? name : null;
+                    } catch (error) {
+                        return null;
+                    }
+                }
+
+                function rememberTab(name) {
+                    try {
+                        sessionStorage.setItem(tabMemory, name);
+                    } catch (error) {
+                        return;
+                    }
+                }
+
+                // Lists the tabs for the Dashboard header. A hash after the page address keeps the page loaded.
+                function headerTabs() {
+                    return panels.map(function (panel) {
+                        return { name: panel.getAttribute('aria-label'), href: pageUrl + '#' + panel.dataset.jmTab };
+                    });
+                }
+
+                // Shows the panel of a tab and marks it in the header. Without a header every panel stays shown.
+                function selectTab(name) {
+                    var index = tabNames.indexOf(name);
+                    var active = document.activeElement;
+                    var hasHeader = typeof LibraryMenu !== 'undefined';
+                    var changed = name !== shownTab;
+                    shownTab = name;
+                    panels.forEach(function (panel, position) {
+                        panel.hidden = hasHeader && position !== index;
+                    });
+                    var lostFocus = panels.some(function (panel) {
+                        return panel.hidden && panel.contains(active);
+                    });
+                    if (lostFocus) {
+                        panels[index].tabIndex = -1;
+                        panels[index].focus({ preventScroll: true });
+                    }
+
+                    if (changed) {
+                        window.scrollTo(0, 0);
+                    }
+
+                    rememberTab(name);
+                    if (visible && hasHeader) {
+                        LibraryMenu.setTabs('jellymesh', index, headerTabs);
+                    }
+                }
+
+                // Shows a tab by name and puts it in the address, without adding a step to the browser history.
+                function showTab(name) {
+                    if (tabNames.indexOf(name) < 0) {
+                        return;
+                    }
+
+                    selectTab(name);
+                    if (location.hash.indexOf('#' + pageUrl) === 0 && tabInUrl() !== name) {
+                        history.replaceState(history.state, '', '#' + pageUrl + '#' + name);
+                    }
+                }
+
+                // Follows a header tab the router took. The router writes the address on its own.
+                function tabClicked(e) {
+                    var tab = e.target.closest('[role="tab"][data-tab-index]');
+                    if (tab && e.defaultPrevented) {
+                        selectTab(tabNames[tab.dataset.tabIndex]);
+                    }
+                }
+
+                // Lets Space open a header tab, which is a link and takes only Enter.
+                function tabKey(e) {
+                    if (e.key === ' ' && e.target.matches('[role="tab"][data-tab-index]')) {
+                        e.preventDefault();
+                        e.target.click();
+                    }
+                }
+
+                // Follows the Back and Forward buttons between the tabs visited.
+                function addressChanged() {
+                    var name = tabInUrl();
+                    if (name && name !== shownTab) {
+                        selectTab(name);
+                    }
+                }
+
+                // Puts the tabs in the Dashboard header, which empties it by itself for the next page.
+                function showTabs() {
+                    document.body.classList.add('jmTabs');
+                    document.addEventListener('click', tabClicked);
+                    document.addEventListener('keydown', tabKey);
+                    window.addEventListener('hashchange', addressChanged);
+                    showTab(tabInUrl() || shownTab);
+                }
+
+                function hideTabs() {
+                    document.body.classList.remove('jmTabs');
+                    document.removeEventListener('click', tabClicked);
+                    document.removeEventListener('keydown', tabKey);
+                    window.removeEventListener('hashchange', addressChanged);
                 }
 
                 // Names come from remote servers, so everything goes through textContent.
@@ -169,24 +903,92 @@
                     return node;
                 }
 
-                function showMessage(text) {
+                // Puts the outcome of an action in the status region, or empties the region when there is no text.
+                function showOutcome(kind, text) {
                     var message = el('#jmMessage');
-                    message.textContent = text || '';
-                    message.hidden = !text;
+                    var outcome = el('#jmOutcome');
+                    outcome.classList.remove('jmOutcomeDone', 'jmOutcomeError');
+                    el('#jmDismiss').hidden = !text;
+                    message.textContent = '';
+                    if (text) {
+                        var label = create('span', kind + ': ');
+                        label.className = 'jmOutcomeKind';
+                        message.appendChild(label);
+                        message.appendChild(document.createTextNode(text));
+                        outcome.classList.add('jmOutcome' + kind);
+                    }
                 }
 
-                function api(method, path, body) {
+                function showMessage(text) {
+                    showOutcome('Done', text);
+                }
+
+                function showError(text) {
+                    showOutcome('Error', text);
+                }
+
+                // Marks a field as wrong and says why right under it, opening the part of the page that holds it.
+                function markField(input, text) {
+                    var part = input.closest('details');
+                    if (part) {
+                        part.open = true;
+                    }
+
+                    var note = create('div', text);
+                    fieldNotes += 1;
+                    note.id = 'jmFieldError' + fieldNotes;
+                    note.className = 'jmFieldError';
+                    (input.closest('label, .jmFolderPick') || input).after(note);
+                    input.setAttribute('aria-invalid', 'true');
+                    input.setAttribute('aria-describedby', note.id);
+                }
+
+                function clearField(input) {
+                    var note = document.getElementById(input.getAttribute('aria-describedby'));
+                    if (note) {
+                        note.remove();
+                    }
+
+                    input.removeAttribute('aria-invalid');
+                    input.removeAttribute('aria-describedby');
+                }
+
+                // Opens the tab of a wrong field, brings it to the middle of the screen, clear of the outcome, and focuses it.
+                function focusField(input) {
+                    showTab(input.closest('[role="tabpanel"]').dataset.jmTab);
+                    input.scrollIntoView({ block: 'center' });
+                    input.focus({ preventScroll: true });
+                }
+
+                function refusedText(fieldName, rule) {
+                    return fieldName + ' was refused, so nothing was saved. ' + rule;
+                }
+
+                function numberRule(input) {
+                    return 'Enter a whole number ' + (input.max ? 'from ' + input.min + ' to ' + input.max : 'of at least ' + input.min) + '.';
+                }
+
+                // Writes a text only when it differs, so that polling keeps selections and does not repeat alerts.
+                function setText(node, text) {
+                    if (node.textContent !== text) {
+                        node.textContent = text;
+                    }
+                }
+
+                function api(method, path, body, signal) {
                     var headers = {
                         Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         Accept: 'application/json; profile="PascalCase"'
                     };
-                    var options = { method: method, headers: headers };
+                    var options = { method: method, headers: headers, signal: signal };
                     if (body !== undefined) {
                         headers['Content-Type'] = 'application/json';
                         options.body = JSON.stringify(body);
                     }
 
-                    return fetch(ApiClient.getUrl('JellyMesh/Admin/' + path), options).then(function (response) {
+                    return fetch(ApiClient.getUrl('JellyMesh/Admin/' + path), options).catch(function () {
+                        throw new Error(noAnswer);
+                    }).then(function (response) {
                         if (response.status === 204) {
                             return null;
                         }
@@ -195,7 +997,7 @@
                             return {};
                         }).then(function (data) {
                             if (!response.ok) {
-                                throw new Error(data.Message || 'The request failed.');
+                                throw new Error(data.Message || 'The server answered with error ' + response.status + ' and gave no reason.');
                             }
 
                             return data;
@@ -203,13 +1005,104 @@
                     });
                 }
 
+                // Reads the data of a section, and gives up on a stalled answer so that polling goes on.
+                function read(path) {
+                    return api('GET', path, undefined, AbortSignal.timeout(readTimeoutMilliseconds));
+                }
+
                 function act(promise) {
+                    showMessage('');
                     Dashboard.showLoadingMsg();
                     return promise.catch(function (error) {
-                        showMessage(error.message);
+                        showError(error.message);
                     }).then(function () {
                         Dashboard.hideLoadingMsg();
                     });
+                }
+
+                // Makes a part of the page that loads on its own and reports its failure through failed.
+                function section(request, show, failed) {
+                    return { request: request, show: show, failed: failed, ticket: 0, pending: 0, stale: false, data: null, failure: '' };
+                }
+
+                // Shows the answer of a section and brings the Overview up to date.
+                function answered(part, data) {
+                    part.data = data;
+                    part.failure = '';
+                    part.show(data);
+                    part.stale = false;
+                    part.failed('');
+                    renderOverview();
+                }
+
+                // Loads a section and shows the answer unless a newer read took over. Resolves to the failure, if any.
+                function refresh(part) {
+                    var ticket = ++part.ticket;
+                    part.pending++;
+                    return part.request().then(function (data) {
+                        if (ticket === part.ticket) {
+                            answered(part, data);
+                        }
+                    }).catch(function (error) {
+                        if (ticket === part.ticket) {
+                            part.stale = true;
+                            part.failure = error.message;
+                            part.failed(error.message);
+                            renderOverview();
+                        }
+
+                        return error;
+                    }).then(function (failure) {
+                        part.pending--;
+                        return failure;
+                    });
+                }
+
+                // Shows the answer an action already has, and drops any older read still on its way.
+                function adopt(part, data) {
+                    part.ticket++;
+                    answered(part, data);
+                }
+
+                function showFailure(selector, what, next, reason) {
+                    var note = el(selector);
+                    setText(note, reason ? 'Could not read ' + what + '. ' + next + ' Reason: ' + reason : '');
+                    note.hidden = !reason;
+                }
+
+                // Brings a list up to date, leaving rows that stay in place with their focus, panels and edits.
+                // Each item has a key, a build function and its args; a kept row gets the args through jmUpdate.
+                function updateRows(container, items) {
+                    var rows = container.jmRows || {};
+                    var next = {};
+                    items.forEach(function (item) {
+                        var row = rows[item.key];
+                        if (!row) {
+                            row = item.build.apply(null, item.args);
+                        } else if (row.jmUpdate) {
+                            row.jmUpdate.apply(null, item.args);
+                        }
+
+                        next[item.key] = row;
+                    });
+                    Object.keys(rows).forEach(function (key) {
+                        if (next[key]) {
+                            return;
+                        }
+
+                        if (rows[key].contains(document.activeElement)) {
+                            container.tabIndex = -1;
+                            container.focus();
+                        }
+
+                        container.removeChild(rows[key]);
+                    });
+                    items.forEach(function (item, index) {
+                        if (container.children[index] !== next[item.key]) {
+                            container.insertBefore(next[item.key], container.children[index] || null);
+                        }
+                    });
+                    container.jmRows = next;
                 }
 
                 function button(text, onClick) {
@@ -221,6 +1114,42 @@
                     return node;
                 }
 
+                // Adds a Jellyfin checkbox to a list and returns it. Jellyfin upgrades it when the list joins the page.
+                function addCheckbox(list, value, text) {
+                    var label = create('label');
+                    label.className = 'emby-checkbox-label';
+                    var box = create('input');
+                    box.setAttribute('is', 'emby-checkbox');
+                    box.type = 'checkbox';
+                    box.value = value;
+                    label.appendChild(box);
+                    label.appendChild(create('span', text));
+                    list.appendChild(label);
+                    return box;
+                }
+
+                // Wraps a Jellyfin field in the container that holds the label and arrow it adds to itself.
+                function fieldBox(className, field) {
+                    var box = create('div');
+                    box.className = className;
+                    box.appendChild(field);
+                    return box;
+                }
+
+                // Makes a value safe inside a Dashboard.confirm message, which Jellyfin renders as HTML.
+                function escapeHtml(value) {
+                    return create('div', value).innerHTML;
+                }
+
+                // Runs an action once the admin confirms it. Paragraphs must already be escaped.
+                function confirmAction(title, paragraphs, action) {
+                    Dashboard.confirm(paragraphs.join('<br/><br/>'), title, function (confirmed) {
+                        if (confirmed) {
+                            action();
+                        }
+                    });
+                }
+
                 function renderLibraries(container, server, libraries) {
                     container.textContent = '';
                     if (libraries.length === 0) {
@@ -228,16 +1157,12 @@
                         return;
                     }
 
+                    var list = create('div');
+                    list.className = 'checkboxList';
+                    container.appendChild(list);
                     var boxes = libraries.map(function (library) {
-                        var label = create('label');
-                        label.style.display = 'block';
-                        var box = create('input');
-                        box.type = 'checkbox';
-                        box.value = library.Id;
+                        var box = addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
                         box.checked = library.Selected;
-                        label.appendChild(box);
-                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                        container.appendChild(label);
                         return box;
                     });
 
@@ -249,60 +1174,264 @@
                         });
                         act(api('POST', 'Servers/' + server.Id + '/Libraries', { LibraryIds: ids }).then(function () {
                             showMessage('Libraries saved for ' + server.Name + '.');
-                            return load();
+                            return loadStatus();
                         }));
                     }));
                 }
 
-                function renderServer(server) {
+                function connectionLabel(value) {
+                    return connectionLabels[value] || unknownProblem;
+                }
+
+                function modeLabel(value) {
+                    return modeLabels[value] || modeLabels.Unknown;
+                }
+
+                function sentence(text) {
+                    return text.charAt(0).toUpperCase() + text.slice(1);
+                }
+
+                // Adds a line to a list of facts on a card, and returns the node that holds its value.
+                function addFact(list, name) {
+                    var value = create('dd');
+                    list.appendChild(create('dt', name));
+                    list.appendChild(value);
+                    return value;
+                }
+
+                function factList() {
+                    var list = create('dl');
+                    list.className = 'jmCardFacts';
+                    return list;
+                }
+
+                function actionRow() {
                     var row = create('div');
-                    row.className = 'jmServer';
-                    row.style.marginBottom = '1.5em';
-                    row.appendChild(create('h4', server.Name));
-                    row.appendChild(create('p', server.Url + ' - ' + (modeLabels[server.Mode] || server.Mode) + ' - '
-                        + (connectionLabels[server.Connection] || server.Connection) + ' - '
-                        + 'libraries to import: ' + server.ImportedLibraryIds.length));
+                    row.className = 'jmActions';
+                    return row;
+                }
+
+                // Says why the entries of a server may be out of date, or returns an empty text.
+                function syncProblem(report) {
+                    if (report.IsOffline) {
+                        return 'The sync of ' + formatDate(report.LastAttemptUtc) + ' could not reach it. These entries are kept as they were, and a full read runs when it answers again.';
+                    }
+
+                    return report.State === 'Stale' ? 'Last sync failed (' + connectionLabel(report.Failure) + '): these entries are kept as they were.' : '';
+                }
+
+                // Returns the failure a server shows: the one of the connection, or else the one of its last sync.
+                function serverFailure(server, report) {
+                    if (server.Connection !== 'Online' && server.Connection !== 'NotChecked') {
+                        return server.Connection;
+                    }
+
+                    if (report && report.IsOffline) {
+                        return 'Offline';
+                    }
+
+                    return report && report.State === 'Stale' ? report.Failure || unknownProblem : '';
+                }
+
+                // Works out the state of a server in words, with its look, its cause and the next step.
+                function serverHealth(server, report) {
+                    var problem = report ? syncProblem(report) : '';
+                    if (suspended) {
+                        return {
+                            state: connectionLabels.Suspended,
+                            tone: 'jmStateQuiet',
+                            icon: 'pause_circle_outline',
+                            cause: 'Sync and remote playback are suspended until the secret key is fixed. ' + (problem || 'These entries are kept as they were.')
+                        };
+                    }
+
+                    var failure = serverFailure(server, report);
+                    if (!failure) {
+                        return {
+                            state: connectionLabel(server.Connection),
+                            tone: server.Connection === 'Online' ? 'jmStateGood' : 'jmStateQuiet',
+                            icon: server.Connection === 'Online' ? 'check_circle' : 'schedule',
+                            cause: ''
+                        };
+                    }
+
+                    var step = connectionSteps[failure] || unknownProblemStep;
+                    if (server.Connection === 'Online') {
+                        return {
+                            state: 'online, last sync failed',
+                            tone: 'jmStateWarn',
+                            icon: 'warning',
+                            cause: report.IsOffline ? problem : problem + ' ' + step
+                        };
+                    }
+
+                    return { state: connectionLabel(failure), tone: 'jmStateBad', icon: 'error', cause: (problem + ' ' + step).trim(), failure: failure };
+                }
+
+                function renderServer(server, report) {
+                    var row = create('div');
+                    row.className = 'jmServer paperList';
+                    var head = create('div');
+                    head.className = 'jmCardHead';
+                    var title = create('h4', server.Name);
+                    head.appendChild(title);
+                    var state = create('div');
+                    var icon = create('span');
+                    icon.setAttribute('aria-hidden', 'true');
+                    var stateText = create('span');
+                    state.appendChild(icon);
+                    state.appendChild(stateText);
+                    head.appendChild(state);
+                    row.appendChild(head);
+                    var cause = create('p');
+                    cause.className = 'jmCause';
+                    row.appendChild(cause);
+                    var facts = factList();
+                    var url = addFact(facts, 'URL');
+                    var mode = addFact(facts, 'Mode');
+                    var imported = addFact(facts, 'Libraries to import');
+                    var catalog = addFact(facts, 'Catalog');
+                    var checked = addFact(facts, 'Last check');
+                    var synced = addFact(facts, 'Last complete sync');
+                    row.appendChild(facts);
+                    row.jmUpdate = function (current, currentReport) {
+                        server = current;
+                        var health = serverHealth(server, currentReport);
+                        setText(title, server.Name);
+                        setText(stateText, sentence(health.state));
+                        state.className = 'jmState ' + health.tone;
+                        icon.className = 'material-icons jmStateIcon ' + health.icon;
+                        setText(cause, health.cause);
+                        cause.hidden = !health.cause;
+                        setText(url, server.Url);
+                        setText(mode, sentence(modeLabel(server.Mode)));
+                        setText(imported, String(server.ImportedLibraryIds.length));
+                        setText(catalog, currentReport ? count(currentReport.Movies, 'film', 'films') + ', ' + currentReport.Series + ' series, '
+                            + count(currentReport.Episodes, 'episode', 'episodes') : 'Not read yet');
+                        setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : 'Not since this server started');
+                        setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : 'Not read yet');
+                    };
+                    row.jmUpdate(server, report);
 
                     var libraries = create('div');
-                    row.appendChild(button('Test connection', function () {
-                        act(api('POST', 'Servers/' + server.Id + '/Test').then(function (report) {
-                            showMessage(server.Name + ': connected, ' + (modeLabels[report.Capabilities.Mode] || report.Capabilities.Mode)
-                                + ', importable libraries: ' + report.LibraryCount + '.');
-                            return load();
+                    libraries.className = 'jmLibraries';
+                    var actions = actionRow();
+                    actions.appendChild(button('Test connection', function () {
+                        act(api('POST', 'Servers/' + server.Id + '/Test').then(function (result) {
+                            showMessage(server.Name + ': connected, ' + modeLabel(result.Capabilities.Mode)
+                                + ', importable libraries: ' + result.LibraryCount + '.');
+                            return loadStatus();
                         }));
                     }));
-                    row.appendChild(button('Libraries', function () {
+                    actions.appendChild(button('Libraries', function () {
                         act(api('GET', 'Servers/' + server.Id + '/Libraries').then(function (result) {
                             renderLibraries(libraries, server, result);
                         }));
                     }));
-                    row.appendChild(button('Remove', function () {
-                        if (!window.confirm('Remove ' + server.Name + '?')) {
-                            return;
-                        }
-
-                        act(api('DELETE', 'Servers/' + server.Id).then(load));
+                    actions.appendChild(button('Remove', function () {
+                        confirmAction('Remove this server?', [
+                            escapeHtml(server.Name) + ' and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.',
+                            'Titles found only there stay in the library, but do not play, until the next sync removes them. Removing does not start a sync. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now.',
+                            'Playback already running may not stop right away.',
+                            'Adding the server back brings the same titles and watch state.'
+                        ], function () {
+                            act(api('DELETE', 'Servers/' + server.Id).then(function () {
+                                showMessage('Removed ' + server.Name + '.');
+                                return load();
+                            }));
+                        });
                     }));
+                    row.appendChild(actions);
                     row.appendChild(libraries);
                     return row;
                 }
 
+                // Copies a text through a selected field, and returns whether it worked.
+                function copySelected(text) {
+                    var active = document.activeElement;
+                    var field = create('textarea');
+                    field.className = 'jmCopyField';
+                    field.value = text;
+                    field.readOnly = true;
+                    page.appendChild(field);
+                    field.select();
+                    var copied = false;
+                    try {
+                        copied = document.execCommand('copy');
+                    } catch (error) {
+                        copied = false;
+                    }
+
+                    field.remove();
+                    active.focus({ preventScroll: true });
+                    return copied;
+                }
+
+                // Copies a text with the clipboard API where the browser has one, and resolves to whether it worked.
+                function copyText(text) {
+                    if (!navigator.clipboard) {
+                        return Promise.resolve(copySelected(text));
+                    }
+
+                    return navigator.clipboard.writeText(text).then(function () {
+                        return true;
+                    }, function () {
+                        return copySelected(text);
+                    });
+                }
+
+                // Makes the row of a path to link, whose button reports the result in the status region.
+                function renderPath(library, path) {
+                    var row = create('div');
+                    row.className = 'jmPath';
+                    var name = create('span', library);
+                    name.className = 'jmPathName';
+                    row.appendChild(name);
+                    var value = create('code', path);
+                    value.className = 'jmPathValue';
+                    row.appendChild(value);
+                    var copy = button('Copy', function () {
+                        copyText(path).then(function (copied) {
+                            if (copied) {
+                                showMessage('Copied ' + path + '.');
+                                return;
+                            }
+
+                            window.getSelection().selectAllChildren(value);
+                            showError('The browser did not allow copying. ' + path + ' is selected, so copy it by hand.');
+                        });
+                    });
+                    copy.setAttribute('aria-label', 'Copy ' + library + ' path');
+                    row.appendChild(copy);
+                    return row;
+                }
+
                 function renderFolder(folder) {
-                    var info = el('#jmFolderInfo');
-                    info.textContent = '';
-                    if (!folder.Path) {
-                        info.textContent = 'Choose a folder to see the paths to link.';
+                    var shown = JSON.stringify(folder);
+                    if (shown === folderShown) {
                         return;
                     }
 
-                    info.appendChild(create('div', 'Add these paths by hand in Dashboard > Libraries: ' + folder.MoviesPath + ' to the film library, ' + folder.SeriesPath + ' to the series library.'));
+                    folderShown = shown;
+                    var notes = el('#jmFolderNotes');
+                    notes.textContent = '';
+                    updateRows(el('#jmFolderPaths'), folder.Path ? [
+                        { key: 'film' + folder.MoviesPath, build: renderPath, args: ['Film library', folder.MoviesPath] },
+                        { key: 'series' + folder.SeriesPath, build: renderPath, args: ['Series library', folder.SeriesPath] }
+                    ] : []);
+                    if (!folder.Path) {
+                        el('#jmFolderHint').textContent = 'Choose a folder to see the paths to link.';
+                        return;
+                    }
+
+                    el('#jmFolderHint').textContent = 'Add these paths by hand in Dashboard > Libraries.';
                     if (folder.Link === 'NotChecked') {
-                        info.appendChild(create('div', 'The libraries could not be read to check these paths.'));
+                        notes.appendChild(create('div', 'The libraries could not be read to check these paths.'));
                         return;
                     }
 
                     if (folder.Link === 'Linked') {
-                        info.appendChild(create('div', 'Both paths are linked.'));
+                        notes.appendChild(create('div', 'Both paths are linked.'));
                     }
 
                     var warnings = [
@@ -317,8 +1446,7 @@
                     warnings.filter(Boolean).forEach(function (text) {
                         var warning = create('div', text);
                         warning.className = 'jmFolderWarning';
-                        warning.style.fontWeight = 'bold';
-                        info.appendChild(warning);
+                        notes.appendChild(warning);
                     });
                 }
 
@@ -339,33 +1467,69 @@
                 function render(status) {
                     suspended = status.Suspended;
                     var warning = el('#jmWarning');
-                    warning.textContent = status.Warning || '';
+                    setText(warning, status.Warning || '');
                     warning.hidden = !status.Warning;
-                    el('#jmStatus').textContent = (status.Suspended ? 'Suspended' : 'Active') + '. Servers configured: ' + status.Servers.length + '.';
                     el('#jmAddServer').disabled = suspended;
-
-                    var servers = el('#jmServers');
-                    servers.textContent = '';
-                    status.Servers.forEach(function (server) {
-                        servers.appendChild(renderServer(server));
-                    });
+                    updateSyncButton();
+                    showServers();
                     renderFolder(status.FederatedFolder);
+                }
+
+                function statusFailed(reason) {
+                    showFailure('#jmStatusFailure', 'the status', keepsTrying, reason);
                 }
 
                 function formatDate(value) {
                     return value ? new Date(value).toLocaleString() : 'never';
                 }
 
+                // Gives the outcome of the last sync of a server in a few words. Its counts and dates are on its card.
                 function syncLine(server) {
-                    var text = server.ServerName + ': ' + server.Movies + ' films, ' + server.Series + ' series, '
-                        + server.Episodes + ' episodes, last complete sync ' + formatDate(server.LastSuccessUtc);
-                    if (server.IsOffline) {
-                        text += '. OFFLINE: the sync of ' + formatDate(server.LastAttemptUtc) + ' could not reach it. These entries are kept as they were, and a full read runs when it answers again';
+                    var outcome = server.State ? 'synced' : 'not synced yet';
+                    if (suspended) {
+                        outcome = connectionLabels.Suspended;
+                    } else if (server.IsOffline) {
+                        outcome = 'offline, entries kept. See the Servers tab';
                     } else if (server.State === 'Stale') {
-                        text += '. Last sync failed (' + (connectionLabels[server.Failure] || server.Failure || 'unknown') + '): these entries are kept as they were';
+                        outcome = 'last sync failed (' + connectionLabel(server.Failure) + '), entries kept. See the Servers tab';
                     }
 
-                    return text + '.';
+                    return server.ServerName + ': ' + outcome + '.';
+                }
+
+                // Returns the most recent date a sync left, in the run in memory or in the catalogs.
+                // A timer run with no server read nothing, so it gives no date.
+                function lastSyncDate(sync) {
+                    if (sync.Servers.length === 0) {
+                        return null;
+                    }
+
+                    return sync.Servers.reduce(function (dates, server) {
+                        return dates.concat([server.LastAttemptUtc, server.LastSuccessUtc]);
+                    }, [sync.LastFinishedUtc]).filter(Boolean).sort(function (first, second) {
+                        return Date.parse(second) - Date.parse(first);
+                    })[0];
+                }
+
+                // Brings the cards and the sync lines up to the last answers. Only the status adds or removes a card.
+                function showServers() {
+                    var sync = syncSection.data;
+                    updateRows(el('#jmSyncServers'), (sync ? sync.Servers : []).map(function (server, index) {
+                        var line = syncLine(server);
+                        return { key: index + line, build: create, args: ['p', line] };
+                    }));
+                    if (!statusSection.data) {
+                        return;
+                    }
+
+                    var servers = statusSection.data.Servers.map(function (server) {
+                        return { key: server.Id, build: renderServer, args: [server, reportOf(sync, server)] };
+                    });
+                    if (servers.length === 0) {
+                        servers.push({ key: 'none', build: create, args: ['p', 'No remote servers yet.'] });
+                    }
+
+                    updateRows(el('#jmServers'), servers);
                 }
 
                 function indexWarning(status) {
@@ -389,83 +1553,162 @@
 
                 function renderSync(status) {
                     var warning = el('#jmIndexWarning');
-                    warning.textContent = indexWarning(status);
+                    setText(warning, indexWarning(status));
                     warning.hidden = !warning.textContent;
-                    el('#jmSyncStatus').textContent = status.IsRunning
+                    setText(el('#jmSyncStatus'), status.IsRunning
                         ? 'Sync running...'
-                        : 'Last sync: ' + formatDate(status.LastFinishedUtc) + '.';
-                    el('#jmSyncNow').disabled = suspended || status.IsRunning;
+                        : 'Last sync: ' + formatDate(lastSyncDate(status)) + '.');
+                    syncRunning = status.IsRunning;
+                    updateSyncButton();
+                    showServers();
 
-                    var servers = el('#jmSyncServers');
-                    servers.textContent = '';
-                    status.Servers.forEach(function (server) {
-                        servers.appendChild(create('p', syncLine(server)));
-                    });
+                    var finished = status.LastFinishedUtc || null;
+                    if (lastFinished !== undefined && lastFinished !== finished) {
+                        mergesSection.stale = true;
+                        statusSection.stale = true;
+                    }
 
-                    window.clearTimeout(syncTimer);
-                    syncTimer = status.IsRunning ? window.setTimeout(loadSync, syncPollMilliseconds) : null;
+                    lastFinished = finished;
                 }
 
-                function loadSync() {
-                    return api('GET', 'Sync').then(renderSync).catch(function (error) {
-                        showMessage(error.message);
-                    });
+                function updateSyncButton() {
+                    el('#jmSyncNow').disabled = suspended || syncRunning;
+                }
+
+                function syncFailed(reason) {
+                    showFailure('#jmSyncFailure', 'the state of the sync', keepsTrying, reason);
+                    showFailure('#jmServersSyncFailure', 'the state of the sync', keepsTrying, reason);
+                    if (reason) {
+                        syncRunning = false;
+                        setText(el('#jmSyncStatus'), 'Sync state unknown.');
+                        updateSyncButton();
+                    }
                 }
 
                 function renderPeerEditor(container, userId, libraries, shared, maxStreams) {
-                    var boxes = libraries.map(function (library) {
-                        var label = create('label');
-                        label.style.display = 'block';
-                        var box = create('input');
-                        box.type = 'checkbox';
-                        box.value = library.Id;
-                        box.checked = shared.indexOf(library.Id) >= 0;
-                        label.appendChild(box);
-                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                        container.appendChild(label);
-                        return box;
-                    });
+                    var list = create('div');
+                    list.className = 'checkboxList';
+                    container.appendChild(list);
+                    var boxes = [];
+                    var saved = { shared: shared, limit: String(maxStreams) };
+                    var librariesShown = '';
 
-                    var limitLabel = create('label', 'Stream limit ');
-                    limitLabel.style.display = 'block';
+                    function isShared(box) {
+                        return saved.shared.indexOf(box.value) >= 0;
+                    }
+
+                    function showLibraries(current) {
+                        var shown = JSON.stringify(current);
+                        if (shown === librariesShown) {
+                            return;
+                        }
+
+                        librariesShown = shown;
+                        list.textContent = '';
+                        boxes = current.map(function (library) {
+                            return addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
+                        });
+                    }
+
+                    // Puts the saved values on the form.
+                    function reset() {
+                        boxes.forEach(function (box) {
+                            box.checked = isShared(box);
+                        });
+                        if (limit.value !== saved.limit) {
+                            limit.value = saved.limit;
+                        }
+                    }
+
                     var limit = create('input');
+                    limit.setAttribute('is', 'emby-input');
+                    limit.setAttribute('label', 'Stream limit');
                     limit.type = 'number';
                     limit.min = '1';
-                    limit.value = maxStreams;
-                    limitLabel.appendChild(limit);
-                    container.appendChild(limitLabel);
+                    limit.required = true;
+                    container.appendChild(fieldBox('inputContainer', limit));
+                    showLibraries(libraries);
+                    reset();
 
-                    return function () {
-                        var ids = boxes.filter(function (box) {
-                            return box.checked;
-                        }).map(function (box) {
-                            return box.value;
-                        });
-                        return api('PUT', 'Peers/' + userId(), { SharedLibraryIds: ids, MaxStreams: parseInt(limit.value, 10) || 0 });
+                    return {
+                        save: function () {
+                            clearField(limit);
+                            if (!limit.validity.valid) {
+                                markField(limit, numberRule(limit));
+                                focusField(limit);
+                                return Promise.reject(new Error(refusedText('Stream limit', numberRule(limit))));
+                            }
+
+                            var ids = boxes.filter(function (box) {
+                                return box.checked;
+                            }).map(function (box) {
+                                return box.value;
+                            });
+                            return api('PUT', 'Peers/' + userId(), { SharedLibraryIds: ids, MaxStreams: parseInt(limit.value, 10) || 0 });
+                        },
+                        reset: reset,
+
+                        // Takes the saved values, and shows them unless the admin has changed the form.
+                        update: function (currentLibraries, currentShared, currentLimit) {
+                            var edited = limit.value !== saved.limit || boxes.some(function (box) {
+                                return box.checked !== isShared(box);
+                            });
+                            saved = { shared: currentShared, limit: String(currentLimit) };
+                            if (!edited) {
+                                showLibraries(currentLibraries);
+                                reset();
+                            }
+                        }
                     };
+                }
+
+                // Names a connected server, whose user can be deleted in the Dashboard while it stays connected.
+                function peerName(peer) {
+                    return peer.UserName || 'A user no longer on this server';
                 }
 
                 function renderPeer(peer, libraries) {
                     var row = create('div');
-                    row.style.marginBottom = '1.5em';
-                    row.appendChild(create('h4', peer.UserName));
-                    row.appendChild(create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams));
-                    var save = renderPeerEditor(row, function () {
+                    row.className = 'jmPeer paperList';
+                    var title = create('h4');
+                    row.appendChild(title);
+                    var facts = factList();
+                    var streams = addFact(facts, 'Streams in use');
+                    var shared = addFact(facts, 'Shared libraries');
+                    row.appendChild(facts);
+                    var editor = renderPeerEditor(row, function () {
                         return peer.UserId;
                     }, libraries, peer.SharedLibraryIds, peer.MaxStreams);
-                    row.appendChild(button('Save', function () {
-                        act(save().then(function () {
-                            showMessage('Saved ' + peer.UserName + '.');
+                    row.jmUpdate = function (current, currentLibraries) {
+                        peer = current;
+                        var inUse = currentLibraries.filter(function (library) {
+                            return peer.SharedLibraryIds.indexOf(library.Id) >= 0;
+                        });
+                        setText(title, peerName(peer));
+                        setText(streams, peer.ActiveStreams + ' of ' + peer.MaxStreams);
+                        setText(shared, inUse.length + ' of ' + currentLibraries.length);
+                        editor.update(currentLibraries, peer.SharedLibraryIds, peer.MaxStreams);
+                    };
+                    row.jmUpdate(peer, libraries);
+                    var actions = actionRow();
+                    actions.appendChild(button('Save', function () {
+                        act(editor.save().then(function () {
+                            showMessage('Saved ' + peerName(peer) + '.');
                             return loadPeers();
                         }));
                     }));
-                    row.appendChild(button('Remove', function () {
-                        if (!window.confirm('Disconnect ' + peer.UserName + '?')) {
-                            return;
-                        }
-
-                        act(api('DELETE', 'Peers/' + peer.UserId).then(loadPeers));
+                    actions.appendChild(button('Disconnect', function () {
+                        confirmAction('Disconnect this server?', [
+                            escapeHtml(peerName(peer)) + ' stops being a connected server now. Its streams here are closed, and its shared libraries and stream limit no longer apply.',
+                            'The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.'
+                        ], function () {
+                            act(api('DELETE', 'Peers/' + peer.UserId).then(function () {
+                                showMessage('Disconnected ' + peerName(peer) + '.');
+                                return loadPeers();
+                            }));
+                        });
                     }));
+                    row.appendChild(actions);
                     return row;
                 }
 
@@ -473,58 +1716,100 @@
                     var row = create('div');
                     row.appendChild(create('h4', 'Connect a server'));
                     var select = create('select');
-                    users.forEach(function (user) {
-                        var option = create('option', user.Name);
-                        option.value = user.Id;
-                        select.appendChild(option);
-                    });
-                    row.appendChild(select);
-                    var save = renderPeerEditor(row, function () {
+                    select.setAttribute('is', 'emby-select');
+                    select.setAttribute('label', 'User');
+                    var usersShown = '';
+
+                    // Lists the free users and keeps the one chosen while it is still free.
+                    function showUsers(current) {
+                        var shown = JSON.stringify(current);
+                        if (shown === usersShown) {
+                            return;
+                        }
+
+                        usersShown = shown;
+                        var chosen = select.value;
+                        select.textContent = '';
+                        current.forEach(function (user) {
+                            var option = create('option', user.Name);
+                            option.value = user.Id;
+                            select.appendChild(option);
+                        });
+                        select.value = chosen;
+                        if (select.selectedIndex < 0) {
+                            select.selectedIndex = 0;
+                        }
+                    }
+
+                    showUsers(users);
+                    row.appendChild(fieldBox('selectContainer', select));
+                    var editor = renderPeerEditor(row, function () {
                         return select.value;
-                    }, libraries, [], 2);
-                    row.appendChild(button('Connect', function () {
-                        act(save().then(function () {
+                    }, libraries, [], defaultStreamLimit);
+                    row.jmUpdate = function (currentUsers, currentLibraries) {
+                        showUsers(currentUsers);
+                        editor.update(currentLibraries, [], defaultStreamLimit);
+                    };
+                    var actions = actionRow();
+                    actions.appendChild(button('Connect', function () {
+                        act(editor.save().then(function () {
                             showMessage('Connected.');
+                            editor.reset();
                             return loadPeers();
                         }));
                     }));
+                    row.appendChild(actions);
                     return row;
                 }
 
-                function loadPeers() {
-                    return Promise.all([api('GET', 'Peers'), api('GET', 'Peers/Options')]).then(function (results) {
-                        var peers = results[0];
-                        var options = results[1];
-                        var container = el('#jmPeers');
-                        container.textContent = '';
-                        peers.forEach(function (peer) {
-                            container.appendChild(renderPeer(peer, options.Libraries));
-                        });
-
-                        var free = options.Users.filter(function (user) {
-                            return !peers.some(function (peer) {
-                                return peer.UserId === user.Id;
-                            });
-                        });
-                        if (free.length > 0) {
-                            container.appendChild(renderNewPeer(free, options.Libraries));
-                        } else if (peers.length === 0) {
-                            container.appendChild(create('p', 'Create a non-admin user for the other server first.'));
-                        }
+                function renderPeers(results) {
+                    var peers = results[0];
+                    var options = results[1];
+                    var rows = peers.map(function (peer) {
+                        return { key: peer.UserId, build: renderPeer, args: [peer, options.Libraries] };
                     });
-                }
 
-                function describeCopy(copy) {
-                    var parts = [copy.Copy.Title || 'Untitled'];
-                    if (copy.Copy.Year) {
-                        parts[0] += ' (' + copy.Copy.Year + ')';
+                    var free = options.Users.filter(function (user) {
+                        return !peers.some(function (peer) {
+                            return peer.UserId === user.Id;
+                        });
+                    });
+                    if (rows.length === 0) {
+                        rows.push({ key: 'none', build: create, args: ['p', 'No connected servers yet.'] });
                     }
 
+                    var connect = [];
+                    if (free.length > 0) {
+                        connect.push({ key: 'new', build: renderNewPeer, args: [free, options.Libraries] });
+                    } else if (peers.length === 0) {
+                        connect.push({ key: 'none', build: create, args: ['p', 'Create a non-admin user for the other server first.'] });
+                    }
+
+                    updateRows(el('#jmPeerList'), rows);
+                    updateRows(el('#jmPeerNew'), connect);
+                }
+
+                var mergeDetails = 0;
+
+                function copyTitle(copy) {
+                    return (copy.Copy.Title || 'Untitled') + (copy.Copy.Year ? ' (' + copy.Copy.Year + ')' : '');
+                }
+
+                function copyPlace(copy) {
+                    return copy.Copy.IsLocal ? 'this server' : (copy.ServerName || 'a server no longer configured');
+                }
+
+                // Describes a copy. The title and the server are left out where a checkbox already names them.
+                function describeCopy(copy, named) {
+                    var parts = named ? [copyTitle(copy)] : [];
                     if (copy.RunTimeTicks) {
                         parts.push(Math.round(copy.RunTimeTicks / ticksPerMinute) + ' min');
                     }
 
-                    parts.push(copy.Copy.IsLocal ? 'this server' : (copy.ServerName || 'a server no longer configured'));
+                    if (named) {
+                        parts.push(copyPlace(copy));
+                    }
+
                     if (copy.Copy.Tmdb) {
                         parts.push('TMDb ' + copy.Copy.Tmdb);
                     }
@@ -540,73 +1825,223 @@
                     return parts.join(' - ');
                 }
 
-                function renderMergeTitle(title, boxes) {
-                    var label = create('label');
-                    label.style.display = 'block';
-                    label.style.marginBottom = '0.5em';
-                    var box = create('input');
-                    box.type = 'checkbox';
-                    box.value = title.WorkKey;
-                    boxes.push(box);
-                    label.appendChild(box);
-                    label.appendChild(document.createTextNode(title.MergeIds.length > 0 ? ' Already merged:' : ''));
-                    title.Copies.forEach(function (copy) {
-                        var line = create('div', describeCopy(copy));
-                        line.style.marginLeft = '1.5em';
-                        label.appendChild(line);
-                    });
+                function formatBitRate(bitRate) {
+                    return bitRate < 1000000 ? Math.round(bitRate / 1000) + ' kbit/s' : (bitRate / 1000000).toFixed(1) + ' Mbit/s';
+                }
 
-                    return label;
+                function describeQuality(quality) {
+                    if (!quality.Height && !quality.IsRangeKnown && !quality.BitRate && !quality.Codec) {
+                        return 'Quality unknown';
+                    }
+
+                    return [
+                        quality.Height ? quality.Height + 'p' : 'resolution unknown',
+                        quality.IsRangeKnown ? (quality.IsHdr ? 'HDR' : 'SDR') : 'HDR unknown',
+                        quality.BitRate ? formatBitRate(quality.BitRate) : 'bitrate unknown',
+                        quality.Codec ? quality.Codec.toUpperCase() : 'codec unknown'
+                    ].join(' - ');
+                }
+
+                // Gives one line per version, best first.
+                function qualityLines(copy) {
+                    if (copy.Versions.length === 0) {
+                        return [copy.Copy.IsLocal && copy.IsFound ? 'Quality not read: a local copy plays whatever its quality.' : 'Quality unknown'];
+                    }
+
+                    return copy.Versions.map(function (version, index) {
+                        var line = describeQuality(version.Quality);
+                        if (copy.Versions.length === 1) {
+                            return line;
+                        }
+
+                        return (index === 0 ? 'Best version: ' : 'Other version: ') + line;
+                    });
+                }
+
+                function renderCopy(copy, named) {
+                    var line = create('div');
+                    line.className = 'jmMergeCopy';
+                    var text = describeCopy(copy, named);
+                    if (text) {
+                        line.appendChild(create('div', text));
+                    }
+
+                    qualityLines(copy).forEach(function (quality) {
+                        var node = create('div', quality);
+                        node.className = 'jmMergeQuality';
+                        line.appendChild(node);
+                    });
+                    return line;
+                }
+
+                function titleName(title) {
+                    var first = title.Copies[0];
+                    var more = title.Copies.length - 1;
+                    return copyTitle(first) + ', ' + copyPlace(first) + (more > 0 ? ' and ' + more + ' more' : '');
+                }
+
+                // A kept row gets new text and keeps its checkbox, so a refresh leaves the selection and the focus alone.
+                function renderMergeTitle(title, changed) {
+                    var row = create('div');
+                    row.className = 'jmMergeTitle';
+                    var box = addCheckbox(row, title.WorkKey, titleName(title));
+                    var name = row.querySelector('span');
+                    var details = create('div');
+                    details.className = 'jmMergeDetails';
+                    details.id = 'jmMergeDetails' + (++mergeDetails);
+                    row.appendChild(details);
+                    box.setAttribute('aria-describedby', details.id);
+                    box.addEventListener('change', changed);
+                    row.jmBox = box;
+                    row.jmUpdate = function (current) {
+                        row.jmTitle = current;
+                        setText(name, titleName(current));
+                        details.textContent = '';
+                        if (current.MergeIds.length > 0) {
+                            details.appendChild(create('div', 'Already merged:'));
+                        }
+
+                        current.Copies.forEach(function (copy) {
+                            details.appendChild(renderCopy(copy, current.Copies.length > 1));
+                        });
+                    };
+                    row.jmUpdate(title);
+                    return row;
+                }
+
+                function describeForecast(forecast) {
+                    if (!forecast.Copy) {
+                        return 'Which copy would play cannot be known: no copy has any quality data.';
+                    }
+
+                    var name = copyTitle(forecast.Copy) + ' on ' + copyPlace(forecast.Copy);
+                    if (forecast.Copy.Copy.IsLocal) {
+                        return 'If merged, ' + name + ' plays, because a local copy always wins.';
+                    }
+
+                    if (!forecast.IsCertain) {
+                        return 'Which copy would play cannot be known for sure, because some quality values are unknown. As the catalog stands, ' + name + ' would be chosen.';
+                    }
+
+                    return 'If merged, ' + name + ' plays: ' + describeQuality(forecast.Version.Quality) + '. The others stay as backups.';
                 }
 
                 function renderMergeCase(group) {
                     var row = create('div');
                     row.className = 'jmMergeCase';
-                    row.style.marginBottom = '1.5em';
-                    row.appendChild(create('p', mergeReasons[group.Kind] || group.Kind));
+                    var reason = create('p');
+                    reason.className = 'jmMergeReason';
+                    row.appendChild(reason);
+                    var titles = create('div');
+                    row.appendChild(titles);
+                    var result = create('p');
+                    result.className = 'jmMergeResult';
+                    result.setAttribute('role', 'status');
+                    row.appendChild(result);
+                    var ticket = 0;
 
-                    var boxes = [];
-                    group.Titles.forEach(function (title) {
-                        row.appendChild(renderMergeTitle(title, boxes));
-                    });
-
-                    row.appendChild(button('Merge selected', function () {
-                        var keys = boxes.filter(function (box) {
-                            return box.checked;
-                        }).map(function (box) {
-                            return box.value;
+                    function selected() {
+                        return Array.prototype.filter.call(titles.children, function (title) {
+                            return title.jmBox.checked;
                         });
-                        showMessage('');
-                        act(api('POST', 'Merges', { WorkKeys: keys }).then(function () {
+                    }
+
+                    function keys() {
+                        return selected().map(function (title) {
+                            return title.jmBox.value;
+                        });
+                    }
+
+                    function showResult(text, isHint) {
+                        setText(result, text);
+                        result.classList.toggle('jmMergeHint', isHint);
+                    }
+
+                    // Mirrors the checks of the server, and asks it what would play: the comparison lives there alone.
+                    function selectionChanged() {
+                        var chosen = selected();
+                        var locals = chosen.filter(function (title) {
+                            return title.jmTitle.HasLocalCopy;
+                        });
+                        var hint = '';
+                        if (chosen.length < 2) {
+                            hint = 'Select at least two titles to merge them.';
+                        } else if (locals.length > 1) {
+                            hint = 'Select at most one title with a local copy: two local films cannot be merged.';
+                        }
+
+                        merge.disabled = hint !== '';
+                        merge.hidden = hint !== '';
+                        var current = ++ticket;
+                        if (hint) {
+                            showResult(hint, true);
+                            return;
+                        }
+
+                        showResult('Checking which copy would play.', true);
+                        api('POST', 'Merges/Preview', { WorkKeys: keys() }, AbortSignal.timeout(readTimeoutMilliseconds)).then(function (forecast) {
+                            if (current === ticket) {
+                                showResult(describeForecast(forecast), false);
+                            }
+                        }).catch(function (error) {
+                            if (current === ticket) {
+                                showResult('Could not tell which copy would play. ' + error.message, false);
+                            }
+                        });
+                    }
+
+                    var merge = button('Merge selected', function () {
+                        act(api('POST', 'Merges', { WorkKeys: keys() }).then(function () {
                             showMessage('Merged. The film list changes after the library scan that was queued.');
                             return loadMerges();
                         }));
-                    }));
+                    });
+                    row.appendChild(merge);
+                    row.jmUpdate = function (current) {
+                        setText(reason, mergeReasons[current.Kind] || current.Kind);
+                        updateRows(titles, current.Titles.map(function (title) {
+                            return { key: title.WorkKey, build: renderMergeTitle, args: [title, selectionChanged] };
+                        }));
+                        selectionChanged();
+                    };
+                    row.jmUpdate(group);
                     return row;
                 }
 
                 function renderMerge(merge) {
                     var row = create('div');
                     row.className = 'jmMerge';
-                    row.style.marginBottom = '1em';
-                    merge.Copies.forEach(function (copy) {
-                        row.appendChild(create('div', describeCopy(copy)));
-                    });
+                    var details = create('div');
+                    row.appendChild(details);
+                    row.jmUpdate = function (current) {
+                        details.textContent = '';
+                        var date = create('p', 'Merged on ');
+                        date.className = 'jmMergeDate';
+                        var time = create('time', formatDate(current.CreatedUtc));
+                        time.setAttribute('datetime', current.CreatedUtc);
+                        date.appendChild(time);
+                        details.appendChild(date);
+                        current.Copies.forEach(function (copy) {
+                            details.appendChild(renderCopy(copy, true));
+                        });
 
-                    if (!merge.IsInEffect) {
-                        row.appendChild(create('div', 'Not in effect: a copy is missing, or the IDs already make these one film.'));
-                    }
-
-                    row.appendChild(button('Undo merge', function () {
-                        if (!window.confirm('Separate these copies again? The title that stays keeps its watch state.')) {
-                            return;
+                        if (!current.IsInEffect) {
+                            var unused = create('div', 'Not in effect: a copy is missing, or the IDs already make these one film.');
+                            unused.className = 'jmMergeUnused';
+                            details.appendChild(unused);
                         }
-
-                        showMessage('');
-                        act(api('DELETE', 'Merges/' + merge.Id).then(function () {
-                            showMessage('Merge undone. The film list changes after the library scan that was queued.');
-                            return loadMerges();
-                        }));
+                    };
+                    row.jmUpdate(merge);
+                    row.appendChild(button('Undo merge', function () {
+                        confirmAction('Undo this merge?', [
+                            'These copies become separate titles again after the library scan that follows.',
+                            'The title that stays keeps its watch state. The others usually get theirs back, but can start again without it. Local files are not changed.'
+                        ], function () {
+                            act(api('DELETE', 'Merges/' + merge.Id).then(function () {
+                                showMessage('Merge undone. The film list changes after the library scan that was queued.');
+                                return loadMerges();
+                            }));
+                        });
                     }));
                     return row;
                 }
@@ -616,63 +2051,694 @@
                     warning.textContent = list.IsStoreDamaged ? 'The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.' : '';
                     warning.hidden = !list.IsStoreDamaged;
 
-                    var cases = el('#jmMergeCases');
-                    cases.textContent = '';
+                    // Keys a case by its first title and a merge by its ID, which stay while their data changes.
+                    var cases = list.Cases.map(function (group) {
+                        return { key: group.Titles[0].WorkKey, build: renderMergeCase, args: [group] };
+                    });
                     if (list.Cases.length === 0) {
-                        cases.appendChild(create('p', 'No doubtful films.'));
+                        cases.push({ key: 'none', build: create, args: ['p', 'No doubtful films.'] });
                     }
 
-                    list.Cases.forEach(function (group) {
-                        cases.appendChild(renderMergeCase(group));
-                    });
+                    updateRows(el('#jmMergeCases'), cases);
 
-                    var merges = el('#jmMerges');
-                    merges.textContent = '';
+                    var merges = list.Merges.map(function (merge) {
+                        return { key: merge.Id, build: renderMerge, args: [merge] };
+                    });
                     if (list.Merges.length === 0) {
-                        merges.appendChild(create('p', 'Nothing merged.'));
+                        merges.push({ key: 'none', build: create, args: ['p', 'Nothing merged.'] });
                     }
 
-                    list.Merges.forEach(function (merge) {
-                        merges.appendChild(renderMerge(merge));
+                    updateRows(el('#jmMerges'), merges);
+                }
+
+                function renderSettings(config) {
+                    el('#jmSyncInterval').value = config.SyncIntervalSeconds;
+                    el('#jmReconciliationTime').value = config.ReconciliationTime;
+                    el('#jmFederatedFolder').value = config.FederatedFolderPath;
+                    el('#jmMetadataProtection').checked = config.MetadataProtection;
+                    el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
+                    el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
+                    el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
+                    el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
+                    el('#jmSessionRetention').value = config.SessionRetentionHours;
+                    el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                }
+
+                // Makes a link to a tab, which also works as a plain link in a new browser tab.
+                function tabLink(name) {
+                    var label = panels[tabNames.indexOf(name)].getAttribute('aria-label');
+                    var link = create('a', 'Open ' + label);
+                    link.className = 'jmTabLink';
+                    link.href = '#' + pageUrl + '#' + name;
+                    link.addEventListener('click', function (e) {
+                        if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                            e.preventDefault();
+                            showTab(name);
+                        }
                     });
+                    return link;
+                }
+
+                // Makes a line under a fact that says what is wrong, or what waits, and links to the tab that deals with it.
+                function renderNote(note) {
+                    var row = create('div');
+                    row.className = 'jmNote';
+                    var icon = create('span');
+                    icon.className = note.calm ? 'jmNoteIcon' : 'material-icons warning jmNoteIcon';
+                    icon.setAttribute('aria-hidden', 'true');
+                    row.appendChild(icon);
+                    var body = create('div');
+                    var text = create('span');
+                    var link = tabLink(note.tab);
+                    body.appendChild(text);
+                    body.appendChild(document.createTextNode(' '));
+                    body.appendChild(link);
+                    row.appendChild(body);
+                    row.jmUpdate = function (current) {
+                        setText(text, current.text);
+                        link.setAttribute('aria-label', link.textContent + ': ' + current.text);
+                    };
+                    row.jmUpdate(note);
+                    return row;
+                }
+
+                function renderFact(fact) {
+                    var row = create('div');
+                    row.className = 'jmFact';
+                    row.appendChild(create('dt', fact.label));
+                    var value = create('dd');
+                    row.appendChild(value);
+                    var notes = create('dd');
+                    notes.className = 'jmNotes';
+                    row.appendChild(notes);
+                    row.jmUpdate = function (current) {
+                        setText(value, current.value);
+                        updateRows(notes, current.notes.map(function (note) {
+                            return { key: note.key, build: renderNote, args: [note] };
+                        }));
+                    };
+                    row.jmUpdate(fact);
+                    return row;
+                }
+
+                function renderStep(step) {
+                    var row = create('li');
+                    row.className = 'jmStep';
+                    var icon = create('span');
+                    icon.setAttribute('aria-hidden', 'true');
+                    row.appendChild(icon);
+                    var name = create('span', step.name);
+                    name.className = 'jmStepName';
+                    row.appendChild(name);
+                    var state = create('span');
+                    state.className = 'jmStepState';
+                    row.appendChild(state);
+                    var body = create('div');
+                    body.className = 'jmStepText';
+                    var text = create('span');
+                    body.appendChild(text);
+                    if (step.tab) {
+                        body.appendChild(document.createTextNode(' '));
+                        var link = tabLink(step.tab);
+                        link.setAttribute('aria-label', link.textContent + ': ' + step.name);
+                        body.appendChild(link);
+                    }
+
+                    row.appendChild(body);
+                    row.jmUpdate = function (current) {
+                        icon.className = 'material-icons ' + stepIcons[current.state] + ' jmStepIcon';
+                        setText(state, stepStates[current.state]);
+                        setText(text, current.text);
+                        row.classList.toggle('jmStepDone', current.state === 'done');
+                    };
+                    row.jmUpdate(step);
+                    return row;
+                }
+
+                // Returns what a section says now: nothing while it has not answered or its last read failed.
+                function current(part) {
+                    return part.failure ? null : part.data;
+                }
+
+                // Gives the value of a fact, or says that it cannot be told yet.
+                function factValue(part, describe) {
+                    if (part.failure) {
+                        return 'Unknown';
+                    }
+
+                    return part.data ? describe(part.data) : 'Reading...';
+                }
+
+                function count(number, one, many) {
+                    return number + ' ' + (number === 1 ? one : many);
+                }
+
+                function reportOf(sync, server) {
+                    return sync && sync.Servers.filter(function (report) {
+                        return report.ServerId === server.Id;
+                    })[0];
+                }
+
+                // Returns the state of a server as its card shows it, from the last sync that could be read.
+                function healthOf(server) {
+                    return serverHealth(server, reportOf(syncSection.data, server));
+                }
+
+                // Returns what is wrong with the connection of a server, or an empty text.
+                function serverProblem(server) {
+                    var health = healthOf(server);
+                    if (health.failure === 'Offline') {
+                        return server.Name + ' is offline. Titles found only there do not play until it answers.';
+                    }
+
+                    return health.failure === server.Connection ? server.Name + ': ' + health.state + '.' : '';
+                }
+
+                function serversFact(status) {
+                    var notes = !status ? [] : status.Servers.map(function (server) {
+                        return { key: server.Id, text: serverProblem(server), tab: 'servers' };
+                    }).filter(function (note) {
+                        return note.text;
+                    });
+                    return {
+                        key: 'servers',
+                        label: 'Servers',
+                        notes: notes,
+                        value: factValue(statusSection, function (data) {
+                            var total = data.Servers.length;
+                            if (total === 0) {
+                                return 'None yet';
+                            }
+
+                            if (data.Suspended) {
+                                return count(total, 'server', 'servers') + ', suspended';
+                            }
+
+                            var online = data.Servers.filter(function (server) {
+                                return server.Connection === 'Online';
+                            }).length;
+                            var unchecked = data.Servers.filter(function (server) {
+                                return server.Connection === 'NotChecked' && !healthOf(server).failure;
+                            }).length;
+                            return online + ' of ' + total + ' online' + (unchecked > 0 ? ', ' + unchecked + ' not checked yet' : '');
+                        })
+                    };
+                }
+
+                function indexProblem(sync) {
+                    if (sync.Health === 'Corrupt') {
+                        return 'The federation index was damaged and is empty until a sync fills it.';
+                    }
+
+                    if (sync.Health === 'RestoredFromBackup') {
+                        return 'The federation index was restored from its previous copy. Run a sync.';
+                    }
+
+                    return sync.IndexSaveFailed ? 'The last sync could not save the federation index. Check the disk.' : '';
+                }
+
+                // Lists the servers whose last sync failed, when the row of the server does not already say why.
+                function staleNotes(status, sync) {
+                    if (!status || status.Suspended) {
+                        return [];
+                    }
+
+                    return status.Servers.filter(function (server) {
+                        var report = reportOf(sync, server);
+                        return report && report.State === 'Stale' && !serverProblem(server);
+                    }).map(function (server) {
+                        var failure = reportOf(sync, server).Failure;
+                        return {
+                            key: 'stale' + server.Id,
+                            text: server.Name + ': the last sync failed' + (failure ? ' (' + connectionLabel(failure) + ')' : '') + '. Its titles are kept as they were.',
+                            tab: 'servers'
+                        };
+                    });
+                }
+
+                function syncNotes(status, sync) {
+                    if (syncSection.failure) {
+                        return [{ key: 'failed', text: 'The state of the sync could not be read. The page keeps trying.', tab: 'catalog' }];
+                    }
+
+                    if (!sync) {
+                        return [];
+                    }
+
+                    var notes = sync.HeldLibraries.map(function (held) {
+                        return {
+                            key: 'held' + held.ServerId + held.LibraryId,
+                            text: 'A library of ' + held.ServerName + ' came back empty. Its ' + held.Stubs + ' titles are kept.',
+                            tab: 'catalog'
+                        };
+                    });
+                    if (indexProblem(sync)) {
+                        notes.unshift({ key: 'index', text: indexProblem(sync), tab: 'catalog' });
+                    }
+
+                    return notes.concat(staleNotes(status, sync));
+                }
+
+                function syncFact(status, sync) {
+                    return {
+                        key: 'sync',
+                        label: 'Last sync',
+                        notes: syncNotes(status, sync),
+                        value: factValue(syncSection, function (data) {
+                            if (data.IsRunning) {
+                                return 'Running now';
+                            }
+
+                            var date = lastSyncDate(data);
+                            return date ? formatDate(date) : 'Never';
+                        })
+                    };
+                }
+
+                // Says what is wrong with a path to link, or gives an empty text.
+                function pathProblem(path, kind) {
+                    var libraries = path.Libraries.join(', ');
+                    switch (path.Link) {
+                        case 'NotLinked':
+                            return 'The ' + kind + ' path is not linked to a library.';
+                        case 'DifferentCase':
+                            return libraries + ' has the ' + kind + ' path with different capitals.';
+                        case 'WrongLibraryType':
+                            return 'The ' + kind + ' path is linked to ' + libraries + ', which is not a ' + kind + ' library.';
+                        default:
+                            return '';
+                    }
+                }
+
+                function folderNotes(status) {
+                    var notes = [];
+                    var folder = status && status.FederatedFolder;
+                    if (folder && folder.Path && folder.Link === 'NotChecked') {
+                        notes.push({ key: 'unchecked', text: 'The libraries could not be read to check the paths.', tab: 'settings' });
+                    } else if (folder && folder.Path && folder.Link === 'NotLinked') {
+                        var problems = [pathProblem(folder.Movies, 'film'), pathProblem(folder.Series, 'series')].filter(Boolean);
+                        notes.push({ key: 'link', text: problems.join(' ') + ' Fix this by hand in Dashboard > Libraries.', tab: 'settings' });
+                    }
+
+                    if (folder && folder.SeriesGroupingOff.length > 0) {
+                        notes.push({ key: 'grouping', text: 'A series in two folders stays split in ' + folder.SeriesGroupingOff.join(', ') + '.', tab: 'settings' });
+                    }
+
+                    if (settingsSection.failure) {
+                        notes.push({ key: 'failed', text: 'The settings could not be read. Reload the page before saving.', tab: 'settings' });
+                    }
+
+                    return notes;
+                }
+
+                function folderFact(status) {
+                    return {
+                        key: 'folder',
+                        label: 'Federated folder',
+                        notes: folderNotes(status),
+                        value: factValue(statusSection, function (data) {
+                            var folder = data.FederatedFolder;
+                            if (!folder.Path) {
+                                return 'Not chosen';
+                            }
+
+                            return { Linked: 'Linked', NotLinked: 'Not linked' }[folder.Link] || 'Not checked';
+                        })
+                    };
+                }
+
+                function duplicatesFact() {
+                    var merges = current(mergesSection);
+                    var notes = [];
+                    if (mergesSection.failure) {
+                        notes.push({ key: 'failed', text: 'The duplicate and merged films could not be read. The page keeps trying.', tab: 'catalog' });
+                    }
+
+                    if (merges && merges.IsStoreDamaged) {
+                        notes.push({ key: 'damaged', text: 'The file of merges could not be read, so earlier merges are not applied.', tab: 'catalog' });
+                    }
+
+                    if (merges && merges.Cases.length > 0) {
+                        notes.push({ key: 'review', text: 'Merge the ones that are one film.', tab: 'catalog', calm: true });
+                    }
+
+                    return {
+                        key: 'duplicates',
+                        label: 'Duplicates to review',
+                        notes: notes,
+                        value: factValue(mergesSection, function (data) {
+                            return data.Cases.length === 0 ? 'None' : String(data.Cases.length);
+                        })
+                    };
+                }
+
+                function streamsFact() {
+                    return {
+                        key: 'streams',
+                        label: 'Streams in use',
+                        notes: peersSection.failure ? [{ key: 'failed', text: 'The connected servers could not be read. The page keeps trying.', tab: 'sharing' }] : [],
+                        value: factValue(peersSection, function (data) {
+                            var peers = data[0];
+                            if (peers.length === 0) {
+                                return 'No connected servers';
+                            }
+
+                            var total = function (name) {
+                                return peers.reduce(function (sum, peer) {
+                                    return sum + peer[name];
+                                }, 0);
+                            };
+                            return total('ActiveStreams') + ' of ' + total('MaxStreams') + ' by connected servers';
+                        })
+                    };
+                }
+
+                function stateOf(done) {
+                    return done ? 'done' : 'todo';
+                }
+
+                // Says whether every server with libraries to import has been read in full at least once.
+                function syncState(status, sync) {
+                    if (!sync) {
+                        return 'unknown';
+                    }
+
+                    var importing = status.Servers.filter(function (server) {
+                        return server.ImportedLibraryIds.length > 0;
+                    });
+                    return stateOf(importing.length > 0 && importing.every(function (server) {
+                        var report = reportOf(sync, server);
+                        return report && report.LastSuccessUtc;
+                    }));
+                }
+
+                function linkState(folder) {
+                    if (folder.Path && folder.Link === 'NotChecked') {
+                        return 'unknown';
+                    }
+
+                    return stateOf(folder.Link === 'Linked');
+                }
+
+                // Derives the steps of the first setup from the state of the server.
+                function setupSteps(status, sync) {
+                    var folder = status.FederatedFolder;
+                    var firstSync = syncState(status, sync);
+                    var waiting = status.Servers.filter(function (server) {
+                        return server.ImportedLibraryIds.length === 0;
+                    }).map(function (server) {
+                        return server.Name;
+                    });
+                    return [{
+                        key: 'key',
+                        name: 'Set the secret key',
+                        state: stateOf(status.KeyState === 'Ok'),
+                        text: 'JELLYMESH_SECRET_KEY encrypts the stored logins. Set it on the server, outside this plugin, with at least 32 characters, then restart Jellyfin.'
+                    }, {
+                        key: 'server',
+                        name: 'Add a remote server',
+                        state: stateOf(status.Servers.length > 0),
+                        text: 'Log in with a dedicated non-admin user of that server, at its tailnet address.',
+                        tab: 'servers'
+                    }, {
+                        key: 'libraries',
+                        name: 'Choose libraries to import',
+                        state: stateOf(status.Servers.length > 0 && waiting.length === 0),
+                        text: 'Nothing is imported from a server until you choose its libraries.' + (waiting.length > 0 ? ' Still to choose: ' + waiting.join(', ') + '.' : ''),
+                        tab: 'servers'
+                    }, {
+                        key: 'folder',
+                        name: 'Choose the federated folder',
+                        state: stateOf(folder.Path),
+                        text: 'A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.',
+                        tab: 'settings'
+                    }, {
+                        key: 'sync',
+                        name: 'Run the first sync',
+                        state: firstSync,
+                        text: status.Suspended && firstSync !== 'done' ? 'It waits for the secret key.' : 'It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.',
+                        tab: 'catalog'
+                    }, {
+                        key: 'link',
+                        name: 'Link the two paths',
+                        state: linkState(folder),
+                        text: 'Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.',
+                        tab: 'settings'
+                    }];
+                }
+
+                // Shows the steps while one is to do, and hands the focus back to the page when the list goes.
+                function renderSetup(steps, unfinished) {
+                    var setup = el('#jmSetup');
+                    if (!unfinished && setup.contains(document.activeElement)) {
+                        var panel = setup.closest('[role="tabpanel"]');
+                        panel.tabIndex = -1;
+                        panel.focus({ preventScroll: true });
+                    }
+
+                    setup.hidden = !unfinished;
+                    updateRows(el('#jmSetupSteps'), steps.map(function (step) {
+                        return { key: step.key, build: renderStep, args: [step] };
+                    }));
+                }
+
+                function headline(status, problems, unfinished) {
+                    if (!status) {
+                        return statusSection.failure ? 'Status unknown.' : '';
+                    }
+
+                    if (status.Suspended) {
+                        return 'Suspended. Sync and remote playback are stopped until the secret key is fixed.';
+                    }
+
+                    var waiting = [syncSection, peersSection, mergesSection].some(function (part) {
+                        return !part.data && !part.failure;
+                    });
+                    if (waiting) {
+                        return 'Active.';
+                    }
+
+                    if (problems > 0) {
+                        return 'Active. ' + count(problems, 'thing needs', 'things need') + ' attention' + (unfinished > 0 ? ', and setup is not finished.' : '.');
+                    }
+
+                    return unfinished > 0 ? 'Active. Setup is not finished: ' + count(unfinished, 'step', 'steps') + ' to do.' : 'Active. All is well.';
+                }
+
+                // Brings the summary up to date from what the sections last read, keeping its rows and their focus.
+                function renderOverview() {
+                    var status = current(statusSection);
+                    var sync = current(syncSection);
+                    var facts = [serversFact(status), syncFact(status, sync), folderFact(status), duplicatesFact(), streamsFact()];
+                    updateRows(el('#jmSummary'), facts.map(function (fact) {
+                        return { key: fact.key, build: renderFact, args: [fact] };
+                    }));
+
+                    var steps = statusSection.data ? setupSteps(statusSection.data, syncSection.data) : [];
+                    var unfinished = steps.filter(function (step) {
+                        return step.state === 'todo';
+                    }).length;
+                    renderSetup(unfinished > 0 ? steps : [], unfinished);
+
+                    var problems = facts.reduce(function (sum, fact) {
+                        return sum + fact.notes.filter(function (note) {
+                            return !note.calm;
+                        }).length;
+                    }, 0);
+                    var line = headline(status, problems, unfinished);
+                    var announce = el('#jmAnnounce');
+                    setText(el('#jmStatus'), line);
+                    setText(announce, problems > 0 || announce.textContent ? line : '');
+                }
+
+                var statusSection = section(function () {
+                    return read('Status');
+                }, render, statusFailed);
+
+                var syncSection = section(function () {
+                    return read('Sync');
+                }, renderSync, syncFailed);
+
+                // Reads the users and libraries to choose from, which rarely change, only once in a while.
+                function readPeerOptions() {
+                    if (Date.now() < nextOptionsRead) {
+                        return Promise.resolve(peerOptions);
+                    }
+
+                    return read('Peers/Options').then(function (options) {
+                        peerOptions = options;
+                        nextOptionsRead = Date.now() + optionsPollMilliseconds;
+                        return options;
+                    });
+                }
+
+                var peersSection = section(function () {
+                    return Promise.all([read('Peers'), readPeerOptions()]);
+                }, renderPeers, function (reason) {
+                    showFailure('#jmPeersFailure', 'the connected servers', keepsTrying, reason);
+                });
+
+                var mergesSection = section(function () {
+                    return read('Merges');
+                }, renderMerges, function (reason) {
+                    showFailure('#jmMergesFailure', 'the duplicate and merged films', keepsTrying, reason);
+                });
+
+                var settingsSection = section(function () {
+                    settingFields().forEach(clearField);
+                    return ApiClient.getPluginConfiguration(pluginId).catch(function (error) {
+                        throw new Error(error && error.status ? 'The server answered with error ' + error.status + ' and gave no reason.' : noAnswer);
+                    });
+                }, renderSettings, function (reason) {
+                    showFailure('#jmSettingsFailure', 'the settings', 'Reload the page before saving.', reason);
+                });
+
+                function loadStatus() {
+                    return refresh(statusSection);
+                }
+
+                function loadSync() {
+                    return refresh(syncSection);
+                }
+
+                function loadPeers() {
+                    return refresh(peersSection);
                 }
 
                 function loadMerges() {
-                    return api('GET', 'Merges').then(renderMerges);
+                    return refresh(mergesSection);
                 }
 
                 function load() {
-                    return api('GET', 'Status').then(render).then(loadSync).then(loadPeers).then(loadMerges);
+                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges()]);
                 }
 
-                function loadSettings() {
-                    return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                        el('#jmSyncInterval').value = config.SyncIntervalSeconds;
-                        el('#jmReconciliationTime').value = config.ReconciliationTime;
-                        el('#jmFederatedFolder').value = config.FederatedFolderPath;
-                        el('#jmMetadataProtection').checked = config.MetadataProtection;
-                        el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
-                        el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
-                        el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
-                        el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
-                        el('#jmSessionRetention').value = config.SessionRetentionHours;
-                        el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                // Plans the next read while the page is open and its tab is shown, sooner while a sync runs.
+                function schedule() {
+                    window.clearTimeout(pollTimer);
+                    pollTimer = visible && !document.hidden
+                        ? window.setTimeout(poll, syncRunning ? syncPollMilliseconds : idlePollMilliseconds)
+                        : null;
+                }
+
+                // Reads the sync, and what else is due or needs reading again, then plans the next read.
+                function poll() {
+                    if (polling || !visible || document.hidden) {
+                        return;
+                    }
+
+                    var due = Date.now() >= nextStatusPoll;
+                    if (due) {
+                        nextStatusPoll = Date.now() + statusPollMilliseconds;
+                    }
+
+                    var parts = [syncSection, statusSection, peersSection, mergesSection].filter(function (part) {
+                        return part.pending === 0 && (part === syncSection || part.stale || (due && part !== mergesSection));
+                    });
+                    polling = true;
+                    Promise.all(parts.map(refresh)).then(function () {
+                        polling = false;
+                        schedule();
                     });
                 }
 
+                // Stops reading while the tab is hidden, and catches up as soon as it is shown again.
+                function tabChanged() {
+                    if (document.hidden) {
+                        schedule();
+                    } else {
+                        nextStatusPoll = 0;
+                        poll();
+                    }
+                }
+
+                function settingFields() {
+                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input:not([type=checkbox])'));
+                }
+
+                // Follows the check the server makes, as far as the page can know the paths of the server.
+                function isUsableFolder(path) {
+                    var bare = path.replace(/[\\/]+$/, '');
+                    return !path || (/^(\/|\\\\|[a-z]:[\\/])/i.test(path) && bare !== '' && !/^[a-z]:$/i.test(bare) && path.split(/[\\/]/).indexOf('..') < 0);
+                }
+
+                // Returns the rule a Settings field breaks, or an empty text.
+                function settingRule(input) {
+                    if (input.id === 'jmFederatedFolder') {
+                        return isUsableFolder(input.value.trim()) ? '' : 'Enter an absolute path other than the filesystem root, without "..".';
+                    }
+
+                    if (input.validity.valid) {
+                        return '';
+                    }
+
+                    return input.type === 'time' ? 'Enter a time as hours and minutes.' : numberRule(input);
+                }
+
+                // Marks every wrong field, focuses the first and reports it. Returns whether all are right.
+                function checkSettings() {
+                    var wrong = settingFields().filter(function (input) {
+                        clearField(input);
+                        return settingRule(input) !== '';
+                    });
+                    if (wrong.length === 0) {
+                        return true;
+                    }
+
+                    wrong.forEach(function (input) {
+                        markField(input, settingRule(input));
+                    });
+                    var others = wrong.length - 1;
+                    showError(refusedText(el('label[for="' + wrong[0].id + '"]').textContent, settingRule(wrong[0]))
+                        + (others > 0 ? ' Also marked: ' + others + (others === 1 ? ' more field.' : ' more fields.') : ''));
+                    focusField(wrong[0]);
+                    return false;
+                }
+
+                function settingsFailure(error) {
+                    if (!error || !error.status) {
+                        return 'Settings not saved. ' + noAnswer;
+                    }
+
+                    return error.status === 400
+                        ? 'The server refused the settings and gave no reason, so nothing was saved.'
+                        : 'Settings not saved: the server answered with error ' + error.status + '.';
+                }
+
+                selectTab(tabInUrl() || rememberedTab() || shownTab);
+
                 page.addEventListener('pageshow', function () {
-                    showMessage('');
-                    act(Promise.all([loadSettings(), load()]));
+                    visible = true;
+                    showTabs();
+                    nextOptionsRead = 0;
+                    document.addEventListener('visibilitychange', tabChanged);
+                    act(Promise.all([refresh(settingsSection), load()]).then(function (results) {
+                        var failure = [results[0]].concat(results[1]).filter(Boolean)[0];
+                        if (failure) {
+                            showError('Part of this page could not be loaded, and each part says so. ' + failure.message);
+                        }
+
+                        nextStatusPoll = Date.now() + statusPollMilliseconds;
+                        schedule();
+                    }));
                 });
 
                 page.addEventListener('pagehide', function () {
-                    window.clearTimeout(syncTimer);
-                    syncTimer = null;
+                    visible = false;
+                    hideTabs();
+                    document.removeEventListener('visibilitychange', tabChanged);
+                    schedule();
+                });
+
+                el('#jmDismiss').addEventListener('click', function () {
+                    showMessage('');
                 });
 
                 el('#jmSyncNow').addEventListener('click', function () {
-                    showMessage('');
-                    act(api('POST', 'Sync').then(renderSync));
+                    act(api('POST', 'Sync').then(function (status) {
+                        adopt(syncSection, status);
+                        schedule();
+                    }));
                 });
 
                 el('#jmAddServerForm').addEventListener('submit', function (e) {
@@ -685,17 +2751,36 @@
                         Password: password.value
                     };
                     password.value = '';
-                    showMessage('');
                     act(api('POST', 'Servers', request).then(function (server) {
                         el('#jmAddServerForm').reset();
                         showMessage('Added ' + server.Name + '.');
-                        return load();
+                        return Promise.all([loadStatus(), loadSync()]);
                     }));
+                });
+
+                el('#jmChooseFolder').addEventListener('click', function () {
+                    var picker = new Dashboard.DirectoryBrowser();
+                    picker.show({
+                        header: 'Choose the federated folder',
+                        instruction: 'These are the folders of the server. JellyMesh writes only inside the one you choose.',
+                        includeFiles: false,
+                        callback: function (path) {
+                            var field = el('#jmFederatedFolder');
+                            field.value = path;
+                            clearField(field);
+                            picker.close();
+                            el('#jmChooseFolder').focus();
+                            showMessage(path + ' is in the field. Save the settings to use it.');
+                        }
+                    });
                 });
 
                 el('#jmSettingsForm').addEventListener('submit', function (e) {
                     e.preventDefault();
-                    showMessage('');
+                    if (!checkSettings()) {
+                        return;
+                    }
+
                     act(ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                         config.SyncIntervalSeconds = parseInt(el('#jmSyncInterval').value, 10);
                         config.ReconciliationTime = el('#jmReconciliationTime').value;
@@ -710,9 +2795,9 @@
                         return ApiClient.updatePluginConfiguration(pluginId, config);
                     }).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
-                        return load();
-                    }, function () {
-                        throw new Error('The settings were refused: check that the sync interval is at least 300 seconds, the playback times are in range, the time format, and that the folder is an absolute path.');
+                        return loadStatus();
+                    }, function (error) {
+                        throw new Error(settingsFailure(error));
                     }));
                 });
             })();

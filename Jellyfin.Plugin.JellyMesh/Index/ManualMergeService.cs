@@ -55,6 +55,19 @@ public sealed class ManualMergeService
     }
 
     /// <summary>
+    /// Tells what a merge of these titles would do, changing nothing. It passes the checks of <see cref="MergeAsync"/>.
+    /// </summary>
+    /// <param name="workKeys">The titles, from <see cref="GetList"/>.</param>
+    /// <returns>The outcome the merge would have, and what would play.</returns>
+    public MergePreview Preview(IReadOnlyCollection<string> workKeys)
+    {
+        ArgumentNullException.ThrowIfNull(workKeys);
+
+        var (outcome, titles) = Check(workKeys);
+        return new MergePreview(outcome, outcome == ManualMergeOutcome.Merged ? MergeForecast.Of(titles) : null);
+    }
+
+    /// <summary>
     /// Merges titles of one case. A title made by earlier merges is taken in, so one undo separates everything again.
     /// </summary>
     /// <param name="workKeys">The titles, from <see cref="GetList"/>.</param>
@@ -64,23 +77,10 @@ public sealed class ManualMergeService
     {
         ArgumentNullException.ThrowIfNull(workKeys);
 
-        var keys = workKeys.Distinct(StringComparer.Ordinal).ToList();
-        if (keys.Count < 2)
+        var (outcome, titles) = Check(workKeys);
+        if (outcome != ManualMergeOutcome.Merged)
         {
-            return ManualMergeOutcome.TooFewTitles;
-        }
-
-        var titles = _resolver.Resolve().MergeCases
-            .Select(entry => entry.Titles.Where(title => keys.Contains(title.WorkKey, StringComparer.Ordinal)).ToList())
-            .FirstOrDefault(found => found.Count == keys.Count);
-        if (titles is null)
-        {
-            return ManualMergeOutcome.ListChanged;
-        }
-
-        if (titles.Count(title => title.HasLocalCopy) > 1)
-        {
-            return ManualMergeOutcome.TwoLocalTitles;
+            return outcome;
         }
 
         var replaced = titles.SelectMany(title => title.MergeIds).ToHashSet();
@@ -128,6 +128,26 @@ public sealed class ManualMergeService
         }
 
         return found;
+    }
+
+    // Finds the titles of a merge, or why it cannot be made.
+    private (ManualMergeOutcome Outcome, List<MergeTitleView> Titles) Check(IReadOnlyCollection<string> workKeys)
+    {
+        var keys = workKeys.Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count < 2)
+        {
+            return (ManualMergeOutcome.TooFewTitles, []);
+        }
+
+        var titles = _resolver.Resolve().MergeCases
+            .Select(entry => entry.Titles.Where(title => keys.Contains(title.WorkKey, StringComparer.Ordinal)).ToList())
+            .FirstOrDefault(found => found.Count == keys.Count);
+        if (titles is null)
+        {
+            return (ManualMergeOutcome.ListChanged, []);
+        }
+
+        return (titles.Count(title => title.HasLocalCopy) > 1 ? ManualMergeOutcome.TwoLocalTitles : ManualMergeOutcome.Merged, titles);
     }
 
     // The choice is saved by now, so a failure here only delays it to the next sync.

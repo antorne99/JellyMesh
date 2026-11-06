@@ -220,6 +220,66 @@ public class QualityRankingTests
         }
     }
 
+    [Fact]
+    public void NoMissingValue_LeavesTheWinnerCertain()
+    {
+        Assert.False(QualityRanking.DependsOnUnknown([Source("a", Quality(1080, 1)), Source("b", Quality(720, 2))]));
+    }
+
+    [Fact]
+    public void AMissingHeight_CouldBeatAKnownOne()
+    {
+        var unknown = new SourceQuality(null, false, 1000, "h264");
+
+        Assert.True(QualityRanking.DependsOnUnknown([Source("a", Quality(1080, 1)), Source("b", unknown)]));
+    }
+
+    [Fact]
+    public void AMissingBitrate_CouldDecideAtTheSameHeight()
+    {
+        var unknown = new SourceQuality(1080, false, null, "h264");
+
+        Assert.True(QualityRanking.DependsOnUnknown([Source("a", Quality(1080, 1000)), Source("b", unknown)]));
+    }
+
+    [Fact]
+    public void AMissingRange_CouldDecideAtTheSameHeight()
+    {
+        var unknown = new SourceQuality(1080, false, 500, "h264") { IsRangeKnown = false };
+
+        Assert.True(QualityRanking.DependsOnUnknown([Source("a", Quality(1080, 1000)), Source("b", unknown)]));
+    }
+
+    [Fact]
+    public void AMissingCodec_CouldDecideInsideTheBitrateWindow()
+    {
+        var unknown = new SourceQuality(1080, false, 980, null);
+
+        Assert.True(QualityRanking.DependsOnUnknown([Source("a", Quality(1080, 1000)), Source("b", unknown)]));
+    }
+
+    [Fact]
+    public void AMissingValue_ThatCannotChangeTheWinner_IsIgnored()
+    {
+        var lower = new SourceQuality(720, false, null, null) { IsRangeKnown = false };
+
+        Assert.False(QualityRanking.DependsOnUnknown([Source("a", Quality(1080, 1)), Source("b", lower)]));
+    }
+
+    [Fact]
+    public void TheWinnersOwnMissingValue_LeavesItCertain()
+    {
+        var winner = new SourceQuality(1080, false, null, "h264");
+
+        Assert.False(QualityRanking.DependsOnUnknown([Source("a", winner), Source("b", Quality(720, 9000))]));
+    }
+
+    [Fact]
+    public void NoSources_AreNotUncertain()
+    {
+        Assert.False(QualityRanking.DependsOnUnknown([]));
+    }
+
     private static void AssertRanking(IReadOnlyList<RemoteSource> expected)
     {
         foreach (var order in Permutations(expected))
