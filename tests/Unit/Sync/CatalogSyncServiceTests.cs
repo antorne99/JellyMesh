@@ -36,6 +36,21 @@ public sealed class CatalogSyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ASyncDropsTheCatalogOfARemovedServer()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        var removed = await _fixture.AddServerAsync("A", "films");
+        var kept = await _fixture.AddServerAsync("B", "films");
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        _fixture.Registry.Remove(removed.Id);
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Null(_fixture.Index.Snapshot.Find(removed.Id));
+        Assert.NotNull(_fixture.Index.Snapshot.Find(kept.Id));
+    }
+
+    [Fact]
     public async Task AServerFailingInTheMiddleKeepsItsEntriesAndIsMarked()
     {
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1));

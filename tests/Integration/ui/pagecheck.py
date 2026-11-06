@@ -97,6 +97,8 @@ def first_nokey(s, width):
     check(name + " warns", "JELLYMESH_SECRET_KEY" in warning, warning)
     check(name + " is suspended", "suspended" in text(page, u.STATUS).lower(), text(page, u.STATUS))
     check(name + " cannot add a server", page.locator(u.ADD_SUBMIT).is_disabled())
+    u.show_tab(page, "servers")
+    check(name + " says why at the button", page.locator(u.ADD_BLOCKED).is_visible())
     healthy(page, name)
     u.shot(page, f"first-nokey-{width}")
     page.context.close()
@@ -1156,8 +1158,8 @@ def confirms(s, width):
     remove = u.button(u.server_row(page, HOSTILE), "remove")
     remove.click()
     confirm_shows(page, name + " remove", "Remove this server?", [
-        HOSTILE + " and its stored login leave JellyMesh now", "login is not revoked", "do not play", "next sync",
-        "does not start a sync", "without this backup", "Doubtful films", "may not stop right away", "same titles and watch state"], viewport)
+        HOSTILE + " and its stored login leave JellyMesh now", "login is not revoked", "deleted from the libraries now",
+        "without this backup", "Doubtful films", "local files are not touched", "may not stop right away", "same titles and watch state"], viewport)
     u.shot(page, f"confirm-remove-{width}", full_page=False)
     confirm_keeps(page, name + " remove", lambda: len(status()) == count and u.server_row(page, HOSTILE).count() == 1)
     remove.click()
@@ -1420,6 +1422,19 @@ ADVANCED_RANGES = {
 }
 
 
+def inputs_lined_up(page, name):
+    """Checks that the fields of a row of the playback times have their inputs at one height, however long their labels."""
+    rows = page.locator(u.ADVANCED + " .inputContainer").evaluate_all("""nodes => {
+      const rows = {};
+      nodes.forEach(node => {
+        const row = Math.round(node.getBoundingClientRect().top);
+        (rows[row] = rows[row] || []).push(Math.round(node.querySelector('input').getBoundingClientRect().top));
+      });
+      return Object.values(rows);
+    }""")
+    check(name + " lines up the inputs of a row", all(len(set(tops)) == 1 for tops in rows), rows)
+
+
 def advanced_closed(page, name):
     """The playback times start closed, and the keyboard opens them."""
     check(name + " starts closed", not u.advanced_open(page))
@@ -1440,6 +1455,8 @@ def advanced_closed(page, name):
         check(f"{name} shows {selector}", page.locator(selector).is_visible())
         said = page.locator(selector).evaluate("input => input.parentElement.querySelector('.fieldDescription').textContent")
         check(f"{name} gives the range of {selector}", said.startswith(rule), said)
+
+    inputs_lined_up(page, name)
 
 
 def advanced_opens(page, name):
@@ -2621,6 +2638,100 @@ def overview_first(s, width):
     page.context.close()
 
 
+def forget_servers(server):
+    """Removes the remotes of a server, also those a run stopped halfway left there."""
+    for remote in u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["Servers"]:
+        u.api(server, "DELETE", "/JellyMesh/Admin/Servers/" + remote["Id"])
+
+
+def connect_flow(s, width):
+    """Connecting a server goes straight to its libraries, read from that server."""
+    name = width + " connect"
+    forget_servers("first")
+    page = s.open("first", width, tab="servers")
+    check(name + " the form says what comes next", "lists the libraries" in text(page, u.ADD_FORM), text(page, u.ADD_FORM))
+    page.locator(u.ADD_FIELDS["name"]).fill("stock")
+    page.locator(u.ADD_FIELDS["url"]).fill(u.targets()["fresh"]["base"].replace("-fresh:", "-stock:"))
+    page.locator(u.ADD_FIELDS["user"]).fill("jellymesh")
+    page.locator(u.ADD_FIELDS["password"]).fill("jellymesh-test")
+    page.locator(u.ADD_SUBMIT).click()
+    row = u.server_row(page, "stock")
+    check(name + " opens the card of the server", until(page, lambda: row.count() == 1 and row.evaluate("node => node.open")))
+    check(name + " lists the libraries of the server", until(page, lambda: row.locator(u.CHECKBOX).count() == 2), row.inner_text())
+    check(name + " says what the libraries hold", "(films)" in row.inner_text() and "(series)" in row.inner_text(), row.inner_text())
+    check(name + " closes the form", not page.locator(u.ADD_PART).evaluate("node => node.open"))
+    check(name + " moves the focus to the choice", page.evaluate("document.activeElement.type") == "checkbox", page.evaluate("document.activeElement.outerHTML"))
+    check(name + " the choice is in view", u.in_view(page, u.SERVER + " label:has(:focus)"))
+    check(name + " chooses nothing by itself", row.locator(u.CHECKBOX + ":checked").count() == 0)
+    check(name + " says nothing is imported yet", "No libraries chosen" in u.cause_of(row), u.cause_of(row))
+    outcome(page, name + " adding", "Done", "Choose its libraries")
+    u.shot(page, f"connect-libraries-{width}", full_page=False)
+    healthy(page, name)
+
+    u.tick(row.locator(u.CHECKBOX).first)
+    u.button(row, "save_libraries").click()
+    check(name + " saves the choice", until(page, lambda: len(u.api("first", "GET", "/JellyMesh/Admin/Status")[1]["Servers"][0]["ImportedLibraryIds"]) == 1))
+    check(name + " the prompt goes", until(page, lambda: u.cause_of(row) == ""), u.cause_of(row))
+    healthy(page, name)
+    page.context.close()
+    forget_servers("first")
+
+
+def connect_failure(s, width):
+    """A server added whose libraries cannot be read stays added, and the card says how to try again."""
+    name = width + " connect failure"
+    forget_servers("first")
+
+    def refuse(context):
+        context.route("**/JellyMesh/Admin/Servers/*/Libraries", lambda route: route.abort())
+
+    page = s.open("first", width, tab="servers", route=refuse)
+    page.locator(u.ADD_FIELDS["name"]).fill("stock")
+    page.locator(u.ADD_FIELDS["url"]).fill(u.targets()["fresh"]["base"].replace("-fresh:", "-stock:"))
+    page.locator(u.ADD_FIELDS["user"]).fill("jellymesh")
+    page.locator(u.ADD_FIELDS["password"]).fill("jellymesh-test")
+    page.locator(u.ADD_SUBMIT).click()
+    outcome(page, name, "Error", "Open Libraries on its card")
+    check(name + " the server stays", u.server_row(page, "stock").count() == 1)
+    page.context.close()
+    forget_servers("first")
+
+
+def language(s, width):
+    """The page follows the display language set in Jellyfin, and stays in English for one it does not have."""
+    name = width + " Italian"
+    page = s.open("fresh", width, language="it")
+    check(name + " translates the status", text(page, u.STATUS).startswith("Attivo"), text(page, u.STATUS))
+    check(name + " translates the tabs", [node.inner_text() for node in page.locator(u.TAB).all()] == ["Panoramica", "Server", "Catalogo", "Condivisione", "Impostazioni"],
+          [node.inner_text() for node in page.locator(u.TAB).all()])
+    check(name + " translates what the script writes", fact_value(page, "Ultima sincronizzazione") != "", text(page, u.SUMMARY))
+    u.shot(page, f"italian-overview-{width}")
+    u.show_tab(page, "servers")
+    row = u.server_row(page, "stock")
+    u.open_parts(row.locator("dl"))
+    check(name + " translates the card", "Librerie da importare" in row.inner_text(), row.inner_text())
+    check(name + " keeps the date in the language", "AM" not in row.inner_text() and "PM" not in row.inner_text(), row.inner_text())
+    u.shot(page, f"italian-servers-{width}")
+    u.show_tab(page, "settings")
+    check(name + " translates the labels", "Intervallo di sincronizzazione" in text(page, u.SETTINGS_FORM), text(page, u.SETTINGS_FORM))
+    u.open_advanced(page)
+    inputs_lined_up(page, name)
+    u.shot(page, f"italian-advanced-{width}")
+    check(name + " has no raw value left", "{" not in page.locator(u.PAGE).inner_text(), page.locator(u.PAGE).inner_text())
+    healthy(page, name)
+    page.reload()
+    u.wait_loaded(page)
+    check(name + " a reload stays translated", text(page, u.STATUS).startswith("Attivo"), text(page, u.STATUS))
+    healthy(page, name + " after a reload")
+    page.context.close()
+
+    name = width + " other language"
+    page = s.open("fresh", width, language="de")
+    check(name + " falls back to English", text(page, u.STATUS).startswith("Active"), text(page, u.STATUS))
+    healthy(page, name)
+    page.context.close()
+
+
 def overview_first_nokey(s, width):
     """A server with nothing configured and no key: the key is a step, done outside the plugin."""
     name = width + " overview first run without a key"
@@ -2630,6 +2741,10 @@ def overview_first_nokey(s, width):
     check(name + " has the key to do", step_state(page, "Set the secret key") == "To do", step_state(page, "Set the secret key"))
     check(name + " says it is set outside the plugin", "JELLYMESH_SECRET_KEY" in key.inner_text() and "outside this plugin" in key.inner_text(), key.inner_text())
     check(name + " says the sync waits", "waits for the secret key" in u.step(page, "Run the first sync").inner_text())
+    check(name + " says how to make a key", "openssl rand -base64 32" in key.inner_text(), key.inner_text())
+    check(name + " has three commands to copy", key.locator(u.STEP_COMMAND).count() == 3, key.locator(u.STEP_COMMAND).count())
+    check(name + " says a restart is not enough", "plain restart" in key.locator(u.STEP_AFTER).inner_text(), key.inner_text())
+    check(name + " every command has its own label", len({node.get_attribute("aria-label") for node in key.locator(u.STEP_COMMAND + " button").all()}) == 3)
     healthy(page, name)
     u.shot(page, f"overview-first-nokey-{width}")
     page.context.close()
@@ -2847,6 +2962,9 @@ SCENARIOS = {
     "settings-form": (settings_form, WIDTHS),
     "controls": (controls, WIDTHS),
     "control-themes": (control_themes, WIDTHS),
+    "connect-flow": (connect_flow, WIDTHS),
+    "connect-failure": (connect_failure, ["1280"]),
+    "language": (language, WIDTHS),
     "cards": (cards, WIDTHS),
     "cards-in-place": (cards_in_place, ["1280"]),
     "cards-themes": (cards_all_themes, ["1280"]),

@@ -49,4 +49,12 @@ public interface IFederationIndex
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether the change was saved. If not, the index stays as it was.</returns>
     Task<bool> MarkServerFailedAsync(Guid serverId, RemoteFailure failure, DateTimeOffset attemptUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Drops the entries of every server not in the list. Nothing is saved when there is nothing to drop.
+    /// </summary>
+    /// <param name="serverIds">The servers that stay.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the change was saved. If not, the index stays as it was.</returns>
+    Task<bool> KeepServersAsync(IReadOnlySet<Guid> serverIds, CancellationToken cancellationToken);
 }
