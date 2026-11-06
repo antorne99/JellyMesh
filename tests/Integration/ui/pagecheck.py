@@ -228,24 +228,33 @@ def keyboard(s, width):
     page.context.close()
 
 
-CONTRAST = """s => {
-  const parse = c => { const m = c.match(/[\\d.]+/g).map(Number); return {r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1}; };
+COLOURS = """
+  const parse = c => {
+    const m = c.match(/[\\d.]+/g).map(Number);
+    const scale = c.startsWith('color(') ? 255 : 1;
+    return {r: m[0] * scale, g: m[1] * scale, b: m[2] * scale, a: m.length > 3 ? m[3] : 1};
+  };
   const over = (top, under) => ({r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a), b: top.b * top.a + under.b * (1 - top.a), a: 1});
   const channel = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
   const luminance = c => 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+  const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
   const backdrop = node => {
     const layers = [];
     for (let e = node; e; e = e.parentElement) { layers.push(parse(getComputedStyle(e).backgroundColor)); }
     return layers.reverse().reduce((under, top) => over(top, under), {r: 255, g: 255, b: 255, a: 1});
   };
+"""
+
+CONTRAST = "s => {" + COLOURS + """
   const root = document.querySelector(s.page);
-  const worst = [...root.querySelectorAll(s.readable)].filter(e => e.offsetParent !== null && e.textContent.trim() !== '').map(e => {
+  const seen = [...root.querySelectorAll(s.readable)].filter(e => e.offsetParent !== null && (e.textContent.trim() !== '' || e.value)).map(e => {
     const under = backdrop(e);
     const text = over(parse(getComputedStyle(e).color), under);
-    const a = luminance(text), b = luminance(under);
-    return {ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), text: e.textContent.trim().slice(0, 40)};
-  }).sort((x, y) => x.ratio - y.ratio)[0];
-  return {worst, background: luminance(backdrop(root))};
+    return {ratio: ratio(luminance(text), luminance(under)), under: luminance(under), font: getComputedStyle(e).fontFamily,
+      text: (e.textContent.trim() || e.value).slice(0, 40)};
+  }).sort((x, y) => x.ratio - y.ratio);
+  return {worst: seen[0], lightest: Math.max(...seen.map(e => e.under)), fonts: [...new Set(seen.map(e => e.font))],
+    background: luminance(backdrop(root))};
 }"""
 
 
