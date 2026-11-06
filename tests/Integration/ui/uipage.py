@@ -43,6 +43,8 @@ PEERS = "#jmPeers"
 ADD_FORM = "#jmAddServerForm"
 ADD_SUBMIT = "#jmAddServer"
 SETTINGS_FORM = "#jmSettingsForm"
+ADVANCED = "#jmAdvanced"
+ADVANCED_TOGGLE = ADVANCED + " > summary"
 FOLDER_INFO = "#jmFolderInfo"
 LOADING = ".docspinner.mdlSpinnerActive"
 CONFIRM = ".dialogContainer .dialog"
@@ -58,6 +60,12 @@ SAVE_SETTINGS = "#jmSettingsForm button[type=submit]"
 SYNC_INTERVAL = "#jmSyncInterval"
 FEDERATED_FOLDER = "#jmFederatedFolder"
 METADATA_PROTECTION = "#jmMetadataProtection"
+CHOOSE_FOLDER = "#jmChooseFolder"
+FOLDER_PATH = ".jmPath"
+FOLDER_NOTES = "#jmFolderNotes"
+PICKER_ROW = CONFIRM + " .lnkPath"
+PICKER_OK = CONFIRM + " button[type=submit]"
+PICKER_CLOSE = CONFIRM + " .btnCloseDialog"
 ADD_FIELDS = {"name": "#jmServerName", "url": "#jmServerUrl", "user": "#jmServerUser", "password": "#jmServerPassword"}
 SETTINGS = {
     SYNC_INTERVAL: "SyncIntervalSeconds",
@@ -89,6 +97,20 @@ FAILURE = {
     "settings": "#jmSettingsFailure",
 }
 NEW_PEER = "Connect a server"
+ALERT = ".jmAlert"
+ALERTS_WITH_DATA = [WARNING, "#jmIndexWarning", "#jmMergeWarning"]
+SELECT = "select"
+SELECT_ARROW = ".selectArrow"
+CHECK_MARK = ".checkboxOutline"
+CHECK_LABEL = ".checkboxLabel"
+USER_LABEL = "User"
+LIMIT_LABEL = "Stream limit"
+CONTROLS = ", ".join(scope + " " + part for scope in (SERVERS, PEERS) for part in (CHECK_LABEL, NUMBER, SELECT, "label"))
+BUTTONS = PAGE + " .emby-button:not(:disabled)"
+NOT_UPGRADED = ", ".join(scope + " " + part for scope in (SERVERS, PEERS) for part in (
+    CHECKBOX + ":not(.emby-checkbox)", NUMBER + ":not(.emby-input)", SELECT + ":not(.emby-select)"))
+INLINE_STYLE = PAGE + " [style]:not(.selectArrowContainer *)"
+NESTED_LABEL = PAGE + " label label"
 
 
 def targets():
@@ -218,15 +240,30 @@ def refresh_merges(page):
     wait_idle(page)
 
 
-def tick(box, selected=True):
-    """Clicks the label of an emby-checkbox, whose own input is a 1px box under its outline."""
-    if box.is_checked() != selected:
-        box.locator("..").click()
-
-
 def button(scope, name):
     """Finds an action by its role in a part of the page."""
     return scope.get_by_role("button", name=BUTTON[name], exact=True)
+
+
+def tick(box, on=True):
+    """Sets a Jellyfin checkbox as a person does, by clicking its label: the box itself is hidden under the drawn one."""
+    if box.is_checked() != on:
+        box.locator("xpath=ancestor::label").click()
+
+
+def reach(page, node):
+    """Puts the keyboard on a control with the Tab key, which is what makes the browser show focus."""
+    node.focus()
+    page.keyboard.press("Tab")
+    page.keyboard.press("Shift+Tab")
+    page.mouse.move(0, 0)
+    page.wait_for_timeout(300)
+
+
+def close(page):
+    """Closes a page whose reads go through routes, some of which may still be on their way."""
+    page.context.unroute_all(behavior="ignoreErrors")
+    page.context.close()
 
 
 def message(page):
@@ -246,6 +283,49 @@ def clear_message(page):
     """Dismisses the outcome of the action before."""
     if page.locator(DISMISS).is_visible():
         page.locator(DISMISS).click()
+
+
+def advanced_open(page):
+    """Tells whether the advanced part of the settings is open."""
+    return page.locator(ADVANCED).evaluate("node => node.open")
+
+
+def open_advanced(page):
+    """Opens the advanced part of the settings, where the playback times are."""
+    if not advanced_open(page):
+        page.locator(ADVANCED_TOGGLE).click()
+
+
+def copy_button(page, path):
+    """Finds the copy button of a path to link."""
+    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy")
+
+
+def pasted(page):
+    """Returns what the browser clipboard holds, read by pasting it into the first field of the add form."""
+    field = page.locator(ADD_FIELDS["name"])
+    field.fill("")
+    field.focus()
+    page.keyboard.press("Control+V")
+    value = field.input_value()
+    field.fill("")
+    return value
+
+
+def open_picker(page):
+    """Opens the folder browser of Jellyfin and waits for its list of server folders."""
+    page.locator(CHOOSE_FOLDER).click()
+    page.wait_for_selector(PICKER_ROW, state="visible", timeout=15000)
+
+
+def choose_folder(page, path):
+    """Walks into a folder in the folder browser, accepts it and waits until the dialog has gone."""
+    page.locator(PICKER_ROW + '[data-path="%s"]' % path).click()
+    page.wait_for_selector(PICKER_ROW + ':has-text("...")', state="visible", timeout=15000)
+    page.locator(PICKER_OK).click()
+    page.wait_for_selector(CONFIRM, state="detached", timeout=15000)
+    page.wait_for_selector(CONFIRM_BACKDROP, state="detached", timeout=15000)
+    wait_idle(page)
 
 
 def has_focus(node):

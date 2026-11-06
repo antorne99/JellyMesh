@@ -34,6 +34,8 @@ else
   run edits quiet polling sections
   run outcomes outcome-themes
   run confirms confirm-keyboard
+  run settings-form
+  run controls control-themes
   run merge-details
 
   set_key first

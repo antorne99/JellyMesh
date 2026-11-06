@@ -61,6 +61,116 @@
                 outline-offset: 2px;
             }
 
+            .jmAdvanced {
+                margin-bottom: 1.8em;
+            }
+
+            .jmAdvanced > summary {
+                display: grid;
+                grid-template-columns: 1fr auto;
+                column-gap: 1em;
+                align-items: center;
+                margin-bottom: 1.5em;
+                padding-bottom: 0.5em;
+                border-bottom: 0.1em solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+                list-style: none;
+                cursor: pointer;
+            }
+
+            .jmAdvanced > summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .jmAdvanced > summary:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmAdvanced > summary .sectionTitle {
+                margin: 0 0 0.25em;
+            }
+
+            .jmAdvancedIcon {
+                grid-column: 2;
+                grid-row: 1 / span 2;
+                transition: transform 180ms ease-out;
+            }
+
+            .jmAdvanced[open] .jmAdvancedIcon {
+                transform: rotate(180deg);
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .jmAdvancedIcon {
+                    transition: none;
+                }
+            }
+
+            .jmFolderPick {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: flex-end;
+                gap: 0.5em 1em;
+            }
+
+            .jmFolderField {
+                flex: 1 1 14em;
+                min-width: 0;
+            }
+
+            .jmFolderPick .emby-button {
+                flex: none;
+                margin: 0;
+                padding-top: 0.64em;
+                padding-bottom: 0.64em;
+            }
+
+            .fieldDescription.jmFolderInfo {
+                margin-top: 0.75em;
+            }
+
+            .jmPath {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 0.25em 1em;
+                margin-top: 0.5em;
+            }
+
+            .jmPathName {
+                flex: none;
+                width: 7em;
+            }
+
+            .jmPathValue {
+                flex: 1 1 12em;
+                min-width: 0;
+                font-size: 1em;
+                overflow-wrap: anywhere;
+            }
+
+            .jmPath .emby-button {
+                flex: none;
+                margin: 0;
+                padding: 0.4em 0.9em;
+            }
+
+            #jmFolderNotes {
+                margin-top: 0.5em;
+            }
+
+            .jmFolderWarning {
+                margin-top: 0.5em;
+                font-weight: bold;
+            }
+
+            .jmCopyField {
+                position: fixed;
+                top: 0;
+                left: 0;
+                opacity: 0;
+            }
+
             .jmFieldError {
                 margin-top: 0.25em;
                 padding: 0.25em 0.5em;
@@ -71,6 +181,60 @@
 
             #JellyMeshConfigPage input[aria-invalid="true"] {
                 border-color: var(--jf-palette-error-main, #c62828);
+            }
+
+            .jmAlert {
+                margin-bottom: 1em;
+                padding: 1em;
+                border: 1px solid var(--jf-palette-warning-main, #ed6c02);
+                border-radius: 4px;
+                background: var(--jf-palette-background-paper, #202020);
+                background: color-mix(in srgb, var(--jf-palette-warning-main, #ed6c02) 16%, var(--jf-palette-background-paper, #202020));
+                color: var(--jf-palette-text-primary, #fff);
+            }
+
+            .jmFolderInfo {
+                margin-bottom: 1.5em;
+            }
+
+            .jmFolderWarning {
+                font-weight: bold;
+            }
+
+            .jmServer,
+            .jmPeer {
+                margin-bottom: 1.5em;
+            }
+
+            #jmPeers .inputContainer,
+            #jmPeers .selectContainer {
+                max-width: 54em;
+            }
+
+            #JellyMeshConfigPage .emby-button:focus-visible,
+            #JellyMeshConfigPage .emby-input:focus-visible,
+            #JellyMeshConfigPage .emby-select:focus-visible,
+            #JellyMeshConfigPage .emby-checkbox:focus-visible + span + .checkboxOutline {
+                outline: 2px solid var(--jf-palette-text-primary, #fff) !important;
+                outline-offset: 2px;
+            }
+
+            #JellyMeshConfigPage .raised:not(.button-submit):focus {
+                background: var(--jf-palette-Button-inheritContainedBg, #424242);
+            }
+
+            #JellyMeshConfigPage .button-submit:not(:hover) {
+                color: rgba(0, 0, 0, 0.87);
+            }
+
+            #JellyMeshConfigPage .emby-checkbox-label {
+                height: auto;
+                min-height: 2.35em;
+            }
+
+            #JellyMeshConfigPage .checkboxLabel {
+                min-width: 0;
+                overflow-wrap: anywhere;
             }
 
             .jmMergeCase,
@@ -87,11 +251,6 @@
 
             .jmMergeTitle {
                 margin-bottom: 0.75em;
-            }
-
-            .jmMergeTitle .emby-checkbox-label {
-                height: auto;
-                min-height: 2.35em;
             }
 
             .jmMergeTitle .checkboxLabel {
@@ -142,18 +301,18 @@
             <div class="content-primary">
                 <h2 class="sectionTitle">JellyMesh</h2>
 
-                <div id="jmWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmWarning" role="alert" hidden class="jmAlert"></div>
 
                 <h3 class="sectionTitle">Status</h3>
-                <div id="jmStatusFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmStatusFailure" role="alert" hidden class="jmAlert"></div>
                 <p id="jmStatus"></p>
 
                 <h3 class="sectionTitle">Remote servers</h3>
                 <div id="jmServers"></div>
 
                 <h3 class="sectionTitle">Catalog</h3>
-                <div id="jmIndexWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <div id="jmSyncFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmIndexWarning" role="alert" hidden class="jmAlert"></div>
+                <div id="jmSyncFailure" role="alert" hidden class="jmAlert"></div>
                 <p id="jmSyncStatus"></p>
                 <div id="jmSyncServers"></div>
                 <button id="jmSyncNow" is="emby-button" type="button" class="raised emby-button">
@@ -162,15 +321,15 @@
 
                 <h3 class="sectionTitle">Duplicate films</h3>
                 <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
-                <div id="jmMergeWarning" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
-                <div id="jmMergesFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmMergeWarning" role="alert" hidden class="jmAlert"></div>
+                <div id="jmMergesFailure" role="alert" hidden class="jmAlert"></div>
                 <div id="jmMergeCases"></div>
                 <h4>Merged films</h4>
                 <div id="jmMerges"></div>
 
                 <h3 class="sectionTitle">Connected JellyMesh servers</h3>
                 <p>Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.</p>
-                <div id="jmPeersFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                <div id="jmPeersFailure" role="alert" hidden class="jmAlert"></div>
                 <div id="jmPeers"></div>
 
                 <form id="jmAddServerForm" autocomplete="off">
@@ -200,7 +359,7 @@
 
                 <form id="jmSettingsForm" novalidate>
                     <h3 class="sectionTitle">Settings</h3>
-                    <div id="jmSettingsFailure" role="alert" hidden style="background:#7a2e0e;color:#fff;padding:1em;margin-bottom:1em;border-radius:4px;"></div>
+                    <div id="jmSettingsFailure" role="alert" hidden class="jmAlert"></div>
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="jmSyncInterval">Sync interval (seconds)</label>
                         <input id="jmSyncInterval" type="number" is="emby-input" min="300" step="1" required />
@@ -211,11 +370,22 @@
                         <input id="jmReconciliationTime" type="time" is="emby-input" required />
                     </div>
                     <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
-                        <input id="jmFederatedFolder" type="text" is="emby-input" />
+                        <div class="jmFolderPick">
+                            <div class="jmFolderField">
+                                <label class="inputLabel inputLabelUnfocused" for="jmFederatedFolder">Federated folder</label>
+                                <input id="jmFederatedFolder" type="text" is="emby-input" />
+                            </div>
+                            <button id="jmChooseFolder" is="emby-button" type="button" class="raised emby-button">
+                                <span>Choose folder</span>
+                            </button>
+                        </div>
                         <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
+                        <div id="jmFolderInfo" class="fieldDescription jmFolderInfo">
+                            <div id="jmFolderHint"></div>
+                            <div id="jmFolderPaths"></div>
+                            <div id="jmFolderNotes"></div>
+                        </div>
                     </div>
-                    <div id="jmFolderInfo" class="fieldDescription" style="margin-bottom:1.5em;"></div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label class="emby-checkbox-label">
                             <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
@@ -230,32 +400,38 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.</div>
                     </div>
-                    <h3 class="sectionTitle">Playback times</h3>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
-                        <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
-                        <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A client waits this long on each source before the next one is tried.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
-                        <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
-                        <div class="fieldDescription">From 5 to 60. Opening takes up to three steps per source. Raise it if a remote is slow to start a transcode.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
-                        <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
-                        <div class="fieldDescription">From 30 to 109: a JellyMesh remote frees an unused stream after 120 seconds, and this must end first. A paused player resumes by itself.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
-                        <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
-                        <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
-                        <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
-                        <div class="fieldDescription">From 1 to 60.</div>
-                    </div>
+                    <details id="jmAdvanced" class="jmAdvanced">
+                        <summary>
+                            <h3 class="sectionTitle">Advanced playback times</h3>
+                            <span class="fieldDescription">Most servers can keep these values.</span>
+                            <span class="material-icons expand_more jmAdvancedIcon" aria-hidden="true"></span>
+                        </summary>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmRemotePlaybackInfoTimeout">Wait for a remote to answer (seconds)</label>
+                            <input id="jmRemotePlaybackInfoTimeout" type="number" is="emby-input" min="3" max="60" step="1" required />
+                            <div class="fieldDescription">From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmStreamOpenTimeout">Wait for each step of opening a stream (seconds)</label>
+                            <input id="jmStreamOpenTimeout" type="number" is="emby-input" min="5" max="60" step="1" required />
+                            <div class="fieldDescription">From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmPlaybackIdle">Close an idle remote transcode after (seconds)</label>
+                            <input id="jmPlaybackIdle" type="number" is="emby-input" min="30" max="109" step="1" required />
+                            <div class="fieldDescription">From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmSessionRetention">Keep paused sessions (hours)</label>
+                            <input id="jmSessionRetention" type="number" is="emby-input" min="1" max="168" step="1" required />
+                            <div class="fieldDescription">From 1 to 168. After this a paused player has to start the title again.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="jmPolicyCache">Remember the transcoding rights of a remote (minutes)</label>
+                            <input id="jmPolicyCache" type="number" is="emby-input" min="1" max="60" step="1" required />
+                            <div class="fieldDescription">From 1 to 60. A change to these rights on the remote takes up to this long to apply here.</div>
+                        </div>
+                    </details>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                         <span>Save</span>
                     </button>
@@ -349,13 +525,18 @@
                     showOutcome('Error', text);
                 }
 
-                // Marks a field as wrong and says why right under it.
+                // Marks a field as wrong and says why right under it, opening the part of the page that holds it.
                 function markField(input, text) {
+                    var part = input.closest('details');
+                    if (part) {
+                        part.open = true;
+                    }
+
                     var note = create('div', text);
                     fieldNotes += 1;
                     note.id = 'jmFieldError' + fieldNotes;
                     note.className = 'jmFieldError';
-                    (input.closest('label') || input).after(note);
+                    (input.closest('label, .jmFolderPick') || input).after(note);
                     input.setAttribute('aria-invalid', 'true');
                     input.setAttribute('aria-describedby', note.id);
                 }
@@ -522,6 +703,28 @@
                     return node;
                 }
 
+                // Adds a Jellyfin checkbox to a list and returns it. Jellyfin upgrades it when the list joins the page.
+                function addCheckbox(list, value, text) {
+                    var label = create('label');
+                    label.className = 'emby-checkbox-label';
+                    var box = create('input');
+                    box.setAttribute('is', 'emby-checkbox');
+                    box.type = 'checkbox';
+                    box.value = value;
+                    label.appendChild(box);
+                    label.appendChild(create('span', text));
+                    list.appendChild(label);
+                    return box;
+                }
+
+                // Wraps a Jellyfin field in the container that holds the label and arrow it adds to itself.
+                function fieldBox(className, field) {
+                    var box = create('div');
+                    box.className = className;
+                    box.appendChild(field);
+                    return box;
+                }
+
                 // Makes a value safe inside a Dashboard.confirm message, which Jellyfin renders as HTML.
                 function escapeHtml(value) {
                     return create('div', value).innerHTML;
@@ -543,16 +746,12 @@
                         return;
                     }
 
+                    var list = create('div');
+                    list.className = 'checkboxList';
+                    container.appendChild(list);
                     var boxes = libraries.map(function (library) {
-                        var label = create('label');
-                        label.style.display = 'block';
-                        var box = create('input');
-                        box.type = 'checkbox';
-                        box.value = library.Id;
+                        var box = addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
                         box.checked = library.Selected;
-                        label.appendChild(box);
-                        label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                        container.appendChild(label);
                         return box;
                     });
 
@@ -572,7 +771,6 @@
                 function renderServer(server) {
                     var row = create('div');
                     row.className = 'jmServer';
-                    row.style.marginBottom = '1.5em';
                     row.appendChild(create('h4', server.Name));
                     var state = create('p');
                     row.appendChild(state);
@@ -614,6 +812,66 @@
                     return row;
                 }
 
+                // Copies a text through a selected field, and returns whether it worked.
+                function copySelected(text) {
+                    var active = document.activeElement;
+                    var field = create('textarea');
+                    field.className = 'jmCopyField';
+                    field.value = text;
+                    field.readOnly = true;
+                    page.appendChild(field);
+                    field.select();
+                    var copied = false;
+                    try {
+                        copied = document.execCommand('copy');
+                    } catch (error) {
+                        copied = false;
+                    }
+
+                    field.remove();
+                    active.focus({ preventScroll: true });
+                    return copied;
+                }
+
+                // Copies a text with the clipboard API where the browser has one, and resolves to whether it worked.
+                function copyText(text) {
+                    if (!navigator.clipboard) {
+                        return Promise.resolve(copySelected(text));
+                    }
+
+                    return navigator.clipboard.writeText(text).then(function () {
+                        return true;
+                    }, function () {
+                        return copySelected(text);
+                    });
+                }
+
+                // Makes the row of a path to link, whose button reports the result in the status region.
+                function renderPath(library, path) {
+                    var row = create('div');
+                    row.className = 'jmPath';
+                    var name = create('span', library);
+                    name.className = 'jmPathName';
+                    row.appendChild(name);
+                    var value = create('code', path);
+                    value.className = 'jmPathValue';
+                    row.appendChild(value);
+                    var copy = button('Copy', function () {
+                        copyText(path).then(function (copied) {
+                            if (copied) {
+                                showMessage('Copied ' + path + '.');
+                                return;
+                            }
+
+                            window.getSelection().selectAllChildren(value);
+                            showError('The browser did not allow copying. ' + path + ' is selected, so copy it by hand.');
+                        });
+                    });
+                    copy.setAttribute('aria-label', 'Copy ' + library + ' path');
+                    row.appendChild(copy);
+                    return row;
+                }
+
                 function renderFolder(folder) {
                     var shown = JSON.stringify(folder);
                     if (shown === folderShown) {
@@ -621,21 +879,25 @@
                     }
 
                     folderShown = shown;
-                    var info = el('#jmFolderInfo');
-                    info.textContent = '';
+                    var notes = el('#jmFolderNotes');
+                    notes.textContent = '';
+                    updateRows(el('#jmFolderPaths'), folder.Path ? [
+                        { key: 'film' + folder.MoviesPath, build: renderPath, args: ['Film library', folder.MoviesPath] },
+                        { key: 'series' + folder.SeriesPath, build: renderPath, args: ['Series library', folder.SeriesPath] }
+                    ] : []);
                     if (!folder.Path) {
-                        info.textContent = 'Choose a folder to see the paths to link.';
+                        el('#jmFolderHint').textContent = 'Choose a folder to see the paths to link.';
                         return;
                     }
 
-                    info.appendChild(create('div', 'Add these paths by hand in Dashboard > Libraries: ' + folder.MoviesPath + ' to the film library, ' + folder.SeriesPath + ' to the series library.'));
+                    el('#jmFolderHint').textContent = 'Add these paths by hand in Dashboard > Libraries.';
                     if (folder.Link === 'NotChecked') {
-                        info.appendChild(create('div', 'The libraries could not be read to check these paths.'));
+                        notes.appendChild(create('div', 'The libraries could not be read to check these paths.'));
                         return;
                     }
 
                     if (folder.Link === 'Linked') {
-                        info.appendChild(create('div', 'Both paths are linked.'));
+                        notes.appendChild(create('div', 'Both paths are linked.'));
                     }
 
                     var warnings = [
@@ -650,8 +912,7 @@
                     warnings.filter(Boolean).forEach(function (text) {
                         var warning = create('div', text);
                         warning.className = 'jmFolderWarning';
-                        warning.style.fontWeight = 'bold';
-                        info.appendChild(warning);
+                        notes.appendChild(warning);
                     });
                 }
 
@@ -762,6 +1023,7 @@
 
                 function renderPeerEditor(container, userId, libraries, shared, maxStreams) {
                     var list = create('div');
+                    list.className = 'checkboxList';
                     container.appendChild(list);
                     var boxes = [];
                     var saved = { shared: shared, limit: String(maxStreams) };
@@ -780,15 +1042,7 @@
                         librariesShown = shown;
                         list.textContent = '';
                         boxes = current.map(function (library) {
-                            var label = create('label');
-                            label.style.display = 'block';
-                            var box = create('input');
-                            box.type = 'checkbox';
-                            box.value = library.Id;
-                            label.appendChild(box);
-                            label.appendChild(document.createTextNode(' ' + library.Name + ' (' + library.CollectionType + ')'));
-                            list.appendChild(label);
-                            return box;
+                            return addCheckbox(list, library.Id, library.Name + ' (' + library.CollectionType + ')');
                         });
                     }
 
@@ -802,14 +1056,13 @@
                         }
                     }
 
-                    var limitLabel = create('label', 'Stream limit ');
-                    limitLabel.style.display = 'block';
                     var limit = create('input');
+                    limit.setAttribute('is', 'emby-input');
+                    limit.setAttribute('label', 'Stream limit');
                     limit.type = 'number';
                     limit.min = '1';
                     limit.required = true;
-                    limitLabel.appendChild(limit);
-                    container.appendChild(limitLabel);
+                    container.appendChild(fieldBox('inputContainer', limit));
                     showLibraries(libraries);
                     reset();
 
@@ -847,7 +1100,7 @@
 
                 function renderPeer(peer, libraries) {
                     var row = create('div');
-                    row.style.marginBottom = '1.5em';
+                    row.className = 'jmPeer';
                     row.appendChild(create('h4', peer.UserName));
                     var streams = create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams);
                     row.appendChild(streams);
@@ -883,6 +1136,8 @@
                     var row = create('div');
                     row.appendChild(create('h4', 'Connect a server'));
                     var select = create('select');
+                    select.setAttribute('is', 'emby-select');
+                    select.setAttribute('label', 'User');
                     var usersShown = '';
 
                     // Lists the free users and keeps the one chosen while it is still free.
@@ -907,7 +1162,7 @@
                     }
 
                     showUsers(users);
-                    row.appendChild(select);
+                    row.appendChild(fieldBox('selectContainer', select));
                     var editor = renderPeerEditor(row, function () {
                         return select.value;
                     }, libraries, [], 2);
@@ -1041,14 +1296,12 @@
                 function renderMergeTitle(title, changed) {
                     var row = create('div');
                     row.className = 'jmMergeTitle';
-                    row.innerHTML = '<label class="emby-checkbox-label"><input type="checkbox" is="emby-checkbox" /><span></span></label>';
+                    var box = addCheckbox(row, title.WorkKey, titleName(title));
                     var name = row.querySelector('span');
                     var details = create('div');
                     details.className = 'jmMergeDetails';
                     details.id = 'jmMergeDetails' + (++mergeDetails);
                     row.appendChild(details);
-                    var box = row.querySelector('input');
-                    box.value = title.WorkKey;
                     box.setAttribute('aria-describedby', details.id);
                     box.addEventListener('change', changed);
                     row.jmBox = box;
@@ -1443,6 +1696,23 @@
                         showMessage('Added ' + server.Name + '.');
                         return Promise.all([loadStatus(), loadSync()]);
                     }));
+                });
+
+                el('#jmChooseFolder').addEventListener('click', function () {
+                    var picker = new Dashboard.DirectoryBrowser();
+                    picker.show({
+                        header: 'Choose the federated folder',
+                        instruction: 'These are the folders of the server. JellyMesh writes only inside the one you choose.',
+                        includeFiles: false,
+                        callback: function (path) {
+                            var field = el('#jmFederatedFolder');
+                            field.value = path;
+                            clearField(field);
+                            picker.close();
+                            el('#jmChooseFolder').focus();
+                            showMessage(path + ' is in the field. Save the settings to use it.');
+                        }
+                    });
                 });
 
                 el('#jmSettingsForm').addEventListener('submit', function (e) {

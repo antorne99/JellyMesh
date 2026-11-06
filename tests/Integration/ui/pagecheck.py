@@ -15,6 +15,9 @@ PAIR = "JM Sonda Mobile"
 CHAIN = "JM Catena Uno"
 HOSTILE = "<b>x</b>"
 HOSTILE_PEER = "<i>y</i>"
+LONG_NAME = "A library with a very long name " + "and_no_spaces" * 12
+SECOND_USER = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+THEMES = [("dark", True), ("light", False), ("blueradiance", True), ("appletv", False), ("purplehaze", True), ("wmc", True)]
 
 
 def check(name, passed, detail=""):
@@ -244,24 +247,33 @@ def keyboard(s, width):
     page.context.close()
 
 
-CONTRAST = """s => {
-  const parse = c => { const m = c.match(/[\\d.]+/g).map(Number); return {r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1}; };
+COLOURS = """
+  const parse = c => {
+    const m = c.match(/[\\d.]+/g).map(Number);
+    const scale = c.startsWith('color(') ? 255 : 1;
+    return {r: m[0] * scale, g: m[1] * scale, b: m[2] * scale, a: m.length > 3 ? m[3] : 1};
+  };
   const over = (top, under) => ({r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a), b: top.b * top.a + under.b * (1 - top.a), a: 1});
   const channel = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
   const luminance = c => 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+  const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
   const backdrop = node => {
     const layers = [];
     for (let e = node; e; e = e.parentElement) { layers.push(parse(getComputedStyle(e).backgroundColor)); }
     return layers.reverse().reduce((under, top) => over(top, under), {r: 255, g: 255, b: 255, a: 1});
   };
+"""
+
+CONTRAST = "s => {" + COLOURS + """
   const root = document.querySelector(s.page);
-  const worst = [...root.querySelectorAll(s.readable)].filter(e => e.offsetParent !== null && e.textContent.trim() !== '').map(e => {
+  const seen = [...root.querySelectorAll(s.readable)].filter(e => e.offsetParent !== null && (e.textContent.trim() !== '' || e.value)).map(e => {
     const under = backdrop(e);
     const text = over(parse(getComputedStyle(e).color), under);
-    const a = luminance(text), b = luminance(under);
-    return {ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), text: e.textContent.trim().slice(0, 40)};
-  }).sort((x, y) => x.ratio - y.ratio)[0];
-  return {worst, background: luminance(backdrop(root))};
+    return {ratio: ratio(luminance(text), luminance(under)), under: luminance(under), font: getComputedStyle(e).fontFamily,
+      text: (e.textContent.trim() || e.value).slice(0, 40)};
+  }).sort((x, y) => x.ratio - y.ratio);
+  return {worst: seen[0], lightest: Math.max(...seen.map(e => e.under)), fonts: [...new Set(seen.map(e => e.font))],
+    background: luminance(backdrop(root))};
 }"""
 
 
@@ -379,9 +391,9 @@ def edits(s, width):
     new_peer = u.peer_row(page, u.NEW_PEER)
     u.button(stock, "libraries").click()
     page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
-    stock.locator(u.CHECKBOX).first.uncheck()
+    u.tick(stock.locator(u.CHECKBOX).first, False)
     connected.locator(u.NUMBER).fill("9")
-    connected.locator(u.CHECKBOX).first.uncheck()
+    u.tick(connected.locator(u.CHECKBOX).first, False)
 
     def kept(action, limit="9"):
         check(f"{name} {action} keeps the open panel", stock.locator(u.CHECKBOX).count() == 2, stock.locator(u.CHECKBOX).count())
@@ -423,13 +435,13 @@ def edits(s, width):
     u.wait_message(page)
     kept("saved libraries", "7")
     check(name + " saved libraries update their row", "libraries to import: 1" in stock.inner_text(), stock.inner_text())
-    stock.locator(u.CHECKBOX).first.check()
+    u.tick(stock.locator(u.CHECKBOX).first)
     u.clear_message(page)
     u.button(stock, "save_libraries").click()
     u.wait_message(page)
 
     new_peer.locator(u.NUMBER).fill("5")
-    new_peer.locator(u.CHECKBOX).first.check()
+    u.tick(new_peer.locator(u.CHECKBOX).first)
     connected.locator(u.NUMBER).fill("4")
     save = u.button(connected, "save")
     u.clear_message(page)
@@ -440,7 +452,7 @@ def edits(s, width):
     check(name + " a saved peer keeps the other row's box", new_peer.locator(u.CHECKBOX + ":checked").count() == 1)
     check(name + " a saved peer keeps the focus", u.has_focus(save))
     check(name + " a saved peer shows what was saved", connected.locator(u.CHECKBOX + ":checked").count() == 1)
-    connected.locator(u.CHECKBOX).first.check()
+    u.tick(connected.locator(u.CHECKBOX).first)
     u.clear_message(page)
     u.button(connected, "save").click()
     u.wait_message(page)
@@ -724,6 +736,7 @@ def settings_refused(page, name):
     """Each wrong setting is named with its rule and focused, and nothing reaches the server."""
     saves = []
     page.on("request", lambda request: saves.append(request.url) if "/Plugins/" in request.url and request.method == "POST" else None)
+    u.open_advanced(page)
     for selector, value, field, rule in SETTING_ERRORS:
         label = f"{name} {selector} set to '{value}'"
         before = page.locator(selector).input_value()
@@ -840,6 +853,7 @@ def outcome_themes(s, width):
     for theme in ["dark", "light"]:
         name = f"{width} {theme} outcomes"
         page = s.open("fresh", width, theme=theme)
+        u.open_advanced(page)
         policy = page.locator("#jmPolicyCache").input_value()
         page.locator("#jmPolicyCache").fill("0")
         page.locator(u.SAVE_SETTINGS).click()
@@ -856,6 +870,190 @@ def outcome_themes(s, width):
         page.screenshot(path=f"{u.SHOTS}/outcome-done-{theme}-{width}.png")
         page.context.close()
     u.set_theme("fresh", "dark")
+
+
+FOCUS_RING = "mark => {" + COLOURS + """
+  const node = document.activeElement;
+  const ring = mark ? node.parentElement.querySelector(mark) : node;
+  const look = getComputedStyle(ring);
+  const under = backdrop(ring.parentElement);
+  const fill = backdrop(node);
+  const text = over(parse(getComputedStyle(node).color), fill);
+  return {style: look.outlineStyle, width: parseFloat(look.outlineWidth),
+    ring: ratio(luminance(over(parse(look.outlineColor), under)), luminance(under)), text: ratio(luminance(text), luminance(fill))};
+}"""
+
+
+def focus_shows(page, name, node, mark=None):
+    """Checks that a control reached with the keyboard has a ring that stands out, and stays readable."""
+    u.reach(page, node)
+    seen = page.evaluate(FOCUS_RING, mark)
+    check(name + " shows a ring", seen["style"] == "solid" and seen["width"] >= 2, seen)
+    check(name + " has a ring that stands out", seen["ring"] >= 3, seen)
+    if mark is None:
+        check(name + " stays readable", seen["text"] >= 4.5, seen)
+
+
+def readable(page, name, selector):
+    """Checks the contrast of what a selector finds, and returns the measures."""
+    seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": selector})
+    check(name + " is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+    return seen
+
+
+def broken_reads(context):
+    """Refuses every read of the page, so that each part shows its failure."""
+    for pattern in ["**/JellyMesh/Admin/Status", "**/JellyMesh/Admin/Sync", "**/JellyMesh/Admin/Peers", "**/JellyMesh/Admin/Merges", u.PLUGIN_CONFIG]:
+        context.route(pattern, lambda route: route.fulfill(status=500, json={}))
+
+
+def warned(context):
+    """Gives the status, the sync and the merges each a warning to show."""
+    fake(context, "Status", lambda data: data.update(Warning="A warning from the status."))
+    fake(context, "Sync", lambda data: data.update(Health="Corrupt"))
+    fake(context, "Merges", lambda data: data.update(IsStoreDamaged=True))
+
+
+def control_themes(s, width):
+    """Jellyfin controls, focus, alerts and outcomes look right in each of the six themes."""
+    for theme, dark in THEMES:
+        name = f"{width} {theme} controls"
+        page = s.open("fresh", width, theme=theme, route=warned)
+        check(name + " has the theme", u.theme_of(page) == theme, u.theme_of(page))
+        stock = u.server_row(page, "stock")
+        connected = u.peer_row(page, "jellymesh")
+        new_peer = u.peer_row(page, u.NEW_PEER)
+        u.button(stock, "libraries").click()
+        page.wait_for_selector(u.SERVER + " " + u.CHECK_MARK, state="attached", timeout=15000)
+        page.mouse.move(0, 0)
+
+        check(name + " are all upgraded", page.locator(u.NOT_UPGRADED).count() == 0, page.locator(u.NOT_UPGRADED).count())
+        seen = readable(page, name, u.CONTROLS)
+        check(name + " sets the background", (seen["background"] < 0.2) == dark, seen["background"])
+        if dark:
+            check(name + " are not white on dark", seen["lightest"] < 0.2, seen["lightest"])
+        check(name + " use one font", len(seen["fonts"]) == 1 and "Arial" not in seen["fonts"][0], seen["fonts"])
+        readable(page, name + " buttons", u.BUTTONS)
+
+        focus_shows(page, name + " a button", u.button(stock, "test"))
+        focus_shows(page, name + " a main button", page.locator(u.SAVE_SETTINGS))
+        focus_shows(page, name + " a number", connected.locator(u.NUMBER))
+        focus_shows(page, name + " a select", new_peer.locator(u.SELECT))
+        focus_shows(page, name + " a library box", stock.locator(u.CHECKBOX).first, u.CHECK_MARK)
+        focus_shows(page, name + " a settings box", page.locator(u.METADATA_PROTECTION), u.CHECK_MARK)
+        page.evaluate("document.activeElement.blur()")
+
+        for alert in u.ALERTS_WITH_DATA:
+            check(f"{name} shows {alert}", page.locator(alert).is_visible())
+        readable(page, name + " a warning", u.ALERT)
+
+        limit = connected.locator(u.NUMBER)
+        limit.fill("")
+        u.button(connected, "save").click()
+        u.wait_message(page)
+        readable(page, name + " an error", u.MESSAGE + ", " + u.DISMISS + ", " + u.FIELD_ERROR)
+        limit.fill("4")
+        u.clear_message(page)
+        u.button(stock, "test").click()
+        u.wait_message(page)
+        readable(page, name + " a success", u.MESSAGE + ", " + u.DISMISS)
+        u.clear_message(page)
+
+        check(name + " has no inline style", page.locator(u.INLINE_STYLE).count() == 0, page.locator(u.INLINE_STYLE).count())
+        healthy(page, name)
+        u.shot(page, f"control-{theme}-{width}")
+        u.close(page)
+
+        name = f"{width} {theme} failures"
+        page = s.open("fresh", width, theme=theme, route=broken_reads, wait=False)
+        page.wait_for_selector(u.PAGE, state="attached", timeout=30000)
+        notes = [page.locator(selector) for selector in u.FAILURE.values()]
+        check(name + " all show", until(page, lambda: all(note.is_visible() for note in notes), 20))
+        u.wait_idle(page)
+        readable(page, name, u.ALERT)
+        check(name + " have no inline style", page.locator(u.INLINE_STYLE).count() == 0)
+        healthy(page, name)
+        u.shot(page, f"failure-{theme}-{width}")
+        u.close(page)
+    u.set_theme("fresh", "dark")
+
+
+def controls(s, width):
+    """The Jellyfin controls take any text, keep what the admin does, and send what the form shows."""
+    name = width + " controls"
+    extra = [{"Id": "jm-long", "Name": LONG_NAME, "CollectionType": "movies"}, {"Id": "jm-hostile", "Name": HOSTILE, "CollectionType": "movies"}]
+
+    def odd(context):
+        fake(context, "Servers/*/Libraries", lambda data: data.extend(dict(item, Selected=False) for item in extra))
+        fake(context, "Peers/Options", lambda data: (data["Users"].append({"Id": SECOND_USER, "Name": "second"}), data["Libraries"].extend(extra)))
+
+    page = s.open("fresh", width, route=odd)
+    stock = u.server_row(page, "stock")
+    connected = u.peer_row(page, "jellymesh")
+    new_peer = u.peer_row(page, u.NEW_PEER)
+    u.button(stock, "libraries").click()
+    page.wait_for_selector(u.SERVER + " " + u.CHECK_MARK, state="attached", timeout=15000)
+
+    select = new_peer.get_by_label(u.USER_LABEL, exact=True)
+    check(name + " the select has its label", select.evaluate("node => node.tagName") == "SELECT")
+    check(name + " the select has one arrow", new_peer.locator(u.SELECT_ARROW).count() == 1, new_peer.locator(u.SELECT_ARROW).count())
+    limit = connected.get_by_label(u.LIMIT_LABEL, exact=True)
+    check(name + " the limit has its label", limit.get_attribute("type") == "number")
+    check(name + " has no label inside a label", page.locator(u.NESTED_LABEL).count() == 0)
+    limit.fill("")
+    check(name + " an empty limit keeps its label", connected.get_by_text(u.LIMIT_LABEL, exact=True).is_visible())
+    limit.fill("4")
+
+    names = stock.locator(u.CHECK_LABEL)
+    check(name + " a name with markup stays text", names.filter(has_text=HOSTILE).count() == 1, names.all_inner_texts())
+    check(name + " a name renders no markup", stock.locator("b").count() == 0)
+    long_label = stock.locator("label", has_text=LONG_NAME)
+    box = long_label.bounding_box()
+    below = stock.locator("label", has_text=HOSTILE).bounding_box()
+    check(name + " a long name stays on the screen", box["x"] + box["width"] <= u.VIEWPORTS[width]["width"], box)
+    check(name + " a long name does not cover the next", box["y"] + box["height"] <= below["y"], [box, below])
+
+    long_label.locator(u.CHECK_MARK).click()
+    check(name + " the drawn box selects", stock.locator(u.CHECKBOX + "[value=jm-long]").is_checked())
+    last = stock.locator(u.CHECKBOX).last
+    last.focus()
+    page.keyboard.press("Space")
+    check(name + " Space selects a library", last.is_checked())
+
+    u.mark(select)
+    u.mark(limit)
+    select.select_option(SECOND_USER)
+    limit.fill("6")
+    select.focus()
+    with page.expect_response("**/JellyMesh/Admin/Peers", timeout=25000):
+        pass
+    u.wait_idle(page)
+    check(name + " polling keeps the select", u.is_marked(select))
+    check(name + " polling keeps the choice", select.input_value() == SECOND_USER, select.input_value())
+    check(name + " polling keeps the focus", u.has_focus(select))
+    check(name + " polling keeps the limit", u.is_marked(limit) and limit.input_value() == "6", limit.input_value())
+    limit.fill("4")
+
+    sent = []
+
+    def connect(route):
+        if route.request.method == "PUT":
+            sent.append((route.request.url, route.request.post_data_json))
+            route.fulfill(status=204)
+        else:
+            route.fallback()
+
+    page.route("**/JellyMesh/Admin/Peers/*", connect)
+    new_peer.locator(u.NUMBER).fill("3")
+    u.tick(new_peer.locator(u.CHECKBOX).first)
+    chosen = new_peer.locator(u.CHECKBOX).first.get_attribute("value")
+    u.button(new_peer, "connect").click()
+    u.wait_message(page)
+    check(name + " connect sends the chosen user", len(sent) == 1 and sent[0][0].endswith("/Peers/" + SECOND_USER), sent)
+    check(name + " connect sends the form", bool(sent) and sent[0][1] == {"SharedLibraryIds": [chosen], "MaxStreams": 3}, sent)
+    healthy(page, name)
+    u.shot(page, f"controls-{width}")
+    u.close(page)
 
 
 def confirm_shows(page, name, title, says, viewport):
@@ -1040,7 +1238,7 @@ def merge_unknown(s, width, name):
     check(name + " keeps remote text as text", HOSTILE.upper() in shown and page.locator(u.MERGE_CASES + " b").count() == 0, shown)
     healthy(page, name)
     u.shot(page, f"merge-unknown-{width}")
-    page.context.close()
+    u.close(page)
 
 
 def answer_list(route, change):
@@ -1095,7 +1293,7 @@ def merge_forecasts(s, width, name):
     select(case, 2)
     check(name + " two local titles cannot merge", u.button(case, "merge").is_disabled())
     check(name + " two local titles say why", "two local films" in result(case), result(case))
-    page.context.close()
+    u.close(page)
 
     page = s.open("fresh", width)
     case = u.merge_case(page, PAIR)
@@ -1125,7 +1323,7 @@ def merge_forecasts(s, width, name):
     check(name + " a late answer does not replace the current one", "at least two" in result(case), result(case))
     healthy(page, name)
     u.shot(page, f"merge-forecast-{width}")
-    page.context.close()
+    u.close(page)
 
 
 def merge_refresh(s, width, name):
@@ -1154,7 +1352,147 @@ def merge_refresh(s, width, name):
     check(name + " the focused box still works", last.is_checked())
     check(name + " the button follows", u.button(case, "merge").is_enabled())
     healthy(page, name)
-    page.context.close()
+    u.close(page)
+
+
+ADVANCED_RANGES = {
+    "#jmRemotePlaybackInfoTimeout": "From 3 to 60",
+    "#jmStreamOpenTimeout": "From 5 to 60",
+    "#jmPlaybackIdle": "From 30 to 109",
+    "#jmSessionRetention": "From 1 to 168",
+    "#jmPolicyCache": "From 1 to 60",
+}
+
+
+def advanced_closed(page, name):
+    """The playback times start closed, and the keyboard opens them."""
+    check(name + " starts closed", not u.advanced_open(page))
+    for selector in ADVANCED_RANGES:
+        check(f"{name} hides {selector}", not page.locator(selector).is_visible())
+    for selector in [u.SYNC_INTERVAL, u.FEDERATED_FOLDER, u.METADATA_PROTECTION, u.SAVE_SETTINGS]:
+        check(f"{name} leaves {selector} in reach", page.locator(selector).is_visible())
+
+    toggle = page.locator(u.ADVANCED_TOGGLE)
+    toggle.focus()
+    page.keyboard.press("Enter")
+    check(name + " Enter opens it", u.advanced_open(page))
+    page.keyboard.press("Enter")
+    check(name + " Enter closes it", not u.advanced_open(page))
+    page.keyboard.press("Space")
+    check(name + " Space opens it", u.advanced_open(page))
+    for selector, rule in ADVANCED_RANGES.items():
+        check(f"{name} shows {selector}", page.locator(selector).is_visible())
+        said = page.locator(selector).evaluate("input => input.parentElement.querySelector('.fieldDescription').textContent")
+        check(f"{name} gives the range of {selector}", said.startswith(rule), said)
+
+
+def advanced_opens(page, name):
+    """A wrong value left in the closed part opens it, so the field can be seen and focused."""
+    policy = page.locator("#jmPolicyCache").input_value()
+    interval = page.locator(u.SYNC_INTERVAL).input_value()
+    u.open_advanced(page)
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator(u.ADVANCED_TOGGLE).click()
+    check(name + " the wrong value is hidden", not page.locator("#jmPolicyCache").is_visible())
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a hidden field", "Error", "Remember the transcoding rights")
+    check(name + " a hidden field opens the part", u.advanced_open(page))
+    check(name + " a hidden field is focused", u.focused(page) == "jmPolicyCache", u.focused(page))
+    check(name + " a hidden field is in view", u.in_view(page, "#jmPolicyCache"))
+    check(name + " a hidden field is marked", "from 1 to 60" in u.field_error(page, "#jmPolicyCache"))
+    page.locator("#jmPolicyCache").fill(policy)
+    page.locator(u.ADVANCED_TOGGLE).click()
+
+    page.locator(u.SYNC_INTERVAL).fill("60")
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a common field", "Error", "Sync interval")
+    check(name + " a common field leaves the part closed", not u.advanced_open(page))
+    check(name + " a common field is focused", "#" + u.focused(page) == u.SYNC_INTERVAL, u.focused(page))
+
+    u.open_advanced(page)
+    page.locator("#jmPolicyCache").fill("0")
+    page.locator(u.ADVANCED_TOGGLE).click()
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " both", "Error", "1 more field")
+    check(name + " both focuses the first", "#" + u.focused(page) == u.SYNC_INTERVAL, u.focused(page))
+    check(name + " both shows the other", u.advanced_open(page) and page.locator("#jmPolicyCache").is_visible())
+    page.locator("#jmPolicyCache").fill(policy)
+    page.locator(u.SYNC_INTERVAL).fill(interval)
+    u.clear_message(page)
+
+
+def folder_chosen(page, name):
+    """The folder browser fills the field, and nothing is saved until the admin saves."""
+    field = page.locator(u.FEDERATED_FOLDER)
+    field.fill("relative/path")
+    page.locator(u.SAVE_SETTINGS).click()
+    outcome(page, name + " a wrong path", "Error", "absolute path")
+
+    u.open_picker(page)
+    check(name + " lists the folders of the server", page.locator(u.PICKER_ROW + '[data-path="/federata"]').count() == 1)
+    page.locator(u.PICKER_CLOSE).click()
+    page.wait_for_selector(u.CONFIRM, state="detached", timeout=15000)
+    check(name + " cancelling keeps the field", field.input_value() == "relative/path", field.input_value())
+
+    u.open_picker(page)
+    u.shot(page, f"folder-browser-{page.viewport_size['width']}", full_page=False)
+    u.choose_folder(page, "/federata")
+    check(name + " the choice fills the field", field.input_value() == "/federata", field.input_value())
+    check(name + " the choice clears the old error", u.field_error(page, u.FEDERATED_FOLDER) == "")
+    check(name + " the focus returns to the button", "#" + u.focused(page) == u.CHOOSE_FOLDER, u.focused(page))
+    outcome(page, name + " the choice", "Done", "Save the settings")
+    check(name + " the choice is not saved yet", u.config("first")["FederatedFolderPath"] == "")
+    page.wait_for_timeout(6000)
+    check(name + " reading again keeps the choice", field.input_value() == "/federata", field.input_value())
+
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " the choice saves", until(page, lambda: u.config("first")["FederatedFolderPath"] == "/federata"))
+    u.wait_idle(page)
+
+    field.fill("/typed/by/hand")
+    check(name + " the field stays usable", field.input_value() == "/typed/by/hand")
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " a typed path saves", until(page, lambda: u.config("first")["FederatedFolderPath"] == "/typed/by/hand"))
+    u.wait_idle(page)
+
+
+def folder_paths(server):
+    """Returns the two paths to link that the server reports."""
+    folder = u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["FederatedFolder"]
+    return folder["MoviesPath"], folder["SeriesPath"]
+
+
+def copied_over_http(page, name):
+    """The copy buttons work on plain HTTP, where the browser has no clipboard API, and say so."""
+    check(name + " runs on plain HTTP", page.evaluate("!isSecureContext && navigator.clipboard === undefined"))
+    for path in folder_paths("fresh"):
+        button = u.copy_button(page, path)
+        button.click()
+        outcome(page, f"{name} {path}", "Done", path)
+        check(f"{name} {path} reaches the clipboard", u.pasted(page) == path)
+    u.clear_message(page)
+    button = u.copy_button(page, folder_paths("fresh")[1])
+    button.focus()
+    page.keyboard.press("Enter")
+    outcome(page, name + " from the keyboard", "Done", "Copied")
+    check(name + " the focus stays on the button", u.has_focus(button))
+    u.clear_message(page)
+
+
+def copy_refused(s, width):
+    """When the browser refuses, the page says so and leaves the path selected."""
+    name = width + " copy refused"
+
+    def refuses(context):
+        context.add_init_script("document.execCommand = () => false;")
+
+    page = s.open("fresh", width, route=refuses)
+    path = folder_paths("fresh")[0]
+    u.copy_button(page, path).click()
+    outcome(page, name, "Error", "copy it by hand")
+    check(name + " selects the path", page.evaluate("getSelection().toString()") == path, page.evaluate("getSelection().toString()"))
+    healthy(page, name)
+    u.close(page)
 
 
 def merge_dates(s, width, name):
@@ -1176,7 +1514,7 @@ def merge_dates(s, width, name):
         check(name + " explains that it is not in effect", "Not in effect: a copy is missing, or the IDs already make these one film." in row.inner_text(), row.inner_text())
         u.shot(page, f"merge-date-{width}")
         healthy(page, name)
-        page.context.close()
+        u.close(page)
     finally:
         u.api("fresh", "DELETE", "/JellyMesh/Admin/Merges/" + merge["Id"])
 
@@ -1199,6 +1537,102 @@ def merge_details(s, width):
     merge_dates(s, width, name + " merged")
 
 
+def copy_with_api(s, width):
+    """Where the browser has a clipboard API it is used, and a refusal falls back to the selection."""
+    name = width + " copy with the API"
+
+    def clipboard(context):
+        context.add_init_script("""Object.defineProperty(navigator, 'clipboard', {value: {writeText: text => {
+          window.jmWritten = (window.jmWritten || []).concat(text);
+          return window.jmWritten.length > 1 ? Promise.reject(new Error('denied')) : Promise.resolve();
+        }}});""")
+
+    page = s.open("fresh", width, route=clipboard)
+    path = folder_paths("fresh")[0]
+    u.copy_button(page, path).click()
+    outcome(page, name, "Done", path)
+    check(name + " writes the path", page.evaluate("window.jmWritten") == [path], page.evaluate("window.jmWritten"))
+    u.clear_message(page)
+    u.copy_button(page, path).click()
+    outcome(page, name + " refused", "Done", path)
+    check(name + " refused still reaches the clipboard", u.pasted(page) == path)
+    page.context.close()
+
+
+def link_warnings(page, name):
+    """A change in the links leaves the path rows and their focus alone, and a long path fits."""
+    button = u.copy_button(page, folder_paths("fresh")[0])
+    u.mark(button)
+    button.focus()
+
+    def unlinked(status):
+        status["FederatedFolder"]["Link"] = "NotLinked"
+        status["FederatedFolder"]["Movies"]["Link"] = "NotLinked"
+
+    fake(page, "Status", unlinked)
+    check(name + " warns about the path", until(page, lambda: "is not linked" in text(page, u.FOLDER_NOTES), 20), text(page, u.FOLDER_NOTES))
+    check(name + " keeps the row", u.is_marked(button))
+    check(name + " keeps the focus", u.has_focus(button))
+    u.shot(page, f"folder-warning-{page.viewport_size['width']}")
+    page.unroute("**/JellyMesh/Admin/Status")
+
+    def long_path(status):
+        status["FederatedFolder"]["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
+
+    fake(page, "Status", long_path)
+    check(name + " shows a long path", until(page, lambda: u.copy_button(page, "a-very-long-folder-name").count() == 1, 20))
+    healthy(page, name + " long path")
+    page.unroute("**/JellyMesh/Admin/Status")
+
+
+def settings_look(s, width):
+    """The settings in both themes, with the advanced part open, stay readable."""
+    for theme in ["dark", "light"]:
+        name = f"{width} {theme} settings"
+        page = s.open("fresh", width, theme=theme)
+        u.shot(page, f"settings-closed-{theme}-{width}")
+        u.open_advanced(page)
+        readable = ", ".join([u.READABLE, u.ADVANCED_TOGGLE, u.FOLDER_PATH + " code", u.FOLDER_PATH + " span", u.FOLDER_NOTES])
+        seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": readable})
+        check(name + " text is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+        healthy(page, name)
+        u.shot(page, f"settings-open-{theme}-{width}")
+        page.context.close()
+    u.set_theme("fresh", "dark")
+
+
+def settings_form(s, width):
+    """The Settings form: what stays closed, how the folder is chosen, and how its paths are copied."""
+    name = width + " settings form"
+    page = s.open("fresh", width)
+    advanced_closed(page, name + " advanced")
+    healthy(page, name + " advanced")
+    page.context.close()
+
+    page = s.open("fresh", width)
+    advanced_opens(page, name)
+    healthy(page, name)
+    page.context.close()
+
+    page = s.open("first", width)
+    try:
+        folder_chosen(page, name + " folder")
+        healthy(page, name + " folder")
+    finally:
+        u.settings("first", lambda config: config.update(FederatedFolderPath=""))
+    page.context.close()
+
+    page = s.open("fresh", width)
+    copied_over_http(page, name + " copy")
+    healthy(page, name + " copy")
+    link_warnings(page, name + " links")
+    page.context.close()
+
+    copy_refused(s, width)
+    copy_with_api(s, width)
+    settings_look(s, width)
+
+
 SCENARIOS = {
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
@@ -1219,6 +1653,9 @@ SCENARIOS = {
     "outcomes": (outcomes, WIDTHS),
     "outcome-themes": (outcome_themes, WIDTHS),
     "merge-details": (merge_details, WIDTHS),
+    "settings-form": (settings_form, WIDTHS),
+    "controls": (controls, WIDTHS),
+    "control-themes": (control_themes, WIDTHS),
 }
 
 with u.Session() as session:
