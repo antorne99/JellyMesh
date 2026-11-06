@@ -281,6 +281,15 @@ CONTRAST = "s => {" + COLOURS + """
 }"""
 
 
+ICONS = "s => {" + COLOURS + """
+  const seen = [...document.querySelector(s.page).querySelectorAll(s.icons)].filter(e => e.offsetParent !== null).map(e => {
+    const under = backdrop(e);
+    return {ratio: ratio(luminance(over(parse(getComputedStyle(e).color), under)), luminance(under))};
+  }).sort((x, y) => x.ratio - y.ratio);
+  return seen[0] || {ratio: 0};
+}"""
+
+
 def contrast(page, selector):
     """Measures what a selector finds in every tab, comes back to the tab it was on, and returns the worst."""
     shown = u.shown_tab(page)
@@ -1913,8 +1922,453 @@ def tabs(s, width):
     tabs_field_error(s, width)
 
 
+def fact_value(page, label):
+    """Returns the value of a fact of the summary."""
+    return u.fact(page, label).locator("dd").first.inner_text()
+
+
+def alarms(page):
+    """Returns the lines of the summary that report a problem."""
+    return page.locator(u.ALARM).all_inner_texts()
+
+
+def step_state(page, label):
+    """Returns the state a setup step shows."""
+    return u.step(page, label).locator(u.STEP_STATE).inner_text()
+
+
+def opens(page, name, node, tab):
+    """Follows a link of the summary, checks that it opens its tab in the same page, and comes back."""
+    check(f"{name} links to {tab}", node.get_attribute("href") == "#/configurationpage?name=JellyMesh#" + tab, node.get_attribute("href"))
+    node.click()
+    check(f"{name} opens {tab}", until(page, lambda: u.shown_tab(page) == tab), u.shown_tab(page))
+    check(f"{name} marks {tab} in the header", page.locator(u.TAB + "[aria-selected=true]").inner_text().lower() == tab)
+    check(f"{name} moves the focus off the hidden panel", page.evaluate("document.activeElement.getAttribute('role')") == "tabpanel")
+    check(f"{name} keeps the page loaded", page.locator(u.PAGE).count() == 1)
+    u.show_tab(page, "overview")
+
+
+def linked(status):
+    """Makes the federated folder of a status linked, as on a finished setup."""
+    status["FederatedFolder"].update(Link="Linked", Path="/federata", SeriesGroupingOff=[])
+    status["FederatedFolder"]["Movies"].update(Link="Linked", Libraries=["Film"])
+    status["FederatedFolder"]["Series"].update(Link="Linked", Libraries=["Serie"])
+
+
+def half_done(status):
+    """Leaves a server with nothing to import, and the folder chosen but not linked."""
+    status["Servers"][0].update(Name=HOSTILE, ImportedLibraryIds=[])
+    status["FederatedFolder"].update(Link="NotLinked", Path="/federata", SeriesGroupingOff=[])
+    status["FederatedFolder"]["Movies"].update(Link="NotLinked", Libraries=[])
+    status["FederatedFolder"]["Series"].update(Link="NotLinked", Libraries=[])
+
+
+def no_cases(merges):
+    """Leaves no doubtful films."""
+    merges["Cases"] = []
+
+
+def overview_well(s, width):
+    """With nothing wrong the summary is calm, gives the numbers, and offers only the review."""
+    name = width + " overview all well"
+
+    def calm(context):
+        fake(context, "Status", linked)
+        fake(context, "Merges", no_cases)
+
+    page = s.open("fresh", width, route=calm)
+    shown = text(page, u.STATUS)
+    check(name + " says so", shown == "Active. All is well.", shown)
+    check(name + " has the five facts", page.locator(u.FACT).locator("dt").all_inner_texts() == u.FACTS, page.locator(u.FACT).locator("dt").all_inner_texts())
+    check(name + " counts the servers", fact_value(page, "Servers") == "2 of 2 online", fact_value(page, "Servers"))
+    check(name + " has a date for the last sync", re.search(r"\d", fact_value(page, "Last sync")) is not None, fact_value(page, "Last sync"))
+    check(name + " says the folder is linked", fact_value(page, "Federated folder") == "Linked", fact_value(page, "Federated folder"))
+    check(name + " has no duplicates", fact_value(page, "Duplicates to review") == "None", fact_value(page, "Duplicates to review"))
+    check(name + " counts the streams", fact_value(page, "Streams in use") == "0 of 4 by connected servers", fact_value(page, "Streams in use"))
+    check(name + " has nothing to act on", page.locator(u.NOTE).count() == 0, page.locator(u.NOTE).all_inner_texts())
+    check(name + " has no setup", not page.locator(u.SETUP).is_visible())
+    check(name + " announces nothing", text(page, u.ANNOUNCE) == "", text(page, u.ANNOUNCE))
+    healthy(page, name)
+    u.shot(page, f"overview-well-{width}")
+    page.context.close()
+
+    name = width + " overview duplicates"
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", linked))
+    cases = len(u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]["Cases"])
+    check(name + " count", fact_value(page, "Duplicates to review") == str(cases), fact_value(page, "Duplicates to review"))
+    check(name + " are no problem", text(page, u.STATUS) == "Active. All is well." and alarms(page) == [], text(page, u.STATUS))
+    opens(page, name, u.fact(page, "Duplicates").locator(u.TAB_LINK), "catalog")
+    u.shot(page, f"overview-duplicates-{width}")
+    page.context.close()
+
+
+def overview_restart(s, width):
+    """After a restart the run in memory is gone: the summary still has a real date, and connections are not called offline."""
+    name = width + " overview after a restart"
+
+    def restarted(context):
+        fake(context, "Status", lambda status: (linked(status), [server.update(Connection="NotChecked") for server in status["Servers"]]))
+        fake(context, "Sync", lambda sync: sync.update(LastFinishedUtc=None, LastStartedUtc=None))
+
+    page = s.open("fresh", width, route=restarted)
+    check(name + " keeps a real date", re.search(r"\d", fact_value(page, "Last sync")) is not None, fact_value(page, "Last sync"))
+    check(name + " never says never", "never" not in text(page, u.SUMMARY).lower(), text(page, u.SUMMARY))
+    check(name + " says what is not known", fact_value(page, "Servers") == "0 of 2 online, 2 not checked yet", fact_value(page, "Servers"))
+    check(name + " reports no problem", alarms(page) == [], alarms(page))
+    page.context.close()
+
+    def still_offline(context):
+        fake(context, "Status", lambda status: [server.update(Connection="NotChecked") for server in status["Servers"]])
+        fake(context, "Sync", lambda sync: [report.update(State="Stale", Failure="Unreachable", IsOffline=True) for report in sync["Servers"] if report["ServerName"] == "stock"])
+
+    page = s.open("fresh", width, route=still_offline)
+    check(name + " remembers an offline remote", "stock is offline" in " ".join(alarms(page)), alarms(page))
+    check(name + " does not count it as unchecked", fact_value(page, "Servers") == "0 of 2 online, 1 not checked yet", fact_value(page, "Servers"))
+    page.context.close()
+
+
+def overview_running(s, width):
+    """A sync seen by polling shows in the summary, and its end too."""
+    name = width + " overview running"
+    state = {"running": False}
+
+    def running(sync):
+        sync["IsRunning"] = sync["IsRunning"] or state["running"]
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Sync", running))
+    state["running"] = True
+    check(name + " shows the sync", until(page, lambda: fact_value(page, "Last sync") == "Running now", 8), fact_value(page, "Last sync"))
+    state["running"] = False
+    check(name + " shows its end", until(page, lambda: fact_value(page, "Last sync") != "Running now", 8), fact_value(page, "Last sync"))
+    healthy(page, name)
+    page.context.close()
+
+
+def overview_link(s, width):
+    """Whatever is wrong with the link of the folder is said in short, and leads to the paths."""
+    name = width + " overview unlinked"
+
+    def unlinked(status):
+        status["FederatedFolder"].update(Link="NotLinked", Path="/federata", SeriesGroupingOff=[])
+        status["FederatedFolder"]["Movies"].update(Link="NotLinked", Libraries=[])
+        status["FederatedFolder"]["Series"].update(Link="Linked", Libraries=["Serie"])
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", unlinked))
+    check(name + " says not linked", fact_value(page, "Federated folder") == "Not linked", fact_value(page, "Federated folder"))
+    note = u.fact(page, "Federated folder").locator(u.ALARM)
+    check(name + " says which path", "film path is not linked" in note.inner_text() and "series path" not in note.inner_text(), note.inner_text())
+    check(name + " says it is done by hand", "by hand in Dashboard > Libraries" in note.inner_text(), note.inner_text())
+    check(name + " counts it", text(page, u.STATUS).startswith("Active. 1 thing needs attention"), text(page, u.STATUS))
+    check(name + " shows the step", step_state(page, "Link the two paths") == "To do", step_state(page, "Link the two paths"))
+    check(name + " has the rest done", step_state(page, "Run the first sync") == "Done", step_state(page, "Run the first sync"))
+    opens(page, name, note.locator(u.TAB_LINK), "settings")
+    healthy(page, name)
+    u.shot(page, f"overview-unlinked-{width}")
+    page.context.close()
+
+    name = width + " overview wrong library"
+
+    def wrong(status):
+        status["FederatedFolder"].update(Link="NotLinked", Path="/federata", SeriesGroupingOff=["Serie"])
+        status["FederatedFolder"]["Movies"].update(Link="WrongLibraryType", Libraries=["Mixed"])
+        status["FederatedFolder"]["Series"].update(Link="DifferentCase", Libraries=["Serie"])
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", wrong))
+    note = u.fact(page, "Federated folder").locator(u.ALARM)
+    shown = " ".join(note.all_inner_texts())
+    check(name + " names the library", "linked to Mixed, which is not a film library" in shown, shown)
+    check(name + " names the capitals", "different capitals" in shown, shown)
+    check(name + " reports the grouping", "stays split in Serie" in shown, shown)
+    page.context.close()
+
+    name = width + " overview link unknown"
+
+    def unknown(status):
+        status["FederatedFolder"].update(Link="NotChecked", Path="/federata", SeriesGroupingOff=[])
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", unknown))
+    check(name + " does not claim", fact_value(page, "Federated folder") == "Not checked", fact_value(page, "Federated folder"))
+    check(name + " says why", "could not be read" in " ".join(alarms(page)), alarms(page))
+    check(name + " opens no setup by itself", not page.locator(u.SETUP).is_visible())
+    page.context.close()
+
+
+def overview_failed(s, width):
+    """A section that fails is reported in the summary, with a link to the tab that holds the whole text."""
+    parts = [
+        ("sync", "**/JellyMesh/Admin/Sync", "Last sync", "catalog"),
+        ("merges", "**/JellyMesh/Admin/Merges", "Duplicates", "catalog"),
+        ("peers", "**/JellyMesh/Admin/Peers", "Streams", "sharing"),
+    ]
+    for part, pattern, label, tab in parts:
+        name = f"{width} overview {part} failing"
+
+        def broken(context, pattern=pattern):
+            context.route(pattern, lambda route: route.fulfill(status=500, json={}))
+
+        page = s.open("fresh", width, route=broken, wait=False)
+        page.wait_for_selector(u.PAGE, state="attached", timeout=30000)
+        note = u.fact(page, label).locator(u.ALARM)
+        check(name + " is reported", until(page, lambda: note.count() == 1, 20), note.count())
+        u.wait_idle(page)
+        check(name + " is not guessed", fact_value(page, label) == "Unknown", fact_value(page, label))
+        check(name + " is short", len(note.inner_text()) < len(text(page, u.FAILURE[part])), note.inner_text())
+        check(name + " is counted", "attention" in text(page, u.STATUS), text(page, u.STATUS))
+        check(name + " is announced outside the panels", text(page, u.ANNOUNCE) == text(page, u.STATUS), text(page, u.ANNOUNCE))
+        check(name + " keeps the live region out of every panel", page.locator(u.PANEL + " " + u.ANNOUNCE).count() == 0)
+        opens(page, name, note.locator(u.TAB_LINK), tab)
+        healthy(page, name)
+        u.shot(page, f"overview-{part}-failed-{width}")
+        u.close(page)
+
+    name = width + " overview settings failing"
+    page = s.open("fresh", width, route=lambda context: context.route(u.PLUGIN_CONFIG, lambda route: route.fulfill(status=500, json={})), wait=False)
+    page.wait_for_selector(u.PAGE, state="attached", timeout=30000)
+    check(name + " is reported", until(page, lambda: "settings" in " ".join(alarms(page)), 20), alarms(page))
+    u.close(page)
+
+    name = width + " overview status failing"
+    page = s.open("fresh", width, route=lambda context: context.route("**/JellyMesh/Admin/Status", lambda route: route.fulfill(status=500, json={})), wait=False)
+    page.wait_for_selector(u.PAGE, state="attached", timeout=30000)
+    check(name + " says it is unknown", until(page, lambda: text(page, u.STATUS) == "Status unknown.", 20), text(page, u.STATUS))
+    u.wait_idle(page)
+    check(name + " does not guess the servers", fact_value(page, "Servers") == "Unknown", fact_value(page, "Servers"))
+    check(name + " keeps what it can read", fact_value(page, "Streams in use") != "Unknown", fact_value(page, "Streams in use"))
+    check(name + " shows no setup", not page.locator(u.SETUP).is_visible())
+    u.close(page)
+
+
+def overview_damaged(s, width):
+    """A damaged index, held libraries and a damaged merges file reach the summary from their tab, in short."""
+    name = width + " overview damaged"
+
+    def damaged(context):
+        warned(context)
+        fake(context, "Status", linked)
+
+    page = s.open("fresh", width, route=damaged)
+    catalog = text(page, u.ALERTS_WITH_DATA[1])
+    note = u.fact(page, "Last sync").locator(u.ALARM)
+    check(name + " reports the index", "federation index was damaged" in note.inner_text(), note.inner_text())
+    check(name + " does not repeat the warning", note.inner_text() != catalog, note.inner_text())
+    file_note = u.fact(page, "Duplicates").locator(u.ALARM)
+    check(name + " reports the merges file", "file of merges" in file_note.inner_text(), file_note.inner_text())
+    check(name + " counts both, and not the warning at the top", text(page, u.STATUS) == "Active. 2 things need attention.", text(page, u.STATUS))
+    opens(page, name, note.locator(u.TAB_LINK), "catalog")
+    opens(page, name, file_note.locator(u.TAB_LINK), "catalog")
+    healthy(page, name)
+    u.shot(page, f"overview-damaged-{width}")
+    u.close(page)
+
+    name = width + " overview held"
+
+    def held(context):
+        fake(context, "Status", linked)
+        fake(context, "Sync", lambda sync: sync.update(IndexSaveFailed=True, HeldLibraries=[
+            {"ServerId": sync["Servers"][0]["ServerId"], "ServerName": HOSTILE, "LibraryId": "l", "Stubs": 12}]))
+
+    page = s.open("fresh", width, route=held)
+    shown = " ".join(alarms(page))
+    check(name + " reports the library", "A library of " + HOSTILE + " came back empty. Its 12 titles are kept." in shown, shown)
+    check(name + " reports the disk", "Check the disk" in shown, shown)
+    check(name + " keeps remote text as text", page.locator(u.SUMMARY + " b").count() == 0)
+    u.close(page)
+
+    name = width + " overview stale"
+
+    def stale(context):
+        fake(context, "Status", linked)
+        fake(context, "Sync", lambda sync: [report.update(State="Stale", Failure="ServerError") for report in sync["Servers"] if report["ServerName"] == "stock"])
+
+    page = s.open("fresh", width, route=stale)
+    shown = " ".join(alarms(page))
+    check(name + " reports the failed sync", "stock: the last sync failed (server error)" in shown, shown)
+    u.close(page)
+
+
+def overview_half(s, width):
+    """Setup half done: done and to do come from the state, the steps say what to do, and the list goes by itself."""
+    name = width + " overview half done"
+    state = {"half": True}
+
+    def half(status):
+        (half_done if state["half"] else linked)(status)
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", half))
+    check(name + " has the six steps in order", page.locator(u.STEP_NAME).all_inner_texts() == u.STEPS, page.locator(u.STEP_NAME).all_inner_texts())
+    for label, shown in [("Set the secret key", "Done"), ("Add a remote server", "Done"), ("Choose libraries to import", "To do"),
+                         ("Choose the federated folder", "Done"), ("Run the first sync", "Done"), ("Link the two paths", "To do")]:
+        check(f"{name} {label} is {shown}", step_state(page, label) == shown, step_state(page, label))
+    libraries = u.step(page, "Choose libraries to import")
+    check(name + " names the server waiting", "Still to choose: " + HOSTILE in libraries.inner_text(), libraries.inner_text())
+    check(name + " keeps remote text as text", page.locator(u.SETUP + " b").count() == 0)
+    check(name + " says what stays by hand", "by hand in Dashboard > Libraries" in u.step(page, "Link the two paths").inner_text())
+    check(name + " marks state in the text and the icon", u.step(page, "Set the secret key").locator(".check_circle").count() == 1)
+    check(name + " the key has no tab to open", u.step(page, "Set the secret key").locator(u.TAB_LINK).count() == 0)
+    for label, tab in [("Add a remote server", "servers"), ("Choose libraries to import", "servers"), ("Choose the federated folder", "settings"),
+                       ("Run the first sync", "catalog"), ("Link the two paths", "settings")]:
+        opens(page, f"{name} {label}", u.step(page, label).locator(u.TAB_LINK), tab)
+    healthy(page, name)
+    u.shot(page, f"overview-half-{width}")
+
+    link = u.step(page, "Link the two paths").locator(u.TAB_LINK)
+    u.reach(page, link)
+    state["half"] = False
+    check(name + " the list goes once setup is complete", until(page, lambda: not page.locator(u.SETUP).is_visible(), 20))
+    check(name + " the focus stays on the page", page.evaluate("document.activeElement.getAttribute('role')") == "tabpanel",
+          page.evaluate("document.activeElement.tagName"))
+    healthy(page, name)
+    u.close(page)
+
+
+def overview_first(s, width):
+    """A server with nothing configured: the steps show what is left, and nothing blocks the page."""
+    name = width + " overview first run"
+    page = s.open("first", width)
+    shown = text(page, u.STATUS)
+    check(name + " says setup is not finished", shown == "Active. Setup is not finished: 5 steps to do.", shown)
+    check(name + " has the key done", step_state(page, "Set the secret key") == "Done", step_state(page, "Set the secret key"))
+    for label in u.STEPS[1:]:
+        check(f"{name} {label} is to do", step_state(page, label) == "To do", step_state(page, label))
+    check(name + " reports no problem yet", alarms(page) == [], alarms(page))
+    check(name + " has no servers", fact_value(page, "Servers") == "None yet", fact_value(page, "Servers"))
+    check(name + " says never", fact_value(page, "Last sync") == "Never", fact_value(page, "Last sync"))
+    check(name + " has no folder", fact_value(page, "Federated folder") == "Not chosen", fact_value(page, "Federated folder"))
+    check(name + " has no connected server", fact_value(page, "Streams in use") == "No connected servers", fact_value(page, "Streams in use"))
+    check(name + " has nothing to dismiss", page.locator(u.SETUP + " button").count() == 0)
+    opens(page, name, u.step(page, "Add a remote server").locator(u.TAB_LINK), "servers")
+    healthy(page, name)
+    u.shot(page, f"overview-first-{width}")
+    page.context.close()
+
+
+def overview_first_nokey(s, width):
+    """A server with nothing configured and no key: the key is a step, done outside the plugin."""
+    name = width + " overview first run without a key"
+    page = s.open("first", width)
+    check(name + " is suspended", text(page, u.STATUS).startswith("Suspended."), text(page, u.STATUS))
+    key = u.step(page, "Set the secret key")
+    check(name + " has the key to do", step_state(page, "Set the secret key") == "To do", step_state(page, "Set the secret key"))
+    check(name + " says it is set outside the plugin", "JELLYMESH_SECRET_KEY" in key.inner_text() and "outside this plugin" in key.inner_text(), key.inner_text())
+    check(name + " says the sync waits", "waits for the secret key" in u.step(page, "Run the first sync").inner_text())
+    healthy(page, name)
+    u.shot(page, f"overview-first-nokey-{width}")
+    page.context.close()
+
+
+def overview_nokey(s, width):
+    """Servers saved and the key gone: the summary does not call them offline, and does not repeat the warning."""
+    name = width + " overview no key"
+    page = s.open("fresh", width)
+    check(name + " is suspended", text(page, u.STATUS).startswith("Suspended."), text(page, u.STATUS))
+    check(name + " does not count them as offline", fact_value(page, "Servers") == "2 servers, suspended", fact_value(page, "Servers"))
+    check(name + " reports no server problem", u.fact(page, "Servers").locator(u.ALARM).count() == 0, alarms(page))
+    check(name + " keeps a real date", re.search(r"\d", fact_value(page, "Last sync")) is not None, fact_value(page, "Last sync"))
+    check(name + " shows the key step", step_state(page, "Set the secret key") == "To do", step_state(page, "Set the secret key"))
+    check(name + " a sync already done waits for nothing", "waits" not in u.step(page, "Run the first sync").inner_text(), u.step(page, "Run the first sync").inner_text())
+    check(name + " does not repeat the warning", text(page, u.WARNING) not in text(page, u.SETUP) + text(page, u.SUMMARY))
+    healthy(page, name)
+    u.shot(page, f"overview-nokey-{width}")
+    page.context.close()
+
+
+def overview_offline(s, width):
+    """The stock remote really stopped."""
+    name = width + " overview offline"
+    page = s.open("fresh", width)
+    check(name + " counts the servers", fact_value(page, "Servers") == "1 of 2 online", fact_value(page, "Servers"))
+    note = u.fact(page, "Servers").locator(u.ALARM)
+    check(name + " names the remote", note.count() == 1 and "stock is offline" in note.inner_text(), note.all_inner_texts())
+    check(name + " says what it means", "do not play" in note.inner_text(), note.inner_text())
+    check(name + " counts one thing", text(page, u.STATUS).startswith("Active. 1 thing needs attention"), text(page, u.STATUS))
+    check(name + " announces it", text(page, u.ANNOUNCE) == text(page, u.STATUS), text(page, u.ANNOUNCE))
+    opens(page, name, note.locator(u.TAB_LINK), "servers")
+    healthy(page, name)
+    u.shot(page, f"overview-offline-{width}")
+    page.context.close()
+
+
+def overview_focus(s, width):
+    """Polling keeps the summary current and leaves the keyboard on the link it was on."""
+    name = width + " overview polling"
+    state = {"online": True, "active": 0}
+
+    def status(data):
+        linked(data)
+        for server in data["Servers"]:
+            if server["Name"] == "stock":
+                server.update(Connection="Offline")
+            elif not state["online"]:
+                server.update(Connection="AuthenticationFailed")
+
+    def route(context):
+        fake(context, "Status", status)
+        fake(context, "Peers", lambda peers: peers[0].update(ActiveStreams=state["active"]))
+
+    page = s.open("fresh", width, route=route)
+    link = u.fact(page, "Servers").locator(u.TAB_LINK).first
+    u.reach(page, link)
+    u.mark(link)
+    scroll = page.evaluate("scrollY")
+    reads = []
+    page.on("request", lambda request: reads.append(request.url) if "/JellyMesh/Admin/" in request.url else None)
+    state["active"] = 1
+    state["online"] = False
+    check(name + " follows the streams", until(page, lambda: fact_value(page, "Streams in use").startswith("1 of 4"), 18), fact_value(page, "Streams in use"))
+    check(name + " follows the servers", until(page, lambda: "login refused" in " ".join(alarms(page)), 18), alarms(page))
+    check(name + " a new line leaves the link alone", u.is_marked(link), link.count())
+    check(name + " keeps the focus", u.has_focus(link), page.evaluate("document.activeElement.tagName"))
+    check(name + " does not move the page", page.evaluate("scrollY") == scroll, page.evaluate("scrollY"))
+    check(name + " counts the new line", text(page, u.STATUS).startswith("Active. 2 things need attention"), text(page, u.STATUS))
+    check(name + " reads nothing new", {url.rsplit("/Admin/", 1)[1] for url in reads} <= {"Sync", "Status", "Peers", "Peers/Options"}, set(reads))
+    focus_shows(page, name + " a link", link)
+    u.shot(page, f"overview-focus-{width}", full_page=False)
+    healthy(page, name)
+    u.close(page)
+
+
+def overview_themes(s, width):
+    """The summary and the steps stay readable in the six themes, with something to report."""
+    for theme, _ in THEMES:
+        name = f"{width} {theme} overview"
+
+        def route(context):
+            warned(context)
+            fake(context, "Status", lambda status: (half_done(status), status.update(Warning=None)))
+
+        page = s.open("fresh", width, theme=theme, route=route)
+        for label, selector in [("the summary", u.SUMMARY_TEXT), ("the steps", u.STEP_TEXT_ALL)]:
+            seen = page.evaluate(CONTRAST, {"page": u.PAGE, "readable": selector})
+            check(f"{name} {label} is readable", seen["worst"]["ratio"] >= 4.5, seen["worst"])
+        for label, selector in [("warning icon", u.ALARM + " " + u.NOTE_ICON), ("done icon", u.STEP_DONE_ICON)]:
+            seen = page.evaluate(ICONS, {"page": u.PAGE, "icons": selector})
+            check(f"{name} the {label} stands out", seen["ratio"] >= 3, seen)
+        focus_shows(page, name + " a link", u.fact(page, "Last sync").locator(u.TAB_LINK))
+        u.shot(page, f"overview-{theme}-{width}")
+        u.close(page)
+    u.set_theme("fresh", "dark")
+
+
+def overview(s, width):
+    """The summary and the steps of the Overview, in the states faked over a working server."""
+    overview_well(s, width)
+    overview_restart(s, width)
+    overview_running(s, width)
+    overview_link(s, width)
+    overview_failed(s, width)
+    overview_damaged(s, width)
+    overview_half(s, width)
+    overview_first(s, width)
+    overview_focus(s, width)
+
+
 SCENARIOS = {
     "tabs": (tabs, WIDTHS),
+    "overview": (overview, WIDTHS),
+    "overview-themes": (overview_themes, WIDTHS),
+    "overview-first-nokey": (overview_first_nokey, WIDTHS),
+    "overview-nokey": (overview_nokey, WIDTHS),
+    "overview-offline": (overview_offline, WIDTHS),
     "first": (first, WIDTHS),
     "first-nokey": (first_nokey, WIDTHS),
     "normal": (normal, WIDTHS),

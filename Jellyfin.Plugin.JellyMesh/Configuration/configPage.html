@@ -45,6 +45,114 @@
                 min-width: 0;
             }
 
+            .jmHidden {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                overflow: hidden;
+                clip-path: inset(50%);
+                white-space: nowrap;
+            }
+
+            .jmHeadline {
+                margin: 0 0 1em;
+                font-size: 1.15em;
+                font-weight: 500;
+            }
+
+            .jmFacts,
+            .jmSteps {
+                margin: 0 0 1.5em;
+                padding: 0;
+                list-style: none;
+                border-bottom: 1px solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+            }
+
+            .jmFact {
+                display: grid;
+                grid-template-columns: minmax(0, 10em) minmax(0, 1fr);
+                column-gap: 1em;
+                padding: 0.6em 0;
+                border-top: 1px solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+            }
+
+            .jmFact dt,
+            .jmStepText {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmFact dd {
+                min-width: 0;
+                margin: 0;
+                font-variant-numeric: tabular-nums;
+                overflow-wrap: anywhere;
+            }
+
+            .jmFact .jmNotes {
+                grid-column: 1 / -1;
+            }
+
+            .jmNote {
+                display: grid;
+                grid-template-columns: 1.5em minmax(0, 1fr);
+                column-gap: 0.25em;
+                margin-top: 0.4em;
+            }
+
+            .jmNoteIcon {
+                color: var(--jf-palette-warning-main, #ed6c02);
+                color: color-mix(in srgb, var(--jf-palette-warning-main, #ed6c02) 70%, var(--jf-palette-text-primary, #fff));
+                font-size: 1.2em;
+                line-height: 1.25;
+            }
+
+            .jmTabLink {
+                display: inline-block;
+                min-height: 24px;
+                color: inherit;
+                text-decoration: underline;
+                text-underline-offset: 0.15em;
+            }
+
+            .jmTabLink:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmStep {
+                display: grid;
+                grid-template-columns: 1.75em minmax(0, 1fr) auto;
+                column-gap: 0.25em;
+                padding: 0.6em 0;
+                border-top: 1px solid var(--jf-palette-divider, rgba(128, 128, 128, 0.4));
+            }
+
+            .jmStepIcon {
+                grid-row: 1 / span 2;
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+                font-size: 1.25em;
+                line-height: 1.2;
+            }
+
+            .jmStepName {
+                min-width: 0;
+                font-weight: 500;
+                overflow-wrap: anywhere;
+            }
+
+            .jmStepText {
+                grid-column: 2 / -1;
+                overflow-wrap: anywhere;
+            }
+
+            .jmStepDone .jmStepName {
+                font-weight: normal;
+            }
+
+            .jmStepDone .jmStepIcon {
+                color: var(--jf-palette-success-main, #2e7d32);
+            }
+
             .jmOutcome {
                 position: sticky;
                 bottom: 1em;
@@ -336,10 +444,21 @@
 
                 <div id="jmWarning" role="alert" hidden class="jmAlert"></div>
                 <div id="jmStatusFailure" role="alert" hidden class="jmAlert"></div>
+                <div id="jmAnnounce" role="status" class="jmHidden"></div>
 
                 <section data-jm-tab="overview" role="tabpanel" aria-label="Overview">
-                    <h3 class="sectionTitle">Status</h3>
-                    <p id="jmStatus"></p>
+                    <div class="jmColumns">
+                        <div>
+                            <h3 class="sectionTitle">Status</h3>
+                            <p id="jmStatus" class="jmHeadline"></p>
+                            <dl id="jmSummary" class="jmFacts"></dl>
+                        </div>
+                        <div id="jmSetup" hidden>
+                            <h3 class="sectionTitle">Setup</h3>
+                            <p>This list follows the real state of the server and goes away when setup is complete.</p>
+                            <ol id="jmSetupSteps" class="jmSteps"></ol>
+                        </div>
+                    </div>
                 </section>
 
                 <section data-jm-tab="servers" role="tabpanel" aria-label="Servers" hidden>
@@ -540,6 +659,8 @@
                 var tabNames = panels.map(function (panel) {
                     return panel.dataset.jmTab;
                 });
+                var stepStates = { done: 'Done', todo: 'To do', unknown: 'Not known' };
+                var stepIcons = { done: 'check_circle', todo: 'radio_button_unchecked', unknown: 'help_outline' };
                 var shownTab = tabNames[0];
 
                 function el(selector) {
@@ -786,7 +907,17 @@
 
                 // Makes a part of the page that loads on its own and reports its failure through failed.
                 function section(request, show, failed) {
-                    return { request: request, show: show, failed: failed, ticket: 0, pending: 0, stale: false };
+                    return { request: request, show: show, failed: failed, ticket: 0, pending: 0, stale: false, data: null, failure: '' };
+                }
+
+                // Shows the answer of a section and brings the Overview up to date.
+                function answered(part, data) {
+                    part.data = data;
+                    part.failure = '';
+                    part.show(data);
+                    part.stale = false;
+                    part.failed('');
+                    renderOverview();
                 }
 
                 // Loads a section and shows the answer unless a newer read took over. Resolves to the failure, if any.
@@ -795,14 +926,14 @@
                     part.pending++;
                     return part.request().then(function (data) {
                         if (ticket === part.ticket) {
-                            part.show(data);
-                            part.stale = false;
-                            part.failed('');
+                            answered(part, data);
                         }
                     }).catch(function (error) {
                         if (ticket === part.ticket) {
                             part.stale = true;
+                            part.failure = error.message;
                             part.failed(error.message);
+                            renderOverview();
                         }
 
                         return error;
@@ -815,9 +946,7 @@
                 // Shows the answer an action already has, and drops any older read still on its way.
                 function adopt(part, data) {
                     part.ticket++;
-                    part.show(data);
-                    part.stale = false;
-                    part.failed('');
+                    answered(part, data);
                 }
 
                 function showFailure(selector, what, next, reason) {
@@ -1102,7 +1231,6 @@
                     var warning = el('#jmWarning');
                     setText(warning, status.Warning || '');
                     warning.hidden = !status.Warning;
-                    setText(el('#jmStatus'), (status.Suspended ? 'Suspended' : 'Active') + '. Servers configured: ' + status.Servers.length + '.');
                     el('#jmAddServer').disabled = suspended;
                     updateSyncButton();
                     var servers = status.Servers.map(function (server) {
@@ -1118,9 +1246,6 @@
 
                 function statusFailed(reason) {
                     showFailure('#jmStatusFailure', 'the status', keepsTrying, reason);
-                    if (reason) {
-                        setText(el('#jmStatus'), 'Status unknown.');
-                    }
                 }
 
                 function formatDate(value) {
@@ -1665,6 +1790,486 @@
                     el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
                     el('#jmSessionRetention').value = config.SessionRetentionHours;
                     el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                }
+
+                // Makes a link to a tab, which also works as a plain link in a new browser tab.
+                function tabLink(name) {
+                    var label = panels[tabNames.indexOf(name)].getAttribute('aria-label');
+                    var link = create('a', 'Open ' + label);
+                    link.className = 'jmTabLink';
+                    link.href = '#' + pageUrl + '#' + name;
+                    link.addEventListener('click', function (e) {
+                        if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                            e.preventDefault();
+                            showTab(name);
+                        }
+                    });
+                    return link;
+                }
+
+                // Makes a line under a fact that says what is wrong, or what waits, and links to the tab that deals with it.
+                function renderNote(note) {
+                    var row = create('div');
+                    row.className = 'jmNote';
+                    var icon = create('span');
+                    icon.className = note.calm ? 'jmNoteIcon' : 'material-icons warning jmNoteIcon';
+                    icon.setAttribute('aria-hidden', 'true');
+                    row.appendChild(icon);
+                    var body = create('div');
+                    var text = create('span');
+                    var link = tabLink(note.tab);
+                    body.appendChild(text);
+                    body.appendChild(document.createTextNode(' '));
+                    body.appendChild(link);
+                    row.appendChild(body);
+                    row.jmUpdate = function (current) {
+                        setText(text, current.text);
+                        link.setAttribute('aria-label', link.textContent + ': ' + current.text);
+                    };
+                    row.jmUpdate(note);
+                    return row;
+                }
+
+                function renderFact(fact) {
+                    var row = create('div');
+                    row.className = 'jmFact';
+                    row.appendChild(create('dt', fact.label));
+                    var value = create('dd');
+                    row.appendChild(value);
+                    var notes = create('dd');
+                    notes.className = 'jmNotes';
+                    row.appendChild(notes);
+                    row.jmUpdate = function (current) {
+                        setText(value, current.value);
+                        updateRows(notes, current.notes.map(function (note) {
+                            return { key: note.key, build: renderNote, args: [note] };
+                        }));
+                    };
+                    row.jmUpdate(fact);
+                    return row;
+                }
+
+                function renderStep(step) {
+                    var row = create('li');
+                    row.className = 'jmStep';
+                    var icon = create('span');
+                    icon.setAttribute('aria-hidden', 'true');
+                    row.appendChild(icon);
+                    var name = create('span', step.name);
+                    name.className = 'jmStepName';
+                    row.appendChild(name);
+                    var state = create('span');
+                    state.className = 'jmStepState';
+                    row.appendChild(state);
+                    var body = create('div');
+                    body.className = 'jmStepText';
+                    var text = create('span');
+                    body.appendChild(text);
+                    if (step.tab) {
+                        body.appendChild(document.createTextNode(' '));
+                        var link = tabLink(step.tab);
+                        link.setAttribute('aria-label', link.textContent + ': ' + step.name);
+                        body.appendChild(link);
+                    }
+
+                    row.appendChild(body);
+                    row.jmUpdate = function (current) {
+                        icon.className = 'material-icons ' + stepIcons[current.state] + ' jmStepIcon';
+                        setText(state, stepStates[current.state]);
+                        setText(text, current.text);
+                        row.classList.toggle('jmStepDone', current.state === 'done');
+                    };
+                    row.jmUpdate(step);
+                    return row;
+                }
+
+                // Returns what a section says now: nothing while it has not answered or its last read failed.
+                function current(part) {
+                    return part.failure ? null : part.data;
+                }
+
+                // Gives the value of a fact, or says that it cannot be told yet.
+                function factValue(part, describe) {
+                    if (part.failure) {
+                        return 'Unknown';
+                    }
+
+                    return part.data ? describe(part.data) : 'Reading...';
+                }
+
+                function count(number, one, many) {
+                    return number + ' ' + (number === 1 ? one : many);
+                }
+
+                function reportOf(sync, server) {
+                    return sync && sync.Servers.filter(function (report) {
+                        return report.ServerId === server.Id;
+                    })[0];
+                }
+
+                // Tells whether a server is offline, from its connection or, when that is not known, from the last sync.
+                function isOffline(server, sync) {
+                    var report = reportOf(sync, server);
+                    return server.Connection === 'Offline' || (server.Connection === 'NotChecked' && !!report && report.IsOffline);
+                }
+
+                // Returns what is wrong with the connection of a server, or an empty text.
+                function serverProblem(server, sync) {
+                    if (isOffline(server, sync)) {
+                        return server.Name + ' is offline. Titles found only there do not play until it answers.';
+                    }
+
+                    if (['Online', 'NotChecked', 'Suspended'].indexOf(server.Connection) >= 0) {
+                        return '';
+                    }
+
+                    return server.Name + ': ' + (connectionLabels[server.Connection] || server.Connection) + '.';
+                }
+
+                function serversFact(status, sync) {
+                    var notes = !status ? [] : status.Servers.map(function (server) {
+                        return { key: server.Id, text: serverProblem(server, sync), tab: 'servers' };
+                    }).filter(function (note) {
+                        return note.text;
+                    });
+                    return {
+                        key: 'servers',
+                        label: 'Servers',
+                        notes: notes,
+                        value: factValue(statusSection, function (data) {
+                            var total = data.Servers.length;
+                            if (total === 0) {
+                                return 'None yet';
+                            }
+
+                            if (data.Suspended) {
+                                return count(total, 'server', 'servers') + ', suspended';
+                            }
+
+                            var online = data.Servers.filter(function (server) {
+                                return server.Connection === 'Online';
+                            }).length;
+                            var unchecked = data.Servers.filter(function (server) {
+                                return server.Connection === 'NotChecked' && !isOffline(server, sync);
+                            }).length;
+                            return online + ' of ' + total + ' online' + (unchecked > 0 ? ', ' + unchecked + ' not checked yet' : '');
+                        })
+                    };
+                }
+
+                // Returns the most recent date a sync left, in the run in memory or in the catalogs.
+                function lastSyncDate(sync) {
+                    return sync.Servers.reduce(function (dates, server) {
+                        return dates.concat([server.LastAttemptUtc, server.LastSuccessUtc]);
+                    }, [sync.LastFinishedUtc]).filter(Boolean).sort(function (first, second) {
+                        return Date.parse(second) - Date.parse(first);
+                    })[0];
+                }
+
+                function indexProblem(sync) {
+                    if (sync.Health === 'Corrupt') {
+                        return 'The federation index was damaged and is empty until a sync fills it.';
+                    }
+
+                    if (sync.Health === 'RestoredFromBackup') {
+                        return 'The federation index was restored from its previous copy. Run a sync.';
+                    }
+
+                    return sync.IndexSaveFailed ? 'The last sync could not save the federation index. Check the disk.' : '';
+                }
+
+                // Lists the servers whose last sync failed, when the row of the server does not already say why.
+                function staleNotes(status, sync) {
+                    if (!status || status.Suspended) {
+                        return [];
+                    }
+
+                    return status.Servers.filter(function (server) {
+                        var report = reportOf(sync, server);
+                        return report && report.State === 'Stale' && !serverProblem(server, sync);
+                    }).map(function (server) {
+                        var failure = reportOf(sync, server).Failure;
+                        return {
+                            key: 'stale' + server.Id,
+                            text: server.Name + ': the last sync failed' + (failure ? ' (' + (connectionLabels[failure] || failure) + ')' : '') + '. Its titles are kept as they were.',
+                            tab: 'catalog'
+                        };
+                    });
+                }
+
+                function syncNotes(status, sync) {
+                    if (syncSection.failure) {
+                        return [{ key: 'failed', text: 'The state of the sync could not be read. The page keeps trying.', tab: 'catalog' }];
+                    }
+
+                    if (!sync) {
+                        return [];
+                    }
+
+                    var notes = sync.HeldLibraries.map(function (held) {
+                        return {
+                            key: 'held' + held.ServerId + held.LibraryId,
+                            text: 'A library of ' + held.ServerName + ' came back empty. Its ' + held.Stubs + ' titles are kept.',
+                            tab: 'catalog'
+                        };
+                    });
+                    if (indexProblem(sync)) {
+                        notes.unshift({ key: 'index', text: indexProblem(sync), tab: 'catalog' });
+                    }
+
+                    return notes.concat(staleNotes(status, sync));
+                }
+
+                function syncFact(status, sync) {
+                    return {
+                        key: 'sync',
+                        label: 'Last sync',
+                        notes: syncNotes(status, sync),
+                        value: factValue(syncSection, function (data) {
+                            if (data.IsRunning) {
+                                return 'Running now';
+                            }
+
+                            var date = lastSyncDate(data);
+                            return date ? formatDate(date) : 'Never';
+                        })
+                    };
+                }
+
+                // Says what is wrong with a path to link, or gives an empty text.
+                function pathProblem(path, kind) {
+                    var libraries = path.Libraries.join(', ');
+                    switch (path.Link) {
+                        case 'NotLinked':
+                            return 'The ' + kind + ' path is not linked to a library.';
+                        case 'DifferentCase':
+                            return libraries + ' has the ' + kind + ' path with different capitals.';
+                        case 'WrongLibraryType':
+                            return 'The ' + kind + ' path is linked to ' + libraries + ', which is not a ' + kind + ' library.';
+                        default:
+                            return '';
+                    }
+                }
+
+                function folderNotes(status) {
+                    var notes = [];
+                    var folder = status && status.FederatedFolder;
+                    if (folder && folder.Path && folder.Link === 'NotChecked') {
+                        notes.push({ key: 'unchecked', text: 'The libraries could not be read to check the paths.', tab: 'settings' });
+                    } else if (folder && folder.Path && folder.Link === 'NotLinked') {
+                        var problems = [pathProblem(folder.Movies, 'film'), pathProblem(folder.Series, 'series')].filter(Boolean);
+                        notes.push({ key: 'link', text: problems.join(' ') + ' Fix this by hand in Dashboard > Libraries.', tab: 'settings' });
+                    }
+
+                    if (folder && folder.SeriesGroupingOff.length > 0) {
+                        notes.push({ key: 'grouping', text: 'A series in two folders stays split in ' + folder.SeriesGroupingOff.join(', ') + '.', tab: 'settings' });
+                    }
+
+                    if (settingsSection.failure) {
+                        notes.push({ key: 'failed', text: 'The settings could not be read. Reload the page before saving.', tab: 'settings' });
+                    }
+
+                    return notes;
+                }
+
+                function folderFact(status) {
+                    return {
+                        key: 'folder',
+                        label: 'Federated folder',
+                        notes: folderNotes(status),
+                        value: factValue(statusSection, function (data) {
+                            var folder = data.FederatedFolder;
+                            if (!folder.Path) {
+                                return 'Not chosen';
+                            }
+
+                            return { Linked: 'Linked', NotLinked: 'Not linked' }[folder.Link] || 'Not checked';
+                        })
+                    };
+                }
+
+                function duplicatesFact() {
+                    var merges = current(mergesSection);
+                    var notes = [];
+                    if (mergesSection.failure) {
+                        notes.push({ key: 'failed', text: 'The duplicate and merged films could not be read. The page keeps trying.', tab: 'catalog' });
+                    }
+
+                    if (merges && merges.IsStoreDamaged) {
+                        notes.push({ key: 'damaged', text: 'The file of merges could not be read, so earlier merges are not applied.', tab: 'catalog' });
+                    }
+
+                    if (merges && merges.Cases.length > 0) {
+                        notes.push({ key: 'review', text: 'Merge the ones that are one film.', tab: 'catalog', calm: true });
+                    }
+
+                    return {
+                        key: 'duplicates',
+                        label: 'Duplicates to review',
+                        notes: notes,
+                        value: factValue(mergesSection, function (data) {
+                            return data.Cases.length === 0 ? 'None' : String(data.Cases.length);
+                        })
+                    };
+                }
+
+                function streamsFact() {
+                    return {
+                        key: 'streams',
+                        label: 'Streams in use',
+                        notes: peersSection.failure ? [{ key: 'failed', text: 'The connected servers could not be read. The page keeps trying.', tab: 'sharing' }] : [],
+                        value: factValue(peersSection, function (data) {
+                            var peers = data[0];
+                            if (peers.length === 0) {
+                                return 'No connected servers';
+                            }
+
+                            var total = function (name) {
+                                return peers.reduce(function (sum, peer) {
+                                    return sum + peer[name];
+                                }, 0);
+                            };
+                            return total('ActiveStreams') + ' of ' + total('MaxStreams') + ' by connected servers';
+                        })
+                    };
+                }
+
+                function stateOf(done) {
+                    return done ? 'done' : 'todo';
+                }
+
+                // Says whether every server with libraries to import has been read in full at least once.
+                function syncState(status, sync) {
+                    if (!sync) {
+                        return 'unknown';
+                    }
+
+                    var importing = status.Servers.filter(function (server) {
+                        return server.ImportedLibraryIds.length > 0;
+                    });
+                    return stateOf(importing.length > 0 && importing.every(function (server) {
+                        var report = reportOf(sync, server);
+                        return report && report.LastSuccessUtc;
+                    }));
+                }
+
+                function linkState(folder) {
+                    if (folder.Path && folder.Link === 'NotChecked') {
+                        return 'unknown';
+                    }
+
+                    return stateOf(folder.Link === 'Linked');
+                }
+
+                // Derives the steps of the first setup from the state of the server.
+                function setupSteps(status, sync) {
+                    var folder = status.FederatedFolder;
+                    var firstSync = syncState(status, sync);
+                    var waiting = status.Servers.filter(function (server) {
+                        return server.ImportedLibraryIds.length === 0;
+                    }).map(function (server) {
+                        return server.Name;
+                    });
+                    return [{
+                        key: 'key',
+                        name: 'Set the secret key',
+                        state: stateOf(status.KeyState === 'Ok'),
+                        text: 'JELLYMESH_SECRET_KEY encrypts the stored logins. Set it on the server, outside this plugin, with at least 32 characters, then restart Jellyfin.'
+                    }, {
+                        key: 'server',
+                        name: 'Add a remote server',
+                        state: stateOf(status.Servers.length > 0),
+                        text: 'Log in with a dedicated non-admin user of that server, at its tailnet address.',
+                        tab: 'servers'
+                    }, {
+                        key: 'libraries',
+                        name: 'Choose libraries to import',
+                        state: stateOf(status.Servers.length > 0 && waiting.length === 0),
+                        text: 'Nothing is imported from a server until you choose its libraries.' + (waiting.length > 0 ? ' Still to choose: ' + waiting.join(', ') + '.' : ''),
+                        tab: 'servers'
+                    }, {
+                        key: 'folder',
+                        name: 'Choose the federated folder',
+                        state: stateOf(folder.Path),
+                        text: 'A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.',
+                        tab: 'settings'
+                    }, {
+                        key: 'sync',
+                        name: 'Run the first sync',
+                        state: firstSync,
+                        text: status.Suspended && firstSync !== 'done' ? 'It waits for the secret key.' : 'It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.',
+                        tab: 'catalog'
+                    }, {
+                        key: 'link',
+                        name: 'Link the two paths',
+                        state: linkState(folder),
+                        text: 'Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.',
+                        tab: 'settings'
+                    }];
+                }
+
+                // Shows the steps while one is to do, and hands the focus back to the page when the list goes.
+                function renderSetup(steps, unfinished) {
+                    var setup = el('#jmSetup');
+                    if (!unfinished && setup.contains(document.activeElement)) {
+                        var panel = setup.closest('[role="tabpanel"]');
+                        panel.tabIndex = -1;
+                        panel.focus({ preventScroll: true });
+                    }
+
+                    setup.hidden = !unfinished;
+                    updateRows(el('#jmSetupSteps'), steps.map(function (step) {
+                        return { key: step.key, build: renderStep, args: [step] };
+                    }));
+                }
+
+                function headline(status, problems, unfinished) {
+                    if (!status) {
+                        return statusSection.failure ? 'Status unknown.' : '';
+                    }
+
+                    if (status.Suspended) {
+                        return 'Suspended. Sync and remote playback are stopped until the secret key is fixed.';
+                    }
+
+                    var waiting = [syncSection, peersSection, mergesSection].some(function (part) {
+                        return !part.data && !part.failure;
+                    });
+                    if (waiting) {
+                        return 'Active.';
+                    }
+
+                    if (problems > 0) {
+                        return 'Active. ' + count(problems, 'thing needs', 'things need') + ' attention' + (unfinished > 0 ? ', and setup is not finished.' : '.');
+                    }
+
+                    return unfinished > 0 ? 'Active. Setup is not finished: ' + count(unfinished, 'step', 'steps') + ' to do.' : 'Active. All is well.';
+                }
+
+                // Brings the summary up to date from what the sections last read, keeping its rows and their focus.
+                function renderOverview() {
+                    var status = current(statusSection);
+                    var sync = current(syncSection);
+                    var facts = [serversFact(status, sync), syncFact(status, sync), folderFact(status), duplicatesFact(), streamsFact()];
+                    updateRows(el('#jmSummary'), facts.map(function (fact) {
+                        return { key: fact.key, build: renderFact, args: [fact] };
+                    }));
+
+                    var steps = statusSection.data ? setupSteps(statusSection.data, syncSection.data) : [];
+                    var unfinished = steps.filter(function (step) {
+                        return step.state === 'todo';
+                    }).length;
+                    renderSetup(unfinished > 0 ? steps : [], unfinished);
+
+                    var problems = facts.reduce(function (sum, fact) {
+                        return sum + fact.notes.filter(function (note) {
+                            return !note.calm;
+                        }).length;
+                    }, 0);
+                    var line = headline(status, problems, unfinished);
+                    var announce = el('#jmAnnounce');
+                    setText(el('#jmStatus'), line);
+                    setText(announce, problems > 0 || announce.textContent ? line : '');
                 }
 
                 var statusSection = section(function () {

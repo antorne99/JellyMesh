@@ -32,6 +32,7 @@ if [ $# -gt 0 ]; then
 else
   run tabs
   run first normal loading errors keyboard themes actions
+  run overview overview-themes
   run edits quiet polling sections
   run outcomes outcome-themes
   run confirms confirm-keyboard
@@ -40,15 +41,15 @@ else
   run merge-details
 
   set_key first
-  run first-nokey
+  run first-nokey overview-first-nokey
   set_key first "$TEST_KEY"
 
   set_key fresh
-  run nokey
+  run nokey overview-nokey
   set_key fresh "$TEST_KEY"
 
   offline stock
-  run offline
+  run offline overview-offline
   online stock
 fi
 
