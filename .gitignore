@@ -6,3 +6,7 @@ artifacts
 .claude/settings.local.json
 bin-out/
 .claude/worktrees/
+CLAUDE.md
+docs/
+.claude/
+PRODUCT.md

@@ -139,7 +139,7 @@ These observations led to the three decisions recorded in §10 of the plan: a 5%
 
 ## Spikes
 
-Phase 0 tests live in `spikes/`, and their results in `docs/fase-0-esiti.md`. `stub_server.py` stands in for a `.strm` target and logs every request. Spikes write fixtures to `federata/`, so remove them afterwards. Jellyfin skips a completely empty library path and keeps its items, so leave a hidden file there until a scan has removed them.
+Phase 0 tests live in `spikes/`. `stub_server.py` stands in for a `.strm` target and logs every request. Spikes write fixtures to `federata/`, so remove them afterwards. Jellyfin skips a completely empty library path and keeps its items, so leave a hidden file there until a scan has removed them.
 
 The spikes for points 2 to 7 run on private throwaway containers, never on this stack. `private-instance.sh` starts one for `series-merge.sh` and `watch-state.sh`. `JellyMeshProbe/` is a test plugin, not the real one, built by `build-probe.sh`. `media-source-probing.sh` and `unavailable-title.sh` read `P3` and `P6`, a work folder holding `tests/Integration` and a copy of the spikes in `out/spikes`. `results.txt` and `unavailable-title-results.txt` are recorded runs.
 
