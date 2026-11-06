@@ -258,6 +258,15 @@ Selectors, button texts and the way to read an outcome live only in `uipage.py`,
 source ui/lib.sh && pw /path/to/script.py
 ```
 
+The page has five tabs, so most of it is hidden at any moment. Reading text or a value works on a hidden tab, while `uipage.py` makes `click`, `fill`, `focus`, `is_visible`, `select_option`, `bounding_box` and `scroll_into_view_if_needed` open the tab of their element first, so a check does not have to name tabs. `page.evaluate` opens nothing: use `u.reveal(node)` or `u.show_tab(page, name)` before measuring what is on screen, and `contrast` in `pagecheck.py` for a selector across all tabs. `Session.open(tab="catalog")` opens the page on a tab, and the `tabs` scenario checks the tabs themselves.
+
+What Jellyfin 12.4 was observed to do with these tabs:
+
+- `LibraryMenu.setTabs` draws them in the Dashboard header at every width, as router links with `role="tab"`, arrow keys and Enter, but not Space. Without `href` a click leaves for `/configurationpage` with no plugin name and ends on Home.
+- An `href` with another query, such as `&tab=catalog`, loads a second copy of the page and hides the first with its edits. A hash after the query, as in `#/configurationpage?name=JellyMesh#catalog`, keeps the page loaded, adds a step to the browser history, and survives a reload and a return.
+- The router pushes that address without an event, while Back and Forward fire `popstate` and `hashchange`.
+- The header empties itself when the next page appears, and tabs must be set again at each `pageshow`. Calling `setTabs(null)` at `pagehide` runs after the next page set its own, and removes the tabs of Home.
+
 ## Not covered here
 
 - **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so the test needs the OPS pc.

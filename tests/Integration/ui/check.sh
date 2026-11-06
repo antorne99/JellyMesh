@@ -30,6 +30,7 @@ sync_now fresh
 if [ $# -gt 0 ]; then
   run "$@"
 else
+  run tabs
   run first normal loading errors keyboard themes actions
   run edits quiet polling sections
   run outcomes outcome-themes

@@ -5,7 +5,7 @@ import time
 import urllib.error
 import urllib.request
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Locator, sync_playwright
 
 WEB = "/w"
 SHOTS = os.path.join(WEB, "shots")
@@ -14,6 +14,9 @@ PLUGIN = "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
 PLUGIN_CONFIG = "**/Plugins/" + PLUGIN + "/Configuration"
 
 PAGE = "#JellyMeshConfigPage"
+TAB = "[role=tab][data-tab-index]"
+PANEL = PAGE + " [role=tabpanel]"
+TABS = ["overview", "servers", "catalog", "sharing", "settings"]
 WARNING = "#jmWarning"
 MESSAGE = "#jmMessage"
 OUTCOME = "#jmOutcome"
@@ -113,6 +116,39 @@ INLINE_STYLE = PAGE + " [style]:not(.selectArrowContainer *)"
 NESTED_LABEL = PAGE + " label label"
 
 
+def show_tab(page, name):
+    """Opens a tab by clicking it in the Dashboard header."""
+    page.locator(TAB).nth(TABS.index(name)).click()
+
+
+def shown_tab(page):
+    """Returns the name of the tab on screen."""
+    return page.locator(PANEL + ":not([hidden])").get_attribute("data-jm-tab")
+
+
+def reveal(node):
+    """Opens the tab that holds an element, as a person has to before using it."""
+    tab = node.evaluate_all("""(nodes, panel) => {
+      const holder = nodes[0] && nodes[0].closest(panel);
+      return holder && holder.hidden ? holder.dataset.jmTab : null;
+    }""", "[role=tabpanel]")
+    if tab:
+        show_tab(node.page, tab)
+
+
+def opens_tab(action):
+    """Makes a Playwright action open the tab of its element first. Reading text or values needs no open tab."""
+    def run(self, *args, **kwargs):
+        reveal(self)
+        return action(self, *args, **kwargs)
+
+    return run
+
+
+for _name in ["click", "fill", "focus", "select_option", "is_visible", "bounding_box", "scroll_into_view_if_needed"]:
+    setattr(Locator, _name, opens_tab(getattr(Locator, _name)))
+
+
 def targets():
     """Reads what up.sh wrote about the servers."""
     with open(os.path.join(WEB, "targets.json"), encoding="utf-8") as stream:
@@ -179,8 +215,8 @@ class Session:
         self._browser.close()
         self._playwright.stop()
 
-    def open(self, server, viewport="1280", theme="dark", route=None, wait=True):
-        """Opens the page. route gets the Playwright context before the page loads, to fake or delay answers."""
+    def open(self, server, viewport="1280", theme="dark", route=None, wait=True, tab=""):
+        """Opens the page, on a tab if named. route gets the Playwright context before the page loads, to fake or delay answers."""
         set_theme(server, theme)
         target = targets()[server]
         credentials = {"Servers": [{
@@ -198,7 +234,7 @@ class Session:
         page.errors = []
         page.on("pageerror", lambda error: page.errors.append(str(error)))
         page.on("dialog", lambda dialog: (page.errors.append("browser dialog: " + dialog.message), dialog.dismiss()))
-        page.goto(f"{target['base']}/web/index.html#/configurationpage?name=JellyMesh")
+        page.goto(f"{target['base']}/web/index.html#/configurationpage?name=JellyMesh" + ("#" + tab if tab else ""))
         if wait:
             wait_loaded(page)
         return page
@@ -207,6 +243,7 @@ class Session:
 def wait_loaded(page):
     """Waits until every part of the page has its data."""
     page.wait_for_selector(PAGE + ":not(.hide)", state="attached", timeout=30000)
+    page.wait_for_selector(TAB, state="attached", timeout=30000)
     page.wait_for_function(
         "s => document.querySelector(s.settings).value !== '' && document.querySelector(s.merges).textContent !== ''",
         arg={"settings": SYNC_INTERVAL, "merges": MERGES}, timeout=30000)
@@ -220,12 +257,12 @@ def wait_idle(page):
 
 def server_row(page, name):
     """Finds the row of a remote server."""
-    return page.locator(SERVER).filter(has=page.get_by_role("heading", name=name, exact=True))
+    return page.locator(SERVER).filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
 
 
 def peer_row(page, name):
     """Finds the row of a connected server."""
-    return page.locator(PEERS + " > div").filter(has=page.get_by_role("heading", name=name, exact=True))
+    return page.locator(PEERS + " > div").filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
 
 
 def merge_case(page, title):
@@ -242,7 +279,7 @@ def refresh_merges(page):
 
 def button(scope, name):
     """Finds an action by its role in a part of the page."""
-    return scope.get_by_role("button", name=BUTTON[name], exact=True)
+    return scope.get_by_role("button", name=BUTTON[name], exact=True, include_hidden=True)
 
 
 def tick(box, on=True):
@@ -298,7 +335,7 @@ def open_advanced(page):
 
 def copy_button(page, path):
     """Finds the copy button of a path to link."""
-    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy")
+    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy", include_hidden=True)
 
 
 def pasted(page):
