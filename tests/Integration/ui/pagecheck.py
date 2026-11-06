@@ -1299,17 +1299,17 @@ def merge_selection(page, name):
     case = u.merge_case(page, PAIR)
     merge = u.button(case, "merge")
     check(name + " nothing selected cannot merge", merge.is_disabled())
+    check(name + " nothing selected shows no button", merge.is_hidden())
     check(name + " nothing selected says what is needed", "at least two" in result(case), result(case))
     select(case, 1)
     check(name + " one title cannot merge", merge.is_disabled())
+    check(name + " one title shows no button", merge.is_hidden())
     check(name + " one title says what is needed", "at least two" in result(case), result(case))
     posts = []
     page.on("request", lambda request: posts.append(request.url) if request.method == "POST" and "/Merges" in request.url else None)
-    faded = merge.evaluate("node => getComputedStyle(node).opacity")
     select(case, 2)
     check(name + " two titles can merge", merge.is_enabled())
-    solid = until(page, lambda: float(merge.evaluate("node => getComputedStyle(node).opacity")) == 1, 3)
-    check(name + " a button that cannot merge looks it", float(faded) < 1 and solid, faded)
+    check(name + " two titles show the button", merge.is_visible())
 
     data = u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
     keys = [title["WorkKey"] for title in titles_of(data, PAIR)]
@@ -1334,6 +1334,7 @@ def merge_forecasts(s, width, name):
     case = u.merge_case(page, PAIR)
     select(case, 2)
     check(name + " two local titles cannot merge", u.button(case, "merge").is_disabled())
+    check(name + " two local titles show no button", u.button(case, "merge").is_hidden())
     check(name + " two local titles say why", "two local films" in result(case), result(case))
     u.close(page)
 

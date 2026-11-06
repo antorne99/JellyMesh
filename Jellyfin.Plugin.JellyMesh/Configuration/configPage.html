@@ -509,9 +509,8 @@
                 color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
             }
 
-            .jmMergeCase .emby-button:disabled {
-                opacity: 0.45;
-                cursor: default;
+            .jmMergeCase .emby-button[hidden] {
+                display: none;
             }
 
             .jmMergeDate {
@@ -1956,6 +1955,7 @@
                         }
 
                         merge.disabled = hint !== '';
+                        merge.hidden = hint !== '';
                         var current = ++ticket;
                         if (hint) {
                             showResult(hint, true);
