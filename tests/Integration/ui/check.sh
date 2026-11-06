@@ -39,17 +39,19 @@ else
   run settings-form
   run controls control-themes
   run merge-details
+  run cards cards-in-place cards-themes
 
   set_key first
   run first-nokey overview-first-nokey
   set_key first "$TEST_KEY"
 
   set_key fresh
-  run nokey overview-nokey
+  run nokey overview-nokey cards-nokey
   set_key fresh "$TEST_KEY"
+  run cards-restart
 
   offline stock
-  run offline overview-offline
+  run offline overview-offline cards-offline
   online stock
 fi
 

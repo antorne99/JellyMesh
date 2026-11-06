@@ -344,7 +344,95 @@
 
             .jmServer,
             .jmPeer {
-                margin-bottom: 1.5em;
+                margin: 0 0 1em;
+                padding: 1em;
+                overflow-wrap: anywhere;
+            }
+
+            .jmServer h4,
+            .jmPeer h4 {
+                margin: 0;
+            }
+
+            .jmCardHead {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                justify-content: space-between;
+                gap: 0.25em 1em;
+            }
+
+            .jmCardHead h4 {
+                flex: 1 1 8em;
+                min-width: 0;
+            }
+
+            .jmState {
+                display: flex;
+                align-items: center;
+                gap: 0.35em;
+                min-width: 0;
+                font-weight: 500;
+            }
+
+            .jmStateIcon {
+                flex: none;
+                font-size: 1.2em;
+            }
+
+            .jmStateGood .jmStateIcon {
+                color: var(--jf-palette-success-main, #2e7d32);
+            }
+
+            .jmStateWarn .jmStateIcon {
+                color: var(--jf-palette-warning-main, #ed6c02);
+            }
+
+            .jmStateBad .jmStateIcon {
+                color: var(--jf-palette-error-main, #c62828);
+            }
+
+            .jmStateQuiet .jmStateIcon {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmCause {
+                margin: 0.5em 0 0;
+            }
+
+            .jmCardFacts {
+                display: grid;
+                grid-template-columns: max-content minmax(0, 1fr);
+                gap: 0.25em 1.5em;
+                margin: 0.75em 0 1em;
+            }
+
+            .jmCardFacts dt {
+                color: var(--jf-palette-text-secondary, rgba(255, 255, 255, 0.7));
+            }
+
+            .jmCardFacts dd {
+                margin: 0;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .jmActions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5em;
+            }
+
+            .jmActions .emby-button,
+            .jmLibraries .emby-button {
+                margin: 0;
+            }
+
+            #jmSyncServers > p {
+                margin: 0.25em 0;
+            }
+
+            .jmLibraries:not(:empty) {
+                margin-top: 1em;
             }
 
             #jmPeers .inputContainer,
@@ -466,6 +554,7 @@
                     <div class="jmColumns">
                         <div>
                             <h3 class="sectionTitle">Remote servers</h3>
+                            <div id="jmServersSyncFailure" hidden class="jmAlert"></div>
                             <div id="jmServers"></div>
                         </div>
                         <form id="jmAddServerForm" autocomplete="off">
@@ -625,11 +714,28 @@
                     ServerError: 'server error',
                     InvalidResponse: 'unexpected answer',
                     ResponseTooLarge: 'answer too large',
-                    LibraryUnavailable: 'a chosen library is gone: open Libraries and save again',
-                    CatalogChanged: 'the catalog kept changing, try again',
-                    Suspended: 'suspended'
+                    LibraryUnavailable: 'a chosen library is gone',
+                    CatalogChanged: 'the catalog kept changing',
+                    Suspended: 'suspended',
+                    Unreachable: 'could not be reached',
+                    Timeout: 'no answer in time'
                 };
-                var modeLabels = { Unknown: 'mode unknown', Standard: 'standard', JellyMesh: 'JellyMesh' };
+                var connectionSteps = {
+                    Offline: 'Check that the server is running and reachable on the tailnet, then test the connection.',
+                    AuthenticationFailed: 'Fix the login on that server, or remove this server and add it again with a working one.',
+                    Forbidden: 'Give the dedicated user access on that server, then test the connection.',
+                    AdministratorAccount: 'Remove this server and add it again with a dedicated non-admin user.',
+                    RedirectRefused: 'Remove this server and add it again with the URL it answers on.',
+                    ServerError: 'Check the log of that server, then test the connection.',
+                    InvalidResponse: 'Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.',
+                    ResponseTooLarge: 'Check that the URL leads to a Jellyfin server, then test the connection.',
+                    LibraryUnavailable: 'Open Libraries and save the selection again.',
+                    CatalogChanged: 'The next sync tries again.'
+                };
+                var unknownProblem = 'unknown problem';
+                var unknownProblemStep = 'Test the connection to see what is wrong.';
+                var modeLabels = { Unknown: 'mode not known yet', Standard: 'standard Jellyfin server', JellyMesh: 'JellyMesh server' };
+                var defaultStreamLimit = 2;
                 var mergeReasons = {
                     ConflictingProviderIds: 'These titles are linked by shared provider IDs, but some of those IDs contradict each other.',
                     PossibleDuplicate: 'These titles have the same name and year, but nothing confirms they are one film.'
@@ -1064,34 +1170,156 @@
                     }));
                 }
 
-                function renderServer(server) {
+                function connectionLabel(value) {
+                    return connectionLabels[value] || unknownProblem;
+                }
+
+                function modeLabel(value) {
+                    return modeLabels[value] || modeLabels.Unknown;
+                }
+
+                function sentence(text) {
+                    return text.charAt(0).toUpperCase() + text.slice(1);
+                }
+
+                // Adds a line to a list of facts on a card, and returns the node that holds its value.
+                function addFact(list, name) {
+                    var value = create('dd');
+                    list.appendChild(create('dt', name));
+                    list.appendChild(value);
+                    return value;
+                }
+
+                function factList() {
+                    var list = create('dl');
+                    list.className = 'jmCardFacts';
+                    return list;
+                }
+
+                function actionRow() {
                     var row = create('div');
-                    row.className = 'jmServer';
-                    row.appendChild(create('h4', server.Name));
-                    var state = create('p');
-                    row.appendChild(state);
-                    row.jmUpdate = function (current) {
+                    row.className = 'jmActions';
+                    return row;
+                }
+
+                // Says why the entries of a server may be out of date, or returns an empty text.
+                function syncProblem(report) {
+                    if (report.IsOffline) {
+                        return 'The sync of ' + formatDate(report.LastAttemptUtc) + ' could not reach it. These entries are kept as they were, and a full read runs when it answers again.';
+                    }
+
+                    return report.State === 'Stale' ? 'Last sync failed (' + connectionLabel(report.Failure) + '): these entries are kept as they were.' : '';
+                }
+
+                // Returns the failure a server shows: the one of the connection, or else the one of its last sync.
+                function serverFailure(server, report) {
+                    if (server.Connection !== 'Online' && server.Connection !== 'NotChecked') {
+                        return server.Connection;
+                    }
+
+                    if (report && report.IsOffline) {
+                        return 'Offline';
+                    }
+
+                    return report && report.State === 'Stale' ? report.Failure || unknownProblem : '';
+                }
+
+                // Works out the state of a server in words, with its look, its cause and the next step.
+                function serverHealth(server, report) {
+                    var problem = report ? syncProblem(report) : '';
+                    if (suspended) {
+                        return {
+                            state: connectionLabels.Suspended,
+                            tone: 'jmStateQuiet',
+                            icon: 'pause_circle_outline',
+                            cause: 'Sync and remote playback are suspended until the secret key is fixed. ' + (problem || 'These entries are kept as they were.')
+                        };
+                    }
+
+                    var failure = serverFailure(server, report);
+                    if (!failure) {
+                        return {
+                            state: connectionLabel(server.Connection),
+                            tone: server.Connection === 'Online' ? 'jmStateGood' : 'jmStateQuiet',
+                            icon: server.Connection === 'Online' ? 'check_circle' : 'schedule',
+                            cause: ''
+                        };
+                    }
+
+                    var step = connectionSteps[failure] || unknownProblemStep;
+                    if (server.Connection === 'Online') {
+                        return {
+                            state: 'online, last sync failed',
+                            tone: 'jmStateWarn',
+                            icon: 'warning',
+                            cause: report.IsOffline ? problem : problem + ' ' + step
+                        };
+                    }
+
+                    return { state: connectionLabel(failure), tone: 'jmStateBad', icon: 'error', cause: (problem + ' ' + step).trim(), failure: failure };
+                }
+
+                function renderServer(server, report) {
+                    var row = create('div');
+                    row.className = 'jmServer paperList';
+                    var head = create('div');
+                    head.className = 'jmCardHead';
+                    var title = create('h4', server.Name);
+                    head.appendChild(title);
+                    var state = create('div');
+                    var icon = create('span');
+                    icon.setAttribute('aria-hidden', 'true');
+                    var stateText = create('span');
+                    state.appendChild(icon);
+                    state.appendChild(stateText);
+                    head.appendChild(state);
+                    row.appendChild(head);
+                    var cause = create('p');
+                    cause.className = 'jmCause';
+                    row.appendChild(cause);
+                    var facts = factList();
+                    var url = addFact(facts, 'URL');
+                    var mode = addFact(facts, 'Mode');
+                    var imported = addFact(facts, 'Libraries to import');
+                    var catalog = addFact(facts, 'Catalog');
+                    var checked = addFact(facts, 'Last check');
+                    var synced = addFact(facts, 'Last complete sync');
+                    row.appendChild(facts);
+                    row.jmUpdate = function (current, currentReport) {
                         server = current;
-                        setText(state, server.Url + ' - ' + (modeLabels[server.Mode] || server.Mode) + ' - '
-                            + (connectionLabels[server.Connection] || server.Connection) + ' - '
-                            + 'libraries to import: ' + server.ImportedLibraryIds.length);
+                        var health = serverHealth(server, currentReport);
+                        setText(title, server.Name);
+                        setText(stateText, sentence(health.state));
+                        state.className = 'jmState ' + health.tone;
+                        icon.className = 'material-icons jmStateIcon ' + health.icon;
+                        setText(cause, health.cause);
+                        cause.hidden = !health.cause;
+                        setText(url, server.Url);
+                        setText(mode, sentence(modeLabel(server.Mode)));
+                        setText(imported, String(server.ImportedLibraryIds.length));
+                        setText(catalog, currentReport ? count(currentReport.Movies, 'film', 'films') + ', ' + currentReport.Series + ' series, '
+                            + count(currentReport.Episodes, 'episode', 'episodes') : 'Not read yet');
+                        setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : 'Not since this server started');
+                        setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : 'Not read yet');
                     };
-                    row.jmUpdate(server);
+                    row.jmUpdate(server, report);
 
                     var libraries = create('div');
-                    row.appendChild(button('Test connection', function () {
-                        act(api('POST', 'Servers/' + server.Id + '/Test').then(function (report) {
-                            showMessage(server.Name + ': connected, ' + (modeLabels[report.Capabilities.Mode] || report.Capabilities.Mode)
-                                + ', importable libraries: ' + report.LibraryCount + '.');
+                    libraries.className = 'jmLibraries';
+                    var actions = actionRow();
+                    actions.appendChild(button('Test connection', function () {
+                        act(api('POST', 'Servers/' + server.Id + '/Test').then(function (result) {
+                            showMessage(server.Name + ': connected, ' + modeLabel(result.Capabilities.Mode)
+                                + ', importable libraries: ' + result.LibraryCount + '.');
                             return loadStatus();
                         }));
                     }));
-                    row.appendChild(button('Libraries', function () {
+                    actions.appendChild(button('Libraries', function () {
                         act(api('GET', 'Servers/' + server.Id + '/Libraries').then(function (result) {
                             renderLibraries(libraries, server, result);
                         }));
                     }));
-                    row.appendChild(button('Remove', function () {
+                    actions.appendChild(button('Remove', function () {
                         confirmAction('Remove this server?', [
                             escapeHtml(server.Name) + ' and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.',
                             'Titles found only there stay in the library, but do not play, until the next sync removes them. Removing does not start a sync. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now.',
@@ -1104,6 +1332,7 @@
                             }));
                         });
                     }));
+                    row.appendChild(actions);
                     row.appendChild(libraries);
                     return row;
                 }
@@ -1233,14 +1462,7 @@
                     warning.hidden = !status.Warning;
                     el('#jmAddServer').disabled = suspended;
                     updateSyncButton();
-                    var servers = status.Servers.map(function (server) {
-                        return { key: server.Id, build: renderServer, args: [server] };
-                    });
-                    if (servers.length === 0) {
-                        servers.push({ key: 'none', build: create, args: ['p', 'No remote servers yet.'] });
-                    }
-
-                    updateRows(el('#jmServers'), servers);
+                    showServers();
                     renderFolder(status.FederatedFolder);
                 }
 
@@ -1252,16 +1474,53 @@
                     return value ? new Date(value).toLocaleString() : 'never';
                 }
 
+                // Gives the outcome of the last sync of a server in a few words. Its counts and dates are on its card.
                 function syncLine(server) {
-                    var text = server.ServerName + ': ' + server.Movies + ' films, ' + server.Series + ' series, '
-                        + server.Episodes + ' episodes, last complete sync ' + formatDate(server.LastSuccessUtc);
-                    if (server.IsOffline) {
-                        text += '. OFFLINE: the sync of ' + formatDate(server.LastAttemptUtc) + ' could not reach it. These entries are kept as they were, and a full read runs when it answers again';
+                    var outcome = server.State ? 'synced' : 'not synced yet';
+                    if (suspended) {
+                        outcome = connectionLabels.Suspended;
+                    } else if (server.IsOffline) {
+                        outcome = 'offline, entries kept. See the Servers tab';
                     } else if (server.State === 'Stale') {
-                        text += '. Last sync failed (' + (connectionLabels[server.Failure] || server.Failure || 'unknown') + '): these entries are kept as they were';
+                        outcome = 'last sync failed (' + connectionLabel(server.Failure) + '), entries kept. See the Servers tab';
                     }
 
-                    return text + '.';
+                    return server.ServerName + ': ' + outcome + '.';
+                }
+
+                // Returns the most recent date a sync left, in the run in memory or in the catalogs.
+                // A timer run with no server read nothing, so it gives no date.
+                function lastSyncDate(sync) {
+                    if (sync.Servers.length === 0) {
+                        return null;
+                    }
+
+                    return sync.Servers.reduce(function (dates, server) {
+                        return dates.concat([server.LastAttemptUtc, server.LastSuccessUtc]);
+                    }, [sync.LastFinishedUtc]).filter(Boolean).sort(function (first, second) {
+                        return Date.parse(second) - Date.parse(first);
+                    })[0];
+                }
+
+                // Brings the cards and the sync lines up to the last answers. Only the status adds or removes a card.
+                function showServers() {
+                    var sync = syncSection.data;
+                    updateRows(el('#jmSyncServers'), (sync ? sync.Servers : []).map(function (server, index) {
+                        var line = syncLine(server);
+                        return { key: index + line, build: create, args: ['p', line] };
+                    }));
+                    if (!statusSection.data) {
+                        return;
+                    }
+
+                    var servers = statusSection.data.Servers.map(function (server) {
+                        return { key: server.Id, build: renderServer, args: [server, reportOf(sync, server)] };
+                    });
+                    if (servers.length === 0) {
+                        servers.push({ key: 'none', build: create, args: ['p', 'No remote servers yet.'] });
+                    }
+
+                    updateRows(el('#jmServers'), servers);
                 }
 
                 function indexWarning(status) {
@@ -1289,20 +1548,18 @@
                     warning.hidden = !warning.textContent;
                     setText(el('#jmSyncStatus'), status.IsRunning
                         ? 'Sync running...'
-                        : 'Last sync: ' + formatDate(status.LastFinishedUtc) + '.');
+                        : 'Last sync: ' + formatDate(lastSyncDate(status)) + '.');
                     syncRunning = status.IsRunning;
                     updateSyncButton();
-                    updateRows(el('#jmSyncServers'), status.Servers.map(function (server, index) {
-                        var line = syncLine(server);
-                        return { key: index + line, build: create, args: ['p', line] };
-                    }));
+                    showServers();
 
-                    if (lastFinished !== undefined && lastFinished !== status.LastFinishedUtc) {
+                    var finished = status.LastFinishedUtc || null;
+                    if (lastFinished !== undefined && lastFinished !== finished) {
                         mergesSection.stale = true;
                         statusSection.stale = true;
                     }
 
-                    lastFinished = status.LastFinishedUtc;
+                    lastFinished = finished;
                 }
 
                 function updateSyncButton() {
@@ -1311,6 +1568,7 @@
 
                 function syncFailed(reason) {
                     showFailure('#jmSyncFailure', 'the state of the sync', keepsTrying, reason);
+                    showFailure('#jmServersSyncFailure', 'the state of the sync', keepsTrying, reason);
                     if (reason) {
                         syncRunning = false;
                         setText(el('#jmSyncStatus'), 'Sync state unknown.');
@@ -1395,37 +1653,53 @@
                     };
                 }
 
+                // Names a connected server, whose user can be deleted in the Dashboard while it stays connected.
+                function peerName(peer) {
+                    return peer.UserName || 'A user no longer on this server';
+                }
+
                 function renderPeer(peer, libraries) {
                     var row = create('div');
-                    row.className = 'jmPeer';
-                    row.appendChild(create('h4', peer.UserName));
-                    var streams = create('p', 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams);
-                    row.appendChild(streams);
+                    row.className = 'jmPeer paperList';
+                    var title = create('h4');
+                    row.appendChild(title);
+                    var facts = factList();
+                    var streams = addFact(facts, 'Streams in use');
+                    var shared = addFact(facts, 'Shared libraries');
+                    row.appendChild(facts);
                     var editor = renderPeerEditor(row, function () {
                         return peer.UserId;
                     }, libraries, peer.SharedLibraryIds, peer.MaxStreams);
                     row.jmUpdate = function (current, currentLibraries) {
                         peer = current;
-                        setText(streams, 'Streams in use: ' + peer.ActiveStreams + ' of ' + peer.MaxStreams);
+                        var inUse = currentLibraries.filter(function (library) {
+                            return peer.SharedLibraryIds.indexOf(library.Id) >= 0;
+                        });
+                        setText(title, peerName(peer));
+                        setText(streams, peer.ActiveStreams + ' of ' + peer.MaxStreams);
+                        setText(shared, inUse.length + ' of ' + currentLibraries.length);
                         editor.update(currentLibraries, peer.SharedLibraryIds, peer.MaxStreams);
                     };
-                    row.appendChild(button('Save', function () {
+                    row.jmUpdate(peer, libraries);
+                    var actions = actionRow();
+                    actions.appendChild(button('Save', function () {
                         act(editor.save().then(function () {
-                            showMessage('Saved ' + peer.UserName + '.');
+                            showMessage('Saved ' + peerName(peer) + '.');
                             return loadPeers();
                         }));
                     }));
-                    row.appendChild(button('Disconnect', function () {
+                    actions.appendChild(button('Disconnect', function () {
                         confirmAction('Disconnect this server?', [
-                            escapeHtml(peer.UserName) + ' stops being a connected server now. Its streams here are closed, and its shared libraries and stream limit no longer apply.',
+                            escapeHtml(peerName(peer)) + ' stops being a connected server now. Its streams here are closed, and its shared libraries and stream limit no longer apply.',
                             'The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.'
                         ], function () {
                             act(api('DELETE', 'Peers/' + peer.UserId).then(function () {
-                                showMessage('Disconnected ' + peer.UserName + '.');
+                                showMessage('Disconnected ' + peerName(peer) + '.');
                                 return loadPeers();
                             }));
                         });
                     }));
+                    row.appendChild(actions);
                     return row;
                 }
 
@@ -1462,18 +1736,20 @@
                     row.appendChild(fieldBox('selectContainer', select));
                     var editor = renderPeerEditor(row, function () {
                         return select.value;
-                    }, libraries, [], 2);
+                    }, libraries, [], defaultStreamLimit);
                     row.jmUpdate = function (currentUsers, currentLibraries) {
                         showUsers(currentUsers);
-                        editor.update(currentLibraries, [], 2);
+                        editor.update(currentLibraries, [], defaultStreamLimit);
                     };
-                    row.appendChild(button('Connect', function () {
+                    var actions = actionRow();
+                    actions.appendChild(button('Connect', function () {
                         act(editor.save().then(function () {
                             showMessage('Connected.');
                             editor.reset();
                             return loadPeers();
                         }));
                     }));
+                    row.appendChild(actions);
                     return row;
                 }
 
@@ -1907,28 +2183,24 @@
                     })[0];
                 }
 
-                // Tells whether a server is offline, from its connection or, when that is not known, from the last sync.
-                function isOffline(server, sync) {
-                    var report = reportOf(sync, server);
-                    return server.Connection === 'Offline' || (server.Connection === 'NotChecked' && !!report && report.IsOffline);
+                // Returns the state of a server as its card shows it, from the last sync that could be read.
+                function healthOf(server) {
+                    return serverHealth(server, reportOf(syncSection.data, server));
                 }
 
                 // Returns what is wrong with the connection of a server, or an empty text.
-                function serverProblem(server, sync) {
-                    if (isOffline(server, sync)) {
+                function serverProblem(server) {
+                    var health = healthOf(server);
+                    if (health.failure === 'Offline') {
                         return server.Name + ' is offline. Titles found only there do not play until it answers.';
                     }
 
-                    if (['Online', 'NotChecked', 'Suspended'].indexOf(server.Connection) >= 0) {
-                        return '';
-                    }
-
-                    return server.Name + ': ' + (connectionLabels[server.Connection] || server.Connection) + '.';
+                    return health.failure === server.Connection ? server.Name + ': ' + health.state + '.' : '';
                 }
 
-                function serversFact(status, sync) {
+                function serversFact(status) {
                     var notes = !status ? [] : status.Servers.map(function (server) {
-                        return { key: server.Id, text: serverProblem(server, sync), tab: 'servers' };
+                        return { key: server.Id, text: serverProblem(server), tab: 'servers' };
                     }).filter(function (note) {
                         return note.text;
                     });
@@ -1950,20 +2222,11 @@
                                 return server.Connection === 'Online';
                             }).length;
                             var unchecked = data.Servers.filter(function (server) {
-                                return server.Connection === 'NotChecked' && !isOffline(server, sync);
+                                return server.Connection === 'NotChecked' && !healthOf(server).failure;
                             }).length;
                             return online + ' of ' + total + ' online' + (unchecked > 0 ? ', ' + unchecked + ' not checked yet' : '');
                         })
                     };
-                }
-
-                // Returns the most recent date a sync left, in the run in memory or in the catalogs.
-                function lastSyncDate(sync) {
-                    return sync.Servers.reduce(function (dates, server) {
-                        return dates.concat([server.LastAttemptUtc, server.LastSuccessUtc]);
-                    }, [sync.LastFinishedUtc]).filter(Boolean).sort(function (first, second) {
-                        return Date.parse(second) - Date.parse(first);
-                    })[0];
                 }
 
                 function indexProblem(sync) {
@@ -1986,13 +2249,13 @@
 
                     return status.Servers.filter(function (server) {
                         var report = reportOf(sync, server);
-                        return report && report.State === 'Stale' && !serverProblem(server, sync);
+                        return report && report.State === 'Stale' && !serverProblem(server);
                     }).map(function (server) {
                         var failure = reportOf(sync, server).Failure;
                         return {
                             key: 'stale' + server.Id,
-                            text: server.Name + ': the last sync failed' + (failure ? ' (' + (connectionLabels[failure] || failure) + ')' : '') + '. Its titles are kept as they were.',
-                            tab: 'catalog'
+                            text: server.Name + ': the last sync failed' + (failure ? ' (' + connectionLabel(failure) + ')' : '') + '. Its titles are kept as they were.',
+                            tab: 'servers'
                         };
                     });
                 }
@@ -2250,7 +2513,7 @@
                 function renderOverview() {
                     var status = current(statusSection);
                     var sync = current(syncSection);
-                    var facts = [serversFact(status, sync), syncFact(status, sync), folderFact(status), duplicatesFact(), streamsFact()];
+                    var facts = [serversFact(status), syncFact(status, sync), folderFact(status), duplicatesFact(), streamsFact()];
                     updateRows(el('#jmSummary'), facts.map(function (fact) {
                         return { key: fact.key, build: renderFact, args: [fact] };
                     }));
