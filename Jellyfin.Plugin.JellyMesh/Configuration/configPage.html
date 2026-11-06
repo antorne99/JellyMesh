@@ -353,6 +353,24 @@
                 overflow-wrap: anywhere;
             }
 
+            .jmStepCommands {
+                grid-column: 2 / -1;
+            }
+
+            .jmStepCommands .jmPathName {
+                width: 9em;
+            }
+
+            .jmStepCommands + .jmStepAfter {
+                margin-top: 0.5em;
+            }
+
+            .jmStepAfter {
+                grid-column: 2 / -1;
+                color: var(--jm-muted);
+                overflow-wrap: anywhere;
+            }
+
             .jmStepDone .jmStepName {
                 font-weight: normal;
             }
@@ -2029,30 +2047,38 @@
                     });
                 }
 
-                // Makes the row of a path to link, whose button reports the result in the status region.
-                function renderPath(library, path) {
+                // Makes a row with a value to copy, whose button reports the result in the status region.
+                function renderCopyRow(label, shown, copyLabel) {
                     var row = create('div');
                     row.className = 'jmPath';
-                    var name = create('span', library);
+                    var name = create('span', label);
                     name.className = 'jmPathName';
                     row.appendChild(name);
-                    var value = create('code', path);
+                    var value = create('code', shown);
                     value.className = 'jmPathValue';
                     row.appendChild(value);
                     var copy = button('Copy', function () {
-                        copyText(path).then(function (copied) {
+                        copyText(shown).then(function (copied) {
                             if (copied) {
-                                showMessage('Copied ' + path + '.');
+                                showMessage('Copied ' + shown + '.');
                                 return;
                             }
 
                             window.getSelection().selectAllChildren(value);
-                            showError('The browser did not allow copying. ' + path + ' is selected, so copy it by hand.');
+                            showError('The browser did not allow copying. ' + shown + ' is selected, so copy it by hand.');
                         });
                     });
-                    copy.setAttribute('aria-label', 'Copy ' + library + ' path');
+                    copy.setAttribute('aria-label', copyLabel);
                     row.appendChild(copy);
                     return row;
+                }
+
+                function renderPath(library, path) {
+                    return renderCopyRow(library, path, 'Copy ' + library + ' path');
+                }
+
+                function renderCommand(command) {
+                    return renderCopyRow(command.label, command.value, 'Copy: ' + command.label);
                 }
 
                 function renderFolder(folder) {
@@ -2123,6 +2149,7 @@
                     setText(warning, status.Warning || '');
                     warning.hidden = !status.Warning;
                     el('#jmAddServer').disabled = suspended;
+                    el('#jmAddBlocked').hidden = !suspended;
                     updateSyncButton();
                     showServers();
                     renderFolder(status.FederatedFolder);
@@ -2994,10 +3021,22 @@
                     }
 
                     row.appendChild(body);
+                    var commands = create('div');
+                    commands.className = 'jmStepCommands';
+                    row.appendChild(commands);
+                    var after = create('div');
+                    after.className = 'jmStepAfter';
+                    row.appendChild(after);
                     row.jmUpdate = function (current) {
                         icon.className = 'material-icons ' + stepIcons[current.state] + ' jmStepIcon';
                         setText(state, stepStates[current.state]);
                         setText(text, current.text);
+                        updateRows(commands, (current.commands || []).map(function (command) {
+                            return { key: command.value, build: renderCommand, args: [command] };
+                        }));
+                        commands.hidden = !current.commands;
+                        setText(after, current.after || '');
+                        after.hidden = !current.after;
                         row.classList.toggle('jmStepDone', current.state === 'done');
                         row.classList.toggle('jmStepNext', !!current.next);
                     };
@@ -3270,6 +3309,27 @@
                     return stateOf(folder.Link === 'Linked');
                 }
 
+                // Says what the key is for and what to do about its state, with the commands to copy when one has to be made.
+                function keyStep(status) {
+                    var purpose = 'JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. ';
+                    var make = {
+                        commands: [
+                            { label: 'Generate a key', value: 'openssl rand -base64 32' },
+                            { label: 'Put it in .env', value: 'JELLYMESH_SECRET_KEY=<the generated key>' },
+                            { label: 'Apply it', value: 'docker compose up -d' }
+                        ],
+                        after: 'That recreates the container, and a plain restart would not. Without Docker, set the variable in the environment of the Jellyfin service and restart it. Each server has its own key.'
+                    };
+                    var steps = {
+                        Ok: { text: 'JELLYMESH_SECRET_KEY encrypts the stored logins. It is set on the server, outside this plugin.' },
+                        Missing: { text: purpose + 'It is not set yet. Set it on the server, outside this plugin, with at least 32 characters.', commands: make.commands, after: make.after },
+                        TooShort: { text: purpose + 'The one set is too short. Set it on the server, outside this plugin, with at least 32 characters.', commands: make.commands, after: make.after },
+                        Wrong: { text: 'JELLYMESH_SECRET_KEY does not decrypt the stored logins: it changed, or they were altered. It is set on the server, outside this plugin. Restore the original key, or remove the servers and add them again.' }
+                    };
+                    var step = steps[status.KeyState] || steps.Wrong;
+                    return { key: 'key', name: 'Set the secret key', state: stateOf(status.KeyState === 'Ok'), text: step.text, commands: step.commands, after: step.after };
+                }
+
                 // Derives the steps of the first setup from the state of the server.
                 function setupSteps(status, sync) {
                     var folder = status.FederatedFolder;
@@ -3279,12 +3339,7 @@
                     }).map(function (server) {
                         return server.Name;
                     });
-                    return [{
-                        key: 'key',
-                        name: 'Set the secret key',
-                        state: stateOf(status.KeyState === 'Ok'),
-                        text: 'JELLYMESH_SECRET_KEY encrypts the stored logins. Set it on the server, outside this plugin, with at least 32 characters, then restart Jellyfin.'
-                    }, {
+                    return [keyStep(status), {
                         key: 'server',
                         name: 'Add a remote server',
                         state: stateOf(status.Servers.length > 0),
