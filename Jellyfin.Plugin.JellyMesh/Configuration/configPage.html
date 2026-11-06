@@ -110,6 +110,22 @@
                 margin-left: 1.5em;
             }
 
+            #JellyMeshConfigPage .emby-button:focus-visible,
+            #JellyMeshConfigPage .emby-input:focus-visible,
+            #JellyMeshConfigPage .emby-select:focus-visible,
+            #JellyMeshConfigPage .emby-checkbox:focus-visible + span + .checkboxOutline {
+                outline: 2px solid var(--jf-palette-text-primary, #fff) !important;
+                outline-offset: 2px;
+            }
+
+            #JellyMeshConfigPage .raised:not(.button-submit):focus {
+                background: var(--jf-palette-Button-inheritContainedBg, #424242);
+            }
+
+            #JellyMeshConfigPage .button-submit:not(:hover) {
+                color: rgba(0, 0, 0, 0.87);
+            }
+
             #JellyMeshConfigPage .emby-checkbox-label {
                 height: auto;
                 min-height: 2.35em;
