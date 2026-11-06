@@ -121,6 +121,54 @@
             .jmFolderPick .emby-button {
                 flex: none;
                 margin: 0;
+                padding-top: 0.64em;
+                padding-bottom: 0.64em;
+            }
+
+            .fieldDescription.jmFolderInfo {
+                margin-top: 0.75em;
+            }
+
+            .jmPath {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 0.25em 1em;
+                margin-top: 0.5em;
+            }
+
+            .jmPathName {
+                flex: none;
+                width: 7em;
+            }
+
+            .jmPathValue {
+                flex: 1 1 12em;
+                min-width: 0;
+                font-size: 1em;
+                overflow-wrap: anywhere;
+            }
+
+            .jmPath .emby-button {
+                flex: none;
+                margin: 0;
+                padding: 0.4em 0.9em;
+            }
+
+            #jmFolderNotes {
+                margin-top: 0.5em;
+            }
+
+            .jmFolderWarning {
+                margin-top: 0.5em;
+                font-weight: bold;
+            }
+
+            .jmCopyField {
+                position: fixed;
+                top: 0;
+                left: 0;
+                opacity: 0;
             }
 
             .jmFieldError {
@@ -218,8 +266,12 @@
                             </button>
                         </div>
                         <div class="fieldDescription">Absolute path on the server. JellyMesh writes only inside this folder.</div>
+                        <div id="jmFolderInfo" class="fieldDescription jmFolderInfo">
+                            <div id="jmFolderHint"></div>
+                            <div id="jmFolderPaths"></div>
+                            <div id="jmFolderNotes"></div>
+                        </div>
                     </div>
-                    <div id="jmFolderInfo" class="fieldDescription" style="margin-bottom:1.5em;"></div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label class="emby-checkbox-label">
                             <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
@@ -629,6 +681,66 @@
                     return row;
                 }
 
+                // Copies a text through a selected field, and returns whether it worked.
+                function copySelected(text) {
+                    var active = document.activeElement;
+                    var field = create('textarea');
+                    field.className = 'jmCopyField';
+                    field.value = text;
+                    field.readOnly = true;
+                    page.appendChild(field);
+                    field.select();
+                    var copied = false;
+                    try {
+                        copied = document.execCommand('copy');
+                    } catch (error) {
+                        copied = false;
+                    }
+
+                    field.remove();
+                    active.focus({ preventScroll: true });
+                    return copied;
+                }
+
+                // Copies a text with the clipboard API where the browser has one, and resolves to whether it worked.
+                function copyText(text) {
+                    if (!navigator.clipboard) {
+                        return Promise.resolve(copySelected(text));
+                    }
+
+                    return navigator.clipboard.writeText(text).then(function () {
+                        return true;
+                    }, function () {
+                        return copySelected(text);
+                    });
+                }
+
+                // Makes the row of a path to link, whose button reports the result in the status region.
+                function renderPath(library, path) {
+                    var row = create('div');
+                    row.className = 'jmPath';
+                    var name = create('span', library);
+                    name.className = 'jmPathName';
+                    row.appendChild(name);
+                    var value = create('code', path);
+                    value.className = 'jmPathValue';
+                    row.appendChild(value);
+                    var copy = button('Copy', function () {
+                        copyText(path).then(function (copied) {
+                            if (copied) {
+                                showMessage('Copied ' + path + '.');
+                                return;
+                            }
+
+                            window.getSelection().selectAllChildren(value);
+                            showError('The browser did not allow copying. ' + path + ' is selected, so copy it by hand.');
+                        });
+                    });
+                    copy.setAttribute('aria-label', 'Copy ' + library + ' path');
+                    row.appendChild(copy);
+                    return row;
+                }
+
                 function renderFolder(folder) {
                     var shown = JSON.stringify(folder);
                     if (shown === folderShown) {
@@ -636,21 +748,25 @@
                     }
 
                     folderShown = shown;
-                    var info = el('#jmFolderInfo');
-                    info.textContent = '';
+                    var notes = el('#jmFolderNotes');
+                    notes.textContent = '';
+                    updateRows(el('#jmFolderPaths'), folder.Path ? [
+                        { key: 'film' + folder.MoviesPath, build: renderPath, args: ['Film library', folder.MoviesPath] },
+                        { key: 'series' + folder.SeriesPath, build: renderPath, args: ['Series library', folder.SeriesPath] }
+                    ] : []);
                     if (!folder.Path) {
-                        info.textContent = 'Choose a folder to see the paths to link.';
+                        el('#jmFolderHint').textContent = 'Choose a folder to see the paths to link.';
                         return;
                     }
 
-                    info.appendChild(create('div', 'Add these paths by hand in Dashboard > Libraries: ' + folder.MoviesPath + ' to the film library, ' + folder.SeriesPath + ' to the series library.'));
+                    el('#jmFolderHint').textContent = 'Add these paths by hand in Dashboard > Libraries.';
                     if (folder.Link === 'NotChecked') {
-                        info.appendChild(create('div', 'The libraries could not be read to check these paths.'));
+                        notes.appendChild(create('div', 'The libraries could not be read to check these paths.'));
                         return;
                     }
 
                     if (folder.Link === 'Linked') {
-                        info.appendChild(create('div', 'Both paths are linked.'));
+                        notes.appendChild(create('div', 'Both paths are linked.'));
                     }
 
                     var warnings = [
@@ -665,8 +781,7 @@
                     warnings.filter(Boolean).forEach(function (text) {
                         var warning = create('div', text);
                         warning.className = 'jmFolderWarning';
-                        warning.style.fontWeight = 'bold';
-                        info.appendChild(warning);
+                        notes.appendChild(warning);
                     });
                 }
 
