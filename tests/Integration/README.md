@@ -260,6 +260,8 @@ source ui/lib.sh && pw /path/to/script.py
 
 The page has five tabs, so most of it is hidden at any moment. Reading text or a value works on a hidden tab, while `uipage.py` makes `click`, `fill`, `focus`, `is_visible`, `select_option`, `bounding_box` and `scroll_into_view_if_needed` open the tab of their element first, so a check does not have to name tabs. `page.evaluate` opens nothing: use `u.reveal(node)` or `u.show_tab(page, name)` before measuring what is on screen, and `contrast` in `pagecheck.py` for a selector across all tabs. `Session.open(tab="catalog")` opens the page on a tab, and the `tabs` scenario checks the tabs themselves.
 
+Servers and connected servers are expandable rows. The same actions also open the rows and parts that hold their element, except `is_visible`, which reports what a person sees. Save appears only with a change, so a check that saves calls `u.change_settings(page)` first if it has changed nothing.
+
 What Jellyfin 12.4 was observed to do with these tabs:
 
 - `LibraryMenu.setTabs` draws them in the Dashboard header at every width, as router links with `role="tab"`, arrow keys and Enter, but not Space. Without `href` a click leaves for `/configurationpage` with no plugin name and ends on Home.

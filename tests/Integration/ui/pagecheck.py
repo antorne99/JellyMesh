@@ -221,9 +221,14 @@ def keyboard(s, width):
     reached = []
     for tab in u.TABS:
         u.show_tab(page, tab)
+        if tab == "settings":
+            u.change_settings(page)
+            page.locator(u.TAB + "[aria-selected=true]").focus()
         inside = False
         for _ in range(400):
             page.keyboard.press("Tab")
+            if page.evaluate("document.activeElement.matches('details:not([open]) > summary')"):
+                page.keyboard.press("Enter")
             focus = page.evaluate("""p => { const e = document.activeElement;
               return e.closest(p) ? (e.id || (e.textContent || '').trim() || e.type) : null; }""", u.PAGE)
             if focus is None and inside:
@@ -808,6 +813,7 @@ def settings_failed(page, name):
     outcome(page, name + " a save the server refuses", "Error", "server refused")
     check(name + " the field errors have gone", page.locator(u.FIELD_ERROR).count() == 0)
     page.locator(u.FEDERATED_FOLDER).fill(folder)
+    interval = u.change_settings(page)
 
     def post(answer):
         page.route(config, lambda route: answer(route) if route.request.method == "POST" else route.continue_())
@@ -831,6 +837,7 @@ def settings_failed(page, name):
     page.locator(u.SAVE_SETTINGS).click()
     outcome(page, name + " a save offline", "Error", "No answer from this server")
     page.context.set_offline(False)
+    page.locator(u.SYNC_INTERVAL).fill(interval)
 
 
 def peer_limit(page, name):
@@ -977,6 +984,7 @@ def control_themes(s, width):
         page.keyboard.press("ArrowRight")
         ring_shows(page, name + " a closed tab")
         focus_shows(page, name + " a button", u.button(stock, "test"))
+        u.change_settings(page)
         focus_shows(page, name + " a main button", page.locator(u.SAVE_SETTINGS))
         focus_shows(page, name + " a number", connected.locator(u.NUMBER))
         focus_shows(page, name + " a select", new_peer.locator(u.SELECT))
@@ -1273,9 +1281,13 @@ def merge_unknown(s, width, name):
 
     page = s.open("fresh", width, route=lambda context: context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, change)))
     shown = u.merge_case(page, PAIR).inner_text()
-    check(name + " shows the best version first", "Best version: 2160p - HDR - 800 kbit/s" in shown, shown)
-    check(name + " shows the other version", "Other version: Quality unknown" in shown, shown)
-    check(name + " says what is unknown one by one", "1080p - HDR unknown - bitrate unknown - codec unknown" in shown, shown)
+    u.reveal(u.merge_case(page, PAIR))
+    cells = u.merge_case(page, PAIR).locator(u.MERGE_TITLE).first.locator(u.MERGE_QUALITY).all_inner_texts()
+    other = u.merge_case(page, PAIR).locator(u.MERGE_TITLE).nth(1).locator(u.MERGE_QUALITY).all_inner_texts()
+    check(name + " says the best version comes first", "Best version first." in shown, shown)
+    check(name + " shows the best version first", cells[2].split() == ["2160p", "Unknown"] and cells[4].startswith("800 kbit/s"), cells)
+    check(name + " shows the other version as unknown", cells[3].split() == ["HDR", "Unknown"], cells)
+    check(name + " says what is unknown one by one", other[2].split()[0] == "1080p" and other[3].split()[0] == "Unknown" and other[4].split()[0] == "Unknown", other)
     check(name + " says a local copy has no quality read", "Quality not read" in shown, shown)
     check(name + " shows several copies in the name", " and 1 more" in text(page, u.MERGE_NAME + " >> nth=1"), shown)
     check(name + " keeps remote text as text", HOSTILE.upper() in shown and page.locator(u.MERGE_CASES + " b").count() == 0, shown)
@@ -1413,7 +1425,7 @@ def advanced_closed(page, name):
     check(name + " starts closed", not u.advanced_open(page))
     for selector in ADVANCED_RANGES:
         check(f"{name} hides {selector}", not page.locator(selector).is_visible())
-    for selector in [u.SYNC_INTERVAL, u.FEDERATED_FOLDER, u.METADATA_PROTECTION, u.SAVE_SETTINGS]:
+    for selector in [u.SYNC_INTERVAL, u.FEDERATED_FOLDER, u.METADATA_PROTECTION]:
         check(f"{name} leaves {selector} in reach", page.locator(selector).is_visible())
 
     toggle = page.locator(u.ADVANCED_TOGGLE)
@@ -1718,11 +1730,7 @@ def tabs_laid_out(s, width):
     check(name + " Sharing says what others read", "read from this server" in page.locator(u.PANEL + ":not([hidden])").inner_text())
     connected = u.peer_row(page, "jellymesh").bounding_box()
     connect = u.peer_row(page, u.NEW_PEER).bounding_box()
-    beside = connect["x"] >= connected["x"] + connected["width"]
-    below = connect["y"] >= connected["y"] + connected["height"]
-    check(name + " Sharing fits its width", beside if width == "1280" else below, [connected, connect])
-    titles = [u.peer_row(page, title).get_by_role("heading").bounding_box()["y"] for title in ("jellymesh", u.NEW_PEER)]
-    check(name + " Sharing aligns its two titles", width != "1280" or abs(titles[0] - titles[1]) < 1, titles)
+    check(name + " Sharing puts the form under the list", connect["y"] >= connected["y"] + connected["height"], [connected, connect])
     healthy(page, name)
     page.context.close()
 
@@ -2733,6 +2741,80 @@ def overview(s, width):
     overview_focus(s, width)
 
 
+def design(s, width):
+    """The page picks its look from the theme, and shows its version only when it can read it."""
+    name = width + " design"
+    for theme, dark in THEMES:
+        page = s.open("fresh", width, theme=theme)
+        seen = page.locator(u.PAGE).get_attribute("data-jm-scheme")
+        check(f"{name} {theme} has its scheme", seen == ("dark" if dark else "light"), seen)
+        u.close(page)
+    u.set_theme("fresh", "dark")
+
+    page = s.open("fresh", width)
+    check(name + " shows the version", text(page, u.VERSION).startswith("Version "), text(page, u.VERSION))
+    check(name + " the banner has a tone", "jmTone" in page.locator(u.BANNER).get_attribute("class"))
+    u.close(page)
+
+    page = s.open("fresh", width, route=lambda context: context.route("**/Plugins", lambda route: route.abort()))
+    check(name + " hides a version it cannot read", not page.locator(u.VERSION).is_visible())
+    check(name + " still loads", page.locator(u.TAB).count() == len(u.TABS))
+    u.close(page)
+
+
+def rows(s, width):
+    """A server with a problem opens by itself, says why when closed, and stays as the admin left it."""
+    name = width + " rows"
+
+    def refused(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(Connection="AuthenticationFailed"))
+
+    page = s.open("fresh", width, route=refused, tab="servers")
+    stock = u.server_row(page, "stock")
+    check(name + " a problem opens its row", stock.evaluate("row => row.open"))
+    check(name + " a healthy row stays closed", not u.server_row(page, "peer").evaluate("row => row.open"))
+    stock.locator("summary").click()
+    check(name + " the admin can close it", not stock.evaluate("row => row.open"))
+    check(name + " the reason stays in view", stock.locator(u.CAUSE).is_visible())
+    page.wait_for_timeout(20000)
+    check(name + " reading again keeps it closed", not stock.evaluate("row => row.open"))
+    healthy(page, name)
+    u.close(page)
+
+
+def save_bar(s, width):
+    """Save appears with a change, only on Settings, and goes when nothing is left to save."""
+    name = width + " save bar"
+    page = s.open("fresh", width, tab="settings")
+    bar = page.locator(u.SAVE_BAR)
+    check(name + " nothing to save hides it", bar.is_hidden())
+    interval = u.change_settings(page)
+    check(name + " a change shows it", bar.is_visible())
+    check(name + " says what waits", "Unsaved changes" in bar.inner_text(), bar.inner_text())
+    u.show_tab(page, "overview")
+    check(name + " stays on Settings", bar.is_hidden())
+    u.show_tab(page, "settings")
+    check(name + " comes back with the tab", bar.is_visible())
+    page.locator(u.SYNC_INTERVAL).fill(interval)
+    check(name + " undoing the change hides it", bar.is_hidden())
+    u.change_settings(page)
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " saves", until(page, lambda: u.config("fresh")["SyncIntervalSeconds"] == int(interval) + 1))
+    u.wait_idle(page)
+    check(name + " a save hides it", bar.is_hidden())
+    check(name + " a save leaves the focus on the page", page.evaluate("!!document.activeElement.closest('[role=tabpanel]')"))
+    u.settings("fresh", lambda config: config.update(SyncIntervalSeconds=int(interval)))
+    healthy(page, name)
+    u.close(page)
+
+    def locked(status):
+        status["FederatedFolder"]["FromEnvironment"] = True
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", locked), tab="settings")
+    check(name + " a locked folder is not a change", page.locator(u.SAVE_BAR).is_hidden())
+    u.close(page)
+
+
 SCENARIOS = {
     "tabs": (tabs, WIDTHS),
     "overview": (overview, WIDTHS),
@@ -2747,6 +2829,9 @@ SCENARIOS = {
     "errors": (errors, WIDTHS),
     "keyboard": (keyboard, WIDTHS),
     "themes": (themes, WIDTHS),
+    "design": (design, WIDTHS),
+    "rows": (rows, WIDTHS),
+    "save-bar": (save_bar, WIDTHS),
     "actions": (actions, ["1280"]),
     "confirms": (confirms, WIDTHS),
     "confirm-keyboard": (confirm_keyboard, WIDTHS),
