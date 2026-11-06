@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -30,6 +31,7 @@ public class FederationAdminController : ControllerBase
     private readonly IFederatedFolderLinkChecker _linkChecker;
     private readonly PlaybackCoordinator _playback;
     private readonly IFederatedRootSource _rootSource;
+    private readonly ICatalogSyncService _sync;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -40,13 +42,15 @@ public class FederationAdminController : ControllerBase
     /// <param name="linkChecker">The federated folder link checker.</param>
     /// <param name="playback">The playback coordinator.</param>
     /// <param name="rootSource">The source of the federated folder.</param>
+    /// <param name="sync">The sync service, which deletes what a removed server left.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
         IPluginConfigurationStore store,
         IFederatedFolderLinkChecker linkChecker,
         PlaybackCoordinator playback,
-        IFederatedRootSource rootSource)
+        IFederatedRootSource rootSource,
+        ICatalogSyncService sync)
     {
         _registry = registry;
         _vault = vault;
@@ -54,6 +58,7 @@ public class FederationAdminController : ControllerBase
         _linkChecker = linkChecker;
         _playback = playback;
         _rootSource = rootSource;
+        _sync = sync;
     }
 
     /// <summary>
@@ -94,7 +99,7 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Removes a server. Works whatever the state of the key.
+    /// Removes a server and starts deleting its content. Works whatever the state of the key.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <returns>Nothing.</returns>
@@ -104,7 +109,13 @@ public class FederationAdminController : ControllerBase
     public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId)
     {
         await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
-        return _registry.Remove(serverId) ? NoContent() : Failed(RemoteFailure.UnknownServer);
+        if (!_registry.Remove(serverId))
+        {
+            return Failed(RemoteFailure.UnknownServer);
+        }
+
+        _sync.StartRemovalCleanup();
+        return NoContent();
     }
 
     /// <summary>
@@ -165,7 +176,7 @@ public class FederationAdminController : ControllerBase
         return _registry.SetImportedLibraries(serverId, request.LibraryIds) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
 
-    private static string? KeyWarning(KeyState state)
+    internal static string? KeyWarning(KeyState state)
     {
         const string Consequence = "Remote credentials cannot be saved or used, and sync and remote playback are suspended.";
         return state switch

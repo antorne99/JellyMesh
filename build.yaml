@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.2.2.0"
+version: "0.3.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -19,9 +19,11 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: >
-  Adds a logo, shown in the plugin catalog, and a JellyMesh entry in the Plugins
-  section of the Dashboard menu. The federated folder can now be set with the
-  JELLYMESH_FEDERATED_ROOT environment variable, which then wins over the plugin
-  page. The logo and the menu entry are checked on Jellyfin 12.0 and 12.4, and
-  remote playback only on 12.4, with jellyfin-web only: real Android and TV
-  clients and QSV are not yet tested.
+  Redesigns the plugin page around the JellyMesh identity, in a dark and a light
+  scheme that follow the Jellyfin theme, and shows it in English or Italian
+  according to the language set in Jellyfin. After connecting a server, the page
+  goes straight to choosing its libraries. Removing a server now deletes its
+  content right away, while titles also on another server stay and move to it.
+  The first setup step says what to do about the secret key. Remote playback is
+  checked only on 12.4, with jellyfin-web only: real Android and TV clients and
+  QSV are not yet tested.

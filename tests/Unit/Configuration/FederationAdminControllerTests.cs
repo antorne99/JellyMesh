@@ -12,10 +12,12 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
@@ -37,7 +39,8 @@ public class FederationAdminControllerTests
             fixture.Store,
             checker ?? new RecordingChecker(FederatedFolderLinkState.NotChecked),
             new CoordinatorFixture().Coordinator,
-            new FixedFederatedRootSource(federatedRoot));
+            new FixedFederatedRootSource(federatedRoot),
+            Mock.Of<ICatalogSyncService>());
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -48,19 +51,42 @@ public class FederationAdminControllerTests
         await playback.OpenAsync(PlaybackValues.Stub(source));
         var releasedBeforeRemoval = -1;
         playback.Registry.OnRemove = () => releasedBeforeRemoval = playback.Client.Released.Count;
+        var sync = new Mock<ICatalogSyncService>();
         var controller = new FederationAdminController(
             playback.Registry,
             new RegistryFixture().Vault,
             playback.Store,
             new RecordingChecker(FederatedFolderLinkState.NotChecked),
             playback.Coordinator,
-            new FixedFederatedRootSource(null));
+            new FixedFederatedRootSource(null),
+            sync.Object);
 
         var result = await controller.RemoveServer(source.ServerId);
 
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(1, releasedBeforeRemoval);
         Assert.Empty(playback.Sessions.All);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
+    }
+
+    [Fact]
+    public async Task Removing_an_unknown_server_deletes_nothing()
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        using var fixture = new RegistryFixture();
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            sync.Object);
+
+        var result = await controller.RemoveServer(Guid.NewGuid());
+
+        Assert.Equal(404, Assert.IsType<ObjectResult>(result).StatusCode);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
     }
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);

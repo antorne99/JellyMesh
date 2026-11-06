@@ -16,6 +16,7 @@ JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series
 - At playback, sends the real client's device profile to the remote, which decides between direct play and transcode and does any transcoding on its own hardware. Your server proxies the stream.
 - Falls back when a remote cannot serve, as described in [Stream limit and fallback](#stream-limit-and-fallback).
 - Keeps watch state on your server.
+- Shows its page in the display language set in Jellyfin. English and Italian are available, and any other language shows English.
 
 ## What it doesn't do
 
@@ -58,7 +59,7 @@ https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
 Download `jellymesh_<version>.zip` from a [release](https://github.com/antorne99/JellyMesh/releases) and compare it with the `.sha256` file next to it. Unpack the zip into a folder in Jellyfin's `plugins` folder, keeping `meta.json`, and restart Jellyfin. For the Docker image that folder is:
 
 ```
-/config/plugins/JellyMesh_0.2.2.0/
+/config/plugins/JellyMesh_0.3.0.0/
 ```
 
 Until a release exists, you can build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
@@ -99,7 +100,7 @@ services:
 
 **Back up the key, separately from the Jellyfin config.** Without it the stored credentials can't be decrypted, and losing it means re-entering all remote credentials.
 
-If the key is missing, shorter than 32 characters or not the one that encrypted the credentials, JellyMesh saves and uses no credentials, suspends sync and remote playback, and shows a warning on its page. Titles already synced stay visible but won't play. To recover, restore the original key. If you can't, set a new key, remove every server on the plugin page, then add them again. Nothing can be added until all the old ones are gone. There is no way to rotate the key while keeping the servers. Removing a server takes its titles out at the next sync, and watch state on those titles can be lost.
+If the key is missing, shorter than 32 characters or not the one that encrypted the credentials, JellyMesh saves and uses no credentials, suspends sync and remote playback, and shows a warning on its page. Titles already synced stay visible but won't play. To recover, restore the original key. If you can't, set a new key, remove every server on the plugin page, then add them again. Nothing can be added until all the old ones are gone. There is no way to rotate the key while keeping the servers. Removing a server deletes its titles from your libraries right away, and adding it back restores them. A film kept its watch state when this was tested on 12.4.
 
 A server that only provides, with no remote servers of its own, can run without the key, but its plugin page keeps the warning and its log gets a warning at every scheduled sync. Setting a key there too avoids both.
 
@@ -112,12 +113,14 @@ All of this is on the plugin page, under Dashboard > Plugins > JellyMesh, unless
 1. On the remote, create a dedicated non-admin user that can see the libraries you want. Leave its transcoding permission on, so that the remote can transcode for you. Use it for one server only.
 2. On your server, make the federated folder writable by Jellyfin. In the Compose example above that is `/federata`.
 3. Under **Settings**, enter the path in **Federated folder** and save. It must be an absolute path, and not the filesystem root. If `JELLYMESH_FEDERATED_ROOT` is set, skip this step: at every start the plugin uses that path, and the field is read-only. A value that isn't usable is ignored with a warning in the log. If you remove the variable, the last path stays and the field can be edited again.
-4. Under **Add a server**, enter a name, the tailnet URL of the remote, and the dedicated user and password, then choose **Test and add**. The remote must be online, and an administrator account is refused.
-5. Under **Remote servers**, choose **Libraries**, tick what to import and save. Nothing is imported until you do.
+4. Under **Add a server**, enter a name, the tailnet URL of the remote, and the dedicated user and password, then choose **Connect and choose libraries**. The remote must be online, and an administrator account is refused.
+5. The server's card opens with the libraries read from it. Tick what to import and choose **Save libraries**. Nothing is imported until you do. To change the choice later, choose **Libraries** on the card.
 6. Under **Catalog**, choose **Sync now**. This also creates the `Film` and `Serie` subfolders.
 7. In the Dashboard, add those two paths to your libraries by hand: `<federated folder>/Film` to a film library and `<federated folder>/Serie` to a series library. The plugin page shows the exact paths, and warns until they are linked.
 
 After a sync that changes anything, JellyMesh asks Jellyfin to scan the libraries, so titles appear once that scan ends.
+
+To stop reading a server, choose **Remove** on its card. Titles found only there leave your libraries right away, with their images. Titles also on another server stay and play from it. Nothing changes on the remote or in your local files.
 
 ### Connect a JellyMesh remote
 
