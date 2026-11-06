@@ -120,8 +120,7 @@ public static class DedupEngine
             return new FederationDecision(identity, null, []) { LocalItemIds = localItemIds, RemoteItems = remoteItems };
         }
 
-        var ranked = QualityRanking.Rank(items.SelectMany(item => item.Versions.Select(version =>
-            new RemoteSource(item.ServerId, item.ItemId, version.MediaSourceId, version.Quality))));
+        var ranked = QualityRanking.Rank(items.SelectMany(item => item.ToSources()));
 
         return new FederationDecision(identity, ranked[0], ranked.Skip(1).ToList()) { RemoteItems = remoteItems };
     }

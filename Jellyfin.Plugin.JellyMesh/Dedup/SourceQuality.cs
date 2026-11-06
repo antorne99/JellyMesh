@@ -10,4 +10,8 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// estimate for MKV (plan §10). Missing counts as 0.
 /// </param>
 /// <param name="Codec">The <c>MediaStream.Codec</c> as Jellyfin reports it, such as <c>h264</c>, <c>hevc</c> or <c>av1</c>.</param>
-public sealed record SourceQuality(int? Height, bool IsHdr, int? BitRate, string? Codec);
+public sealed record SourceQuality(int? Height, bool IsHdr, int? BitRate, string? Codec)
+{
+    /// <summary>Gets a value indicating whether the range was read. If not, <see cref="IsHdr"/> is false without being known.</summary>
+    public bool IsRangeKnown { get; init; } = true;
+}
