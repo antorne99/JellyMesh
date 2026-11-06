@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -49,6 +50,35 @@ public sealed class FederationIndexTests : IDisposable
 
         Assert.Equal("c", Assert.Single(index.Snapshot.Find(_first)!.Items).ItemId);
         Assert.Equal("b", Assert.Single(index.Snapshot.Find(_second)!.Items).ItemId);
+    }
+
+    [Fact]
+    public async Task KeepingServersDropsTheOthersForGood()
+    {
+        using (var index = NewIndex())
+        {
+            await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
+            await index.ReplaceServerAsync(_second, [Item("b")], _now, null, CancellationToken.None);
+
+            await index.KeepServersAsync(new HashSet<Guid> { _second }, CancellationToken.None);
+        }
+
+        using var restarted = NewIndex();
+
+        Assert.Null(restarted.Snapshot.Find(_first));
+        Assert.Equal("b", Assert.Single(restarted.Snapshot.Find(_second)!.Items).ItemId);
+    }
+
+    [Fact]
+    public async Task KeepingEveryServerWritesNothing()
+    {
+        using var index = NewIndex();
+        await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
+        File.Delete(MainPath);
+
+        Assert.True(await index.KeepServersAsync(new HashSet<Guid> { _first }, CancellationToken.None));
+
+        Assert.False(File.Exists(MainPath));
     }
 
     [Fact]

@@ -337,6 +337,30 @@ public class StubPlannerTests
         Assert.Empty(plan.Removals);
     }
 
+    [Theory]
+    [InlineData(IndexHealth.Ok)]
+    [InlineData(IndexHealth.Corrupt)]
+    [InlineData(IndexHealth.RestoredFromBackup)]
+    public void AStubOfRemovedServersIsGoneWhateverTheIndexSays(IndexHealth health)
+    {
+        var plan = Plan([], [], new StubState { Stubs = [ExistingStub("stub1", "k", _serverA, "m")] }, [Server(_serverB, Library)], health);
+
+        Assert.Single(plan.Removals);
+    }
+
+    [Fact]
+    public void ADamagedIndexKeepsAStubWithASourceStillConfigured()
+    {
+        var existing = ExistingStub("stub1", "k", _serverA, "m") with
+        {
+            Sources = [new StubSource(_serverA, "m", "m") { LibraryId = Library }, new StubSource(_serverB, "z", "z") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [], new StubState { Stubs = [existing] }, [Server(_serverB, Library)], IndexHealth.Corrupt);
+
+        Assert.Empty(plan.Removals);
+    }
+
     [Fact]
     public void OneStaleSourceKeepsAStubOtherwiseGone()
     {

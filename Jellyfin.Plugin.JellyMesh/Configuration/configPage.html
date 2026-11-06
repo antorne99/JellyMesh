@@ -1946,12 +1946,12 @@
                     actions.appendChild(button('Remove', function () {
                         confirmAction('Remove this server?', [
                             escapeHtml(server.Name) + ' and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.',
-                            'Titles found only there stay in the library, but do not play, until the next sync removes them. Removing does not start a sync. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now.',
+                            'Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.',
                             'Playback already running may not stop right away.',
                             'Adding the server back brings the same titles and watch state.'
                         ], function () {
                             act(api('DELETE', 'Servers/' + server.Id).then(function () {
-                                showMessage('Removed ' + server.Name + '.');
+                                showMessage('Removed ' + server.Name + '. Its titles are leaving the libraries.');
                                 return load();
                             }));
                         });

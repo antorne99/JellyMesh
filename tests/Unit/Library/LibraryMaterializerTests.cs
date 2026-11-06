@@ -225,6 +225,61 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task RemovingAServerDeletesWhatOnlyItHadAndMovesTheRestToTheOther()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("extra", "Extra", "movies"));
+        _fixture.Sync.Client.Add("extra", RemoteItemType.Movie, TestItems.Movie("b", "Other", 2021, "2"));
+        var removed = await _fixture.Sync.AddServerAsync("A", "films", "extra");
+        var kept = await _fixture.Sync.AddServerAsync("B", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_("Film", "Other (2021)", "Other (2021).strm");
+        Assert.True(File.Exists(path));
+        var item = new Movie { Id = Guid.NewGuid(), Path = path };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        using var sync = new CatalogSyncService(
+            _fixture.Sync.Registry,
+            _fixture.Sync.Reader,
+            _fixture.Sync.Index,
+            _fixture.Sync.Vault,
+            _fixture.Sync.Clock,
+            _fixture.Sync.Logger,
+            _fixture.Materializer);
+
+        _fixture.Sync.Registry.Remove(removed.Id);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.False(Directory.Exists(_fixture.Path_("Film", "Other (2021)")));
+        Assert.True(File.Exists(_fixture.Path_("Film", "Film (2020)", "Film (2020).strm")));
+        Assert.Equal(kept.Id, Assert.Single(Assert.Single(_fixture.Registry.State.Stubs).Sources).ServerId);
+        Assert.Null(_fixture.Sync.Index.Snapshot.Find(removed.Id));
+        _fixture.Library.Verify(library => library.DeleteItem(item, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
+    }
+
+    [Fact]
+    public async Task RemovingAServerDeletesItsContentWhileTheKeyIsBroken()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var removed = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        using var sync = new CatalogSyncService(
+            _fixture.Sync.Registry,
+            _fixture.Sync.Reader,
+            _fixture.Sync.Index,
+            _fixture.Sync.Vault,
+            _fixture.Sync.Clock,
+            _fixture.Sync.Logger,
+            _fixture.Materializer);
+
+        _fixture.Sync.KeySource.Key = null;
+        _fixture.Sync.Registry.Remove(removed.Id);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.False(Directory.Exists(_fixture.Path_("Film", "Film (2020)")));
+        Assert.Empty(_fixture.Registry.State.Stubs);
+    }
+
+    [Fact]
     public async Task AFailedSyncRemovesNothing()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());

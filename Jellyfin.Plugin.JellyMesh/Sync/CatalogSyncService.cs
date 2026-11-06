@@ -120,6 +120,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
+    public void StartRemovalCleanup()
+    {
+        var cancellationToken = _shutdown.Token;
+        _ = Task.Run(() => CleanUpAfterRemovalAsync(cancellationToken), CancellationToken.None);
+    }
+
+    /// <inheritdoc />
     public SyncStatus GetStatus()
     {
         var snapshot = _index.Snapshot;
@@ -136,6 +143,25 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     {
         _shutdown.Cancel();
         _shutdown.Dispose();
+    }
+
+    // Takes no claim: a sync that is running must not delay this, and the materializer lets one run at a time.
+    internal async Task CleanUpAfterRemovalAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
+            await MaterializeAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Cleanup after removing a server cancelled");
+        }
+        catch (Exception exception)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Cleanup after removing a server stopped: {Error}", exception.GetType().Name);
+        }
     }
 
     private static bool CoversSameLibraries(SyncMark mark, RemoteServerInfo server)
@@ -193,6 +219,18 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
     }
 
+    // A sync that was reading a server when it was removed stores its catalog afterwards, so this also runs after each sync.
+    private async Task DropRemovedServersAsync(CancellationToken cancellationToken)
+    {
+        var configured = _registry.GetServers().Select(server => server.Id).ToHashSet();
+        foreach (var serverId in _feedCursors.Keys.Where(serverId => !configured.Contains(serverId)))
+        {
+            _feedCursors.TryRemove(serverId, out _);
+        }
+
+        await _index.KeepServersAsync(configured, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, CancellationToken cancellationToken)
     {
         try
@@ -202,6 +240,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
                 await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
             }
 
+            await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             await MaterializeAsync(cancellationToken).ConfigureAwait(false);
         }
         finally

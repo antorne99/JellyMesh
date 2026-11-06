@@ -109,13 +109,20 @@ public static class StubPlanner
 
     private static bool IsGone(StubPlanInput input, StubEntry stub, Dictionary<(Guid ServerId, string LibraryId), int> held)
     {
+        var servers = input.Servers.ToDictionary(server => server.Id);
+
+        // Removing every source was the administrator's choice, and that needs no index to prove.
+        if (stub.Sources.Count > 0 && stub.Sources.All(source => !servers.ContainsKey(source.ServerId)))
+        {
+            return true;
+        }
+
         // A damaged index says nothing, and a server missing from it is not proof either.
         if (input.Snapshot.Health != IndexHealth.Ok)
         {
             return false;
         }
 
-        var servers = input.Servers.ToDictionary(server => server.Id);
         var emptyLibraries = new List<(Guid ServerId, string LibraryId)>();
         foreach (var source in stub.Sources)
         {
