@@ -41,7 +41,6 @@ Both roles are active on every server with the plugin.
 - Jellyfin 12.x. The manifest allows any server from 12.0, but only 12.4 has been tested, and the plugin is compiled against the 12.4 packages.
 - A tailnet between your servers. Tailscale is managed outside the plugin.
 - `EnableAutomaticSeriesGrouping` on in the series library you link the federated `Serie` path to, so that a local series and its remote episodes merge. In the Dashboard it is called "Automatically merge series that are spread across multiple folders". The plugin page warns if it is off and does not change it for you.
-- `JELLYMESH_SECRET_KEY` set on every server that reads remote servers. See [The secret key](#the-secret-key).
 - A dedicated non-admin user on each remote.
 
 ## Install
@@ -68,26 +67,15 @@ You can also build the plugin and install it into a running Jellyfin container. 
 tests/Integration/scripts/install-plugin.sh <container>
 ```
 
-## The secret key
+## Docker Compose
 
-Remote credentials are encrypted before they are saved, with a key derived from `JELLYMESH_SECRET_KEY`. It needs at least 32 characters, is used exactly as set, and each server has its own. Generate one with:
-
-```sh
-openssl rand -base64 32
-```
-
-In Docker Compose, keep it in an `.env` file next to `compose.yaml`, out of version control:
-
-```sh
-JELLYMESH_SECRET_KEY=<the generated key>
-```
+An example, with the federated folder mounted:
 
 ```yaml
 services:
   jellyfin:
     image: jellyfin/jellyfin:12.4
     environment:
-      JELLYMESH_SECRET_KEY: ${JELLYMESH_SECRET_KEY:?set it in .env}
       JELLYMESH_FEDERATED_ROOT: /federata # optional, see Setup
     volumes:
       - ./config:/config
@@ -96,13 +84,15 @@ services:
       - /your/federated:/federata
 ```
 
-`docker compose up -d` recreates the container with the new variable. A plain restart doesn't.
+## The credential key
 
-**Back up the key, separately from the Jellyfin config.** Without it the stored credentials can't be decrypted, and losing it means re-entering all remote credentials.
+Remote credentials are encrypted before they are saved, with a key that JellyMesh makes by itself at its first start: a random file named `credential.key` in its data folder. In the Docker image that is `/config/plugins/Jellyfin.Plugin.JellyMesh/`. On Linux and macOS only its owner can read it. On Windows it has the permissions of that folder. There is nothing to set.
 
-If the key is missing, shorter than 32 characters or not the one that encrypted the credentials, JellyMesh saves and uses no credentials, suspends sync and remote playback, and shows a warning on its page. Titles already synced stay visible but won't play. To recover, restore the original key. If you can't, set a new key, remove every server on the plugin page, then add them again. Nothing can be added until all the old ones are gone. There is no way to rotate the key while keeping the servers. Removing a server deletes its titles from your libraries right away, and adding it back restores them. A film kept its watch state when this was tested on 12.4.
+**Back up the key file, separately from the Jellyfin config.** Without it the saved passwords can't be decrypted.
 
-A server that only provides, with no remote servers of its own, can run without the key, but its plugin page keeps the warning and its log gets a warning at every scheduled sync. Setting a key there too avoids both.
+If the file is lost or replaced, JellyMesh suspends sync and remote playback and marks each server whose password no longer decrypts. Enter the login of each marked server again on its card, and the federation works again. Titles already synced stay in your libraries meanwhile, but won't play. If JellyMesh cannot keep the file at all, for example because its data folder is read-only, it saves and uses no credentials and shows a warning on its page.
+
+**Upgrading from 0.3.** Earlier versions read the key from `JELLYMESH_SECRET_KEY`. At the first start of the new version with the variable still set, JellyMesh moves the saved passwords to the key file, once. After that the variable is no longer used, and the plugin page says you can remove it. If you remove it before upgrading, enter the login of each server again.
 
 ## Setup
 
