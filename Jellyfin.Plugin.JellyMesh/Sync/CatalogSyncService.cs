@@ -125,9 +125,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
-    public Task MarkRemovedAsync(Guid serverId, CancellationToken cancellationToken)
+    public Task<bool> RemoveServerAsync(Guid serverId, Func<Task<bool>> remove, CancellationToken cancellationToken)
     {
-        return _stubs?.MarkRemovedAsync(serverId, cancellationToken) ?? Task.CompletedTask;
+        ArgumentNullException.ThrowIfNull(remove);
+        return _stubs?.RemoveServerAsync(serverId, remove, cancellationToken) ?? remove();
     }
 
     /// <inheritdoc />

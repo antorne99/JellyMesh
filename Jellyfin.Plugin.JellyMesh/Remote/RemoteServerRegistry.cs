@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
@@ -162,19 +163,34 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     /// <inheritdoc />
     public bool Remove(Guid serverId)
     {
-        var removed = false;
-        _store.Update(config =>
+        RemoteServerConfig? removed = null;
+        var position = -1;
+        try
         {
-            var server = config.Servers.FirstOrDefault(candidate => candidate.Id == serverId);
-            if (server is not null)
+            _store.Update(config =>
             {
-                removed = config.Servers.Remove(server);
-            }
-        });
+                removed = config.Servers.FirstOrDefault(candidate => candidate.Id == serverId);
+                if (removed is not null)
+                {
+                    position = config.Servers.IndexOf(removed);
+                    config.Servers.RemoveAt(position);
+                }
+            });
+        }
+        catch (Exception exception) when (removed is not null && exception is IOException or UnauthorizedAccessException)
+        {
+            Restore(removed, position);
+            throw;
+        }
+
+        if (removed is null)
+        {
+            return false;
+        }
 
         // Not disposed here: a call may still hold its login gate. The registry disposes the rest.
         _runtimes.TryRemove(serverId, out _);
-        return removed;
+        return true;
     }
 
     /// <inheritdoc />
@@ -316,6 +332,19 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         foreach (var runtime in _runtimes.Values)
         {
             runtime.Dispose();
+        }
+    }
+
+    // Puts back in memory a server whose removal was not saved: the file still has it.
+    private void Restore(RemoteServerConfig server, int position)
+    {
+        try
+        {
+            _store.Update(config => config.Servers.Insert(Math.Min(position, config.Servers.Count), server));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot save the configuration again after a failed removal: {Error}", exception.GetType().Name);
         }
     }
 

@@ -42,8 +42,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
         var removed = await _fixture.AddServerAsync("A", "films");
         var kept = await _fixture.AddServerAsync("B", "films");
         await _fixture.Sync.RunAsync(CancellationToken.None);
-        await _fixture.Sync.MarkRemovedAsync(removed.Id, CancellationToken.None);
-        _fixture.Registry.Remove(removed.Id);
+        await _fixture.Sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Registry.Remove(removed.Id)), CancellationToken.None);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -69,7 +68,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
     {
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
         var server = await _fixture.AddServerAsync("A", "films");
-        await _fixture.Sync.MarkRemovedAsync(server.Id, CancellationToken.None);
+        await _fixture.Sync.RemoveServerAsync(server.Id, () => Task.FromResult(true), CancellationToken.None);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 

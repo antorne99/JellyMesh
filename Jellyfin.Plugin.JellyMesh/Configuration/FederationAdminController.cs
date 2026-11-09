@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Mime;
 using System.Threading;
@@ -103,7 +104,8 @@ public class FederationAdminController : ControllerBase
 
     /// <summary>
     /// Removes a server and starts deleting its content. Works whatever the state of the key. The removal is recorded before
-    /// the server leaves the configuration: only recorded servers lose their content (decision 44).
+    /// the server leaves the configuration: only recorded servers lose their content (decision 44). If the removal cannot be
+    /// saved, the record is taken back and the server stays.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -111,6 +113,7 @@ public class FederationAdminController : ControllerBase
     [HttpDelete("Servers/{serverId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
         if (_registry.GetServers().All(server => server.Id != serverId))
@@ -118,10 +121,25 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.UnknownServer);
         }
 
-        // Marking may wait for a materialization, so sessions close after it, right before the server goes.
-        await _sync.MarkRemovedAsync(serverId, cancellationToken).ConfigureAwait(false);
-        await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
-        if (!_registry.Remove(serverId))
+        bool removed;
+        try
+        {
+            // Marking may wait for a materialization, so sessions close after it, right before the server goes.
+            removed = await _sync.RemoveServerAsync(
+                serverId,
+                async () =>
+                {
+                    await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
+                    return _registry.Remove(serverId);
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return Failed(RemoteFailure.RemovalFailed);
+        }
+
+        if (!removed)
         {
             return Failed(RemoteFailure.UnknownServer);
         }
@@ -239,6 +257,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.LibraryUnavailable => "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.",
             RemoteFailure.CatalogChanged => "The catalog kept changing while it was read. Try again.",
             RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
+            RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
             _ => "The operation failed."
         };
     }
@@ -277,6 +296,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.Suspended => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
+            RemoteFailure.RemovalFailed => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status502BadGateway
         };
 

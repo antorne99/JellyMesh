@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Threading;
@@ -152,6 +153,22 @@ public class RemoteServerRegistryTests
             CancellationToken.None);
 
         Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
+    }
+
+    [Fact]
+    public async Task AServerWhoseRemovalCannotBeSavedStays()
+    {
+        using var fixture = new RegistryFixture();
+        var first = await fixture.AddServerAsync();
+        var server = await fixture.AddServerAsync();
+        var last = await fixture.AddServerAsync();
+        fixture.Store.SaveFailure = new IOException("disk full");
+
+        Assert.Throws<IOException>(() => fixture.Registry.Remove(server.Id));
+
+        Assert.Equal([first.Id, server.Id, last.Id], fixture.Registry.GetServers().Select(item => item.Id));
+        fixture.Store.SaveFailure = null;
+        Assert.True(fixture.Registry.Remove(server.Id));
     }
 
     [Fact]

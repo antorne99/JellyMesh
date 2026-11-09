@@ -1551,6 +1551,8 @@
                     "The list changed. Check it again, then merge.": "L'elenco è cambiato. Ricontrollalo, poi unisci.",
                     "The next sync tries again.": "La prossima sincronizzazione riprova.",
                     "The operation failed.": "L'operazione non è riuscita.",
+                    "The server could not be removed. It stays, with its titles. Try again.": "Il server non è stato rimosso. Resta, con i suoi titoli. Riprova.",
+                    "Removing {server} failed. It stays, with its titles. Try again.": "La rimozione di {server} non è riuscita. Il server resta, con i suoi titoli. Riprova.",
                     "The server answered with an error.": "Il server ha risposto con un errore.",
                     "The server answered with error {status} and gave no reason.": "Il server ha risposto con l'errore {status} senza dare un motivo.",
                     "The server cannot be reached.": "Il server non è raggiungibile.",
@@ -2044,7 +2046,9 @@
                             return {};
                         }).then(function (data) {
                             if (!response.ok) {
-                                throw new Error(data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status }));
+                                var failure = new Error(data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status }));
+                                failure.failure = data.Failure;
+                                throw failure;
                             }
 
                             return data;
@@ -2521,6 +2525,12 @@
                             act(api('DELETE', 'Servers/' + server.Id).then(function () {
                                 showMessage(t('Removed {server}. Its titles are leaving the libraries.', { server: server.Name }));
                                 return load();
+                            }, function (error) {
+                                if (error.failure === 'RemovalFailed') {
+                                    throw new Error(t('Removing {server} failed. It stays, with its titles. Try again.', { server: server.Name }));
+                                }
+
+                                throw error;
                             }));
                         });
                     }, 'jmDanger'));

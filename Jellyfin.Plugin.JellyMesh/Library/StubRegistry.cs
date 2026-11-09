@@ -113,20 +113,38 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     }
 
     /// <summary>
-    /// Records a server the administrator removed, under the lock: a run in progress would otherwise save over it.
+    /// Records a server as removed by the administrator, then removes it, under the lock: a run in progress would otherwise
+    /// save over the mark. If the removal fails or finds no server, the mark this call added is taken back.
     /// </summary>
     /// <param name="serverId">The server.</param>
+    /// <param name="remove">What takes the server out of the configuration. False when there was no such server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task.</returns>
-    public async Task MarkRemovedAsync(Guid serverId, CancellationToken cancellationToken)
+    /// <returns>Whether the server was removed.</returns>
+    /// <exception cref="IOException">The mark or the removal could not be saved. The server stays.</exception>
+    public async Task<bool> RemoveServerAsync(Guid serverId, Func<Task<bool>> remove, CancellationToken cancellationToken)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var state = State;
-            if (!state.RemovedServers.Contains(serverId))
+            var marked = !state.RemovedServers.Contains(serverId);
+            if (marked)
             {
                 await SaveAsync(state with { RemovedServers = [.. state.RemovedServers, serverId] }, cancellationToken).ConfigureAwait(false);
+            }
+
+            var removed = false;
+            try
+            {
+                removed = await remove().ConfigureAwait(false);
+                return removed;
+            }
+            finally
+            {
+                if (marked && !removed)
+                {
+                    await UnmarkAsync(serverId).ConfigureAwait(false);
+                }
             }
         }
         finally
@@ -137,6 +155,20 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
 
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
+
+    // Takes back a mark whose server stays. If that cannot be saved either, the mark stays: the server is still configured.
+    private async Task UnmarkAsync(Guid serverId)
+    {
+        var state = State;
+        try
+        {
+            await SaveAsync(state with { RemovedServers = state.RemovedServers.Where(server => server != serverId).ToList() }, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}", exception.GetType().Name);
+        }
+    }
 
     private StubState Load()
     {

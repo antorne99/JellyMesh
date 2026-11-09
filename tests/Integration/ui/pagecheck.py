@@ -749,6 +749,18 @@ def outcomes_shown(page, name):
     done = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
     check(name + " an error and a success differ in colour", error != done, done)
 
+    failed = {"Failure": "RemovalFailed", "Message": "The server could not be removed. It stays, with its titles. Try again."}
+    page.route("**/JellyMesh/Admin/Servers/*", lambda route: route.fulfill(status=500, json=failed) if route.request.method == "DELETE" else route.continue_())
+    u.button(u.server_row(page, "stock"), "remove").click()
+    page.locator(u.CONFIRM_OK).click()
+    until(page, lambda: u.message(page).startswith("Error"))
+    page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
+    until(page, lambda: u.in_view(page, u.OUTCOME), 3)
+    shown = outcome(page, name + " a failed removal", "Error", "Removing stock failed")
+    check(name + " a failed removal says to try again", "Try again" in shown, shown)
+    check(name + " a failed removal keeps the server", u.server_row(page, "stock").count() == 1)
+    page.unroute("**/JellyMesh/Admin/Servers/*")
+
     hold = []
     page.route("**/JellyMesh/Admin/Servers/*", lambda route: hold.append(route) if route.request.method == "DELETE" else route.continue_())
     u.button(u.server_row(page, "stock"), "remove").click()
