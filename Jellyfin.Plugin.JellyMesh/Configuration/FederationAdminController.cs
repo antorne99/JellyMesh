@@ -102,15 +102,24 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Removes a server and starts deleting its content. Works whatever the state of the key.
+    /// Removes a server and starts deleting its content. Works whatever the state of the key. The removal is recorded before
+    /// the server leaves the configuration: only recorded servers lose their content (decision 44).
     /// </summary>
     /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Nothing.</returns>
     [HttpDelete("Servers/{serverId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId)
+    public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
+        if (_registry.GetServers().All(server => server.Id != serverId))
+        {
+            return Failed(RemoteFailure.UnknownServer);
+        }
+
+        // Marking may wait for a materialization, so sessions close after it, right before the server goes.
+        await _sync.MarkRemovedAsync(serverId, cancellationToken).ConfigureAwait(false);
         await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
         if (!_registry.Remove(serverId))
         {

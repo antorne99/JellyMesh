@@ -90,14 +90,14 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
     }
 
     /// <inheritdoc />
-    public Task<bool> KeepServersAsync(IReadOnlySet<Guid> serverIds, CancellationToken cancellationToken)
+    public Task<bool> DropServersAsync(IReadOnlySet<Guid> serverIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(serverIds);
 
         return CommitAsync(
-            current => current.Servers.All(server => serverIds.Contains(server.ServerId))
-                ? current
-                : current with { Servers = current.Servers.Where(server => serverIds.Contains(server.ServerId)).ToList() },
+            current => current.Servers.Any(server => serverIds.Contains(server.ServerId))
+                ? current with { Servers = current.Servers.Where(server => !serverIds.Contains(server.ServerId)).ToList() }
+                : current,
             cancellationToken);
     }
 

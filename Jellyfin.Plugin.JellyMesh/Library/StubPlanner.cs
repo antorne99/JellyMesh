@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -69,7 +70,29 @@ public static class StubPlanner
         var unclaimed = input.State.Stubs.Where(stub => !matcher.IsClaimed(stub)).ToList();
 
         var held = new Dictionary<(Guid ServerId, string LibraryId), int>();
-        var removals = unclaimed.Where(stub => IsGone(input, stub, held)).ToList();
+        var servers = input.Servers.ToDictionary(server => server.Id);
+        var removed = input.State.RemovedServers.Where(server => !servers.ContainsKey(server)).ToHashSet();
+        var unconfigured = 0;
+        var removals = new List<StubEntry>();
+        foreach (var stub in unclaimed)
+        {
+            // Every server missing and not all removed by the administrator: the configuration may be back, so nothing goes.
+            if (stub.Sources.Count > 0 && stub.Sources.All(source => !servers.ContainsKey(source.ServerId)))
+            {
+                if (stub.Sources.All(source => removed.Contains(source.ServerId)))
+                {
+                    removals.Add(stub);
+                }
+                else
+                {
+                    unconfigured++;
+                }
+            }
+            else if (IsGone(input, servers, stub, held))
+            {
+                removals.Add(stub);
+            }
+        }
 
         // Claimed stubs that get no work, such as those turning local, stay as they are. So do those still in doubt.
         var stubs = input.State.Stubs
@@ -89,7 +112,8 @@ public static class StubPlanner
 
         return new StubPlan(input.State with { Stubs = stubs, Series = series }, works, seriesWorks, removals, heldLibraries, unplaceable)
         {
-            MergedStubs = claims.Sum(claim => claim.Merged.Count)
+            MergedStubs = claims.Sum(claim => claim.Merged.Count),
+            Unconfigured = unconfigured
         };
     }
 
@@ -107,16 +131,9 @@ public static class StubPlanner
     // keeps the file and the item on the current URL by itself.
     private static string Unsigned(string url) => url.Split('?', 2)[0];
 
-    private static bool IsGone(StubPlanInput input, StubEntry stub, Dictionary<(Guid ServerId, string LibraryId), int> held)
+    // Only for a stub with a configured server: one whose servers are all missing is decided by the caller.
+    private static bool IsGone(StubPlanInput input, Dictionary<Guid, RemoteServerInfo> servers, StubEntry stub, Dictionary<(Guid ServerId, string LibraryId), int> held)
     {
-        var servers = input.Servers.ToDictionary(server => server.Id);
-
-        // Removing every source was the administrator's choice, and that needs no index to prove.
-        if (stub.Sources.Count > 0 && stub.Sources.All(source => !servers.ContainsKey(source.ServerId)))
-        {
-            return true;
-        }
-
         // A damaged index says nothing, and a server missing from it is not proof either.
         if (input.Snapshot.Health != IndexHealth.Ok)
         {
@@ -126,7 +143,7 @@ public static class StubPlanner
         var emptyLibraries = new List<(Guid ServerId, string LibraryId)>();
         foreach (var source in stub.Sources)
         {
-            // A server taken out of the configuration can serve nothing: that was the administrator's choice.
+            // A server missing from the configuration can serve nothing: the configured ones decide.
             if (!servers.TryGetValue(source.ServerId, out var server))
             {
                 continue;

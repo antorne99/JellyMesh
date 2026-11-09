@@ -1648,6 +1648,8 @@
                     "unexpected answer": "risposta inattesa",
                     "unknown problem": "problema sconosciuto",
                     "{count} min": "{count} min",
+                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server.",
+                    "{count} titles come from servers missing from the settings. They are kept.": "{count} titoli vengono da server assenti dalle impostazioni. Restano.",
                     "{field} was refused, so nothing was saved. {rule}": "{field} è stato rifiutato, quindi non è stato salvato nulla. {rule}",
                     "{films}, {series} series, {episodes}": "{films}, {series} serie, {episodes}",
                     "{first} Also marked: {more}.": "{first} Segnalati anche: {more}.",
@@ -2778,9 +2780,14 @@
                         return t('The last sync could not save the federation index. Check the disk.');
                     }
 
-                    return status.HeldLibraries.map(function (held) {
+                    var notes = status.HeldLibraries.map(function (held) {
                         return t('A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.', { server: held.ServerName, count: held.Stubs });
-                    }).join(' ');
+                    });
+                    if (status.UnconfiguredStubs > 0) {
+                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again.', { count: status.UnconfiguredStubs }));
+                    }
+
+                    return notes.join(' ');
                 }
 
                 function renderSync(status) {
@@ -3699,6 +3706,10 @@
                             tab: 'catalog'
                         };
                     });
+                    if (sync.UnconfiguredStubs > 0) {
+                        notes.push({ key: 'unconfigured', text: t('{count} titles come from servers missing from the settings. They are kept.', { count: sync.UnconfiguredStubs }), tab: 'catalog' });
+                    }
+
                     if (indexProblem(sync)) {
                         notes.unshift({ key: 'index', text: indexProblem(sync), tab: 'catalog' });
                     }

@@ -19,4 +19,13 @@ public interface ILibraryMaterializer
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The outcome.</returns>
     Task<MaterializationReport> MaterializeAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Same as <see cref="MaterializeAsync(CancellationToken)"/>. With <paramref name="verifyEveryStub"/> each stub also
+    /// gets its library item checked against the current URL, even when nothing says it changed.
+    /// </summary>
+    /// <param name="verifyEveryStub">Whether to check every stub.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The outcome.</returns>
+    Task<MaterializationReport> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken);
 }

@@ -112,6 +112,29 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         _lookup = new Lookup(state);
     }
 
+    /// <summary>
+    /// Records a server the administrator removed, under the lock: a run in progress would otherwise save over it.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public async Task MarkRemovedAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        await EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = State;
+            if (!state.RemovedServers.Contains(serverId))
+            {
+                await SaveAsync(state with { RemovedServers = [.. state.RemovedServers, serverId] }, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            Exit();
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
 

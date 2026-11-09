@@ -50,8 +50,22 @@ public class FederationAdminControllerTests
         playback.Registry.AddJellyMesh(source.ServerId);
         await playback.OpenAsync(PlaybackValues.Stub(source));
         var releasedBeforeRemoval = -1;
-        playback.Registry.OnRemove = () => releasedBeforeRemoval = playback.Client.Released.Count;
+        var markedBeforeRemoval = false;
+        var marked = false;
+        var releasedWhenMarked = -1;
+        playback.Registry.OnRemove = () =>
+        {
+            releasedBeforeRemoval = playback.Client.Released.Count;
+            markedBeforeRemoval = marked;
+        };
         var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.MarkRemovedAsync(source.ServerId, It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                marked = true;
+                releasedWhenMarked = playback.Client.Released.Count;
+            })
+            .Returns(Task.CompletedTask);
         var controller = new FederationAdminController(
             playback.Registry,
             new RegistryFixture().Vault,
@@ -61,10 +75,12 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object);
 
-        var result = await controller.RemoveServer(source.ServerId);
+        var result = await controller.RemoveServer(source.ServerId, CancellationToken.None);
 
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(1, releasedBeforeRemoval);
+        Assert.True(markedBeforeRemoval);
+        Assert.Equal(0, releasedWhenMarked);
         Assert.Empty(playback.Sessions.All);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
     }
@@ -83,10 +99,11 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object);
 
-        var result = await controller.RemoveServer(Guid.NewGuid());
+        var result = await controller.RemoveServer(Guid.NewGuid(), CancellationToken.None);
 
         Assert.Equal(404, Assert.IsType<ObjectResult>(result).StatusCode);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+        sync.Verify(service => service.MarkRemovedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);

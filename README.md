@@ -110,7 +110,7 @@ All of this is on the plugin page, under Dashboard > Plugins > JellyMesh, unless
 
 After a sync that changes anything, JellyMesh asks Jellyfin to scan the libraries, so titles appear once that scan ends.
 
-To stop reading a server, choose **Remove** on its card. Titles found only there leave your libraries right away, with their images. Titles also on another server stay and play from it. Nothing changes on the remote or in your local files.
+To stop reading a server, choose **Remove** on its card. Titles found only there leave your libraries right away, with their images. Titles also on another server stay and play from it. Nothing changes on the remote or in your local files. Only a removal from this page deletes titles: if a server goes missing from the settings in any other way, such as a reset settings file, its titles stay in your libraries, cannot play, and the plugin page warns you. Restore the settings or add the server again to bring them back.
 
 ### Connect a JellyMesh remote
 

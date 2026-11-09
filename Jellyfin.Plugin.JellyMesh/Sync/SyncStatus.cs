@@ -27,4 +27,10 @@ public sealed record SyncStatus(
     /// has items again, or it is deselected, or its server is removed.
     /// </summary>
     public IReadOnlyList<HeldLibrary> HeldLibraries { get; init; } = [];
+
+    /// <summary>
+    /// Gets how many titles belong only to servers missing from the configuration that were not removed from the page.
+    /// They stay, and cannot play until those servers are back.
+    /// </summary>
+    public int UnconfiguredStubs { get; init; }
 }
