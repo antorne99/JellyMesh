@@ -13,7 +13,6 @@ WORK=${WORK:-${TMPDIR:-/tmp}/$UI_PREFIX-work}
 MEDIA=${MEDIA:-$(dirname "$(git -C "$UI" rev-parse --path-format=absolute --git-common-dir)")/tests/Integration/media}
 source "$UI/../merge/lib.sh"
 # The plugin keeps its credential key in a file now (decision 42), so these servers run without the old variable.
-TEST_KEY=
 
 SERVERS="fresh stock peer first"
 NETWORK=$UI_PREFIX-net
