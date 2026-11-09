@@ -1552,7 +1552,9 @@
                     "The next sync tries again.": "La prossima sincronizzazione riprova.",
                     "The operation failed.": "L'operazione non è riuscita.",
                     "The server could not be removed. It stays, with its titles. Try again.": "Il server non è stato rimosso. Resta, con i suoi titoli. Riprova.",
+                    "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.": "Il server non è stato rimosso. Resta, con i suoi titoli, ma le riproduzioni in corso da quel server sono state interrotte. Riprova.",
                     "Removing {server} failed. It stays, with its titles. Try again.": "La rimozione di {server} non è riuscita. Il server resta, con i suoi titoli. Riprova.",
+                    "Removing {server} failed. It stays, with its titles, but any playback from it was stopped. Try again.": "La rimozione di {server} non è riuscita. Il server resta, con i suoi titoli, ma le riproduzioni in corso da quel server sono state interrotte. Riprova.",
                     "The server answered with an error.": "Il server ha risposto con un errore.",
                     "The server answered with error {status} and gave no reason.": "Il server ha risposto con l'errore {status} senza dare un motivo.",
                     "The server cannot be reached.": "Il server non è raggiungibile.",
@@ -2528,6 +2530,10 @@
                             }, function (error) {
                                 if (error.failure === 'RemovalFailed') {
                                     throw new Error(t('Removing {server} failed. It stays, with its titles. Try again.', { server: server.Name }));
+                                }
+
+                                if (error.failure === 'RemovalFailedPlaybackStopped') {
+                                    throw new Error(t('Removing {server} failed. It stays, with its titles, but any playback from it was stopped. Try again.', { server: server.Name }));
                                 }
 
                                 throw error;

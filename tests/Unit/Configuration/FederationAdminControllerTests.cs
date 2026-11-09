@@ -131,10 +131,38 @@ public class FederationAdminControllerTests
 
         Assert.Equal(500, result.StatusCode);
         var failure = Assert.IsType<FailureResponse>(result.Value);
-        Assert.Equal(RemoteFailure.RemovalFailed, failure.Failure);
+        Assert.Equal(RemoteFailure.RemovalFailedPlaybackStopped, failure.Failure);
+        Assert.Contains("playback from it was stopped", failure.Message, StringComparison.Ordinal);
         Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
         Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_removal_whose_mark_cannot_be_saved_stops_nothing_and_says_to_try_again()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk full"));
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            sync.Object);
+
+        var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.RemovalFailed, failure.Failure);
+        Assert.DoesNotContain("playback", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
     }
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);

@@ -729,6 +729,19 @@ def outcome(page, name, kind, says=""):
     return shown
 
 
+def refusing_removal(failure):
+    """Answers a removal with a failure, and lets every other call through."""
+    failed = {"Failure": failure, "Message": "The server could not be removed."}
+
+    def answer(route):
+        if route.request.method == "DELETE":
+            route.fulfill(status=500, json=failed)
+        else:
+            route.continue_()
+
+    return answer
+
+
 def outcomes_shown(page, name):
     """Outcomes of the actions, where they appear, and when they go."""
     check(name + " the region is rendered before it has text", page.locator(u.MESSAGE).evaluate(
@@ -749,17 +762,21 @@ def outcomes_shown(page, name):
     done = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
     check(name + " an error and a success differ in colour", error != done, done)
 
-    failed = {"Failure": "RemovalFailed", "Message": "The server could not be removed. It stays, with its titles. Try again."}
-    page.route("**/JellyMesh/Admin/Servers/*", lambda route: route.fulfill(status=500, json=failed) if route.request.method == "DELETE" else route.continue_())
-    u.button(u.server_row(page, "stock"), "remove").click()
-    page.locator(u.CONFIRM_OK).click()
-    until(page, lambda: u.message(page).startswith("Error"))
-    page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
-    until(page, lambda: u.in_view(page, u.OUTCOME), 3)
-    shown = outcome(page, name + " a failed removal", "Error", "Removing stock failed")
-    check(name + " a failed removal says to try again", "Try again" in shown, shown)
-    check(name + " a failed removal keeps the server", u.server_row(page, "stock").count() == 1)
-    page.unroute("**/JellyMesh/Admin/Servers/*")
+    failures = [
+        ("RemovalFailed", "a failed removal", "with its titles. Try again."),
+        ("RemovalFailedPlaybackStopped", "a removal failed after stopping playback", "any playback from it was stopped. Try again."),
+    ]
+    for failure, label, said in failures:
+        page.route("**/JellyMesh/Admin/Servers/*", refusing_removal(failure))
+        u.button(u.server_row(page, "stock"), "remove").click()
+        page.locator(u.CONFIRM_OK).click()
+        until(page, lambda said=said: u.message(page).startswith("Error") and said in u.message(page))
+        page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
+        until(page, lambda: u.in_view(page, u.OUTCOME), 3)
+        shown = outcome(page, name + " " + label, "Error", "Removing stock failed")
+        check(name + " " + label + " says what happened and to try again", said in shown, shown)
+        check(name + " " + label + " keeps the server", u.server_row(page, "stock").count() == 1)
+        page.unroute("**/JellyMesh/Admin/Servers/*")
 
     hold = []
     page.route("**/JellyMesh/Admin/Servers/*", lambda route: hold.append(route) if route.request.method == "DELETE" else route.continue_())

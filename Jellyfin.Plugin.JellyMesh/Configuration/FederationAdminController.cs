@@ -104,7 +104,7 @@ public class FederationAdminController : ControllerBase
     /// <summary>
     /// Removes a server and starts deleting its content. Works whatever the state of the key. The removal is recorded before
     /// the server leaves the configuration: only recorded servers lose their content (decision 44). If the removal cannot be
-    /// saved, the record is taken back and the server stays.
+    /// saved, the record is taken back and the server stays; the answer says whether its playback was already stopped.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -121,6 +121,7 @@ public class FederationAdminController : ControllerBase
         }
 
         bool removed;
+        var stopping = false;
         try
         {
             // Marking may wait for a materialization, so sessions close after it, right before the server goes.
@@ -128,6 +129,7 @@ public class FederationAdminController : ControllerBase
                 serverId,
                 async () =>
                 {
+                    stopping = true;
                     await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
                     return _registry.Remove(serverId);
                 },
@@ -135,7 +137,7 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return Failed(RemoteFailure.RemovalFailed);
+            return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed);
         }
 
         if (!removed)
@@ -257,6 +259,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.CatalogChanged => "The catalog kept changing while it was read. Try again.",
             RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
             RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
+            RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
             _ => "The operation failed."
         };
     }
@@ -295,7 +298,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.Suspended => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
-            RemoteFailure.RemovalFailed => StatusCodes.Status500InternalServerError,
+            RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status502BadGateway
         };
 
