@@ -7,7 +7,7 @@ WORK=${WORK:-${TMPDIR:-/tmp}/jm-rms-run}
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Own containers and ports. alice and bob are consumer users: their requests go to local with their own token.
-port_of() { case $1 in local | alice | bob) echo 18450 ;; remote) echo 18451 ;; esac; }
+port_of() { case $1 in local | alice | bob) echo 18470 ;; remote) echo 18471 ;; esac; }
 name_of() { echo "jm-rms-$1"; }
 down() {
   docker rm -f jm-rms-local jm-rms-remote >/dev/null 2>&1 || true
@@ -33,7 +33,7 @@ login local
 login alice alice
 login bob bob
 settings local '.FederatedFolderPath = "/federata"' >/dev/null
-id=$(add_remote local remote http://host.docker.internal:18451 jellymesh)
+id=$(add_remote local remote http://host.docker.internal:18471 jellymesh)
 import_all local "$id"
 sync_now local
 scan local
@@ -144,7 +144,7 @@ done
 check "the user data cleanup ran" Completed "$(get local "/ScheduledTasks/$task" | jq -r '.LastExecutionResult.Status // ""')"
 
 echo "--- the server comes back"
-id=$(add_remote local remote http://host.docker.internal:18451 jellymesh)
+id=$(add_remote local remote http://host.docker.internal:18471 jellymesh)
 import_all local "$id"
 sync_now local
 scan local

@@ -218,6 +218,12 @@ MEDIA=<main checkout>/tests/Integration/media OLD=<folder> bash play/all.sh
 
 It leaves the containers up. `down` in `play/lib.sh` removes them and their volumes.
 
+`removal-series.sh` proves the promise of the removal dialog on a series, with its own `jm-rms-local` and `jm-rms-remote` containers on ports 18470-18471. Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without. The server is removed and added back, and every episode and series row keeps the same item ID and the same watch state. Jellyfin keeps the user data of removed items by key, so the promise holds as long as stub paths and the IDs in the `.nfo` stay the same. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/removal-series.sh
+```
+
 `watchstate.sh` proves decision 41 on its own, with fresh `jm-play-local` and `jm-play-remote` containers and the current build. It needs only `MEDIA`. A film watched or stopped on the consumer changes no user's watch state on the remote, and a film the dedicated user and another remote user watch stays unwatched on the consumer after a sync. The clips are shorter than the 300 seconds Jellyfin needs to keep a resume point, so a film stopped halfway counts as watched.
 
 ```sh
