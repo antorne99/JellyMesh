@@ -101,5 +101,10 @@ public enum RemoteFailure
     /// <summary>
     /// Removing a server could not be saved after its playback was stopped. The server stays, with its titles.
     /// </summary>
-    RemovalFailedPlaybackStopped
+    RemovalFailedPlaybackStopped,
+
+    /// <summary>
+    /// Forgetting the servers missing from the settings could not be saved. Their titles stay.
+    /// </summary>
+    ForgetFailed
 }

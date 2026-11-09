@@ -150,6 +150,35 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
+    /// Forgets the servers missing from the settings that still left titles, as if they had been removed on this page, and
+    /// starts deleting what they left (decision 44). A server added back to the settings wins over this.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many servers were forgotten.</returns>
+    [HttpPost("MissingServers/Forget")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ForgetResponse>> ForgetMissingServers(CancellationToken cancellationToken)
+    {
+        int forgotten;
+        try
+        {
+            forgotten = await _sync.ForgetMissingServersAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return Failed(RemoteFailure.ForgetFailed);
+        }
+
+        if (forgotten > 0)
+        {
+            _sync.StartRemovalCleanup();
+        }
+
+        return new ForgetResponse(forgotten);
+    }
+
+    /// <summary>
     /// Enters the dedicated user of a server again, after logging in with it. This is how a lost key file is fixed.
     /// </summary>
     /// <param name="serverId">The server to update.</param>
@@ -260,6 +289,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
             RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
             RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
+            RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
             _ => "The operation failed."
         };
     }
@@ -298,7 +328,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.Suspended => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
-            RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped => StatusCodes.Status500InternalServerError,
+            RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status502BadGateway
         };
 

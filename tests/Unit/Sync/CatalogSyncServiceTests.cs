@@ -64,6 +64,35 @@ public sealed class CatalogSyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ForgettingDropsTheCatalogOfAServerMissingFromTheConfiguration()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        var missing = await _fixture.AddServerAsync("A", "films");
+        var kept = await _fixture.AddServerAsync("B", "films");
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        _fixture.Registry.Remove(missing.Id);
+
+        Assert.Equal(1, await _fixture.Sync.ForgetMissingServersAsync(CancellationToken.None));
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Null(_fixture.Index.Snapshot.Find(missing.Id));
+        Assert.NotNull(_fixture.Index.Snapshot.Find(kept.Id));
+    }
+
+    [Fact]
+    public async Task ForgettingWithEveryServerConfiguredMarksNothing()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        var server = await _fixture.AddServerAsync("A", "films");
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(0, await _fixture.Sync.ForgetMissingServersAsync(CancellationToken.None));
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_fixture.Index.Snapshot.Find(server.Id));
+    }
+
+    [Fact]
     public async Task AMarkOnAServerStillConfiguredKeepsItsCatalog()
     {
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));

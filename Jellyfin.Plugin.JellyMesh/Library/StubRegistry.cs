@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -146,6 +147,44 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
                     await UnmarkAsync(serverId).ConfigureAwait(false);
                 }
             }
+        }
+        finally
+        {
+            Exit();
+        }
+    }
+
+    /// <summary>
+    /// Records as removed every server that the stubs or the index still name but the settings do not, under the lock, so
+    /// that the cleanup after a removal deletes what they left (decision 44). A server configured again wins over its mark.
+    /// </summary>
+    /// <param name="configured">The servers in the settings.</param>
+    /// <param name="known">Other servers that left content, such as those with a catalog in the index.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many servers were marked now.</returns>
+    /// <exception cref="IOException">The marks could not be saved. Nothing is marked.</exception>
+    public async Task<int> ForgetServersAsync(IReadOnlySet<Guid> configured, IEnumerable<Guid> known, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(configured);
+        ArgumentNullException.ThrowIfNull(known);
+
+        await EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = State;
+            var missing = state.Stubs.SelectMany(stub => stub.Sources)
+                .Concat(state.Series.SelectMany(series => series.Sources))
+                .Select(source => source.ServerId)
+                .Concat(known)
+                .Where(server => !configured.Contains(server) && !state.RemovedServers.Contains(server))
+                .Distinct()
+                .ToList();
+            if (missing.Count > 0)
+            {
+                await SaveAsync(state with { RemovedServers = [.. state.RemovedServers, .. missing] }, cancellationToken).ConfigureAwait(false);
+            }
+
+            return missing.Count;
         }
         finally
         {

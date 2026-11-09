@@ -165,6 +165,48 @@ public class FederationAdminControllerTests
         Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
     }
 
+    [Theory]
+    [InlineData(2, 1)]
+    [InlineData(0, 0)]
+    public async Task Forgetting_missing_servers_says_how_many_and_cleans_up_only_when_some_were_forgotten(int forgotten, int cleanups)
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(forgotten);
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = await controller.ForgetMissingServers(CancellationToken.None);
+
+        Assert.Equal(forgotten, Assert.IsType<ForgetResponse>(result.Value).Servers);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Exactly(cleanups));
+    }
+
+    [Fact]
+    public async Task Forgetting_missing_servers_that_cannot_be_saved_says_to_try_again()
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk full"));
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = Assert.IsType<ObjectResult>((await controller.ForgetMissingServers(CancellationToken.None)).Result);
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.ForgetFailed, failure.Failure);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+    }
+
+    private static FederationAdminController CreateController(RegistryFixture fixture, ICatalogSyncService sync) => new(
+        fixture.Registry,
+        fixture.Vault,
+        fixture.Store,
+        new RecordingChecker(FederatedFolderLinkState.NotChecked),
+        new CoordinatorFixture().Coordinator,
+        new FixedFederatedRootSource(null),
+        sync);
+
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
 
     private static string ToXml(PluginConfiguration config)

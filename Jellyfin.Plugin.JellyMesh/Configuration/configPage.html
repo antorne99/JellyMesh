@@ -820,6 +820,14 @@
                 gap: 0.5em;
             }
 
+            #jmMissingServers {
+                margin-bottom: 1em;
+            }
+
+            #jmMissingServers .emby-button {
+                margin: 0;
+            }
+
             .jmActions .emby-button,
             .jmLibraries .emby-button {
                 margin: 0;
@@ -1189,6 +1197,11 @@
                         </button>
                     </div>
                     <div id="jmIndexWarning" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmMissingServers" hidden>
+                        <button id="jmForgetMissing" is="emby-button" type="button" class="raised emby-button jmDanger">
+                            <span>Forget missing servers</span>
+                        </button>
+                    </div>
                     <div id="jmSyncFailure" role="alert" hidden class="jmAlert"></div>
                     <div id="jmSyncServers"></div>
 
@@ -1399,6 +1412,8 @@
                     "Fix the login on that server, or remove this server and add it again with a working one.": "Sistema l'accesso su quel server, oppure rimuovi questo server e aggiungilo di nuovo con un accesso funzionante.",
                     "Folder": "Cartella",
                     "For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.": "Per i server connessi a questo. Uno stream senza attività per 2 minuti libera il suo posto, e questa opzione ne chiude anche la transcodifica. Se disattivata, la chiude il timer di Jellyfin. Una connessione caduta chiude comunque la transcodifica.",
+                    "Forget missing servers": "Dimentica i server mancanti",
+                    "Forget the servers missing from the settings?": "Dimenticare i server assenti dalle impostazioni?",
                     "From 1 to 168. After this a paused player has to start the title again.": "Da 1 a 168. Passato questo tempo, un player in pausa deve far ripartire il titolo.",
                     "From 1 to 60. A change to these rights on the remote takes up to this long to apply here.": "Da 1 a 60. Una modifica di questi diritti sul remoto può metterci fino a questo tempo per valere qui.",
                     "From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.": "Da 3 a 60. Aumentalo per un remoto lento. Uno spettatore aspetta questo tempo su ogni sorgente prima che si provi la successiva.",
@@ -1446,6 +1461,7 @@
                     "No doubtful films.": "Nessun film dubbio.",
                     "No libraries chosen, so nothing is imported from this server yet.": "Nessuna libreria scelta, quindi per ora da questo server non si importa nulla.",
                     "No remote servers yet.": "Ancora nessun server remoto.",
+                    "No server was left to forget.": "Non restava nessun server da dimenticare.",
                     "None": "Nessuno",
                     "None yet": "Ancora nessuno",
                     "Not checked": "Non controllata",
@@ -1481,6 +1497,7 @@
                     "Remove this server?": "Rimuovere questo server?",
                     "Removed {server}. Its titles are leaving the libraries.": "{server} è stato rimosso. I suoi titoli stanno uscendo dalle librerie.",
                     "Resolution": "Risoluzione",
+                    "Restoring the settings or adding those servers again brings the same titles and watch state.": "Ripristinando le impostazioni o aggiungendo di nuovo quei server tornano gli stessi titoli e lo stato di visione.",
                     "Run the first sync": "Esegui la prima sincronizzazione",
                     "Running now": "In corso",
                     "Save": "Salva",
@@ -1509,6 +1526,7 @@
                     "Let JellyMesh keep its key file": "Permetti a JellyMesh di tenere il file della chiave",
                     "JellyMesh encrypts the stored logins with a key file in its plugin data folder, and it cannot write that file. Let Jellyfin write to that folder, then restart Jellyfin.": "JellyMesh cifra gli accessi salvati con un file della chiave nella cartella dati del plugin, e non riesce a scrivere quel file. Permetti a Jellyfin di scrivere in quella cartella, poi riavvia Jellyfin.",
                     "Enter the passwords again": "Inserisci di nuovo le password",
+                    "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
                     "The stored logins do not decrypt with the key file: it was lost or replaced. Enter the password of each marked server again.": "Gli accessi salvati non si decifrano con il file della chiave: è stato perso o sostituito. Inserisci di nuovo la password di ogni server segnato.",
                     "It waits until the stored logins can be used.": "Attende che gli accessi salvati si possano usare.",
                     "Suspended. Sync and remote playback are stopped until JellyMesh can keep its key file.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché JellyMesh non riesce a tenere il file della chiave.",
@@ -1552,6 +1570,7 @@
                     "The next sync tries again.": "La prossima sincronizzazione riprova.",
                     "The operation failed.": "L'operazione non è riuscita.",
                     "The server could not be removed. It stays, with its titles. Try again.": "Il server non è stato rimosso. Resta, con i suoi titoli. Riprova.",
+                    "The missing servers could not be forgotten. Their titles stay. Try again.": "Non è stato possibile dimenticare i server mancanti. I loro titoli restano. Riprova.",
                     "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.": "Il server non è stato rimosso. Resta, con i suoi titoli, ma le riproduzioni in corso da quel server sono state interrotte. Riprova.",
                     "Removing {server} failed. It stays, with its titles. Try again.": "La rimozione di {server} non è riuscita. Il server resta, con i suoi titoli. Riprova.",
                     "Removing {server} failed. It stays, with its titles, but any playback from it was stopped. Try again.": "La rimozione di {server} non è riuscita. Il server resta, con i suoi titoli, ma le riproduzioni in corso da quel server sono state interrotte. Riprova.",
@@ -1652,8 +1671,9 @@
                     "unexpected answer": "risposta inattesa",
                     "unknown problem": "problema sconosciuto",
                     "{count} min": "{count} min",
-                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server.",
-                    "{count} titles come from servers missing from the settings. They are kept.": "{count} titoli vengono da server assenti dalle impostazioni. Restano.",
+                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server. Se quei server non torneranno più, dimenticali qui sotto.",
+                    "{count} titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog.": "{count} titoli vengono da server assenti dalle impostazioni. Restano finché quei server non vengono dimenticati nel Catalogo.",
+                    "{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.": "{count} titoli presenti solo su quei server vengono eliminati ora dalle librerie, con le loro immagini. I titoli presenti anche su un server nelle impostazioni restano, senza quelle riserve. Su quei server non cambia nulla e i file locali non vengono toccati.",
                     "{field} was refused, so nothing was saved. {rule}": "{field} è stato rifiutato, quindi non è stato salvato nulla. {rule}",
                     "{films}, {series} series, {episodes}": "{films}, {series} serie, {episodes}",
                     "{first} Also marked: {more}.": "{first} Segnalati anche: {more}.",
@@ -2800,16 +2820,22 @@
                         return t('A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.', { server: held.ServerName, count: held.Stubs });
                     });
                     if (status.UnconfiguredStubs > 0) {
-                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again.', { count: status.UnconfiguredStubs }));
+                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.', { count: status.UnconfiguredStubs }));
                     }
 
                     return notes.join(' ');
+                }
+
+                // Whether the warning names titles of servers missing from the settings, which the page can forget.
+                function hasMissingServers(status) {
+                    return status.Health !== 'Corrupt' && status.Health !== 'RestoredFromBackup' && !status.IndexSaveFailed && status.UnconfiguredStubs > 0;
                 }
 
                 function renderSync(status) {
                     var warning = el('#jmIndexWarning');
                     setText(warning, indexWarning(status));
                     warning.hidden = !warning.textContent;
+                    el('#jmMissingServers').hidden = !hasMissingServers(status);
                     setText(el('#jmSyncStatus'), status.IsRunning
                         ? t('Sync running...')
                         : t('Last sync: {date}.', { date: formatDate(lastSyncDate(status)) }));
@@ -3723,7 +3749,7 @@
                         };
                     });
                     if (sync.UnconfiguredStubs > 0) {
-                        notes.push({ key: 'unconfigured', text: t('{count} titles come from servers missing from the settings. They are kept.', { count: sync.UnconfiguredStubs }), tab: 'catalog' });
+                        notes.push({ key: 'unconfigured', text: t('{count} titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog.', { count: sync.UnconfiguredStubs }), tab: 'catalog' });
                     }
 
                     if (indexProblem(sync)) {
@@ -4209,6 +4235,21 @@
 
                 el('#jmDismiss').addEventListener('click', function () {
                     showMessage('');
+                });
+
+                el('#jmForgetMissing').addEventListener('click', function () {
+                    var count = syncSection.data ? syncSection.data.UnconfiguredStubs : 0;
+                    confirmAction(t('Forget the servers missing from the settings?'), [
+                        t('{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.', { count: count }),
+                        t('Restoring the settings or adding those servers again brings the same titles and watch state.')
+                    ], function () {
+                        act(api('POST', 'MissingServers/Forget').then(function (result) {
+                            showMessage(result.Servers > 0
+                                ? t('The missing servers are forgotten. Their titles are leaving the libraries.')
+                                : t('No server was left to forget.'));
+                            return load();
+                        }));
+                    });
                 });
 
                 el('#jmSyncNow').addEventListener('click', function () {
