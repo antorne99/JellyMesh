@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -47,4 +48,10 @@ public sealed record StubEntry
 
     /// <summary>Gets a tag of the technical data applied to the item.</summary>
     public string? TechnicalTag { get; init; }
+
+    /// <summary>Gets a tag of the signed URL last confirmed in the <c>.strm</c> and on the item, null until then.</summary>
+    public string? UrlTag { get; init; }
+
+    /// <summary>Gets the last write time of the <c>.strm</c> when its URL was confirmed, to notice a change made by others.</summary>
+    public DateTime? StrmWrittenUtc { get; init; }
 }

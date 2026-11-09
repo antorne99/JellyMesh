@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
@@ -151,7 +153,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     }
 
     private static Task WriteTextAsync(string path, string text, CancellationToken cancellationToken)
-        => WriteFileAsync(path, System.Text.Encoding.UTF8.GetBytes(text), cancellationToken);
+        => WriteFileAsync(path, Encoding.UTF8.GetBytes(text), cancellationToken);
 
     private static void DeleteOtherExtensions(string stem, string keep)
     {
@@ -166,6 +168,18 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 File.Delete(file);
             }
         }
+    }
+
+    private static string UrlTagOf(string url)
+    {
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)), 0, 16);
+    }
+
+    // The URL is confirmed while it is the one to write and nobody has written the file since: a new signing key changes the
+    // first, a hand edit or an older version the second.
+    private static bool IsUrlConfirmed(StubEntry stub, string strm, string urlTag)
+    {
+        return string.Equals(stub.UrlTag, urlTag, StringComparison.Ordinal) && stub.StrmWrittenUtc == File.GetLastWriteTimeUtc(strm);
     }
 
     private async Task<MaterializationReport> RunAsync(string root, bool isProtected, CancellationToken cancellationToken)
@@ -271,22 +285,22 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var folder = FederatedPaths.Resolve(run.Root, entry.RelativePath);
         try
         {
-            var existing = work.IsNew ? null : _library.FindByPath(folder, true);
+            var existing = new LazyItem(_library, folder, true, work.IsNew);
             if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(nfo))
             {
                 await WriteTextAsync(nfo, work.Nfo, cancellationToken).ConfigureAwait(false);
-                if (existing is not null)
+                if (existing.Value is { } item)
                 {
-                    await _updater.ApplyMetadataAsync(existing, work.Metadata, cancellationToken).ConfigureAwait(false);
+                    await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
                 }
 
                 // The merge key may have changed, and only a scan regroups the rows (Phase 0, V10).
-                entry = entry with { ContentHash = work.ContentHash, NeedsRefresh = entry.NeedsRefresh || existing is not null };
+                entry = entry with { ContentHash = work.ContentHash, NeedsRefresh = entry.NeedsRefresh || existing.Value is not null };
                 run.NeedsScan = true;
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing, cancellationToken).ConfigureAwait(false))
+                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
@@ -306,15 +320,17 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var strm = FederatedPaths.Resolve(run.Root, entry.RelativePath);
         try
         {
-            var existing = work.IsNew ? null : _library.FindByPath(strm, false);
+            // The item is looked up only when something has to reach it: on a large catalog one lookup per stub was most of a run.
+            var existing = new LazyItem(_library, strm, false, work.IsNew);
             var changed = false;
+            var written = false;
             if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(strm))
             {
                 await WriteTextAsync(strm, work.StrmUrl, cancellationToken).ConfigureAwait(false);
                 await WriteTextAsync(FederatedPaths.Resolve(run.Root, work.NfoPath), work.Nfo, cancellationToken).ConfigureAwait(false);
-                if (existing is not null)
+                if (existing.Value is { } item)
                 {
-                    await _updater.ApplyMetadataAsync(existing, work.Metadata, cancellationToken).ConfigureAwait(false);
+                    await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -323,23 +339,29 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
                 entry = entry with { ContentHash = work.ContentHash };
                 changed = true;
+                written = true;
             }
 
-            changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing, cancellationToken).ConfigureAwait(false);
+            var urlTag = UrlTagOf(work.StrmUrl);
+            if (written || !IsUrlConfirmed(entry, strm, urlTag))
+            {
+                changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing.Value, cancellationToken).ConfigureAwait(false);
+                entry = entry with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) };
+            }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing, cancellationToken).ConfigureAwait(false))
+                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
 
             if (!string.Equals(entry.TechnicalTag, work.TechnicalTag, StringComparison.Ordinal))
             {
-                if (existing is not null)
+                if (existing.Value is { } item)
                 {
-                    _technical.WriteItemAndStreams(existing, entry, cancellationToken);
-                    _technical.WriteStreamsAndChapters(existing, entry, cancellationToken);
-                    await _updater.SaveAsync(existing, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
+                    _technical.WriteItemAndStreams(item, entry, cancellationToken);
+                    _technical.WriteStreamsAndChapters(item, entry, cancellationToken);
+                    await _updater.SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
                 }
 
                 entry = entry with { TechnicalTag = work.TechnicalTag };
@@ -361,9 +383,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var strm = FederatedPaths.Resolve(run.Root, stub.RelativePath);
         try
         {
-            if (File.Exists(strm))
+            var url = _urls.Build(stub.Id);
+            var urlTag = UrlTagOf(url);
+            if (File.Exists(strm) && !IsUrlConfirmed(stub, strm, urlTag))
             {
-                await ApplyStrmUrlAsync(strm, _urls.Build(stub.Id), _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
+                await ApplyStrmUrlAsync(strm, url, _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
+                run.Put(stub with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) });
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -461,6 +486,27 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             run.Failed++;
             _logger.LogError("Cannot remove a stub: {Error}", exception.GetType().Name);
+        }
+    }
+
+    // The library item of a path, looked up on first use. A stub minted by this run has none yet.
+    private sealed class LazyItem(ILibraryManager library, string path, bool isFolder, bool isNew)
+    {
+        private bool _looked = isNew;
+        private BaseItem? _item;
+
+        public BaseItem? Value
+        {
+            get
+            {
+                if (!_looked)
+                {
+                    _looked = true;
+                    _item = library.FindByPath(path, isFolder);
+                }
+
+                return _item;
+            }
         }
     }
 

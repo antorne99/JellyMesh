@@ -126,6 +126,22 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARunWithNothingChangedLooksUpNoItem()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        await _fixture.Sync.AddServerAsync("A", "films", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Library.Invocations.Clear();
+
+        var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal((0, 0, 0, 0), (report.Created, report.Updated, report.Removed, report.Failed));
+        _fixture.Library.Verify(library => library.FindByPath(It.IsAny<string>(), It.IsAny<bool?>()), Times.Never);
+    }
+
+    [Fact]
     public async Task NoFolderMeansNothingIsWritten()
     {
         _fixture.Sync.Store.Configuration.FederatedFolderPath = string.Empty;
@@ -391,6 +407,27 @@ public sealed class LibraryMaterializerTests : IDisposable
 
         Assert.Equal(signed, StubFixture.Text(path));
         Assert.Equal(signed, item.ShortcutPath);
+    }
+
+    [Fact]
+    public async Task AnEntryFromAnOlderVersionGetsItsItemMovedOnce()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_("Film", "Film (2020)", "Film (2020).strm");
+        var signed = StubFixture.Text(path);
+        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film", ShortcutPath = signed.Split('?')[0] };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        var state = _fixture.Registry.State;
+        await _fixture.Registry.SaveAsync(state with { Stubs = state.Stubs.Select(stub => stub with { UrlTag = null, StrmWrittenUtc = null }).ToList() }, CancellationToken.None);
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+        _fixture.Library.Invocations.Clear();
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(signed, item.ShortcutPath);
+        _fixture.Library.Verify(library => library.FindByPath(It.IsAny<string>(), It.IsAny<bool?>()), Times.Never);
     }
 
     [Fact]
