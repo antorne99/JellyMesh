@@ -13,7 +13,6 @@ IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 NAME=jm-scale-consumer
 PORT=18460
 FAKE=18461
-KEY=jm-scale-test-key-0123456789abcdef0123456789
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshScale", Device="scale", DeviceId="jm-scale-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
@@ -106,7 +105,7 @@ echo "--- consumer $NAME on :$PORT"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:8096" --add-host host.docker.internal:host-gateway \
-  -e TZ=UTC -e "JELLYMESH_SECRET_KEY=$KEY" -v "$NAME-config:/config" -v "$NAME-cache:/cache" -v "$NAME-fed:/federata" "$IMAGE" >/dev/null
+  -e TZ=UTC -v "$NAME-config:/config" -v "$NAME-cache:/cache" -v "$NAME-fed:/federata" "$IMAGE" >/dev/null
 wait_ready
 sleep 3
 post /Startup/Configuration '{"UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"}' >/dev/null
