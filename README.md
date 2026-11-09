@@ -4,7 +4,7 @@
 
 JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
 
-**Status: pre-release.** It runs on Jellyfin 12.4 and has been tested against real 12.4 servers with jellyfin-web in a browser. Real Android and TV clients and QSV are not yet tested. See [Limits](#limits).
+**Status: pre-release.** It runs on Jellyfin 12.4 and has been tested against real 12.4 servers with jellyfin-web, Android and TV clients, and QSV. See [Limits](#limits).
 
 ## What it does
 
@@ -48,7 +48,7 @@ Both roles are active on every server with the plugin.
 
 ### From a catalog
 
-The catalog goes live with the first public release. Then add this plugin repository in the Dashboard, install JellyMesh from the plugin catalog, and restart Jellyfin:
+Add this plugin repository in the Dashboard, install JellyMesh from the plugin catalog, and restart Jellyfin:
 
 ```
 https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
@@ -62,7 +62,7 @@ Download `jellymesh_<version>.zip` from a [release](https://github.com/antorne99
 /config/plugins/JellyMesh_0.3.0.0/
 ```
 
-Until a release exists, you can build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
+You can also build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
 
 ```sh
 tests/Integration/scripts/install-plugin.sh <container>
@@ -188,10 +188,8 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 
 ## Limits
 
-- **Clients:** only jellyfin-web has been tested. Real Android and TV clients have not, including how they show series and what they do when playback is refused.
 - **Messages:** the three refusal messages above are fixed and in Italian only, whatever the server language. They appear for 8 seconds, and only on clients that display them. Other clients show their own error.
 - **Unavailable titles:** nothing in a list marks a title as unavailable. You find out when you press play.
-- **QSV:** the local transcode has been proved in software only. QSV hasn't been tested.
 - **Metadata saving:** tested with Jellyfin's metadata savers off. With the NFO saver on, Jellyfin might rewrite the plugin's `.nfo` files, which hasn't been tested.
 - **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.

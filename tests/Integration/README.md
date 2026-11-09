@@ -271,7 +271,7 @@ What Jellyfin 12.4 was observed to do with these tabs:
 
 ## Not covered here
 
-- **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so the test needs the OPS pc.
+- **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so it cannot test QSV. Antonio verified it on the OPS pc: it works.
 - **Slow network, offline server, stream limit (§8):** belong to the Phase 6 task. To simulate an offline server, stop its service with `docker compose stop remoto-standard`.
 
 ## Licences
