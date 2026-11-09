@@ -153,7 +153,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41 | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
@@ -217,6 +217,12 @@ MEDIA=<main checkout>/tests/Integration/media OLD=<folder> bash play/all.sh
 ```
 
 It leaves the containers up. `down` in `play/lib.sh` removes them and their volumes.
+
+`watchstate.sh` proves decision 41 on its own, with fresh `jm-play-local` and `jm-play-remote` containers and the current build. It needs only `MEDIA`. A film watched or stopped on the consumer changes no user's watch state on the remote, and a film the dedicated user and another remote user watch stays unwatched on the consumer after a sync. The clips are shorter than the 300 seconds Jellyfin needs to keep a resume point, so a film stopped halfway counts as watched.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/watchstate.sh
+```
 
 ### `merge/`
 
