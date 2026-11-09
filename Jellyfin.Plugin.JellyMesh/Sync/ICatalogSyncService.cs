@@ -33,13 +33,15 @@ public interface ICatalogSyncService
     Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Records that the administrator removed a server, before it leaves the configuration: only such servers lose their
-    /// catalogs and stubs. Waits for a materialization that is running.
+    /// Records that the administrator removed a server, then runs the removal: only such servers lose their catalogs and
+    /// stubs. Waits for a materialization that is running. If the removal fails, the record is taken back.
     /// </summary>
     /// <param name="serverId">The server.</param>
+    /// <param name="remove">What takes the server out of the configuration. False when there was no such server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task.</returns>
-    Task MarkRemovedAsync(Guid serverId, CancellationToken cancellationToken);
+    /// <returns>Whether the server was removed.</returns>
+    /// <exception cref="System.IO.IOException">The record or the removal could not be saved. The server stays.</exception>
+    Task<bool> RemoveServerAsync(Guid serverId, Func<Task<bool>> remove, CancellationToken cancellationToken);
 
     /// <summary>
     /// Starts deleting in the background what removed servers left: their catalogs and the stubs only they served. Titles

@@ -91,5 +91,10 @@ public enum RemoteFailure
     /// This server already has as many playback calls or streams open on that remote as it allows itself. Says nothing
     /// about the health of the remote, and no request was sent.
     /// </summary>
-    Busy
+    Busy,
+
+    /// <summary>
+    /// Removing a server could not be saved. The server stays, with its titles.
+    /// </summary>
+    RemovalFailed
 }

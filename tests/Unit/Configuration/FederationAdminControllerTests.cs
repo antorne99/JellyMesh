@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -59,13 +60,13 @@ public class FederationAdminControllerTests
             markedBeforeRemoval = marked;
         };
         var sync = new Mock<ICatalogSyncService>();
-        sync.Setup(service => service.MarkRemovedAsync(source.ServerId, It.IsAny<CancellationToken>()))
-            .Callback(() =>
+        sync.Setup(service => service.RemoveServerAsync(source.ServerId, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, Func<Task<bool>>, CancellationToken>((_, remove, _) =>
             {
                 marked = true;
                 releasedWhenMarked = playback.Client.Released.Count;
-            })
-            .Returns(Task.CompletedTask);
+                return remove();
+            });
         var controller = new FederationAdminController(
             playback.Registry,
             new RegistryFixture().Vault,
@@ -103,7 +104,35 @@ public class FederationAdminControllerTests
 
         Assert.Equal(404, Assert.IsType<ObjectResult>(result).StatusCode);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
-        sync.Verify(service => service.MarkRemovedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        sync.Verify(service => service.RemoveServerAsync(It.IsAny<Guid>(), It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_removal_that_cannot_be_saved_keeps_the_server_and_says_to_try_again()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, Func<Task<bool>>, CancellationToken>((_, remove, _) => remove());
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            sync.Object);
+        fixture.Store.SaveFailure = new IOException("disk full");
+
+        var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.RemovalFailed, failure.Failure);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
     }
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);

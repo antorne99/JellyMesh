@@ -45,6 +45,7 @@ public interface IRemoteServerRegistry
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <returns>Whether the server existed.</returns>
+    /// <exception cref="System.IO.IOException">The configuration could not be saved. The server stays.</exception>
     bool Remove(Guid serverId);
 
     /// <summary>

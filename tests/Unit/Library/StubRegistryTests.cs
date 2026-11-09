@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -46,6 +47,87 @@ public sealed class StubRegistryTests : IDisposable
 
         Assert.Equal(1, registry.Find("abc")?.EpisodeNumber);
         Assert.Null(registry.Find("abc")?.EpisodeNumberEnd);
+    }
+
+    [Fact]
+    public async Task ARemovedServerStaysMarkedAcrossARestart()
+    {
+        var server = Guid.NewGuid();
+        using (var registry = Create())
+        {
+            Assert.True(await registry.RemoveServerAsync(server, () => Task.FromResult(true), CancellationToken.None));
+        }
+
+        using var restarted = Create();
+        Assert.Equal([server], restarted.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task ARemovalThatFailsTakesItsMarkBack()
+    {
+        var server = Guid.NewGuid();
+        using (var registry = Create())
+        {
+            await Assert.ThrowsAsync<IOException>(() => registry.RemoveServerAsync(server, () => throw new IOException("disk full"), CancellationToken.None));
+            Assert.Empty(registry.State.RemovedServers);
+        }
+
+        using var restarted = Create();
+        Assert.Empty(restarted.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task ARemovalThatFindsNoServerTakesItsMarkBack()
+    {
+        using var registry = Create();
+
+        Assert.False(await registry.RemoveServerAsync(Guid.NewGuid(), () => Task.FromResult(false), CancellationToken.None));
+
+        Assert.Empty(registry.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task AFailedRemovalKeepsAMarkThatWasThereBefore()
+    {
+        var server = Guid.NewGuid();
+        using var registry = Create();
+        await registry.RemoveServerAsync(server, () => Task.FromResult(true), CancellationToken.None);
+
+        await Assert.ThrowsAsync<IOException>(() => registry.RemoveServerAsync(server, () => throw new IOException("disk full"), CancellationToken.None));
+
+        Assert.Equal([server], registry.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task TheRemovalRunsWithTheMarkSavedAndUnderTheLock()
+    {
+        var server = Guid.NewGuid();
+        using var registry = Create();
+        var markedDuringRemoval = false;
+        var lockFree = true;
+
+        await registry.RemoveServerAsync(
+            server,
+            async () =>
+            {
+                markedDuringRemoval = registry.State.RemovedServers.Contains(server);
+                using var wait = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+                try
+                {
+                    await registry.EnterAsync(wait.Token);
+                    registry.Exit();
+                }
+                catch (OperationCanceledException)
+                {
+                    lockFree = false;
+                }
+
+                return true;
+            },
+            CancellationToken.None);
+
+        Assert.True(markedDuringRemoval);
+        Assert.False(lockFree);
     }
 
     [Fact]

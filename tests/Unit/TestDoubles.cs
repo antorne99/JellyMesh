@@ -61,6 +61,8 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 
     public int Saves { get; private set; }
 
+    public Exception? SaveFailure { get; set; }
+
     public event EventHandler? SettingsChanged;
 
     public void RaiseSettingsChanged() => SettingsChanged?.Invoke(this, EventArgs.Empty);
@@ -69,7 +71,13 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 
     public void Update(Action<PluginConfiguration> update)
     {
+        // Like the plugin, the change is made in memory before the save that may fail.
         update(Configuration);
+        if (SaveFailure is not null)
+        {
+            throw SaveFailure;
+        }
+
         Saves++;
     }
 }
