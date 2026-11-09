@@ -13,13 +13,11 @@ run() { # run <scenario>...: one browser run, whose lines also go to the report
   [ "${PIPESTATUS[0]}" = 0 ] || FAILED=1
 }
 
-has_key() { docker inspect -f '{{.Config.Env}}' "$(container_of "$1")" | grep -q JELLYMESH_SECRET_KEY; }
-
-# A run stopped halfway leaves a remote down or a key gone.
+# A run stopped halfway leaves a remote down or a key lost.
 restore() {
   local s
   for s in fresh first; do
-    has_key "$s" || set_key "$s" "$TEST_KEY"
+    [ "$(key_state "$s")" = Ok ] || fix_key "$s"
   done
   [ "$(docker inspect -f '{{.State.Running}}' "$(container_of stock)")" = true ] || online stock
 }
@@ -42,13 +40,14 @@ else
   run merge-details
   run cards cards-in-place cards-themes
 
-  set_key first
+  block_key first
   run first-nokey overview-first-nokey
-  set_key first "$TEST_KEY"
+  fix_key first
 
-  set_key fresh
-  run nokey overview-nokey cards-nokey
-  set_key fresh "$TEST_KEY"
+  lose_key fresh
+  run nokey overview-nokey cards-nokey relogin
+  fix_key fresh
+  restart_server fresh
   run cards-restart
 
   offline stock

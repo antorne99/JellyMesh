@@ -11,17 +11,12 @@ public enum KeyState
     Ok,
 
     /// <summary>
-    /// The key is not set.
+    /// There is no key: the key file cannot be kept in the plugin data folder.
     /// </summary>
     Missing,
 
     /// <summary>
-    /// The key is set but shorter than <see cref="CredentialCipher.MinimumKeyLength"/>.
-    /// </summary>
-    TooShort,
-
-    /// <summary>
-    /// A stored credential does not decrypt: the key changed, or the stored value was altered.
+    /// A stored credential does not decrypt: the key file was lost or replaced, or the stored value was altered.
     /// </summary>
     Wrong
 }

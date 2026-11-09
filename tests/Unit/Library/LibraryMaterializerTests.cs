@@ -58,6 +58,23 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task AServerRemovedWhileARunPlansLeavesThatRunWhole()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var before = _fixture.Files;
+        var stubs = _fixture.Registry.State.Stubs.Select(stub => stub.Id).ToList();
+
+        _fixture.AfterResolve = () => _fixture.Sync.Registry.Remove(server.Id);
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Contains(_fixture.Hooked.LastServers ?? [], candidate => candidate.Id == server.Id);
+        Assert.Equal(before, _fixture.Files);
+        Assert.Equal(stubs, _fixture.Registry.State.Stubs.Select(stub => stub.Id).ToList());
+    }
+
+    [Fact]
     public async Task NoFileHoldsATokenOrARemoteAddress()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());

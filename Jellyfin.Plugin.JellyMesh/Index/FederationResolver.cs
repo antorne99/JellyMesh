@@ -33,12 +33,16 @@ public sealed class FederationResolver : IFederationResolver
     }
 
     /// <inheritdoc />
-    public FederationView Resolve()
+    public FederationView Resolve() => Resolve(_index.Snapshot, _registry.GetServers());
+
+    /// <inheritdoc />
+    public FederationView Resolve(IndexSnapshot snapshot, IReadOnlyList<RemoteServerInfo> servers)
     {
-        var snapshot = _index.Snapshot;
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(servers);
 
         // A server removed from the configuration can no longer serve anything, even if its entries are still stored.
-        var names = _registry.GetServers().ToDictionary(server => server.Id, server => server.Name);
+        var names = servers.ToDictionary(server => server.Id, server => server.Name);
         var catalogs = snapshot.Servers.Where(catalog => names.ContainsKey(catalog.ServerId)).ToList();
 
         var local = _localCatalog.Read();

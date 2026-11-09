@@ -1170,7 +1170,7 @@
                             <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit emby-button">
                                 <span>Connect and choose libraries</span>
                             </button>
-                            <p id="jmAddBlocked" class="fieldDescription" hidden>Connecting a server waits for the secret key. The Overview says what to do.</p>
+                            <p id="jmAddBlocked" class="fieldDescription" hidden>Connecting a server waits until the stored logins can be used. The Overview says what to do.</p>
                         </form>
                     </details>
                 </section>
@@ -1351,7 +1351,6 @@
                     "Advanced playback times": "Tempi di riproduzione avanzati",
                     "Already merged.": "Già uniti.",
                     "Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.": "Un altro server JellyMesh accede qui con un utente dedicato non amministratore di questo server. Scegli quell'utente, cosa può leggere e quanti stream può tenere insieme. Un utente così non può raggiungere nient'altro su questo server.",
-                    "Apply it": "Applicala",
                     "At least 300 seconds.": "Almeno 300 secondi.",
                     "Best version first.": "Prima la versione migliore.",
                     "Best version: {quality}": "Versione migliore: {quality}",
@@ -1375,7 +1374,6 @@
                     "Connect and choose libraries": "Connetti e scegli le librerie",
                     "Connected JellyMesh servers": "Server JellyMesh connessi",
                     "Connected.": "Connesso.",
-                    "Connecting a server waits for the secret key. The Overview says what to do.": "Per connettere un server serve la chiave segreta. La Panoramica spiega cosa fare.",
                     "Copied {value}.": "Copiato {value}.",
                     "Copy": "Copia",
                     "Copy {library} path": "Copia il percorso di {library}",
@@ -1406,22 +1404,12 @@
                     "From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.": "Da 3 a 60. Aumentalo per un remoto lento. Uno spettatore aspetta questo tempo su ogni sorgente prima che si provi la successiva.",
                     "From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.": "Da 30 a 109. Abbassalo per liberare prima un remoto. Un player in pausa riprende da solo.",
                     "From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.": "Da 5 a 60. Aumentalo se un remoto è lento ad avviare una transcodifica. L'apertura può richiedere fino a tre fasi per ogni sorgente.",
-                    "Generate a key": "Genera una chiave",
                     "Give the dedicated user access on that server, then test the connection.": "Dai accesso all'utente dedicato su quel server, poi prova la connessione.",
                     "HDR unknown": "HDR sconosciuto",
                     "IDs": "ID",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
                     "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
                     "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
-                    "It waits for the secret key.": "Aspetta la chiave segreta.",
-                    "JELLYMESH_SECRET_KEY does not decrypt the stored credentials: it changed, or they were altered. Remote credentials cannot be saved or used, and sync and remote playback are suspended. Restore the original key, or remove the servers and add them again.": "JELLYMESH_SECRET_KEY non decifra le credenziali salvate: è cambiata, oppure sono state alterate. Le credenziali remote non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese. Ripristina la chiave originale, oppure rimuovi i server e aggiungili di nuovo.",
-                    "JELLYMESH_SECRET_KEY does not decrypt the stored logins: it changed, or they were altered. It is set on the server, outside this plugin. Restore the original key, or remove the servers and add them again.": "JELLYMESH_SECRET_KEY non decifra gli accessi salvati: è cambiata, oppure sono stati alterati. Si imposta sul server, fuori da questo plugin. Ripristina la chiave originale, oppure rimuovi i server e aggiungili di nuovo.",
-                    "JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. It is not set yet. Set it on the server, outside this plugin, with at least 32 characters.": "JELLYMESH_SECRET_KEY cifra gli accessi salvati, quindi senza di essa non si può connettere nessun server. Non è ancora impostata. Impostala sul server, fuori da questo plugin, con almeno 32 caratteri.",
-                    "JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. The one set is too short. Set it on the server, outside this plugin, with at least 32 characters.": "JELLYMESH_SECRET_KEY cifra gli accessi salvati, quindi senza di essa non si può connettere nessun server. Quella impostata è troppo corta. Impostala sul server, fuori da questo plugin, con almeno 32 caratteri.",
-                    "JELLYMESH_SECRET_KEY encrypts the stored logins. It is set on the server, outside this plugin.": "JELLYMESH_SECRET_KEY cifra gli accessi salvati. Si imposta sul server, fuori da questo plugin.",
-                    "JELLYMESH_SECRET_KEY is not set. Remote credentials cannot be saved or used, and sync and remote playback are suspended.": "JELLYMESH_SECRET_KEY non è impostata. Le credenziali remote non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese.",
-                    "JELLYMESH_SECRET_KEY must have at least 32 characters. Remote credentials cannot be saved or used, and sync and remote playback are suspended.": "JELLYMESH_SECRET_KEY deve avere almeno 32 caratteri. Le credenziali remote non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese.",
-                    "JELLYMESH_SECRET_KEY=<the generated key>": "JELLYMESH_SECRET_KEY=<la chiave generata>",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
                     "JellyMesh server": "server JellyMesh",
@@ -1479,7 +1467,6 @@
                     "Password": "Password",
                     "Playback already running may not stop right away.": "Una riproduzione già in corso potrebbe non fermarsi subito.",
                     "Protect metadata": "Proteggi i metadati",
-                    "Put it in .env": "Mettila in .env",
                     "Quality not read: a local copy plays whatever its quality.": "Qualità non letta: una copia locale viene riprodotta qualunque sia la sua qualità.",
                     "Quality unknown": "Qualità sconosciuta",
                     "Range": "Gamma",
@@ -1506,7 +1493,6 @@
                     "Server": "Server",
                     "Servers": "Server",
                     "Set by JELLYMESH_FEDERATED_ROOT on the server. To choose it here, remove the variable and restart.": "Impostata da JELLYMESH_FEDERATED_ROOT sul server. Per sceglierla qui, rimuovi la variabile e riavvia.",
-                    "Set the secret key": "Imposta la chiave segreta",
                     "Settings": "Impostazioni",
                     "Settings not saved. {reason}": "Impostazioni non salvate. {reason}",
                     "Settings not saved: the server answered with error {status}.": "Impostazioni non salvate: il server ha risposto con l'errore {status}.",
@@ -1519,9 +1505,27 @@
                     "Stream limit": "Limite di stream",
                     "Streams": "Stream",
                     "Streams in use": "Stream in uso",
-                    "Suspended. Sync and remote playback are stopped until the secret key is fixed.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché la chiave segreta non viene sistemata.",
                     "Sync": "Sincronizzazione",
-                    "Sync and remote playback are suspended until the secret key is fixed. {problem}": "Sincronizzazione e riproduzione remota sono sospese finché la chiave segreta non viene sistemata. {problem}",
+                    "Let JellyMesh keep its key file": "Permetti a JellyMesh di tenere il file della chiave",
+                    "JellyMesh encrypts the stored logins with a key file in its plugin data folder, and it cannot write that file. Let Jellyfin write to that folder, then restart Jellyfin.": "JellyMesh cifra gli accessi salvati con un file della chiave nella cartella dati del plugin, e non riesce a scrivere quel file. Permetti a Jellyfin di scrivere in quella cartella, poi riavvia Jellyfin.",
+                    "Enter the passwords again": "Inserisci di nuovo le password",
+                    "The stored logins do not decrypt with the key file: it was lost or replaced. Enter the password of each marked server again.": "Gli accessi salvati non si decifrano con il file della chiave: è stato perso o sostituito. Inserisci di nuovo la password di ogni server segnato.",
+                    "It waits until the stored logins can be used.": "Attende che gli accessi salvati si possano usare.",
+                    "Suspended. Sync and remote playback are stopped until JellyMesh can keep its key file.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché JellyMesh non riesce a tenere il file della chiave.",
+                    "Suspended. Sync and remote playback are stopped until the password of each marked server is entered again.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché non inserisci di nuovo la password di ogni server segnato.",
+                    "Connecting a server waits until the stored logins can be used. The Overview says what to do.": "Il collegamento di un server attende che gli accessi salvati si possano usare. La Panoramica dice cosa fare.",
+                    "password needed": "password da inserire",
+                    "The stored password no longer decrypts. Enter the login again below. {problem}": "La password salvata non si decifra più. Inserisci di nuovo l'accesso qui sotto. {problem}",
+                    "Sync and remote playback are suspended until the stored logins can be used. {problem}": "Sincronizzazione e riproduzione remota sono sospese finché gli accessi salvati non si possono usare. {problem}",
+                    "Enter the login of {server} again": "Inserisci di nuovo l'accesso di {server}",
+                    "JellyMesh logs in with it before saving it, encrypted with the new key file.": "JellyMesh accede con questo prima di salvarlo, cifrato con il nuovo file della chiave.",
+                    "Save login": "Salva l'accesso",
+                    "Enter the user JellyMesh logs in with.": "Inserisci l'utente con cui JellyMesh accede.",
+                    "{server}: login saved.": "{server}: accesso salvato.",
+                    "JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.": "JELLYMESH_SECRET_KEY non si usa più: ora la chiave è un file nella cartella dati del plugin. Puoi togliere la variabile dall'ambiente di Jellyfin.",
+                    "{server}: enter its login again.": "{server}: inserisci di nuovo il suo accesso.",
+                    "The plugin cannot keep its key file in its data folder. Remote credentials cannot be saved or used, and sync and remote playback are suspended.": "Il plugin non riesce a tenere il file della chiave nella sua cartella dati. Le credenziali dei remoti non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese.",
+                    "The saved passwords do not decrypt with the key file: it was lost or replaced, or they were altered. Sync and remote playback are suspended until the password of each marked server is entered again.": "Le password salvate non si decifrano con il file della chiave: è stato perso o sostituito, oppure sono state alterate. Sincronizzazione e riproduzione remota restano sospese finché non inserisci di nuovo la password di ogni server segnato.",
                     "Sync interval (seconds)": "Intervallo di sincronizzazione (secondi)",
                     "Sync now": "Sincronizza ora",
                     "Sync running...": "Sincronizzazione in corso...",
@@ -1529,7 +1533,6 @@
                     "Tailnet URL": "URL tailnet",
                     "Test connection": "Prova la connessione",
                     "Test the connection to see what is wrong.": "Prova la connessione per vedere cosa non va.",
-                    "That recreates the container, and a plain restart would not. Without Docker, set the variable in the environment of the Jellyfin service and restart it. Each server has its own key.": "Così il container viene ricreato, cosa che un semplice riavvio non fa. Senza Docker, imposta la variabile nell'ambiente del servizio Jellyfin e riavvialo. Ogni server ha la sua chiave.",
                     "The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.": "L'utente Jellyfin resta e può ancora accedere, quindi quel server può continuare a leggere e riprodurre in modalità standard, con tutti gli accessi che questo utente ha in Jellyfin e senza limite di stream. Per tenerlo fuori, disattiva l'utente nel Pannello di controllo > Utenti.",
                     "The answer does not look like a Jellyfin server.": "La risposta non sembra quella di un server Jellyfin.",
                     "The browser did not allow copying. {value} is selected, so copy it by hand.": "Il browser non ha permesso di copiare. {value} è selezionato: copialo a mano.",
@@ -1723,6 +1726,7 @@
                 var readTimeoutMilliseconds = 15000;
                 var keepsTrying = t('What is shown here may be out of date, and the page keeps trying.');
                 var suspended = false;
+                var keyState = 'Ok';
                 var syncRunning = false;
                 var lastFinished;
                 var folderShown = '';
@@ -2314,15 +2318,79 @@
                     return report && report.State === 'Stale' ? report.Failure || unknownProblem : '';
                 }
 
+                // Tells whether the stored login of a server must be entered again, because it does not decrypt with the key file.
+                function needsPassword(server) {
+                    return keyState === 'Wrong' && server.NeedsPassword;
+                }
+
+                // Asks for the login of a server again, and saves it once the server accepts it.
+                function renderPassword(container, server) {
+                    container.textContent = '';
+                    var form = create('form');
+                    form.autocomplete = 'off';
+                    form.noValidate = true;
+                    var title = create('p', t('Enter the login of {server} again', { server: server.Name }));
+                    title.className = 'jmLibrariesTitle';
+                    form.appendChild(title);
+                    var note = create('p', t('JellyMesh logs in with it before saving it, encrypted with the new key file.'));
+                    note.className = 'jmLibrariesNote';
+                    form.appendChild(note);
+                    var grid = create('div');
+                    grid.className = 'jmFormGrid';
+                    var user = create('input');
+                    user.setAttribute('is', 'emby-input');
+                    user.setAttribute('label', t('User'));
+                    user.type = 'text';
+                    user.required = true;
+                    user.autocomplete = 'off';
+                    var password = create('input');
+                    password.setAttribute('is', 'emby-input');
+                    password.setAttribute('label', t('Password'));
+                    password.type = 'password';
+                    password.autocomplete = 'new-password';
+                    grid.appendChild(fieldBox('inputContainer', user));
+                    grid.appendChild(fieldBox('inputContainer', password));
+                    form.appendChild(grid);
+                    var save = button(t('Save login'), function () {});
+                    save.type = 'submit';
+                    form.appendChild(save);
+                    form.addEventListener('submit', function (e) {
+                        e.preventDefault();
+                        clearField(user);
+                        if (!user.value.trim()) {
+                            markField(user, t('Enter the user JellyMesh logs in with.'));
+                            focusField(user);
+                            return;
+                        }
+
+                        act(api('POST', 'Servers/' + server.Id + '/Credentials', { Username: user.value.trim(), Password: password.value }).then(function () {
+                            password.value = '';
+                            showMessage(t('{server}: login saved.', { server: server.Name }));
+                            return loadStatus();
+                        }));
+                    });
+                    container.appendChild(form);
+                }
+
                 // Works out the state of a server in words, with its look, its cause and the next step.
                 function serverHealth(server, report) {
                     var problem = report ? syncProblem(report) : '';
+                    if (needsPassword(server)) {
+                        return {
+                            state: t('password needed'),
+                            tone: 'jmStateBad',
+                            icon: 'vpn_key',
+                            cause: t('The stored password no longer decrypts. Enter the login again below. {problem}', { problem: problem || t('These entries are kept as they were.') }),
+                            needsPassword: true
+                        };
+                    }
+
                     if (suspended) {
                         return {
                             state: connectionLabels.Suspended,
                             tone: 'jmStateQuiet',
                             icon: 'pause_circle_outline',
-                            cause: t('Sync and remote playback are suspended until the secret key is fixed. {problem}', { problem: problem || t('These entries are kept as they were.') })
+                            cause: t('Sync and remote playback are suspended until the stored logins can be used. {problem}', { problem: problem || t('These entries are kept as they were.') })
                         };
                     }
 
@@ -2405,6 +2473,21 @@
                     };
                     row.jmUpdate(server, report);
 
+                    var login = create('div');
+                    login.className = 'jmLibraries';
+                    var loginShown = false;
+                    row.jmShowLogin = function (current) {
+                        var wanted = needsPassword(current);
+                        if (wanted !== loginShown) {
+                            loginShown = wanted;
+                            if (wanted) {
+                                renderPassword(login, current);
+                            } else {
+                                login.textContent = '';
+                            }
+                        }
+                    };
+
                     var libraries = create('div');
                     libraries.className = 'jmLibraries';
                     row.jmShowLibraries = function () {
@@ -2439,8 +2522,15 @@
                             }));
                         });
                     }, 'jmDanger'));
+                    body.appendChild(login);
                     body.appendChild(actions);
                     body.appendChild(libraries);
+                    var update = row.jmUpdate;
+                    row.jmUpdate = function (current, currentReport) {
+                        update(current, currentReport);
+                        row.jmShowLogin(current);
+                    };
+                    row.jmShowLogin(server);
                     return row;
                 }
 
@@ -2575,6 +2665,7 @@
 
                 function render(status) {
                     suspended = status.Suspended;
+                    keyState = status.KeyState;
                     var warning = el('#jmWarning');
                     setText(warning, status.Warning ? t(status.Warning) : '');
                     warning.hidden = !status.Warning;
@@ -3513,6 +3604,10 @@
                 // Returns what is wrong with the connection of a server, or an empty text.
                 function serverProblem(server) {
                     var health = healthOf(server);
+                    if (health.needsPassword) {
+                        return t('{server}: enter its login again.', { server: server.Name });
+                    }
+
                     if (health.failure === 'Offline') {
                         return t('{server} is offline. Titles found only there do not play until it answers.', { server: server.Name });
                     }
@@ -3526,6 +3621,9 @@
                     }).filter(function (note) {
                         return note.text;
                     });
+                    if (status && status.LegacyKeySet && status.KeyState === 'Ok') {
+                        notes.push({ key: 'legacyKey', text: t('JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.'), tab: 'servers', calm: true });
+                    }
                     return {
                         key: 'servers',
                         label: t('Servers'),
@@ -3749,24 +3847,15 @@
                     return stateOf(folder.Link === 'Linked');
                 }
 
-                // Says what the key is for and what to do about its state, with the commands to copy when one has to be made.
+                // Says what blocks the stored logins while something does, or returns null.
                 function keyStep(status) {
-                                        var make = {
-                        commands: [
-                            { label: t('Generate a key'), value: 'openssl rand -base64 32' },
-                            { label: t('Put it in .env'), value: t('JELLYMESH_SECRET_KEY=<the generated key>') },
-                            { label: t('Apply it'), value: 'docker compose up -d' }
-                        ],
-                        after: t('That recreates the container, and a plain restart would not. Without Docker, set the variable in the environment of the Jellyfin service and restart it. Each server has its own key.')
-                    };
-                    var steps = {
-                        Ok: { text: t('JELLYMESH_SECRET_KEY encrypts the stored logins. It is set on the server, outside this plugin.') },
-                        Missing: { text: t('JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. It is not set yet. Set it on the server, outside this plugin, with at least 32 characters.'), commands: make.commands, after: make.after },
-                        TooShort: { text: t('JELLYMESH_SECRET_KEY encrypts the stored logins, so no server can be connected without it. The one set is too short. Set it on the server, outside this plugin, with at least 32 characters.'), commands: make.commands, after: make.after },
-                        Wrong: { text: t('JELLYMESH_SECRET_KEY does not decrypt the stored logins: it changed, or they were altered. It is set on the server, outside this plugin. Restore the original key, or remove the servers and add them again.') }
-                    };
-                    var step = steps[status.KeyState] || steps.Wrong;
-                    return { key: 'key', name: t('Set the secret key'), state: stateOf(status.KeyState === 'Ok'), text: step.text, commands: step.commands, after: step.after };
+                    if (status.KeyState === 'Ok') {
+                        return null;
+                    }
+
+                    return status.KeyState === 'Missing'
+                        ? { key: 'key', name: t('Let JellyMesh keep its key file'), state: stateOf(false), text: t('JellyMesh encrypts the stored logins with a key file in its plugin data folder, and it cannot write that file. Let Jellyfin write to that folder, then restart Jellyfin.') }
+                        : { key: 'key', name: t('Enter the passwords again'), state: stateOf(false), text: t('The stored logins do not decrypt with the key file: it was lost or replaced. Enter the password of each marked server again.'), tab: 'servers' };
                 }
 
                 // Derives the steps of the first setup from the state of the server.
@@ -3802,7 +3891,7 @@
                         key: 'sync',
                         name: t('Run the first sync'),
                         state: firstSync,
-                        text: status.Suspended && firstSync !== 'done' ? t('It waits for the secret key.') : t('It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.'),
+                        text: status.Suspended && firstSync !== 'done' ? t('It waits until the stored logins can be used.') : t('It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.'),
                         tab: 'catalog'
                     }, {
                         key: 'link',
@@ -3810,7 +3899,7 @@
                         state: linkState(folder),
                         text: t('Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.'),
                         tab: 'settings'
-                    }];
+                    }].filter(Boolean);
                 }
 
                 // Shows the steps while one is to do, and hands the focus back to the page when the list goes.
@@ -3834,7 +3923,9 @@
                     }
 
                     if (status.Suspended) {
-                        return t('Suspended. Sync and remote playback are stopped until the secret key is fixed.');
+                        return status.KeyState === 'Missing'
+                            ? t('Suspended. Sync and remote playback are stopped until JellyMesh can keep its key file.')
+                            : t('Suspended. Sync and remote playback are stopped until the password of each marked server is entered again.');
                     }
 
                     var waiting = [syncSection, peersSection, mergesSection].some(function (part) {

@@ -189,7 +189,7 @@ public class FederationAdminControllerTests
 
     [Theory]
     [InlineData(null, KeyState.Missing)]
-    [InlineData("short", KeyState.TooShort)]
+    [InlineData("short", KeyState.Missing)]
     public async Task AnUnusableKeyIsReportedAndRefusesTheAdd(string? key, KeyState expected)
     {
         using var fixture = new RegistryFixture(key: key);
@@ -200,7 +200,7 @@ public class FederationAdminControllerTests
 
         Assert.Equal(expected, status.KeyState);
         Assert.True(status.Suspended);
-        Assert.Contains(EnvironmentSecretKeySource.VariableName, status.Warning, StringComparison.Ordinal);
+        Assert.Contains("key file", status.Warning, StringComparison.Ordinal);
         Assert.Equal(409, Assert.IsType<ObjectResult>(add.Result).StatusCode);
         Assert.Empty(fixture.Store.Configuration.Servers);
     }
@@ -223,6 +223,24 @@ public class FederationAdminControllerTests
         Assert.DoesNotContain(TestValues.OtherKey, status.Warning, StringComparison.Ordinal);
         Assert.Equal(409, Assert.IsType<ObjectResult>(test.Result).StatusCode);
         Assert.Empty(fixture.Handler.Requests);
+    }
+
+    [Fact]
+    public async Task AWrongKeyMarksTheServerAndTheNewPasswordClearsIt()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        fixture.KeySource.Key = TestValues.OtherKey;
+        var controller = ControllerFor(fixture);
+        Assert.True(controller.GetStatus().Value!.Servers.Single().NeedsPassword);
+
+        var result = await controller.UpdateCredentials(server.Id, new CredentialsRequest { Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+
+        Assert.False(result.Value!.NeedsPassword);
+        var status = controller.GetStatus().Value!;
+        Assert.Equal(KeyState.Ok, status.KeyState);
+        Assert.False(status.Suspended);
+        Assert.DoesNotContain(TestValues.Password, System.Text.Json.JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
     }
 
     [Fact]

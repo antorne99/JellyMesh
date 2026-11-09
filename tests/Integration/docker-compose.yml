@@ -22,7 +22,6 @@ services:
     hostname: locale
     environment:
       <<: *jellyfin-env
-      JELLYMESH_SECRET_KEY:
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:8096:8096"
     volumes:
@@ -50,7 +49,6 @@ services:
     hostname: remoto-jellymesh
     environment:
       <<: *jellyfin-env
-      JELLYMESH_SECRET_KEY:
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:8098:8096"
     volumes:
