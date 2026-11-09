@@ -379,7 +379,11 @@ public sealed class LibraryMaterializerTests : IDisposable
         var path = _fixture.Path_("Film", "Film (2020)", "Film (2020).strm");
         var signed = StubFixture.Text(path);
         var old = url(signed);
+        var written = File.GetLastWriteTimeUtc(path);
         await File.WriteAllTextAsync(path, old);
+
+        // A write by someone else comes later than the plugin's; file times can be too coarse to show it by themselves.
+        File.SetLastWriteTimeUtc(path, written.AddSeconds(1));
         var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Renamed by a fetcher", ShortcutPath = old };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
         return (path, signed, item);
