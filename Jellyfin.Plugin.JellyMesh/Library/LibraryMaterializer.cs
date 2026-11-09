@@ -168,11 +168,6 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    private static List<T> ReplaceAll<T>(IEnumerable<T> items, Func<T, bool> match, T replacement)
-    {
-        return items.Select(item => match(item) ? replacement : item).ToList();
-    }
-
     private async Task<MaterializationReport> RunAsync(string root, bool isProtected, CancellationToken cancellationToken)
     {
         // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
@@ -211,6 +206,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             await SignStubAsync(run, stub, cancellationToken).ConfigureAwait(false);
         }
 
+        run.Commit();
         foreach (var stub in plan.Removals)
         {
             RemoveGone(run, stub);
@@ -295,8 +291,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 entry = entry with { ImageTag = work.ImageTag };
             }
 
-            var saved = entry;
-            run.State = run.State with { Series = ReplaceAll(run.State.Series, item => string.Equals(item.Id, saved.Id, StringComparison.Ordinal), saved) };
+            run.Put(entry);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -350,8 +345,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 entry = entry with { TechnicalTag = work.TechnicalTag };
             }
 
-            var saved = entry;
-            run.State = run.State with { Stubs = ReplaceAll(run.State.Stubs, item => string.Equals(item.Id, saved.Id, StringComparison.Ordinal), saved) };
+            run.Put(entry);
             run.Created += work.IsNew ? 1 : 0;
             run.Updated += !work.IsNew && changed ? 1 : 0;
         }
@@ -470,12 +464,22 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
+    // Entries change in place by position, and the state is rebuilt once: a new list per stub made a run quadratic.
     private sealed class Run
     {
+        private readonly List<StubEntry> _stubs;
+        private readonly List<SeriesStub> _series;
+        private readonly Dictionary<string, int> _stubAt;
+        private readonly Dictionary<string, int> _seriesAt;
+
         public Run(string root, StubState state)
         {
             Root = root;
             State = state;
+            _stubs = [.. state.Stubs];
+            _series = [.. state.Series];
+            _stubAt = Positions(_stubs, stub => stub.Id);
+            _seriesAt = Positions(_series, series => series.Id);
         }
 
         public string Root { get; }
@@ -493,5 +497,35 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public int Removed { get; set; }
 
         public int Failed { get; set; }
+
+        public void Put(StubEntry stub)
+        {
+            if (_stubAt.TryGetValue(stub.Id, out var at))
+            {
+                _stubs[at] = stub;
+            }
+        }
+
+        public void Put(SeriesStub series)
+        {
+            if (_seriesAt.TryGetValue(series.Id, out var at))
+            {
+                _series[at] = series;
+            }
+        }
+
+        /// <summary>Applies every <see cref="Put(StubEntry)"/> to <see cref="State"/>.</summary>
+        public void Commit() => State = State with { Stubs = [.. _stubs], Series = [.. _series] };
+
+        private static Dictionary<string, int> Positions<T>(List<T> items, Func<T, string> id)
+        {
+            var positions = new Dictionary<string, int>(items.Count, StringComparer.Ordinal);
+            for (var i = 0; i < items.Count; i++)
+            {
+                positions.TryAdd(id(items[i]), i);
+            }
+
+            return positions;
+        }
     }
 }
