@@ -230,6 +230,12 @@ MEDIA=<main checkout>/tests/Integration/media bash play/removal-series.sh
 MEDIA=<main checkout>/tests/Integration/media bash play/watchstate.sh
 ```
 
+`collections.sh` proves that films a remote groups into collections still reach the consumer, with its own `jm-col-local` and `jm-col-remote` containers on ports 18480-18481. The stock remote turns on "Group movies into collections" (`EnableGroupingMoviesIntoCollections`) and puts two films in a collection. Asked the sync query as the dedicated user, Jellyfin 12.4 answers the collection in place of both films, and one fewer in `TotalRecordCount`, unless the query carries `collapseBoxSetItems=false`. With it, the consumer gets a stub for each film and none for the collection. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/collections.sh
+```
+
 ### `merge/`
 
 Proves decision 20 on private containers named `jm-merge-*`, on ports 18441-18443:
