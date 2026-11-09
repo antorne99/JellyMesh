@@ -260,7 +260,7 @@ bash ui/down.sh                   # removes containers, volumes, network and scr
 | `peer` | `UI_PORT+2` | `remoto-jellymesh` | Plugin, shares its libraries |
 | `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured |
 
-`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), and `nokey` and `key` for the secret key (on `fresh` by default). Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
+`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), `nokey` to delete the credential key file (on `fresh` by default), `blockkey` to put a folder where the key file goes (on `first` by default), and `key` to fix either, entering the logins again. Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
 
 The browser runs on the private network of these servers and reaches them by container name. Through `host.docker.internal` a few new connections stayed in `SYN_SENT` for 7 to 45 seconds on Docker Desktop while the server answered others in milliseconds, which failed about one run in three with `urlopen timed out`.
 

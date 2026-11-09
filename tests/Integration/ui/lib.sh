@@ -12,6 +12,8 @@ WORK=${WORK:-${TMPDIR:-/tmp}/$UI_PREFIX-work}
 # The media is gitignored, so a worktree takes the one of the main checkout.
 MEDIA=${MEDIA:-$(dirname "$(git -C "$UI" rev-parse --path-format=absolute --git-common-dir)")/tests/Integration/media}
 source "$UI/../merge/lib.sh"
+# The plugin keeps its credential key in a file now (decision 42), so these servers run without the old variable.
+TEST_KEY=
 
 SERVERS="fresh stock peer first"
 NETWORK=$UI_PREFIX-net
@@ -22,10 +24,47 @@ port_of() { case $1 in fresh) echo "$UI_PORT" ;; stock) echo $((UI_PORT + 1)) ;;
 container_of() { echo "$UI_PREFIX-$1"; }
 media_of() { case $1 in fresh | first) echo locale ;; stock) echo remoto-standard ;; peer) echo remoto-jellymesh ;; esac; }
 
-# set_key <server> [key]: the same server restarted with that key, or with none when it is left out.
-set_key() {
-  docker rm -f "$(container_of "$1")" >/dev/null
-  run_container "$1" "${2:-}"
+restart_server() {
+  docker restart "$(container_of "$1")" >/dev/null
+  wait_ready "$1"
+}
+
+# key_state <server>: the state of the credential key, as the page reads it.
+key_state() { get "$1" /JellyMesh/Admin/Status | jq -r .KeyState; }
+
+# key_path <server>: where the credential key file goes, next to the .strm signing key in the plugin data folder.
+key_path() {
+  get "$1" /JellyMesh/Admin/Status >/dev/null
+  docker exec "$(container_of "$1")" sh -c 'echo "$(dirname "$(find /config -name strm-signing.key -o -name credential.key | head -1)")/credential.key"'
+}
+
+# lose_key <server>: the key file deleted and the server restarted, so its stored logins no longer decrypt.
+lose_key() {
+  local path
+  path=$(key_path "$1")
+  docker exec "$(container_of "$1")" rm -f "$path"
+  restart_server "$1"
+}
+
+# block_key <server>: a folder where the key file goes and a restart, so that the plugin cannot keep a key.
+block_key() {
+  local path
+  path=$(key_path "$1")
+  docker exec "$(container_of "$1")" sh -c "rm -rf '$path' && mkdir '$path'"
+  restart_server "$1"
+}
+
+# fix_key <server>: a blocked key file freed, and every login that no longer decrypts entered again.
+fix_key() {
+  local path id
+  path=$(key_path "$1")
+  if docker exec "$(container_of "$1")" test -d "$path"; then
+    docker exec "$(container_of "$1")" rmdir "$path"
+    restart_server "$1"
+  fi
+  for id in $(get "$1" /JellyMesh/Admin/Status | jq -r '.Servers[] | select(.NeedsPassword) | .Id'); do
+    post "$1" "/JellyMesh/Admin/Servers/$id/Credentials" '{"Username":"jellymesh","Password":"jellymesh-test"}' >/dev/null
+  done
 }
 
 # offline <remote>: stops a remote, and syncs so that the page knows.
