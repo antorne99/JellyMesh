@@ -256,6 +256,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             "sortBy=DateCreated,SortName",
             "sortOrder=Ascending",
             "excludeLocationTypes=Virtual",
+            // A remote that groups films into collections would otherwise answer with the collection in their place.
+            "collapseBoxSetItems=false",
             "enableUserData=false",
             "fields=" + ItemFields,
             string.Create(CultureInfo.InvariantCulture, $"startIndex={query.StartIndex}"),
