@@ -408,6 +408,8 @@ public sealed class IncrementalSyncTests : IDisposable
     public async Task AnIncrementalThatCannotBeSavedIsReported()
     {
         await SyncedServerAsync();
+        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
+        SaveOnRemote("c");
         var folder = _fixture.Folder;
         System.IO.Directory.Delete(folder, recursive: true);
         await System.IO.File.WriteAllTextAsync(folder, "a file where the folder should be");

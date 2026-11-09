@@ -116,12 +116,36 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
     /// <summary>Fails the image reads.</summary>
     public RemoteFailure ImageFailure { get; set; }
 
-    public Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken)
+    /// <summary>Runs inside every image read, to hold it open.</summary>
+    public Func<CancellationToken, Task> BeforeImage { get; set; } = _ => Task.CompletedTask;
+
+    /// <summary>The most image reads that were open at once.</summary>
+    public int MaxImagesInFlight { get; private set; }
+
+    private int _imagesInFlight;
+
+    public async Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken)
     {
-        ImageReads.Add(itemId + "/" + imageType + "/" + imageIndex);
-        return Task.FromResult(ImageFailure == RemoteFailure.None
-            ? RemoteResult.Success(new RemoteImage(new byte[] { 0xFF, 0xD8, 0xFF }, "image/jpeg"))
-            : RemoteResult.Fail<RemoteImage>(ImageFailure));
+        lock (ImageReads)
+        {
+            ImageReads.Add(itemId + "/" + imageType + "/" + imageIndex);
+            MaxImagesInFlight = Math.Max(MaxImagesInFlight, ++_imagesInFlight);
+        }
+
+        try
+        {
+            await BeforeImage(cancellationToken);
+            return ImageFailure == RemoteFailure.None
+                ? RemoteResult.Success(new RemoteImage(new byte[] { 0xFF, 0xD8, 0xFF }, "image/jpeg"))
+                : RemoteResult.Fail<RemoteImage>(ImageFailure);
+        }
+        finally
+        {
+            lock (ImageReads)
+            {
+                _imagesInFlight--;
+            }
+        }
     }
 
     public Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken)
