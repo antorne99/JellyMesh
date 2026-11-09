@@ -75,7 +75,10 @@ public class FederationAdminController : ControllerBase
             keyState != KeyState.Ok,
             KeyWarning(keyState),
             GetFederatedFolder(),
-            _registry.GetServers().Select(ToStatus).ToList());
+            _registry.GetServers().Select(ToStatus).ToList())
+        {
+            LegacyKeySet = _vault.IsLegacyKeySet
+        };
     }
 
     /// <summary>

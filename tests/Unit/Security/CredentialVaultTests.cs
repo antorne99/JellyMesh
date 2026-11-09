@@ -133,6 +133,81 @@ public class CredentialVaultTests
         Assert.ThrowsAny<CryptographicException>(() => Vault.Unprotect(Guid.NewGuid(), encrypted!));
     }
 
+    private const string ThirdKey = "01234567890123456789012345678901";
+
+    private readonly FixedLegacyKeySource _legacy = new(null);
+
+    private CredentialVault VaultWithLegacy(string fileKey) => new(new FixedKeySource(fileKey), _store, _legacy);
+
+    private RemoteServerConfig StoreServerWith(string key)
+    {
+        var id = Guid.NewGuid();
+        var server = new RemoteServerConfig { Id = id, EncryptedCredentials = new CredentialVault(new FixedKeySource(key), new InMemoryConfigurationStore()).Protect(id, TestValues.Credentials)! };
+        _store.Configuration.Servers.Add(server);
+        return server;
+    }
+
+    [Fact]
+    public void TheOldVariableMovesEveryPasswordToTheKeyFileOnce()
+    {
+        var first = StoreServerWith(TestValues.Key);
+        var second = StoreServerWith(TestValues.Key);
+        _legacy.Key = TestValues.Key;
+
+        var vault = VaultWithLegacy(TestValues.OtherKey);
+
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+        Assert.Equal(TestValues.Password, vault.Unprotect(first.Id, first.EncryptedCredentials)!.Password);
+        Assert.Equal(TestValues.Password, vault.Unprotect(second.Id, second.EncryptedCredentials)!.Password);
+        Assert.True(new CredentialVault(new FixedKeySource(TestValues.OtherKey), _store).GetKeyState() == KeyState.Ok);
+        Assert.True(vault.IsLegacyKeySet);
+    }
+
+    [Fact]
+    public void APasswordTheOldVariableCannotReadMovesNothing()
+    {
+        var first = StoreServerWith(TestValues.Key);
+        var second = StoreServerWith(ThirdKey);
+        var before = (first.EncryptedCredentials, second.EncryptedCredentials);
+        _legacy.Key = TestValues.Key;
+
+        var vault = VaultWithLegacy(TestValues.OtherKey);
+
+        Assert.Equal(KeyState.Wrong, vault.GetKeyState());
+        Assert.Equal(before, (first.EncryptedCredentials, second.EncryptedCredentials));
+    }
+
+    [Fact]
+    public void AfterTheMoveTheOldVariableIsIgnored()
+    {
+        var server = StoreServerWith(TestValues.OtherKey);
+        var before = server.EncryptedCredentials;
+        _legacy.Key = TestValues.Key;
+
+        var vault = VaultWithLegacy(TestValues.OtherKey);
+
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+        Assert.Equal(before, server.EncryptedCredentials);
+        Assert.True(vault.IsLegacyKeySet);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("   ")]
+    [InlineData("short")]
+    public void WithoutAUsableOldVariableNothingMoves(string? legacy)
+    {
+        var server = StoreServerWith(TestValues.Key);
+        var before = server.EncryptedCredentials;
+        _legacy.Key = legacy;
+
+        var vault = VaultWithLegacy(TestValues.OtherKey);
+
+        Assert.Equal(KeyState.Wrong, vault.GetKeyState());
+        Assert.Equal(before, server.EncryptedCredentials);
+        Assert.Equal(legacy == "short", vault.IsLegacyKeySet);
+    }
+
     private RemoteServerConfig StoreServer()
     {
         var id = Guid.NewGuid();

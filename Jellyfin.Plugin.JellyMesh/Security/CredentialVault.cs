@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Jellyfin.Plugin.JellyMesh.Security;
 
@@ -19,21 +22,33 @@ public sealed class CredentialVault : ICredentialVault
 {
     private readonly ISecretKeySource _keySource;
     private readonly IPluginConfigurationStore _store;
+    private readonly ILegacySecretKeySource? _legacy;
+    private readonly ILogger _logger;
+    private readonly Lock _migration = new();
+    private bool _migrated;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CredentialVault"/> class.
     /// </summary>
     /// <param name="keySource">The key source.</param>
     /// <param name="store">The configuration store.</param>
-    public CredentialVault(ISecretKeySource keySource, IPluginConfigurationStore store)
+    /// <param name="legacy">The key of versions before 0.4, if any.</param>
+    /// <param name="logger">The logger.</param>
+    public CredentialVault(ISecretKeySource keySource, IPluginConfigurationStore store, ILegacySecretKeySource? legacy = null, ILogger<CredentialVault>? logger = null)
     {
         _keySource = keySource;
         _store = store;
+        _legacy = legacy;
+        _logger = logger ?? NullLogger<CredentialVault>.Instance;
     }
+
+    /// <inheritdoc />
+    public bool IsLegacyKeySet => !string.IsNullOrWhiteSpace(_legacy?.GetSecretKey());
 
     /// <inheritdoc />
     public KeyState GetKeyState()
     {
+        MigrateOnce();
         if (UsableKey() is not { } secret)
         {
             return KeyState.Missing;
@@ -90,6 +105,7 @@ public sealed class CredentialVault : ICredentialVault
     /// <inheritdoc />
     public bool CanDecrypt(Guid serverId, string encryptedCredentials)
     {
+        MigrateOnce();
         return UsableKey() is { } secret && CanDecrypt(secret, serverId, encryptedCredentials);
     }
 
@@ -106,9 +122,81 @@ public sealed class CredentialVault : ICredentialVault
         }
     }
 
-    private string? UsableKey()
+    private static string? Usable(string? secret)
     {
-        var secret = _keySource.GetSecretKey();
         return string.IsNullOrWhiteSpace(secret) || secret.Length < CredentialCipher.MinimumKeyLength ? null : secret;
+    }
+
+    private static string Reencrypt(string from, string to, Guid serverId, string value)
+    {
+        var payload = CredentialCipher.Decrypt(from, value, serverId.ToByteArray());
+        try
+        {
+            return CredentialCipher.Encrypt(to, payload, serverId.ToByteArray());
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(payload);
+        }
+    }
+
+    private string? UsableKey() => Usable(_keySource.GetSecretKey());
+
+    // Before anything reads the state, so that no caller sees a wrong key that is about to be moved. All or nothing: a
+    // password the old key cannot read leaves every password as it was, and the page asks for them again.
+    private void MigrateOnce()
+    {
+        lock (_migration)
+        {
+            if (_migrated)
+            {
+                return;
+            }
+
+            _migrated = true;
+            if (UsableKey() is not { } key || Usable(_legacy?.GetSecretKey()) is not { } legacy)
+            {
+                return;
+            }
+
+            var stale = _store.Read(config => config.Servers
+                .Where(server => !CanDecrypt(key, server.Id, server.EncryptedCredentials))
+                .Select(server => (server.Id, Value: server.EncryptedCredentials))
+                .ToList());
+            if (stale.Count == 0)
+            {
+                return;
+            }
+
+            if (!stale.All(server => CanDecrypt(legacy, server.Id, server.Value)))
+            {
+                _logger.LogWarning("JELLYMESH_SECRET_KEY does not decrypt every saved password, so none was moved. Enter the password of each marked server again");
+                return;
+            }
+
+            var values = stale.ToDictionary(server => server.Id, server => (Old: server.Value, New: Reencrypt(legacy, key, server.Id, server.Value)));
+            var moved = 0;
+            _store.Update(config =>
+            {
+                // A password changed meanwhile means someone entered it again: then nothing is moved at all.
+                var servers = config.Servers.Where(server => values.ContainsKey(server.Id)).ToList();
+                if (servers.Count != values.Count || servers.Any(server => server.EncryptedCredentials != values[server.Id].Old))
+                {
+                    return;
+                }
+
+                foreach (var server in servers)
+                {
+                    server.EncryptedCredentials = values[server.Id].New;
+                }
+
+                moved = servers.Count;
+            });
+
+            if (moved > 0)
+            {
+                _logger.LogInformation("Moved the credentials of {Count} servers to the key file. JELLYMESH_SECRET_KEY is no longer used and can be removed", moved);
+            }
+        }
     }
 }

@@ -28,6 +28,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<FileSecretKeySource>>()));
         serviceCollection.AddSingleton<IFederatedRootSource, EnvironmentFederatedRootSource>();
+        serviceCollection.AddSingleton<ILegacySecretKeySource, EnvironmentSecretKeySource>();
         serviceCollection.AddSingleton<ICredentialVault, CredentialVault>();
         serviceCollection.AddSingleton<IJellyfinRemoteClient, JellyfinRemoteClient>();
         serviceCollection.AddSingleton<IRemoteServerRegistry, RemoteServerRegistry>();

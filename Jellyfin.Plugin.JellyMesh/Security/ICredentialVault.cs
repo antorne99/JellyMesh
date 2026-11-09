@@ -13,6 +13,11 @@ namespace Jellyfin.Plugin.JellyMesh.Security;
 public interface ICredentialVault
 {
     /// <summary>
+    /// Gets a value indicating whether the key of versions before 0.4 is still set, though only a first start uses it.
+    /// </summary>
+    bool IsLegacyKeySet { get; }
+
+    /// <summary>
     /// Evaluates the key against everything stored. Evaluated on each call, nothing is cached.
     /// </summary>
     /// <returns>The state of the key.</returns>
