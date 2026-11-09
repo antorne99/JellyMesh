@@ -105,7 +105,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
-            await SyncAllAsync(SyncServerAsync, cancellationToken).ConfigureAwait(false);
+            // The nightly reconciliation also checks every stub's item: the safety net for an item left on an old URL.
+            await SyncAllAsync(SyncServerAsync, true, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -117,7 +118,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
-            await SyncAllAsync(SyncChangesAsync, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncChangesAsync, false, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -163,7 +164,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         try
         {
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
-            await MaterializeAsync(cancellationToken).ConfigureAwait(false);
+            await MaterializeAsync(false, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -218,7 +219,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     {
         try
         {
-            await SyncAllAsync(SyncServerAsync, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncServerAsync, false, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -245,7 +246,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         await _index.DropServersAsync(removed, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, CancellationToken cancellationToken)
+    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, bool verifyEveryStub, CancellationToken cancellationToken)
     {
         try
         {
@@ -255,7 +256,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             }
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
-            await MaterializeAsync(cancellationToken).ConfigureAwait(false);
+            await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -290,7 +291,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     // After every sync, also a failed one: what one server sent is still good, and removals check each server by itself.
-    private async Task MaterializeAsync(CancellationToken cancellationToken)
+    private async Task MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
         if (_materializer is null)
         {
@@ -299,7 +300,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         try
         {
-            await _materializer.MaterializeAsync(cancellationToken).ConfigureAwait(false);
+            await _materializer.MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

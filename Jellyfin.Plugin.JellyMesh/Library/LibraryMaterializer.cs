@@ -92,7 +92,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     public MaterializationReport? LastReport => _lastReport;
 
     /// <inheritdoc />
-    public async Task<MaterializationReport> MaterializeAsync(CancellationToken cancellationToken)
+    public Task<MaterializationReport> MaterializeAsync(CancellationToken cancellationToken) => MaterializeAsync(false, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<MaterializationReport> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
         var (root, isProtected) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection));
         if (root.Length == 0)
@@ -105,7 +108,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var report = await RunAsync(root, isProtected, cancellationToken).ConfigureAwait(false);
+            var report = await RunAsync(root, isProtected, verifyEveryStub, cancellationToken).ConfigureAwait(false);
             _lastReport = report;
             return report;
         }
@@ -186,7 +189,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return string.Equals(stub.UrlTag, urlTag, StringComparison.Ordinal) && stub.StrmWrittenUtc == File.GetLastWriteTimeUtc(strm);
     }
 
-    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, CancellationToken cancellationToken)
+    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool verifyEveryStub, CancellationToken cancellationToken)
     {
         // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
         var snapshot = _index.Snapshot;
@@ -206,7 +209,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 
-        var run = new Run(root, plan.State);
+        var run = new Run(root, plan.State) { VerifyEveryStub = verifyEveryStub };
         await FetchImagesAsync(run, plan, cancellationToken).ConfigureAwait(false);
         foreach (var series in plan.Series)
         {
@@ -348,7 +351,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             var urlTag = UrlTagOf(work.StrmUrl);
-            if (written || !IsUrlConfirmed(entry, strm, urlTag))
+            if (written || run.VerifyEveryStub || !IsUrlConfirmed(entry, strm, urlTag))
             {
                 changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing.Value, cancellationToken).ConfigureAwait(false);
                 entry = entry with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) };
@@ -390,7 +393,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             var url = _urls.Build(stub.Id);
             var urlTag = UrlTagOf(url);
-            if (File.Exists(strm) && !IsUrlConfirmed(stub, strm, urlTag))
+            if (File.Exists(strm) && (run.VerifyEveryStub || !IsUrlConfirmed(stub, strm, urlTag)))
             {
                 await ApplyStrmUrlAsync(strm, url, _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
                 run.Put(stub with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) });
@@ -583,6 +586,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public ConcurrentDictionary<string, string?> Fetched { get; } = new(StringComparer.Ordinal);
 
         public bool NeedsScan { get; set; }
+
+        /// <summary>Gets a value indicating whether every stub gets its item checked, as the nightly safety net.</summary>
+        public bool VerifyEveryStub { get; init; }
 
         public int Created { get; set; }
 

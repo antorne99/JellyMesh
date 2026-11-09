@@ -142,6 +142,25 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFullReconciliationLooksUpEveryStubAgain()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var strm = _fixture.Path_("Film", "Film (2020)", "Film (2020).strm");
+        var url = StubFixture.Text(strm);
+        var item = new Movie { Id = Guid.NewGuid(), Path = strm, ShortcutPath = "http://127.0.0.1:8096/old" };
+        _fixture.Library.Setup(library => library.FindByPath(strm, false)).Returns(item);
+        using var sync = SyncWithMaterializer();
+
+        await sync.RunIncrementalAsync(CancellationToken.None);
+        Assert.Equal("http://127.0.0.1:8096/old", item.ShortcutPath);
+
+        await sync.RunAsync(CancellationToken.None);
+        Assert.Equal(url, item.ShortcutPath);
+    }
+
+    [Fact]
     public async Task NoFolderMeansNothingIsWritten()
     {
         _fixture.Sync.Store.Configuration.FederatedFolderPath = string.Empty;
@@ -608,7 +627,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AFailureInMaterializationDoesNotFailTheSync()
     {
         var materializer = new Mock<ILibraryMaterializer>();
-        materializer.Setup(item => item.MaterializeAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException(TestValues.Host));
+        materializer.Setup(item => item.MaterializeAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException(TestValues.Host));
         await _fixture.Sync.AddServerAsync("A", "films");
         using var sync = new CatalogSyncService(
             _fixture.Sync.Registry,
