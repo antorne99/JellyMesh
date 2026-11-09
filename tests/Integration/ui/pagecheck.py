@@ -2572,6 +2572,19 @@ def overview_damaged(s, width):
     check(name + " keeps remote text as text", page.locator(u.SUMMARY + " b").count() == 0)
     u.close(page)
 
+    name = width + " overview unconfigured"
+
+    def unconfigured(context):
+        fake(context, "Status", linked)
+        fake(context, "Sync", lambda sync: sync.update(UnconfiguredStubs=5))
+
+    page = s.open("fresh", width, route=unconfigured)
+    shown = " ".join(alarms(page))
+    check(name + " reports the titles", "5 titles come from servers missing from the settings. They are kept." in shown, shown)
+    catalog = text(page, u.ALERTS_WITH_DATA[1])
+    check(name + " says how to get them back", "were not removed on this page" in catalog and "restore them" in catalog, catalog)
+    u.close(page)
+
     name = width + " overview stale"
 
     def stale(context):

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
@@ -17,7 +18,7 @@ internal sealed class SyncFixture : IDisposable
 
     private readonly string _folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jellymesh-tests-" + Guid.NewGuid().ToString("N"));
 
-    public SyncFixture(string? key = TestValues.Key)
+    public SyncFixture(string? key = TestValues.Key, string? stubFolder = null)
     {
         KeySource = new FixedKeySource(key);
         Vault = new CredentialVault(KeySource, Store);
@@ -25,7 +26,8 @@ internal sealed class SyncFixture : IDisposable
         Reader = new RemoteCatalogReader(Registry, Client, ReaderLogger);
         File = new IndexFile(_folder, new CapturingLogger<IndexFile>());
         Index = new FederationIndex(File, new CapturingLogger<FederationIndex>());
-        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger);
+        Stubs = new StubRegistry(stubFolder ?? System.IO.Path.Combine(_folder, "plugin"), Store, new CapturingLogger<StubRegistry>());
+        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs);
     }
 
     public string Folder => _folder;
@@ -52,6 +54,8 @@ internal sealed class SyncFixture : IDisposable
 
     public CapturingLogger<CatalogSyncService> Logger { get; } = new();
 
+    public StubRegistry Stubs { get; }
+
     public CatalogSyncService Sync { get; }
 
     public async Task<RemoteServerInfo> AddServerAsync(string name, params string[] libraries)
@@ -65,6 +69,7 @@ internal sealed class SyncFixture : IDisposable
     public void Dispose()
     {
         Sync.Dispose();
+        Stubs.Dispose();
         Index.Dispose();
         Registry.Dispose();
         if (System.IO.Directory.Exists(_folder))

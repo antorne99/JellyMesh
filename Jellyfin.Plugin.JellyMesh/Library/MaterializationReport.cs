@@ -22,4 +22,10 @@ public sealed record MaterializationReport(
     int Removed,
     int Failed,
     int Unplaceable,
-    IReadOnlyList<HeldLibrary> Held);
+    IReadOnlyList<HeldLibrary> Held)
+{
+    /// <summary>
+    /// Gets how many stubs are kept because none of their servers is configured and none was removed from the page.
+    /// </summary>
+    public int Unconfigured { get; init; }
+}

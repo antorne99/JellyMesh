@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -21,4 +22,10 @@ public sealed record StubState
 
     /// <summary>Gets the stub series.</summary>
     public IReadOnlyList<SeriesStub> Series { get; init; } = [];
+
+    /// <summary>
+    /// Gets the servers the administrator removed from the page. Only their stubs and catalogs are deleted: a server missing
+    /// from the configuration for any other reason, such as a reset file, keeps them (decision 44).
+    /// </summary>
+    public IReadOnlyList<Guid> RemovedServers { get; init; } = [];
 }

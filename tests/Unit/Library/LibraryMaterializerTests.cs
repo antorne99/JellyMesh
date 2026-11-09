@@ -285,15 +285,9 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.True(File.Exists(path));
         var item = new Movie { Id = Guid.NewGuid(), Path = path };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        using var sync = new CatalogSyncService(
-            _fixture.Sync.Registry,
-            _fixture.Sync.Reader,
-            _fixture.Sync.Index,
-            _fixture.Sync.Vault,
-            _fixture.Sync.Clock,
-            _fixture.Sync.Logger,
-            _fixture.Materializer);
+        using var sync = SyncWithMaterializer();
 
+        await sync.MarkRemovedAsync(removed.Id, CancellationToken.None);
         _fixture.Sync.Registry.Remove(removed.Id);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
 
@@ -310,21 +304,47 @@ public sealed class LibraryMaterializerTests : IDisposable
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
         var removed = await _fixture.Sync.AddServerAsync("A", "films");
         await _fixture.SyncAndMaterializeAsync();
-        using var sync = new CatalogSyncService(
-            _fixture.Sync.Registry,
-            _fixture.Sync.Reader,
-            _fixture.Sync.Index,
-            _fixture.Sync.Vault,
-            _fixture.Sync.Clock,
-            _fixture.Sync.Logger,
-            _fixture.Materializer);
+        using var sync = SyncWithMaterializer();
 
         _fixture.Sync.KeySource.Key = null;
+        await sync.MarkRemovedAsync(removed.Id, CancellationToken.None);
         _fixture.Sync.Registry.Remove(removed.Id);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
 
         Assert.False(Directory.Exists(_fixture.Path_("Film", "Film (2020)")));
         Assert.Empty(_fixture.Registry.State.Stubs);
+    }
+
+    [Fact]
+    public async Task AServerMissingFromAResetConfigurationKeepsItsStubsAndCatalog()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        using var sync = SyncWithMaterializer();
+        await sync.RunAsync(CancellationToken.None);
+        var before = _fixture.Files;
+
+        _fixture.Sync.Registry.Remove(server.Id);
+        await sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(before, _fixture.Files);
+        Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.NotNull(_fixture.Sync.Index.Snapshot.Find(server.Id));
+        Assert.Equal(1, sync.GetStatus().UnconfiguredStubs);
+    }
+
+    [Fact]
+    public async Task ARemovalIsRememberedAcrossARestart()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        using var sync = SyncWithMaterializer();
+        await sync.RunAsync(CancellationToken.None);
+
+        await sync.MarkRemovedAsync(server.Id, CancellationToken.None);
+        using var restarted = new StubRegistry(Path.Combine(Path.GetDirectoryName(_fixture.Root)!, "plugin"), _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
+
+        Assert.Equal([server.Id], restarted.State.RemovedServers);
     }
 
     [Fact]
@@ -604,4 +624,14 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.False(sync.GetStatus().IsRunning);
         Assert.DoesNotContain(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
     }
+
+    private CatalogSyncService SyncWithMaterializer() => new(
+        _fixture.Sync.Registry,
+        _fixture.Sync.Reader,
+        _fixture.Sync.Index,
+        _fixture.Sync.Vault,
+        _fixture.Sync.Clock,
+        _fixture.Sync.Logger,
+        _fixture.Materializer,
+        _fixture.Registry);
 }

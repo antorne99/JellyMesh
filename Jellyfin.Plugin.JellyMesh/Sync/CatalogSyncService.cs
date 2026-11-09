@@ -39,6 +39,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CatalogSyncService> _logger;
     private readonly ILibraryMaterializer? _materializer;
+    private readonly StubRegistry? _stubs;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
 
@@ -56,6 +57,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="materializer">What brings the federated folder in step after a sync.</param>
+    /// <param name="stubs">The stub registry, which remembers the servers the administrator removed.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -63,7 +65,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         ICredentialVault vault,
         TimeProvider timeProvider,
         ILogger<CatalogSyncService> logger,
-        ILibraryMaterializer? materializer = null)
+        ILibraryMaterializer? materializer = null,
+        StubRegistry? stubs = null)
     {
         _registry = registry;
         _reader = reader;
@@ -72,6 +75,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _timeProvider = timeProvider;
         _logger = logger;
         _materializer = materializer;
+        _stubs = stubs;
     }
 
     /// <summary>
@@ -120,6 +124,12 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
+    public Task MarkRemovedAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        return _stubs?.MarkRemovedAsync(serverId, cancellationToken) ?? Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
     public void StartRemovalCleanup()
     {
         var cancellationToken = _shutdown.Token;
@@ -132,9 +142,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var snapshot = _index.Snapshot;
         var run = _run;
         var servers = _registry.GetServers().Select(server => ToReport(server, snapshot.Find(server.Id))).ToList();
+        var report = _materializer?.LastReport;
         return new SyncStatus(run.IsRunning, snapshot.Health, run.IndexSaveFailed, run.StartedUtc, run.FinishedUtc, servers)
         {
-            HeldLibraries = _materializer?.LastReport?.Held ?? []
+            HeldLibraries = report?.Held ?? [],
+            UnconfiguredStubs = report?.Unconfigured ?? 0
         };
     }
 
@@ -220,15 +232,17 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     // A sync that was reading a server when it was removed stores its catalog afterwards, so this also runs after each sync.
+    // Only servers the administrator removed lose their catalogs: one missing from a reset configuration may come back.
     private async Task DropRemovedServersAsync(CancellationToken cancellationToken)
     {
         var configured = _registry.GetServers().Select(server => server.Id).ToHashSet();
-        foreach (var serverId in _feedCursors.Keys.Where(serverId => !configured.Contains(serverId)))
+        var removed = (_stubs?.State.RemovedServers ?? []).Where(serverId => !configured.Contains(serverId)).ToHashSet();
+        foreach (var serverId in _feedCursors.Keys.Where(removed.Contains))
         {
             _feedCursors.TryRemove(serverId, out _);
         }
 
-        await _index.KeepServersAsync(configured, cancellationToken).ConfigureAwait(false);
+        await _index.DropServersAsync(removed, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, CancellationToken cancellationToken)

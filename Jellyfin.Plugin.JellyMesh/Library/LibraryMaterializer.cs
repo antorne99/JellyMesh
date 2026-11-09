@@ -254,7 +254,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             run.Updated,
             run.Removed,
             run.Failed);
-        return new MaterializationReport(_timeProvider.GetUtcNow(), true, run.Created, run.Updated, run.Removed, run.Failed, plan.Unplaceable, plan.Held);
+        return new MaterializationReport(_timeProvider.GetUtcNow(), true, run.Created, run.Updated, run.Removed, run.Failed, plan.Unplaceable, plan.Held)
+        {
+            Unconfigured = plan.Unconfigured
+        };
     }
 
     private LocalSeries? LocalSeriesOf(FederationView view, string workKey)

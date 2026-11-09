@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -30,6 +31,15 @@ public interface ICatalogSyncService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether it ran. If a sync is running this one does not, and nothing waits for it.</returns>
     Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records that the administrator removed a server, before it leaves the configuration: only such servers lose their
+    /// catalogs and stubs. Waits for a materialization that is running.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task MarkRemovedAsync(Guid serverId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Starts deleting in the background what removed servers left: their catalogs and the stubs only they served. Titles

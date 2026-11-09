@@ -53,14 +53,14 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
-    public async Task KeepingServersDropsTheOthersForGood()
+    public async Task DroppingAServerRemovesItForGood()
     {
         using (var index = NewIndex())
         {
             await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
             await index.ReplaceServerAsync(_second, [Item("b")], _now, null, CancellationToken.None);
 
-            await index.KeepServersAsync(new HashSet<Guid> { _second }, CancellationToken.None);
+            await index.DropServersAsync(new HashSet<Guid> { _first }, CancellationToken.None);
         }
 
         using var restarted = NewIndex();
@@ -70,13 +70,13 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
-    public async Task KeepingEveryServerWritesNothing()
+    public async Task DroppingAServerNotThereWritesNothing()
     {
         using var index = NewIndex();
         await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
         File.Delete(MainPath);
 
-        Assert.True(await index.KeepServersAsync(new HashSet<Guid> { _first }, CancellationToken.None));
+        Assert.True(await index.DropServersAsync(new HashSet<Guid> { _second }, CancellationToken.None));
 
         Assert.False(File.Exists(MainPath));
     }

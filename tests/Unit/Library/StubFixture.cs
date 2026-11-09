@@ -28,8 +28,9 @@ internal sealed class StubFixture : IDisposable
     public StubFixture()
     {
         Root = Path.Combine(_data, "federata");
+        Sync = new SyncFixture(stubFolder: Path.Combine(_data, "plugin"));
         Sync.Store.Configuration.FederatedFolderPath = Root;
-        Registry = new StubRegistry(Path.Combine(_data, "plugin"), Sync.Store, new CapturingLogger<StubRegistry>());
+        Registry = Sync.Stubs;
         Merges = new ManualMergeStore(Path.Combine(_data, "plugin"), new CapturingLogger<ManualMergeStore>());
         Resolver = new FederationResolver(Sync.Index, LocalCatalog, Sync.Registry, Merges);
         Hooked = new HookedResolver(Resolver, () => AfterResolve?.Invoke());
@@ -57,7 +58,7 @@ internal sealed class StubFixture : IDisposable
             Logger);
     }
 
-    public SyncFixture Sync { get; } = new();
+    public SyncFixture Sync { get; }
 
     public string Root { get; }
 
