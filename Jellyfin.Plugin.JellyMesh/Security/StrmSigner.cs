@@ -12,8 +12,8 @@ namespace Jellyfin.Plugin.JellyMesh.Security;
 /// </summary>
 /// <remarks>
 /// The key is a random file in the plugin data folder, next to the stub registry it belongs with. It stays out of the
-/// plugin XML, which the stock endpoints exchange with the browser, and it does not derive from
-/// <c>JELLYMESH_SECRET_KEY</c>: that key protects remote credentials, and rotating it has no reason to touch stubs. Losing
+/// plugin XML, which the stock endpoints exchange with the browser, and it is not the credential key: that one protects
+/// remote credentials, and replacing it has no reason to touch stubs. Losing
 /// the file costs nothing lasting: the next materialization signs every stub again, on the same paths.
 /// </remarks>
 public sealed class StrmSigner

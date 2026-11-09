@@ -153,7 +153,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41 | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42 | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
@@ -236,6 +236,12 @@ MEDIA=<main checkout>/tests/Integration/media bash play/watchstate.sh
 MEDIA=<main checkout>/tests/Integration/media bash play/collections.sh
 ```
 
+`keyfile.sh` proves decision 42. A consumer on 0.3.0.0, built from the `v0.3.0.0` tag with `git archive`, has `JELLYMESH_SECRET_KEY` set. It is upgraded to the current build with the variable still set, then started again without it, then its key file is deleted. The saved password moves to the key file once, and the stubs stay the same. Once the file is lost, the server asks for its password, and the federation works again after the password is entered. The saved password is read from the plugin XML, because the API never shows it.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/keyfile.sh
+```
+
 ### `merge/`
 
 Proves decision 20 on private containers named `jm-merge-*`, on ports 18441-18443:
@@ -266,7 +272,7 @@ bash ui/down.sh                   # removes containers, volumes, network and scr
 | `peer` | `UI_PORT+2` | `remoto-jellymesh` | Plugin, shares its libraries |
 | `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured |
 
-`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), and `nokey` and `key` for the secret key (on `fresh` by default). Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
+`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), `nokey` to delete the credential key file (on `fresh` by default), `blockkey` to put a folder where the key file goes (on `first` by default), and `key` to fix either, entering the logins again. Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
 
 The browser runs on the private network of these servers and reaches them by container name. Through `host.docker.internal` a few new connections stayed in `SYN_SENT` for 7 to 45 seconds on Docker Desktop while the server answered others in milliseconds, which failed about one run in three with `urlopen timed out`.
 

@@ -30,6 +30,16 @@ public interface IRemoteServerRegistry
     Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Replaces the dedicated user of a server, once the login with it succeeded. On failure nothing is saved. Works with a
+    /// wrong key too, because entering each password again is how a lost key file is fixed.
+    /// </summary>
+    /// <param name="serverId">The server to update.</param>
+    /// <param name="credentials">The dedicated user.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The server with its new credentials.</returns>
+    Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Removes a server. Possible in any key state: it uses no credential, and it is how to
     /// recover from a lost key.
     /// </summary>

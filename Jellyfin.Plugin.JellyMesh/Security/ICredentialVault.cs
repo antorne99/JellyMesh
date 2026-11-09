@@ -13,6 +13,11 @@ namespace Jellyfin.Plugin.JellyMesh.Security;
 public interface ICredentialVault
 {
     /// <summary>
+    /// Gets a value indicating whether the key of versions before 0.4 is still set, though only a first start uses it.
+    /// </summary>
+    bool IsLegacyKeySet { get; }
+
+    /// <summary>
     /// Evaluates the key against everything stored. Evaluated on each call, nothing is cached.
     /// </summary>
     /// <returns>The state of the key.</returns>
@@ -23,7 +28,7 @@ public interface ICredentialVault
     /// </summary>
     /// <param name="serverId">The server the credentials belong to.</param>
     /// <param name="credentials">The credentials.</param>
-    /// <returns>The encrypted value, or null if the key state is not <see cref="KeyState.Ok"/>.</returns>
+    /// <returns>The encrypted value, or null if there is no key. A wrong key still protects, so credentials can be entered again.</returns>
     string? Protect(Guid serverId, RemoteCredentials credentials);
 
     /// <summary>
@@ -33,4 +38,12 @@ public interface ICredentialVault
     /// <param name="encryptedCredentials">The stored value.</param>
     /// <returns>The credentials, or null if the key state is not <see cref="KeyState.Ok"/>.</returns>
     RemoteCredentials? Unprotect(Guid serverId, string encryptedCredentials);
+
+    /// <summary>
+    /// Tells whether the stored credentials of one server decrypt with the current key.
+    /// </summary>
+    /// <param name="serverId">The server the credentials belong to.</param>
+    /// <param name="encryptedCredentials">The stored value.</param>
+    /// <returns>Whether they decrypt.</returns>
+    bool CanDecrypt(Guid serverId, string encryptedCredentials);
 }

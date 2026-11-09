@@ -74,6 +74,15 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
     }
 }
 
+internal sealed class FixedLegacyKeySource : ILegacySecretKeySource
+{
+    public FixedLegacyKeySource(string? key) => Key = key;
+
+    public string? Key { get; set; }
+
+    public string? GetSecretKey() => Key;
+}
+
 internal sealed class FixedKeySource : ISecretKeySource
 {
     public FixedKeySource(string? key) => Key = key;

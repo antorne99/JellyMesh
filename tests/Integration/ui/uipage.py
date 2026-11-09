@@ -36,7 +36,7 @@ STEP = ".jmStep"
 STEP_NAME = ".jmStepName"
 STEP_STATE = ".jmStepState"
 STEP_DONE_ICON = ".jmStepDone .jmStepIcon"
-STEPS = ["Set the secret key", "Add a remote server", "Choose libraries to import", "Choose the federated folder",
+STEPS = ["Add a remote server", "Choose libraries to import", "Choose the federated folder",
          "Run the first sync", "Link the two paths"]
 STEP_TEXT_ALL = ", ".join([STEP_NAME, STEP_STATE, ".jmStepText"])
 ANNOUNCE = "#jmAnnounce"
@@ -121,6 +121,7 @@ BUTTON = {
     "undo": "Undo merge",
     "save": "Save",
     "connect": "Connect",
+    "save_login": "Save login",
 }
 READABLE = ", ".join(["h2, h3, h4, p, label, dt, dd, .fieldDescription", STATE, MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING, SUMMARY_TEXT])
 FAILURE = {

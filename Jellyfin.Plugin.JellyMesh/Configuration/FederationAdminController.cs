@@ -75,7 +75,10 @@ public class FederationAdminController : ControllerBase
             keyState != KeyState.Ok,
             KeyWarning(keyState),
             GetFederatedFolder(),
-            _registry.GetServers().Select(ToStatus).ToList());
+            _registry.GetServers().Select(ToStatus).ToList())
+        {
+            LegacyKeySet = _vault.IsLegacyKeySet
+        };
     }
 
     /// <summary>
@@ -116,6 +119,28 @@ public class FederationAdminController : ControllerBase
 
         _sync.StartRemovalCleanup();
         return NoContent();
+    }
+
+    /// <summary>
+    /// Enters the dedicated user of a server again, after logging in with it. This is how a lost key file is fixed.
+    /// </summary>
+    /// <param name="serverId">The server to update.</param>
+    /// <param name="request">The dedicated user.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The server with its new credentials.</returns>
+    [HttpPost("Servers/{serverId:guid}/Credentials")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<ServerStatus>> UpdateCredentials([FromRoute] Guid serverId, [FromBody] CredentialsRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
+        var result = await _registry.UpdateCredentialsAsync(serverId, credentials, cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
     }
 
     /// <summary>
@@ -178,13 +203,11 @@ public class FederationAdminController : ControllerBase
 
     internal static string? KeyWarning(KeyState state)
     {
-        const string Consequence = "Remote credentials cannot be saved or used, and sync and remote playback are suspended.";
         return state switch
         {
             KeyState.Ok => null,
-            KeyState.Missing => $"{EnvironmentSecretKeySource.VariableName} is not set. {Consequence}",
-            KeyState.TooShort => $"{EnvironmentSecretKeySource.VariableName} must have at least {CredentialCipher.MinimumKeyLength} characters. {Consequence}",
-            _ => $"{EnvironmentSecretKeySource.VariableName} does not decrypt the stored credentials: it changed, or they were altered. {Consequence} Restore the original key, or remove the servers and add them again."
+            KeyState.Missing => "The plugin cannot keep its key file in its data folder. Remote credentials cannot be saved or used, and sync and remote playback are suspended.",
+            _ => "The saved passwords do not decrypt with the key file: it was lost or replaced, or they were altered. Sync and remote playback are suspended until the password of each marked server is entered again."
         };
     }
 
@@ -232,7 +255,10 @@ public class FederationAdminController : ControllerBase
             server.ProtocolVersion,
             server.ImportedLibraryIds,
             ConnectionOf(server.LastFailure),
-            server.LastCheckedUtc);
+            server.LastCheckedUtc)
+        {
+            NeedsPassword = server.NeedsPassword
+        };
     }
 
     private ObjectResult Failed(RemoteFailure failure)

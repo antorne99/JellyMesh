@@ -103,6 +103,63 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+
+        if (_vault.GetKeyState() == KeyState.Missing)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
+        }
+
+        if (string.IsNullOrEmpty(credentials.Username))
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.InvalidServer);
+        }
+
+        var stored = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
+            ? new StoredServer(server.Id, server.Name, server.Url, server.EncryptedCredentials)
+            : null);
+        if (stored is null)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+        }
+
+        var login = await _client.AuthenticateAsync(EndpointOf(serverId, stored.Url), credentials, cancellationToken).ConfigureAwait(false);
+        if (!login.IsSuccess)
+        {
+            _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", stored.Name, login.Failure);
+            return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
+        }
+
+        var encrypted = _vault.Protect(serverId, credentials);
+        if (encrypted is null)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
+        }
+
+        var found = false;
+        _store.Update(config =>
+        {
+            if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
+            {
+                server.EncryptedCredentials = encrypted;
+                found = true;
+            }
+        });
+        if (!found)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+        }
+
+        var runtime = RuntimeOf(serverId);
+        runtime.Session = login.Value;
+        runtime.Record(RemoteFailure.None);
+        _logger.LogInformation("Updated the credentials of remote server {ServerName}", stored.Name);
+        return RemoteResult.Success(_store.Read(config => ToInfo(config.Servers.First(server => server.Id == serverId))));
+    }
+
+    /// <inheritdoc />
     public bool Remove(Guid serverId)
     {
         var removed = false;
@@ -356,7 +413,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             server.ProtocolVersion,
             server.ImportedLibraryIds.ToList(),
             runtime?.LastFailure,
-            runtime?.LastCheckedUtc);
+            runtime?.LastCheckedUtc)
+        {
+            NeedsPassword = !_vault.CanDecrypt(server.Id, server.EncryptedCredentials)
+        };
     }
 
     private ServerRuntime RuntimeOf(Guid serverId) => _runtimes.GetOrAdd(serverId, _ => new ServerRuntime());
