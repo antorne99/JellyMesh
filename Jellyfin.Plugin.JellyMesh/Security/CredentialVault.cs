@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
-using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -24,8 +24,6 @@ public sealed class CredentialVault : ICredentialVault
     private readonly IPluginConfigurationStore _store;
     private readonly ILegacySecretKeySource? _legacy;
     private readonly ILogger _logger;
-    private readonly Lock _migration = new();
-    private bool _migrated;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CredentialVault"/> class.
@@ -40,6 +38,9 @@ public sealed class CredentialVault : ICredentialVault
         _store = store;
         _legacy = legacy;
         _logger = logger ?? NullLogger<CredentialVault>.Instance;
+
+        // Here, before any caller can hold the configuration lock or read a wrong key that is about to be moved.
+        Migrate();
     }
 
     /// <inheritdoc />
@@ -48,7 +49,6 @@ public sealed class CredentialVault : ICredentialVault
     /// <inheritdoc />
     public KeyState GetKeyState()
     {
-        MigrateOnce();
         if (UsableKey() is not { } secret)
         {
             return KeyState.Missing;
@@ -105,7 +105,6 @@ public sealed class CredentialVault : ICredentialVault
     /// <inheritdoc />
     public bool CanDecrypt(Guid serverId, string encryptedCredentials)
     {
-        MigrateOnce();
         return UsableKey() is { } secret && CanDecrypt(secret, serverId, encryptedCredentials);
     }
 
@@ -142,18 +141,12 @@ public sealed class CredentialVault : ICredentialVault
 
     private string? UsableKey() => Usable(_keySource.GetSecretKey());
 
-    // Before anything reads the state, so that no caller sees a wrong key that is about to be moved. All or nothing: a
-    // password the old key cannot read leaves every password as it was, and the page asks for them again.
-    private void MigrateOnce()
+    // All or nothing: a password the old key cannot read leaves every password as it was, and the page asks for them
+    // again. A failure here must not stop the plugin from starting.
+    private void Migrate()
     {
-        lock (_migration)
+        try
         {
-            if (_migrated)
-            {
-                return;
-            }
-
-            _migrated = true;
             if (UsableKey() is not { } key || Usable(_legacy?.GetSecretKey()) is not { } legacy)
             {
                 return;
@@ -197,6 +190,10 @@ public sealed class CredentialVault : ICredentialVault
             {
                 _logger.LogInformation("Moved the credentials of {Count} servers to the key file. JELLYMESH_SECRET_KEY is no longer used and can be removed", moved);
             }
+        }
+        catch (Exception exception) when (exception is CryptographicException or IOException or InvalidOperationException)
+        {
+            _logger.LogError("Moving the credentials to the key file failed: {Error}", exception.GetType().Name);
         }
     }
 }

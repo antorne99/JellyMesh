@@ -51,7 +51,7 @@ public sealed class FileSecretKeySourceTests : IDisposable
     }
 
     [Fact]
-    public void ADamagedFileIsReplacedAndSaysSo()
+    public void ADamagedFileIsMovedAsideAndReplaced()
     {
         Directory.CreateDirectory(_folder);
         File.WriteAllText(KeyPath, "damaged");
@@ -60,7 +60,33 @@ public sealed class FileSecretKeySourceTests : IDisposable
 
         Assert.NotEqual("damaged", key);
         Assert.Equal(key, File.ReadAllText(KeyPath));
+        Assert.Equal("damaged", File.ReadAllText(KeyPath + ".damaged"));
         Assert.Contains(_logger.Lines, line => line.Contains("damaged", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void AKeyPutBackWithANewlineIsStillTheKey()
+    {
+        var key = new FileSecretKeySource(_folder, _logger).GetSecretKey();
+        File.WriteAllText(KeyPath, key + "\n");
+
+        Assert.Equal(key, new FileSecretKeySource(_folder, _logger).GetSecretKey());
+    }
+
+    [Fact]
+    public void AKeyRestoredReadableByOthersBecomesPrivateAgain()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        new FileSecretKeySource(_folder, _logger).GetSecretKey();
+        File.SetUnixFileMode(KeyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+
+        new FileSecretKeySource(_folder, _logger).GetSecretKey();
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(KeyPath));
     }
 
     [Fact]

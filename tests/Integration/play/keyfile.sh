@@ -74,8 +74,9 @@ check "a lost key file asks for the password, and the old variable cannot help" 
 check "sync is refused meanwhile" 409 "$(post local /JellyMesh/Admin/Sync >/dev/null; status)"
 check "a wrong password is refused" 502 "$(post local "/JellyMesh/Admin/Servers/$id/Credentials" '{"Username":"jellymesh","Pw":"x","Password":"wrong"}' >/dev/null; status)"
 check "the password entered again is accepted" 200 "$(post local "/JellyMesh/Admin/Servers/$id/Credentials" '{"Username":"jellymesh","Password":"jellymesh-test"}' >/dev/null; status)"
+cp "$WORK/body" "$WORK/credentials-answer"
 check "and the federation works again" "Ok suspended=false legacy=true needs=false" "$(status_line)"
-check "the answer holds no password" 0 "$(grep -c jellymesh-test "$WORK/body" || true)"
+check "the answer holds no password" 0 "$(grep -c jellymesh-test "$WORK/credentials-answer" || true)"
 sync_now local
 check "the stubs are still the same" "$stubs_before" "$(docker exec jm-play-local sh -c 'find /federata/Film -name "*.strm" | sort')"
 
