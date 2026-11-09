@@ -127,6 +127,21 @@ public class ProviderCatalogTests
     }
 
     [Fact]
+    public void The_watch_state_of_this_server_never_reaches_a_peer()
+    {
+        MediaBrowser.Controller.Dto.DtoOptions? options = null;
+        var dto = new BaseItemDto { Id = ProviderFixture.SharedItem, UserData = new UserItemDataDto { Played = true, PlayCount = 3, Key = "k", ItemId = ProviderFixture.SharedItem } };
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((_, value, _, _, _) => options = value)
+            .Returns([dto]);
+
+        var page = _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.False(options!.EnableUserData);
+        Assert.All(page.Items, item => Assert.Null(item.UserData));
+    }
+
+    [Fact]
     public void A_lookup_keeps_to_the_type_asked_for()
     {
         _fixture.WithDtos();

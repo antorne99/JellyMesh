@@ -117,6 +117,27 @@ public class NfoDocumentTests
         Assert.Equal(["title", "uniqueid", "year"], names);
     }
 
+    [Theory]
+    [InlineData("movie")]
+    [InlineData("episode")]
+    [InlineData("series")]
+    public void NoNfoCarriesWatchState(string kind)
+    {
+        var xml = kind switch
+        {
+            "movie" => NfoDocument.Movie(Protected()),
+            "episode" => NfoDocument.Episode(Protected() with { SeasonNumber = 1, EpisodeNumber = 2 }),
+            _ => NfoDocument.Series(Protected())
+        };
+
+        var names = XDocument.Parse(xml).Root!.Descendants().Select(element => element.Name.LocalName).ToHashSet();
+
+        foreach (var name in new[] { "playcount", "lastplayed", "watched", "resume", "userrating" })
+        {
+            Assert.DoesNotContain(name, names);
+        }
+    }
+
     [Fact]
     public void UntrustedTextStaysText()
     {
