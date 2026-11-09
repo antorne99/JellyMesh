@@ -200,6 +200,22 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
+    public async Task AMergeWithNoChangesLeavesTheFileAsItWas()
+    {
+        using var index = NewIndex();
+        await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
+        var saved = await File.ReadAllBytesAsync(MainPath);
+        var later = _now.AddMinutes(15);
+        var mark = new SyncMark(later, ["library"]);
+
+        Assert.True(await index.MergeServerAsync(_first, [], later, mark, CancellationToken.None));
+
+        Assert.Equal(saved, await File.ReadAllBytesAsync(MainPath));
+        var catalog = index.Snapshot.Find(_first)!;
+        Assert.Equal((later, mark), (catalog.LastAttemptUtc, catalog.Mark));
+    }
+
+    [Fact]
     public async Task AMergeNeverMakesAStaleServerAuthoritative()
     {
         using var index = NewIndex();

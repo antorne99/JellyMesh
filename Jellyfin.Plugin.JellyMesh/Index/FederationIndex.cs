@@ -70,7 +70,8 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
                     Servers = WithServer(current, catalog with { LastAttemptUtc = syncedUtc, Mark = mark, Items = Merged(catalog.Items, changed) })
                 };
             },
-            cancellationToken);
+            cancellationToken,
+            persist: changed.Count > 0);
     }
 
     /// <inheritdoc />
@@ -119,7 +120,8 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         ];
     }
 
-    private async Task<bool> CommitAsync(Func<IndexSnapshot, IndexSnapshot> change, CancellationToken cancellationToken)
+    // Without persist the change stays in memory until the next save: after a restart an older mark only rereads a little more.
+    private async Task<bool> CommitAsync(Func<IndexSnapshot, IndexSnapshot> change, CancellationToken cancellationToken, bool persist = true)
     {
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -131,7 +133,11 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
                 return true;
             }
 
-            await _file.SaveAsync(next, current.Health == IndexHealth.Ok, cancellationToken).ConfigureAwait(false);
+            if (persist)
+            {
+                await _file.SaveAsync(next, current.Health == IndexHealth.Ok, cancellationToken).ConfigureAwait(false);
+            }
+
             _snapshot = next;
             return true;
         }
