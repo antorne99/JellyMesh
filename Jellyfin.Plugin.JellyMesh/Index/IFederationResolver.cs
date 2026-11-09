@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using Jellyfin.Plugin.JellyMesh.Remote;
+
 namespace Jellyfin.Plugin.JellyMesh.Index;
 
 /// <summary>
@@ -10,4 +13,12 @@ public interface IFederationResolver
     /// </summary>
     /// <returns>The sources of each identity.</returns>
     FederationView Resolve();
+
+    /// <summary>
+    /// Resolves one snapshot of the catalog against the local library, with the given servers as the configured ones.
+    /// </summary>
+    /// <param name="snapshot">The index snapshot.</param>
+    /// <param name="servers">The configured servers.</param>
+    /// <returns>The sources of each identity.</returns>
+    FederationView Resolve(IndexSnapshot snapshot, IReadOnlyList<RemoteServerInfo> servers);
 }

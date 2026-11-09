@@ -175,12 +175,15 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     private async Task<MaterializationReport> RunAsync(string root, bool isProtected, CancellationToken cancellationToken)
     {
-        var view = _resolver.Resolve();
+        // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
+        var snapshot = _index.Snapshot;
+        var servers = _servers.GetServers();
+        var view = _resolver.Resolve(snapshot, servers);
         var plan = StubPlanner.Plan(new StubPlanInput(
             view,
-            _index.Snapshot,
+            snapshot,
             _registry.State,
-            _servers.GetServers(),
+            servers,
             isProtected,
             _urls.Build,
             workKey => LocalSeriesOf(view, workKey)));
