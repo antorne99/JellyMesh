@@ -12,8 +12,8 @@ namespace Jellyfin.Plugin.JellyMesh.Security;
 /// </summary>
 /// <remarks>
 /// There is no separate key check value: a key is wrong exactly when a stored credential does not
-/// decrypt. With nothing stored no key can be wrong, so removing the last server is the way out
-/// after a key is lost for good.
+/// decrypt. The way out is to enter the password of each such server again, which a key that is
+/// there always allows.
 /// </remarks>
 public sealed class CredentialVault : ICredentialVault
 {
@@ -34,15 +34,9 @@ public sealed class CredentialVault : ICredentialVault
     /// <inheritdoc />
     public KeyState GetKeyState()
     {
-        var secret = _keySource.GetSecretKey();
-        if (string.IsNullOrWhiteSpace(secret))
+        if (UsableKey() is not { } secret)
         {
             return KeyState.Missing;
-        }
-
-        if (secret.Length < CredentialCipher.MinimumKeyLength)
-        {
-            return KeyState.TooShort;
         }
 
         var stored = _store.Read(config => config.Servers
@@ -57,7 +51,8 @@ public sealed class CredentialVault : ICredentialVault
     {
         ArgumentNullException.ThrowIfNull(credentials);
 
-        if (GetKeyState() != KeyState.Ok)
+        // A key that is there is enough: credentials entered again are how a changed key is fixed.
+        if (UsableKey() is not { } secret)
         {
             return null;
         }
@@ -65,7 +60,7 @@ public sealed class CredentialVault : ICredentialVault
         var payload = JsonSerializer.SerializeToUtf8Bytes(credentials);
         try
         {
-            return CredentialCipher.Encrypt(_keySource.GetSecretKey()!, payload, serverId.ToByteArray());
+            return CredentialCipher.Encrypt(secret, payload, serverId.ToByteArray());
         }
         finally
         {
@@ -92,6 +87,12 @@ public sealed class CredentialVault : ICredentialVault
         }
     }
 
+    /// <inheritdoc />
+    public bool CanDecrypt(Guid serverId, string encryptedCredentials)
+    {
+        return UsableKey() is { } secret && CanDecrypt(secret, serverId, encryptedCredentials);
+    }
+
     private static bool CanDecrypt(string secret, Guid serverId, string value)
     {
         try
@@ -103,5 +104,11 @@ public sealed class CredentialVault : ICredentialVault
         {
             return false;
         }
+    }
+
+    private string? UsableKey()
+    {
+        var secret = _keySource.GetSecretKey();
+        return string.IsNullOrWhiteSpace(secret) || secret.Length < CredentialCipher.MinimumKeyLength ? null : secret;
     }
 }

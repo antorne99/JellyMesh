@@ -18,8 +18,7 @@ public class CredentialVaultTests
     [InlineData(null, KeyState.Missing)]
     [InlineData("", KeyState.Missing)]
     [InlineData("   ", KeyState.Missing)]
-    [InlineData("short", KeyState.TooShort)]
-    [InlineData("0123456789012345678901234567890", KeyState.TooShort)]
+    [InlineData("0123456789012345678901234567890", KeyState.Missing)]
     [InlineData("01234567890123456789012345678901", KeyState.Ok)]
     public void KeyStateFollowsTheKeyWithNothingStored(string? key, KeyState expected)
     {
@@ -51,7 +50,7 @@ public class CredentialVaultTests
     }
 
     [Fact]
-    public void AChangedKeyIsDetectedAndBlocksEverything()
+    public void AChangedKeyIsDetectedAndBlocksUse()
     {
         var server = StoreServer();
         Assert.Equal(KeyState.Ok, Vault.GetKeyState());
@@ -59,8 +58,26 @@ public class CredentialVaultTests
         _key.Key = TestValues.OtherKey;
 
         Assert.Equal(KeyState.Wrong, Vault.GetKeyState());
-        Assert.Null(Vault.Protect(Guid.NewGuid(), TestValues.Credentials));
+        Assert.False(Vault.CanDecrypt(server.Id, server.EncryptedCredentials));
         Assert.Null(Vault.Unprotect(server.Id, server.EncryptedCredentials));
+    }
+
+    [Fact]
+    public void CredentialsEnteredAgainWithAChangedKeyClearTheState()
+    {
+        var first = StoreServer();
+        var second = StoreServer();
+        _key.Key = TestValues.OtherKey;
+
+        first.EncryptedCredentials = Vault.Protect(first.Id, TestValues.Credentials)!;
+
+        Assert.True(Vault.CanDecrypt(first.Id, first.EncryptedCredentials));
+        Assert.Equal(KeyState.Wrong, Vault.GetKeyState());
+
+        second.EncryptedCredentials = Vault.Protect(second.Id, TestValues.Credentials)!;
+
+        Assert.Equal(KeyState.Ok, Vault.GetKeyState());
+        Assert.Equal(TestValues.Password, Vault.Unprotect(second.Id, second.EncryptedCredentials)!.Password);
     }
 
     [Fact]
