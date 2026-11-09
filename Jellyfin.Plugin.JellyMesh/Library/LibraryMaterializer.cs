@@ -226,10 +226,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         run.Commit();
-        foreach (var stub in plan.Removals)
-        {
-            RemoveGone(run, stub);
-        }
+        RemoveGone(run, plan.Removals);
 
         await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
 
@@ -522,17 +519,15 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return path;
     }
 
-    private void RemoveGone(Run run, StubEntry stub)
+    private void RemoveGone(Run run, IReadOnlyList<StubEntry> stubs)
     {
-        try
+        var removal = _remover.RemoveAll(run.Root, run.State, stubs);
+        run.State = removal.State;
+        run.Removed += removal.Removed;
+        run.Failed += removal.Failures.Count;
+        foreach (var failure in removal.Failures)
         {
-            run.State = _remover.Remove(run.Root, run.State, stub);
-            run.Removed++;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            run.Failed++;
-            _logger.LogError("Cannot remove a stub: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot remove a stub: {Error}", failure.GetType().Name);
         }
     }
 
