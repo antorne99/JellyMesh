@@ -107,8 +107,10 @@ public class FederationAdminControllerTests
         sync.Verify(service => service.RemoveServerAsync(It.IsAny<Guid>(), It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    [Fact]
-    public async Task A_removal_that_cannot_be_saved_keeps_the_server_and_says_to_try_again()
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task A_removal_that_cannot_be_saved_keeps_the_server_and_says_to_try_again(Type saveFailure)
     {
         using var fixture = new RegistryFixture();
         var server = await fixture.AddServerAsync();
@@ -123,7 +125,7 @@ public class FederationAdminControllerTests
             new CoordinatorFixture().Coordinator,
             new FixedFederatedRootSource(null),
             sync.Object);
-        fixture.Store.SaveFailure = new IOException("disk full");
+        fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(saveFailure)!;
 
         var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
 

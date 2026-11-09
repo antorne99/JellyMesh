@@ -120,7 +120,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <param name="remove">What takes the server out of the configuration. False when there was no such server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether the server was removed.</returns>
-    /// <exception cref="IOException">The mark or the removal could not be saved. The server stays.</exception>
+    /// <exception cref="Exception">The mark or the removal could not be saved. The server stays.</exception>
     public async Task<bool> RemoveServerAsync(Guid serverId, Func<Task<bool>> remove, CancellationToken cancellationToken)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
@@ -164,7 +164,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         {
             await SaveAsync(state with { RemovedServers = state.RemovedServers.Where(server => server != serverId).ToList() }, CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}", exception.GetType().Name);
         }

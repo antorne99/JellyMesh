@@ -40,7 +40,7 @@ public interface ICatalogSyncService
     /// <param name="remove">What takes the server out of the configuration. False when there was no such server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether the server was removed.</returns>
-    /// <exception cref="System.IO.IOException">The record or the removal could not be saved. The server stays.</exception>
+    /// <exception cref="System.Exception">The record or the removal could not be saved. The server stays.</exception>
     Task<bool> RemoveServerAsync(Guid serverId, Func<Task<bool>> remove, CancellationToken cancellationToken);
 
     /// <summary>
