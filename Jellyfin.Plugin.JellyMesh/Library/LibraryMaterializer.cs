@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -23,6 +24,9 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed class LibraryMaterializer : ILibraryMaterializer
 {
+    // How many images of one server are read at once. A choice of Claude's, under the 8 reads per peer of decision 31.
+    private const int ImageReadsAtOnce = 4;
+
     private readonly StubRegistry _registry;
     private readonly IFederationResolver _resolver;
     private readonly IFederationIndex _index;
@@ -203,6 +207,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 
         var run = new Run(root, plan.State);
+        await FetchImagesAsync(run, plan, cancellationToken).ConfigureAwait(false);
         foreach (var series in plan.Series)
         {
             await WriteSeriesAsync(run, series, cancellationToken).ConfigureAwait(false);
@@ -447,30 +452,72 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
         else
         {
-            if (image.ServerId is not { } serverId || image.ItemId is not { } itemId || run.UnreachableServers.Contains(serverId))
-            {
-                return null;
-            }
-
-            var read = await _servers.RunWithSessionAsync(
-                serverId,
-                (endpoint, session, token) => _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
-                cancellationToken).ConfigureAwait(false);
-            if (!read.IsSuccess)
-            {
-                // One timeout per image would hold a whole run back. They are tried again at the next one.
-                if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout)
-                {
-                    run.UnreachableServers.Add(serverId);
-                }
-
-                return null;
-            }
-
-            path = stem + ExtensionOf(read.Value!.ContentType);
-            await WriteFileAsync(path, read.Value.Content, cancellationToken).ConfigureAwait(false);
+            return run.Fetched.TryRemove(image.RelativeStem, out var fetched)
+                ? fetched
+                : await DownloadImageAsync(run, image, cancellationToken).ConfigureAwait(false);
         }
 
+        DeleteOtherExtensions(stem, path);
+        return path;
+    }
+
+    // Remote images are read before the stubs are written, a few at a time for each server; the stubs stay one at a time.
+    // A server's first image goes alone, so a server that does not answer still costs one timeout.
+    private async Task FetchImagesAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
+    {
+        var wanted = plan.Series
+            .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
+            .SelectMany(work => work.Images)
+            .Concat(plan.Stubs
+                .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
+                .SelectMany(work => work.Images))
+            .Where(image => image.LocalPath is null && image.ServerId is not null && image.ItemId is not null);
+        var options = new ParallelOptions { MaxDegreeOfParallelism = ImageReadsAtOnce, CancellationToken = cancellationToken };
+        foreach (var server in wanted.GroupBy(image => image.ServerId!.Value))
+        {
+            var images = server.ToList();
+            await FetchImageAsync(run, images[0], cancellationToken).ConfigureAwait(false);
+            await Parallel.ForEachAsync(images.Skip(1), options, async (image, token) => await FetchImageAsync(run, image, token).ConfigureAwait(false)).ConfigureAwait(false);
+        }
+    }
+
+    private async Task FetchImageAsync(Run run, StubImage image, CancellationToken cancellationToken)
+    {
+        try
+        {
+            run.Fetched[image.RelativeStem] = await DownloadImageAsync(run, image, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Left to the write of its stub, which reads it again and counts the failure.
+        }
+    }
+
+    private async Task<string?> DownloadImageAsync(Run run, StubImage image, CancellationToken cancellationToken)
+    {
+        var stem = FederatedPaths.Resolve(run.Root, image.RelativeStem);
+        if (image.ServerId is not { } serverId || image.ItemId is not { } itemId || run.UnreachableServers.ContainsKey(serverId))
+        {
+            return null;
+        }
+
+        var read = await _servers.RunWithSessionAsync(
+            serverId,
+            (endpoint, session, token) => _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
+            cancellationToken).ConfigureAwait(false);
+        if (!read.IsSuccess)
+        {
+            // One timeout per image would hold a whole run back. They are tried again at the next one.
+            if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout)
+            {
+                run.UnreachableServers.TryAdd(serverId, true);
+            }
+
+            return null;
+        }
+
+        var path = stem + ExtensionOf(read.Value!.ContentType);
+        await WriteFileAsync(path, read.Value.Content, cancellationToken).ConfigureAwait(false);
         DeleteOtherExtensions(stem, path);
         return path;
     }
@@ -532,7 +579,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         public StubState State { get; set; }
 
-        public HashSet<Guid> UnreachableServers { get; } = [];
+        public ConcurrentDictionary<Guid, bool> UnreachableServers { get; } = new();
+
+        /// <summary>Gets the remote images read ahead, by relative stem, with null for one that could not be read.</summary>
+        public ConcurrentDictionary<string, string?> Fetched { get; } = new(StringComparer.Ordinal);
 
         public bool NeedsScan { get; set; }
 

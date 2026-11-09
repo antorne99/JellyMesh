@@ -197,6 +197,21 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task ImagesAreReadAFewAtATime()
+    {
+        var films = Enumerable.Range(1, 6).Select(number => FilmWithArt("m" + number, number.ToString(System.Globalization.CultureInfo.InvariantCulture)) with { Name = "Film " + number }).ToArray();
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, films);
+        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.BeforeImage = token => Task.Delay(50, token);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.InRange(_fixture.Sync.Client.MaxImagesInFlight, 2, 4);
+        Assert.Equal(12, _fixture.Files.Count(file => file.EndsWith(".jpg", StringComparison.Ordinal)));
+        Assert.All(_fixture.Registry.State.Stubs, stub => Assert.NotNull(stub.ImageTag));
+    }
+
+    [Fact]
     public async Task AChangeOnAnIndexedItemIsAppliedToTheItem()
     {
         var film = FilmWithArt();
