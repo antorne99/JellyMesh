@@ -40,7 +40,7 @@ To install the plugin, run this with the instance running. It builds in the .NET
 ./scripts/install-plugin.sh jellymesh-test-locale-1
 ```
 
-Copy `.env.example` to `.env` to set `JELLYMESH_SECRET_KEY` or `BIND_ADDRESS`. Ports bind to loopback by default, so set `BIND_ADDRESS` to test from a phone or TV.
+Copy `.env.example` to `.env` to set `BIND_ADDRESS`. Ports bind to loopback by default, so set `BIND_ADDRESS` to test from a phone or TV.
 
 ## Folders
 

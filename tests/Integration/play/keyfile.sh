@@ -17,7 +17,7 @@ library remote Film movies /media/film
 user remote jellymesh >/dev/null
 scan remote
 
-start local jm-play-media:/media
+START_ENV="-e JELLYMESH_SECRET_KEY=$LEGACY" start local jm-play-media:/media
 docker exec jm-play-local sh -c 'mkdir -p /media/film && touch /media/film/.keep'
 library local Film movies /media/film /federata/Film
 NUGET_VOLUME=jellymesh-nuget bash "$OLD/tests/Integration/scripts/install-plugin.sh" jm-play-local

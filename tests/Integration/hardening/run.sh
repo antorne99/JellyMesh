@@ -13,7 +13,6 @@ NAME=jm-hard-a
 PORT=18458
 FAKE=18455
 THIRD=18456
-KEY=jm-hard-test-key-0123456789abcdef0123456789
 REMOTE_PASSWORD=hostile-password-sentinel
 REMOTE_TOKEN=hostile-remote-token-sentinel
 FAKE_URL=http://host.docker.internal:$FAKE
@@ -120,7 +119,7 @@ cleanup
 python3 "$S/hostile.py" "$FAKE" "$THIRD" "$WORK" &
 HOSTILE_PID=$!
 docker run -d --name "$NAME" --memory 1500m -p "127.0.0.1:$PORT:8096" --add-host host.docker.internal:host-gateway \
-  -e TZ=Europe/Rome -e "JELLYMESH_SECRET_KEY=$KEY" -v "$NAME-config:/config" -v "$NAME-cache:/cache" -v "$NAME-fed:/federata" "$IMAGE" >/dev/null
+  -e TZ=Europe/Rome -v "$NAME-config:/config" -v "$NAME-cache:/cache" -v "$NAME-fed:/federata" "$IMAGE" >/dev/null
 wait_ready
 sleep 3
 post /Startup/Configuration '{"UICulture":"en-US","MetadataCountryCode":"IT","PreferredMetadataLanguage":"it"}' >/dev/null
@@ -330,6 +329,8 @@ docker logs "$NAME" >>"$WORK/server.log" 2>&1
 wc -l <"$WORK/server.log"
 check "the log is verbose" true "$([ "$(grep -c -E '\[(VRB|DBG)\]' "$WORK/server.log")" -gt 100 ] && echo true || echo false)"
 echo "verbose lines: $(grep -c -E '\[(VRB|DBG)\]' "$WORK/server.log")"
+KEY=$(docker exec "$NAME" sh -c 'cat "$(find /config -name credential.key | head -1)"')
+check "the credential key file exists" 64 "${#KEY}"
 for secret in "$REMOTE_TOKEN" "$REMOTE_PASSWORD" "$KEY" 'host.docker.internal' "$FAKE" "$THIRD" 'MediaBrowser Client="JellyMesh"'; do
   check "the log holds no '$secret'" 0 "$(grep -c -F "$secret" "$WORK/server.log")"
 done

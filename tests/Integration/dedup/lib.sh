@@ -11,7 +11,6 @@ WORK=${WORK:-${TMPDIR:-/tmp}/jm-dedup-work}
 IMAGE=$(awk '/image:/ {print $2; exit}' "$WT/tests/Integration/docker-compose.yml")
 NETWORK=jm-dedup-net
 PLUGIN=28c43ea1-fb5a-4b3a-8e6e-30aa3245c653
-TEST_KEY=jm-dedup-test-key-0123456789abcdef0123456789
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshDedup", Device="dedup", DeviceId="jm-dedup-admin", Version="0.1"'
 DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'
@@ -90,12 +89,12 @@ sync_now() {
 
 sync_and_scan() { sync_now "$1"; settle "$1"; scan "$1"; settle "$1"; }
 
-# run_container <server> [key]: the container of a server over its volumes. An empty key leaves the variable unset.
+# run_container <server>: the container of a server over its volumes.
 run_container() {
-  local s=$1 key=${2-$TEST_KEY} name
+  local s=$1 name
   name=$(container_of "$s")
   docker run -d --name "$name" --network "$NETWORK" -p "127.0.0.1:$(port_of "$s"):8096" \
-    -e TZ=Europe/Rome ${key:+-e JELLYMESH_SECRET_KEY=$key} \
+    -e TZ=Europe/Rome \
     -v "$name-config:/config" -v "$name-cache:/cache" -v "$name-fed:/federata" -v "$name-extra:/extra" \
     -v "$MEDIA/$(media_of "$s"):/media:ro" "$IMAGE" >/dev/null
   wait_ready "$s"
