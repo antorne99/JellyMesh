@@ -118,8 +118,9 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.UnknownServer);
         }
 
-        await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
+        // Marking may wait for a materialization, so sessions close after it, right before the server goes.
         await _sync.MarkRemovedAsync(serverId, cancellationToken).ConfigureAwait(false);
+        await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
         if (!_registry.Remove(serverId))
         {
             return Failed(RemoteFailure.UnknownServer);

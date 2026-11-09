@@ -52,6 +52,7 @@ public class FederationAdminControllerTests
         var releasedBeforeRemoval = -1;
         var markedBeforeRemoval = false;
         var marked = false;
+        var releasedWhenMarked = -1;
         playback.Registry.OnRemove = () =>
         {
             releasedBeforeRemoval = playback.Client.Released.Count;
@@ -59,7 +60,11 @@ public class FederationAdminControllerTests
         };
         var sync = new Mock<ICatalogSyncService>();
         sync.Setup(service => service.MarkRemovedAsync(source.ServerId, It.IsAny<CancellationToken>()))
-            .Callback(() => marked = true)
+            .Callback(() =>
+            {
+                marked = true;
+                releasedWhenMarked = playback.Client.Released.Count;
+            })
             .Returns(Task.CompletedTask);
         var controller = new FederationAdminController(
             playback.Registry,
@@ -75,6 +80,7 @@ public class FederationAdminControllerTests
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(1, releasedBeforeRemoval);
         Assert.True(markedBeforeRemoval);
+        Assert.Equal(0, releasedWhenMarked);
         Assert.Empty(playback.Sessions.All);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
     }
