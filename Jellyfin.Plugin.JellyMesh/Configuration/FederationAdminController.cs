@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -13,6 +14,7 @@ using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
@@ -32,6 +34,8 @@ public class FederationAdminController : ControllerBase
     private readonly PlaybackCoordinator _playback;
     private readonly IFederatedRootSource _rootSource;
     private readonly ICatalogSyncService _sync;
+    private readonly IManualMergeStore _merges;
+    private readonly ILogger<FederationAdminController> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -43,6 +47,8 @@ public class FederationAdminController : ControllerBase
     /// <param name="playback">The playback coordinator.</param>
     /// <param name="rootSource">The source of the federated folder.</param>
     /// <param name="sync">The sync service, which deletes what a removed server left.</param>
+    /// <param name="merges">The manual merges, which lose the copies of a removed server.</param>
+    /// <param name="logger">The logger.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -50,7 +56,9 @@ public class FederationAdminController : ControllerBase
         IFederatedFolderLinkChecker linkChecker,
         PlaybackCoordinator playback,
         IFederatedRootSource rootSource,
-        ICatalogSyncService sync)
+        ICatalogSyncService sync,
+        IManualMergeStore merges,
+        ILogger<FederationAdminController> logger)
     {
         _registry = registry;
         _vault = vault;
@@ -59,6 +67,8 @@ public class FederationAdminController : ControllerBase
         _playback = playback;
         _rootSource = rootSource;
         _sync = sync;
+        _merges = merges;
+        _logger = logger;
     }
 
     /// <summary>
@@ -145,6 +155,7 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.UnknownServer);
         }
 
+        await RemoveFromMergesAsync(serverId).ConfigureAwait(false);
         _sync.StartRemovalCleanup();
         return NoContent();
     }
@@ -333,6 +344,27 @@ public class FederationAdminController : ControllerBase
         };
 
         return StatusCode(status, new FailureResponse(failure, FailureMessage(failure)));
+    }
+
+    // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure
+    // is only logged and the merges show its copies as not found, as before.
+    private async Task RemoveFromMergesAsync(Guid serverId)
+    {
+        var server = serverId.ToString("N");
+        if (!_merges.Merges.Any(merge => ManualMergeService.HasCopyOn(merge, server)))
+        {
+            return;
+        }
+
+        try
+        {
+            await _merges.UpdateAsync(current => ManualMergeService.WithoutServer(current, server), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path or an address.
+            _logger.LogError("Could not take the removed server out of the manual merges: {Error}", exception.GetType().Name);
+        }
     }
 
     private FederatedFolderStatus GetFederatedFolder()

@@ -43,8 +43,20 @@ internal sealed class InMemoryMergeStore : IManualMergeStore
 
     public bool IsDamaged { get; set; }
 
+    public int Updates { get; private set; }
+
+    public Exception? UpdateFailure { get; set; }
+
+    public void Set(params ManualMerge[] merges) => Merges = merges;
+
     public Task UpdateAsync(Func<IReadOnlyList<ManualMerge>, IReadOnlyList<ManualMerge>> change, CancellationToken cancellationToken)
     {
+        Updates++;
+        if (UpdateFailure is not null)
+        {
+            throw UpdateFailure;
+        }
+
         Merges = change(Merges);
         return Task.CompletedTask;
     }
