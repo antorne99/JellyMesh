@@ -102,10 +102,52 @@ public sealed class FileSecretKeySourceTests : IDisposable
     }
 
     [Fact]
+    public void AKeyThatCannotBeMadePrivateIsNeitherKeptNorUsed()
+    {
+        var key = new FileSecretKeySource(_folder, _logger, new FailingGuard(onCreate: true)).GetSecretKey();
+
+        Assert.Null(key);
+        Assert.False(File.Exists(KeyPath));
+        Assert.False(File.Exists(KeyPath + ".tmp"));
+    }
+
+    [Fact]
+    public void ASavedKeyWhosePermissionsCannotBeRestoredIsNotUsed()
+    {
+        new FileSecretKeySource(_folder, _logger).GetSecretKey();
+
+        var key = new FileSecretKeySource(_folder, _logger, new FailingGuard(onCreate: false)).GetSecretKey();
+
+        Assert.Null(key);
+        Assert.Contains(_logger.Lines, line => line.Contains("UnauthorizedAccessException", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void TheKeyNeverReachesTheLog()
     {
         var key = new FileSecretKeySource(_folder, _logger).GetSecretKey()!;
 
         Assert.DoesNotContain(_logger.Lines, line => line.Contains(key[..16], StringComparison.Ordinal));
+    }
+
+    private sealed class FailingGuard(bool onCreate) : IKeyFileGuard
+    {
+        public FileStream CreatePrivate(string path)
+        {
+            if (onCreate)
+            {
+                throw new UnauthorizedAccessException("access list refused");
+            }
+
+            return new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+        }
+
+        public void KeepPrivate(string path)
+        {
+            if (!onCreate)
+            {
+                throw new UnauthorizedAccessException("access list refused");
+            }
+        }
     }
 }
