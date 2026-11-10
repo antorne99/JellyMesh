@@ -9,9 +9,9 @@ namespace Jellyfin.Plugin.JellyMesh.Security;
 /// Reads the credential key from a random file in the plugin data folder, made at the first start (decision 42).
 /// </summary>
 /// <remarks>
-/// On Linux and macOS only the owner can read the file. On Windows it takes the permissions of the plugin data folder. If it
-/// cannot be kept there is no key at all, never one for this run only: credentials saved with a key that dies at restart
-/// could not be read again.
+/// On Linux and macOS only the owner can read the file. On Windows it has an explicit access list instead of the permissions
+/// of the plugin data folder (decision 43). If it cannot be kept private there is no key at all, never one for this run only:
+/// credentials saved with a key that dies at restart could not be read again.
 /// </remarks>
 public sealed class FileSecretKeySource : ISecretKeySource
 {
@@ -28,16 +28,39 @@ public sealed class FileSecretKeySource : ISecretKeySource
     /// <param name="folder">The folder of the key.</param>
     /// <param name="logger">The logger.</param>
     public FileSecretKeySource(string folder, ILogger<FileSecretKeySource> logger)
+        : this(folder, logger, GuardForThisSystem())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FileSecretKeySource"/> class with the given way of keeping the file private.
+    /// </summary>
+    /// <param name="folder">The folder of the key.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="guard">Keeps the file private.</param>
+    internal FileSecretKeySource(string folder, ILogger<FileSecretKeySource> logger, IKeyFileGuard guard)
     {
         ArgumentNullException.ThrowIfNull(folder);
         ArgumentNullException.ThrowIfNull(logger);
-        _key = LoadOrCreate(Path.Combine(folder, FileName), logger);
+        ArgumentNullException.ThrowIfNull(guard);
+        _key = LoadOrCreate(Path.Combine(folder, FileName), logger, guard);
     }
 
     /// <inheritdoc />
     public string? GetSecretKey() => _key;
 
-    private static string? LoadOrCreate(string path, ILogger logger)
+    // Picks the access list on Windows and the owner-only mode elsewhere.
+    private static IKeyFileGuard GuardForThisSystem()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new WindowsKeyFileGuard();
+        }
+
+        return new UnixKeyFileGuard();
+    }
+
+    private static string? LoadOrCreate(string path, ILogger logger, IKeyFileGuard guard)
     {
         try
         {
@@ -47,7 +70,7 @@ public sealed class FileSecretKeySource : ISecretKeySource
                 var saved = File.ReadAllText(path).Trim();
                 if (IsKey(saved))
                 {
-                    KeepPrivate(path);
+                    guard.KeepPrivate(path);
                     return saved;
                 }
 
@@ -57,7 +80,7 @@ public sealed class FileSecretKeySource : ISecretKeySource
             }
 
             var key = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(KeyBytes));
-            Save(path, key);
+            Save(path, key, guard);
             return key;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -85,31 +108,15 @@ public sealed class FileSecretKeySource : ISecretKeySource
         return true;
     }
 
-    // A file restored from a backup may have come back readable by others.
-    private static void KeepPrivate(string path)
-    {
-        const UnixFileMode Private = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        if (!OperatingSystem.IsWindows() && File.GetUnixFileMode(path) != Private)
-        {
-            File.SetUnixFileMode(path, Private);
-        }
-    }
-
-    // A move, so that a crash never leaves half a key behind. The temporary file is always new, so it gets the private mode.
-    private static void Save(string path, string key)
+    // A move, so that a crash never leaves half a key behind. The temporary file is always new, so it is private from the start.
+    private static void Save(string path, string key, IKeyFileGuard guard)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + ".tmp";
         File.Delete(temporary);
-        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
-        if (!OperatingSystem.IsWindows())
-        {
-            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        }
-
         try
         {
-            using (var stream = new FileStream(temporary, options))
+            using (var stream = guard.CreatePrivate(temporary))
             using (var writer = new StreamWriter(stream))
             {
                 writer.Write(key);
