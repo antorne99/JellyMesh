@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -12,6 +13,18 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// </summary>
 public sealed class StubLookup
 {
+    /// <summary>
+    /// The field of the legacy <c>params</c> query string that stock reads as the version, over <c>mediaSourceId</c>.
+    /// </summary>
+    public const int LegacyMediaSourceField = 2;
+
+    /// <summary>
+    /// The field of the legacy <c>params</c> query string that stock reads as the play session, over <c>playSessionId</c>.
+    /// </summary>
+    public const int LegacyPlaySessionField = 20;
+
+    private static readonly string[] _namingArguments = ["itemId", "routeItemId", "videoId", "mediaSourceId", "routeMediaSourceId"];
+
     private readonly ILibraryManager _libraryManager;
     private readonly IStubRegistry _stubs;
 
@@ -44,6 +57,53 @@ public sealed class StubLookup
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Finds every item a stock action names, as its entity or as the version it picks.
+    /// </summary>
+    /// <param name="context">The action.</param>
+    /// <returns>The item identifiers, without repeats.</returns>
+    public static IReadOnlyCollection<Guid> NamedItemIdsOf(ActionExecutingContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var ids = new HashSet<Guid>();
+        foreach (var name in _namingArguments)
+        {
+            if (context.ActionArguments.TryGetValue(name, out var value)
+                && (value is Guid id || (value is string text && Guid.TryParse(text, out id)))
+                && !id.Equals(Guid.Empty))
+            {
+                ids.Add(id);
+            }
+        }
+
+        if (Guid.TryParse(LegacyParamOf(context, LegacyMediaSourceField), out var version) && !version.Equals(Guid.Empty))
+        {
+            ids.Add(version);
+        }
+
+        return ids;
+    }
+
+    /// <summary>
+    /// Reads one field of the legacy <c>params</c> query string, which stock splits on ';' and applies first.
+    /// </summary>
+    /// <param name="context">The action.</param>
+    /// <param name="field">The field, from zero.</param>
+    /// <returns>The field, null when it is missing or blank, since stock skips it then.</returns>
+    public static string? LegacyParamOf(ActionExecutingContext context, int field)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (!context.ActionArguments.TryGetValue("params", out var value) || value is not string text)
+        {
+            return null;
+        }
+
+        var fields = text.Split(';');
+        return field < fields.Length && !string.IsNullOrWhiteSpace(fields[field]) ? fields[field] : null;
     }
 
     /// <summary>

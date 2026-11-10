@@ -11,7 +11,7 @@ public enum FederatedPathLink
     /// <summary>No library has this path.</summary>
     NotLinked,
 
-    /// <summary>A library of the right type has this path, and none of another type has it.</summary>
+    /// <summary>A library of the right type or a mixed one has this path, and none of another type has it.</summary>
     Linked,
 
     /// <summary>A library has this path with other capitals, which on this server is another folder.</summary>

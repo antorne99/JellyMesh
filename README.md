@@ -58,7 +58,7 @@ https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
 Download `jellymesh_<version>.zip` from a [release](https://github.com/antorne99/JellyMesh/releases) and compare it with the `.sha256` file next to it. Unpack the zip into a folder in Jellyfin's `plugins` folder, keeping `meta.json`, and restart Jellyfin. For the Docker image that folder is:
 
 ```
-/config/plugins/JellyMesh_0.4.0.0/
+/config/plugins/JellyMesh_0.4.1.0/
 ```
 
 You can also build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
@@ -121,6 +121,8 @@ The other server must let you in first, or it looks like a stock remote and you 
 3. On your server, follow the steps for a stock remote with that user. Mode shows `JellyMesh` under **Remote servers**.
 
 If you connect both ways, each server needs its own dedicated user on the other.
+
+Once a user is connected as a server, it can no longer use that server from an app or the web client. The login still works, but every other call gets 403: such a user can reach only what federation needs, that is the JellyMesh endpoints, playback, and images and subtitles of the shared titles. To watch the other server directly, use a separate personal account there.
 
 ### Settings
 

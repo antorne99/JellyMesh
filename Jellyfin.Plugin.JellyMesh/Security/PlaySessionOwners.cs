@@ -20,7 +20,7 @@ public sealed class PlaySessionOwners
     public const int MaxPerOwner = 256;
 
     private readonly Lock _lock = new();
-    private readonly Dictionary<Guid, Dictionary<string, long>> _owners = [];
+    private readonly Dictionary<Guid, Dictionary<string, Entry>> _owners = [];
     private long _uses;
 
     /// <summary>
@@ -30,19 +30,30 @@ public sealed class PlaySessionOwners
     /// <param name="playSessionId">The play session.</param>
     public void Add(Guid owner, string playSessionId)
     {
+        Add(owner, playSessionId, null);
+    }
+
+    /// <summary>
+    /// Records a play session and the item it plays.
+    /// </summary>
+    /// <param name="owner">The user who opened it.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <param name="itemId">The item it plays, null if it is not known.</param>
+    public void Add(Guid owner, string playSessionId, Guid? itemId)
+    {
         lock (_lock)
         {
             if (!_owners.TryGetValue(owner, out var sessions))
             {
                 // Stock compares play sessions ignoring case, so a check here must too.
-                sessions = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                sessions = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
                 _owners[owner] = sessions;
             }
 
-            sessions[playSessionId] = ++_uses;
+            sessions[playSessionId] = new Entry(++_uses, itemId);
             if (sessions.Count > MaxPerOwner)
             {
-                sessions.Remove(sessions.MinBy(pair => pair.Value).Key);
+                sessions.Remove(sessions.MinBy(pair => pair.Value.Use).Key);
             }
         }
     }
@@ -57,12 +68,12 @@ public sealed class PlaySessionOwners
     {
         lock (_lock)
         {
-            if (playSessionId is null || !_owners.TryGetValue(owner, out var sessions) || !sessions.ContainsKey(playSessionId))
+            if (playSessionId is null || !_owners.TryGetValue(owner, out var sessions) || !sessions.TryGetValue(playSessionId, out var entry))
             {
                 return false;
             }
 
-            sessions[playSessionId] = ++_uses;
+            sessions[playSessionId] = entry with { Use = ++_uses };
             return true;
         }
     }
@@ -85,4 +96,32 @@ public sealed class PlaySessionOwners
             return _owners.Any(pair => !pair.Key.Equals(user) && pair.Value.ContainsKey(playSessionId));
         }
     }
+
+    /// <summary>
+    /// Finds the item a play session was recorded with, whoever opened it.
+    /// </summary>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>The item, null if the play session or its item is not known.</returns>
+    public Guid? ItemOf(string? playSessionId)
+    {
+        if (playSessionId is null)
+        {
+            return null;
+        }
+
+        lock (_lock)
+        {
+            foreach (var sessions in _owners.Values)
+            {
+                if (sessions.TryGetValue(playSessionId, out var entry) && entry.Item is { } item)
+                {
+                    return item;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    private readonly record struct Entry(long Use, Guid? Item);
 }

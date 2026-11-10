@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -30,7 +32,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         "Audio",
         "UniversalAudio",
         "Subtitle",
-        "VideoAttachments"
+        "VideoAttachments",
+        "Trickplay"
     };
 
     private readonly StubLookup _stubs;
@@ -93,8 +96,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
         }
         else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
-            && StubLookup.ItemIdOf(context) is { } itemId
-            && _stubs.Find(itemId) is { } stub)
+            && StubsOf(context) is { Count: > 0 } stubs)
         {
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
             if (authorization.User is not { } user)
@@ -104,7 +106,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
 
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
-            if (_libraryManager.GetItemById<BaseItem>(itemId, user) is null || _sessions.IsLocalOfAnother(user.Id, PlaySessionOf(context)))
+            if (stubs.Any(named => _libraryManager.GetItemById<BaseItem>(named.Key, user) is null) || _sessions.IsLocalOfAnother(user.Id, PlaySessionOf(context)))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
@@ -118,7 +120,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 await _transcodes.KillTranscodingJobs(authorization.DeviceId ?? string.Empty, PlaySessionOf(context), _ => true).ConfigureAwait(false);
             }
 
-            if (executed.Exception is not null && !executed.ExceptionHandled && _coordinator.TakeFileRefusal(stub.Id))
+            if (executed.Exception is not null && !executed.ExceptionHandled && stubs.Values.Any(stub => _coordinator.TakeFileRefusal(stub.Id)))
             {
                 executed.Exception = null;
                 executed.ExceptionHandled = true;
@@ -129,6 +131,27 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         await next().ConfigureAwait(false);
+    }
+
+    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub.
+    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context)
+    {
+        var stubs = new Dictionary<Guid, StubEntry>();
+        var named = StubLookup.NamedItemIdsOf(context).ToList();
+        if (_sessions.LocalItemOf(PlaySessionOf(context)) is { } played)
+        {
+            named.Add(played);
+        }
+
+        foreach (var id in named)
+        {
+            if (_stubs.Find(id) is { } stub)
+            {
+                stubs[id] = stub;
+            }
+        }
+
+        return stubs;
     }
 
     private static bool IsFileAction(string controller, string action)
@@ -149,6 +172,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return (report as PlaybackStopInfo)?.PlaySessionId;
         }
 
-        return context.ActionArguments.TryGetValue("playSessionId", out var value) ? value as string : null;
+        return StubLookup.LegacyParamOf(context, StubLookup.LegacyPlaySessionField)
+            ?? (context.ActionArguments.TryGetValue("playSessionId", out var value) ? value as string : null);
     }
 }

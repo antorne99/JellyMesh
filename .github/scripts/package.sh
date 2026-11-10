@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Packs a Release build into the zip a Jellyfin plugin repository serves, with its checksums, all in artifacts/. It expects
-# the build in artifacts/build, and needs zip, md5sum and sha256sum.
+# the build in artifacts/build, and needs zip, md5sum, sha256sum and jq.
 #
 # Jellyfin checks the manifest's "checksum" as MD5. The SHA-256 is for people who download the zip by hand.
 #
@@ -25,6 +25,15 @@ folded() {
     on && /^  / { sub(/^ +/, ""); text = text (text == "" ? "" : " ") $0; next }
     on { exit }
     END { print text }' build.yaml
+}
+
+# The text of a "key: |" block of build.yaml, with its line breaks, as a JSON string.
+literal_json() {
+  awk -v key="$1:" '
+    $1 == key && $2 == "|" { on = 1; next }
+    on && /^$/ { print; next }
+    on && /^  / { sub(/^  /, ""); print; next }
+    on { exit }' build.yaml | jq -Rs 'sub("\\n+$"; "")'
 }
 
 escaped() {
@@ -59,7 +68,7 @@ cat >"$staging/meta.json" <<JSON
   "owner": "$(value owner)",
   "category": "$(value category)",
   "version": "$version",
-  "changelog": "$(escaped "$(folded changelog)")",
+  "changelog": $(literal_json changelog),
   "targetAbi": "$(value targetAbi)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "status": "Active",

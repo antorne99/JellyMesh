@@ -65,8 +65,8 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     {
         var holding = libraries.Where(library => Holds(library, path, _pathComparison)).ToList();
 
-        // Mixed libraries count as another type: they do not resolve a folder of films or of series as one.
-        var wrong = holding.Where(library => library.CollectionType != expected).ToList();
+        // A mixed library is the user's choice, so it counts as the right type.
+        var wrong = holding.Where(library => !IsAccepted(library.CollectionType, expected)).ToList();
         if (wrong.Count > 0)
         {
             return new FederatedPathStatus(FederatedPathLink.WrongLibraryType, Names(wrong));
@@ -82,6 +82,9 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
             ? new FederatedPathStatus(FederatedPathLink.DifferentCase, Names(otherCase))
             : new FederatedPathStatus(FederatedPathLink.NotLinked, []);
     }
+
+    private static bool IsAccepted(CollectionTypeOptions? type, CollectionTypeOptions expected) =>
+        type == expected || type is null or CollectionTypeOptions.mixed;
 
     private static List<string> Names(List<VirtualFolderInfo> libraries) => libraries.Select(library => library.Name).ToList();
 

@@ -36,9 +36,20 @@ public sealed class PlaybackSessionStore
     /// </summary>
     /// <param name="userId">The user who opened it.</param>
     /// <param name="playSessionId">The play session.</param>
-    public void RecordLocal(Guid userId, string playSessionId)
+    /// <param name="itemId">The stub it plays.</param>
+    public void RecordLocal(Guid userId, string playSessionId, Guid itemId)
     {
-        _localOwners.Add(userId, playSessionId);
+        _localOwners.Add(userId, playSessionId, itemId);
+    }
+
+    /// <summary>
+    /// Finds the stub a play session plays on this server, whoever opened it.
+    /// </summary>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>The stub item, null if the play session is not one.</returns>
+    public Guid? LocalItemOf(string? playSessionId)
+    {
+        return _localOwners.ItemOf(playSessionId);
     }
 
     /// <summary>
