@@ -188,7 +188,7 @@ internal sealed class RegistryFixture : IDisposable
         Handler = handler ?? StubHandler.StockServer();
         KeySource = new FixedKeySource(key);
         Vault = new CredentialVault(KeySource, Store);
-        Client = new JellyfinRemoteClient(new StubHttpClientFactory(Handler));
+        Client = new JellyfinRemoteClient(new StubHttpClientFactory(Handler)) { Delay = (_, _) => Task.CompletedTask };
         Registry = new RemoteServerRegistry(Store, Vault, Client, Logger);
     }
 
