@@ -130,6 +130,53 @@ public sealed class ManualMergeService
         return found;
     }
 
+    /// <summary>
+    /// Takes the copies of a server out of the merges. A merge left with fewer than two copies goes; the others keep their
+    /// ID and date, and a merge with no copy there stays the same.
+    /// </summary>
+    /// <param name="merges">The merges.</param>
+    /// <param name="serverId">The server, as in <see cref="MergedCopy.ServerId"/>.</param>
+    /// <returns>The merges without the server.</returns>
+    public static IReadOnlyList<ManualMerge> WithoutServer(IReadOnlyList<ManualMerge> merges, string serverId)
+    {
+        ArgumentNullException.ThrowIfNull(merges);
+
+        var kept = new List<ManualMerge>(merges.Count);
+        foreach (var merge in merges)
+        {
+            if (!HasCopyOn(merge, serverId))
+            {
+                kept.Add(merge);
+                continue;
+            }
+
+            var copies = merge.Copies.Where(copy => !IsOn(copy, serverId)).ToList();
+            if (copies.Count >= 2)
+            {
+                kept.Add(merge with { Copies = copies });
+            }
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// Tells whether a merge has a copy on a server.
+    /// </summary>
+    /// <param name="merge">The merge.</param>
+    /// <param name="serverId">The server, as in <see cref="MergedCopy.ServerId"/>.</param>
+    /// <returns>Whether it has one.</returns>
+    public static bool HasCopyOn(ManualMerge merge, string serverId)
+    {
+        ArgumentNullException.ThrowIfNull(merge);
+
+        return merge.Copies.Any(copy => IsOn(copy, serverId));
+    }
+
+    // A local copy is never on a remote server, whatever its server ID says.
+    private static bool IsOn(MergedCopy copy, string serverId)
+        => !copy.IsLocal && string.Equals(copy.ServerId, serverId, StringComparison.OrdinalIgnoreCase);
+
     // Finds the titles of a merge, or why it cannot be made.
     private (ManualMergeOutcome Outcome, List<MergeTitleView> Titles) Check(IReadOnlyCollection<string> workKeys)
     {

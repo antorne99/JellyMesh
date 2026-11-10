@@ -110,7 +110,7 @@ All of this is on the plugin page, under Dashboard > Plugins > JellyMesh, unless
 
 After a sync that changes anything, JellyMesh asks Jellyfin to scan the libraries, so titles appear once that scan ends.
 
-To stop reading a server, choose **Remove** on its card. Titles found only there leave your libraries right away, with their images. Titles also on another server stay and play from it. Nothing changes on the remote or in your local files. Only a removal from this page deletes titles: if a server goes missing from the settings in any other way, such as a reset settings file, its titles stay in your libraries, cannot play, and the plugin page warns you. Restore the settings or add the server again to bring them back.
+To stop reading a server, choose **Remove** on its card. Titles found only there leave your libraries right away, with their images. Titles also on another server stay and play from it. Its copies leave the films merged by hand, and a merge left with one copy is undone; adding the server back does not merge them again. Nothing changes on the remote or in your local files. Only a removal from this page deletes titles: if a server goes missing from the settings in any other way, such as a reset settings file, its titles stay in your libraries, cannot play, and the plugin page warns you. Restore the settings or add the server again to bring them back.
 
 ### Connect a JellyMesh remote
 
@@ -146,7 +146,7 @@ Films that JellyMesh cannot safely match, such as copies with contradicting prov
 
 **Undo merge** separates the copies again. The title that stayed keeps all the watch state. A separated copy usually gets back what it had before the merge, but it can start with no watch state, for instance two copies with the same title and no provider IDs.
 
-This works for films only, not series. Two local films can't be merged, so such cases aren't listed. Merges belong to one server and don't travel to other JellyMesh servers.
+This works for films only, not series. Two local films can't be merged, so such cases aren't listed. Merges belong to one server and don't travel to other JellyMesh servers. Removing a server takes its copies out of the merges, and a merge left with one copy is undone.
 
 ## Stream limit and fallback
 
