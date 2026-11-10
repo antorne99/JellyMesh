@@ -1425,6 +1425,7 @@
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
                     "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
                     "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
+                    "Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai film uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
                     "JellyMesh server": "server JellyMesh",
@@ -2541,6 +2542,7 @@
                         confirmAction(t('Remove this server?'), [
                             t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
                             t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
+                            t('Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
                             t('Playback already running may not stop right away.'),
                             t('Adding the server back brings the same titles and watch state.')
                         ], function () {
