@@ -51,7 +51,8 @@ jobs:
         run: |
           zip=$(ls artifacts/jellymesh_*.zip)
           md5=$(cut -d' ' -f1 "$zip.md5")
-          printf 'MD5 for manifest.json: %s\n' "$md5" >artifacts/notes.md
+          changelog=$(unzip -p "$zip" meta.json | jq -r .changelog)
+          printf '%s\n\nMD5 for manifest.json: %s\n' "$changelog" "$md5" >artifacts/notes.md
           gh release create "$TAG" "$zip" "$zip.md5" "$zip.sha256" --title "JellyMesh $TAG" --notes-file artifacts/notes.md
 
       # Jellyfin reads the manifest from main, so it changes there and not on the tagged commit.
