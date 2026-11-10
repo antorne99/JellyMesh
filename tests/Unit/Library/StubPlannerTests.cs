@@ -401,6 +401,17 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void AMarkOnAServerConfiguredAgainIsDropped()
+    {
+        var state = new StubState { Stubs = [ExistingStub("stub1", "k", _serverA, "m")], RemovedServers = [_serverA, _serverB] };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Stale)], state, [Server(_serverA, Library)]);
+
+        Assert.Equal([_serverB], plan.State.RemovedServers);
+        Assert.Empty(plan.Removals);
+    }
+
+    [Fact]
     public void ADamagedIndexKeepsAStubWithASourceStillConfigured()
     {
         var existing = ExistingStub("stub1", "k", _serverA, "m") with

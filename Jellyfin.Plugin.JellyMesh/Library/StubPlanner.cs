@@ -110,7 +110,9 @@ public static class StubPlanner
             .OrderBy(library => library.ServerName, StringComparer.Ordinal)
             .ToList();
 
-        return new StubPlan(input.State with { Stubs = stubs, Series = series }, works, seriesWorks, removals, heldLibraries, unplaceable)
+        // A server configured again loses its mark, so that a later reset of the settings keeps its titles (decision 44).
+        var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
+        return new StubPlan(input.State with { Stubs = stubs, Series = series, RemovedServers = marks }, works, seriesWorks, removals, heldLibraries, unplaceable)
         {
             MergedStubs = claims.Sum(claim => claim.Merged.Count),
             Unconfigured = unconfigured
