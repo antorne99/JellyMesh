@@ -18,17 +18,17 @@ owner: "antorne99"
 image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
-changelog: >
-  The credential key now lives in a file the plugin creates in its data folder,
-  so JELLYMESH_SECRET_KEY is no longer needed: credentials saved with it move to
-  the file once at startup. If saved passwords can no longer be read, the page
-  asks for them again on each server. On Windows the key file gets an explicit
-  access list (the account running Jellyfin, SYSTEM, Administrators); this is
-  not yet tried on a Windows server. Only removing a server from the page
-  deletes its content, so an emptied settings file no longer wipes the
-  federated folder; the Catalog tab offers to forget servers missing from the
-  settings. A server whose removal cannot be saved stays configured, and a
-  removed server's copies leave the manual merges. Films that a remote groups
-  into collections now reach the library, large catalogs materialize much
-  faster, and sync reads retry brief remote errors. The .strm endpoint refuses
-  requests that come through a proxy; the README covers the reverse proxy case.
+changelog: |
+  - The credential key lives in a file the plugin creates in its data folder, so JELLYMESH_SECRET_KEY is no longer needed; credentials saved with it move to the file once at startup.
+  - If saved passwords can no longer be read, the page asks for them again on each server.
+  - On Windows the key file gets an explicit access list: the account running Jellyfin, SYSTEM and Administrators.
+  - Only removing a server from the page deletes its content, so an emptied settings file no longer wipes the federated folder.
+  - The Catalog tab offers to forget servers missing from the settings.
+  - A server whose removal cannot be saved stays configured.
+  - A removed server's copies leave the manual merges.
+  - Films that a remote groups into collections reach the library.
+  - Large catalogs materialize much faster.
+  - Sync reads retry brief remote errors.
+  - The .strm endpoint refuses requests that come through a proxy; the README covers the reverse proxy case.
+
+  Not verified: the Windows access list is not yet tried on a Windows server.
