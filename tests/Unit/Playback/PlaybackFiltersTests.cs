@@ -567,6 +567,29 @@ public class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(), Context("Playstate", "OnPlaybackStopped", ("playSessionId", "real-title"))));
     }
 
+    // Stock reads the legacy params as fields split on ';', the version being field 2.
+    private static string LegacyParams(int field, string value) => new string(';', field) + value;
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("other-version")]
+    public async Task A_stub_named_as_the_version_in_the_legacy_params_is_guarded(string? mediaSourceId)
+    {
+        Anonymous();
+        var context = Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("mediaSourceId", mediaSourceId), ("params", LegacyParams(2, _itemId.ToString("N"))));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Legacy_params_that_name_no_stub_are_untouched()
+    {
+        Anonymous();
+
+        Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("params", "profile;device;not-a-guid;true"))));
+    }
+
     private ActionExecutingContext SegmentOfStub(string? playSessionId = null)
     {
         CanSeeItem();

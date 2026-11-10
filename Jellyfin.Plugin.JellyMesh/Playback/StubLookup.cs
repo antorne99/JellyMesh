@@ -13,6 +13,11 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// </summary>
 public sealed class StubLookup
 {
+    /// <summary>
+    /// The field of the legacy <c>params</c> query string that stock reads as the version, over <c>mediaSourceId</c>.
+    /// </summary>
+    public const int LegacyMediaSourceField = 2;
+
     private static readonly string[] _namingArguments = ["itemId", "routeItemId", "videoId", "mediaSourceId", "routeMediaSourceId"];
 
     private readonly ILibraryManager _libraryManager;
@@ -69,7 +74,31 @@ public sealed class StubLookup
             }
         }
 
+        if (Guid.TryParse(LegacyParamOf(context, LegacyMediaSourceField), out var version) && !version.Equals(Guid.Empty))
+        {
+            ids.Add(version);
+        }
+
         return ids;
+    }
+
+    /// <summary>
+    /// Reads one field of the legacy <c>params</c> query string, which stock splits on ';' and applies first.
+    /// </summary>
+    /// <param name="context">The action.</param>
+    /// <param name="field">The field, from zero.</param>
+    /// <returns>The field, null when it is missing or blank, since stock skips it then.</returns>
+    public static string? LegacyParamOf(ActionExecutingContext context, int field)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (!context.ActionArguments.TryGetValue("params", out var value) || value is not string text)
+        {
+            return null;
+        }
+
+        var fields = text.Split(';');
+        return field < fields.Length && !string.IsNullOrWhiteSpace(fields[field]) ? fields[field] : null;
     }
 
     /// <summary>
