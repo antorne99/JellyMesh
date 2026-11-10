@@ -191,6 +191,22 @@ public class CredentialVaultTests
         Assert.True(vault.IsLegacyKeySet);
     }
 
+    [Fact]
+    public void AMoveThatCannotBeSavedDoesNotStopTheStart()
+    {
+        StoreServerWith(TestValues.Key);
+        _legacy.Key = TestValues.Key;
+
+        foreach (var failure in new Exception[] { new UnauthorizedAccessException(), new NotSupportedException() })
+        {
+            _store.SaveFailure = failure;
+
+            var vault = VaultWithLegacy(TestValues.OtherKey);
+
+            Assert.NotNull(vault);
+        }
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("   ")]
