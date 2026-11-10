@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Xunit;
 
@@ -122,6 +123,25 @@ public sealed class FileSecretKeySourceTests : IDisposable
         Assert.Contains(_logger.Lines, line => line.Contains("UnauthorizedAccessException", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnyOtherFailureOfTheAccessListLeavesNoKeyInsteadOfStoppingTheServer(bool onCreate)
+    {
+        if (!onCreate)
+        {
+            new FileSecretKeySource(_folder, _logger).GetSecretKey();
+        }
+
+        foreach (var failure in new Exception[] { new InvalidOperationException(), new NotSupportedException(), new PlatformNotSupportedException(), new SecurityException() })
+        {
+            var key = new FileSecretKeySource(_folder, _logger, new FailingGuard(onCreate, failure)).GetSecretKey();
+
+            Assert.Null(key);
+            Assert.Contains(_logger.Lines, line => line.Contains(failure.GetType().Name, StringComparison.Ordinal));
+        }
+    }
+
     [Fact]
     public void TheKeyNeverReachesTheLog()
     {
@@ -130,13 +150,15 @@ public sealed class FileSecretKeySourceTests : IDisposable
         Assert.DoesNotContain(_logger.Lines, line => line.Contains(key[..16], StringComparison.Ordinal));
     }
 
-    private sealed class FailingGuard(bool onCreate) : IKeyFileGuard
+    private sealed class FailingGuard(bool onCreate, Exception? failure = null) : IKeyFileGuard
     {
+        private readonly Exception _failure = failure ?? new UnauthorizedAccessException("access list refused");
+
         public FileStream CreatePrivate(string path)
         {
             if (onCreate)
             {
-                throw new UnauthorizedAccessException("access list refused");
+                throw _failure;
             }
 
             return new FileStream(path, FileMode.CreateNew, FileAccess.Write);
@@ -146,7 +168,7 @@ public sealed class FileSecretKeySourceTests : IDisposable
         {
             if (!onCreate)
             {
-                throw new UnauthorizedAccessException("access list refused");
+                throw _failure;
             }
         }
     }

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 
@@ -83,8 +84,9 @@ public sealed class FileSecretKeySource : ISecretKeySource
             Save(path, key, guard);
             return key;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException or SecurityException)
         {
+            // The access list calls also throw the last three, for example on a volume without access lists.
             logger.LogError("Cannot keep the credential key file: {Error}. Sync and remote playback stay suspended", exception.GetType().Name);
             return null;
         }
