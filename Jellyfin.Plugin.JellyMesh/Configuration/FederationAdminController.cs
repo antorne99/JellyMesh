@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Net.Mime;
 using System.Threading;
@@ -105,7 +104,7 @@ public class FederationAdminController : ControllerBase
     /// <summary>
     /// Removes a server and starts deleting its content. Works whatever the state of the key. The removal is recorded before
     /// the server leaves the configuration: only recorded servers lose their content (decision 44). If the removal cannot be
-    /// saved, the record is taken back and the server stays.
+    /// saved, the record is taken back and the server stays; the answer says whether its playback was already stopped.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -122,6 +121,7 @@ public class FederationAdminController : ControllerBase
         }
 
         bool removed;
+        var stopping = false;
         try
         {
             // Marking may wait for a materialization, so sessions close after it, right before the server goes.
@@ -129,14 +129,15 @@ public class FederationAdminController : ControllerBase
                 serverId,
                 async () =>
                 {
+                    stopping = true;
                     await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
                     return _registry.Remove(serverId);
                 },
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return Failed(RemoteFailure.RemovalFailed);
+            return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed);
         }
 
         if (!removed)
@@ -146,6 +147,35 @@ public class FederationAdminController : ControllerBase
 
         _sync.StartRemovalCleanup();
         return NoContent();
+    }
+
+    /// <summary>
+    /// Forgets the servers missing from the settings that still left titles, as if they had been removed on this page, and
+    /// starts deleting what they left (decision 44). A server added back to the settings wins over this.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many servers were forgotten.</returns>
+    [HttpPost("MissingServers/Forget")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ForgetResponse>> ForgetMissingServers(CancellationToken cancellationToken)
+    {
+        int forgotten;
+        try
+        {
+            forgotten = await _sync.ForgetMissingServersAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return Failed(RemoteFailure.ForgetFailed);
+        }
+
+        if (forgotten > 0)
+        {
+            _sync.StartRemovalCleanup();
+        }
+
+        return new ForgetResponse(forgotten);
     }
 
     /// <summary>
@@ -258,6 +288,8 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.CatalogChanged => "The catalog kept changing while it was read. Try again.",
             RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
             RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
+            RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
+            RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
             _ => "The operation failed."
         };
     }
@@ -296,7 +328,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.Suspended => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
-            RemoteFailure.RemovalFailed => StatusCodes.Status500InternalServerError,
+            RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status502BadGateway
         };
 

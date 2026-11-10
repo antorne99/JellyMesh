@@ -531,6 +531,39 @@ def fake(page, path, change):
     page.route("**/JellyMesh/Admin/" + path, answer)
 
 
+FORGET_MISSING = "#jmForgetMissing"
+
+
+def forget_missing(page, name):
+    """Forgetting the servers missing from the settings asks first, says what it did, and says to try again on a failure."""
+    u.show_tab(page, "catalog")
+    check(name + " offers to forget the missing servers", page.locator(FORGET_MISSING).is_visible())
+    u.shot(page, "catalog-forget-" + name.split()[0])
+    route = "**/JellyMesh/Admin/MissingServers/Forget"
+    answers = [
+        (lambda r: r.fulfill(status=200, json={"Servers": 2}), "The missing servers are forgotten.", "forgets"),
+        (lambda r: r.fulfill(status=500, json={"Failure": "ForgetFailed", "Message": "The missing servers could not be forgotten. Their titles stay. Try again."}),
+         "Their titles stay. Try again.", "a failed forget"),
+        (None, "No server was left to forget.", "a real forget with nothing missing"),
+    ]
+    for answer, said, label in answers:
+        if answer:
+            page.route(route, answer)
+        page.locator(FORGET_MISSING).click()
+        page.wait_for_selector(u.CONFIRM, timeout=15000)
+        title = page.locator(u.CONFIRM_TITLE).inner_text()
+        body = page.locator(u.CONFIRM_TEXT).inner_text()
+        check(name + " " + label + " asks first", "Forget the servers missing from the settings?" in title, title)
+        check(name + " " + label + " says what goes and what stays", "5 titles that only those servers have" in body and "without those backups" in body, body)
+        check(name + " " + label + " says how to get them back", "brings the same titles and watch state" in body, body)
+        page.locator(u.CONFIRM_OK).click()
+        page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
+        shown = until(page, lambda said=said: said in u.message(page))
+        check(name + " " + label + " says what happened", shown, u.message(page))
+        if answer:
+            page.unroute(route)
+
+
 def quiet(s, width):
     """A page left open stays cheap, and a hidden tab reads nothing."""
     name = width + " quiet"
@@ -729,6 +762,19 @@ def outcome(page, name, kind, says=""):
     return shown
 
 
+def refusing_removal(failure):
+    """Answers a removal with a failure, and lets every other call through."""
+    failed = {"Failure": failure, "Message": "The server could not be removed."}
+
+    def answer(route):
+        if route.request.method == "DELETE":
+            route.fulfill(status=500, json=failed)
+        else:
+            route.continue_()
+
+    return answer
+
+
 def outcomes_shown(page, name):
     """Outcomes of the actions, where they appear, and when they go."""
     check(name + " the region is rendered before it has text", page.locator(u.MESSAGE).evaluate(
@@ -749,17 +795,21 @@ def outcomes_shown(page, name):
     done = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
     check(name + " an error and a success differ in colour", error != done, done)
 
-    failed = {"Failure": "RemovalFailed", "Message": "The server could not be removed. It stays, with its titles. Try again."}
-    page.route("**/JellyMesh/Admin/Servers/*", lambda route: route.fulfill(status=500, json=failed) if route.request.method == "DELETE" else route.continue_())
-    u.button(u.server_row(page, "stock"), "remove").click()
-    page.locator(u.CONFIRM_OK).click()
-    until(page, lambda: u.message(page).startswith("Error"))
-    page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
-    until(page, lambda: u.in_view(page, u.OUTCOME), 3)
-    shown = outcome(page, name + " a failed removal", "Error", "Removing stock failed")
-    check(name + " a failed removal says to try again", "Try again" in shown, shown)
-    check(name + " a failed removal keeps the server", u.server_row(page, "stock").count() == 1)
-    page.unroute("**/JellyMesh/Admin/Servers/*")
+    failures = [
+        ("RemovalFailed", "a failed removal", "with its titles. Try again."),
+        ("RemovalFailedPlaybackStopped", "a removal failed after stopping playback", "any playback from it was stopped. Try again."),
+    ]
+    for failure, label, said in failures:
+        page.route("**/JellyMesh/Admin/Servers/*", refusing_removal(failure))
+        u.button(u.server_row(page, "stock"), "remove").click()
+        page.locator(u.CONFIRM_OK).click()
+        until(page, lambda said=said: u.message(page).startswith("Error") and said in u.message(page))
+        page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
+        until(page, lambda: u.in_view(page, u.OUTCOME), 3)
+        shown = outcome(page, name + " " + label, "Error", "Removing stock failed")
+        check(name + " " + label + " says what happened and to try again", said in shown, shown)
+        check(name + " " + label + " keeps the server", u.server_row(page, "stock").count() == 1)
+        page.unroute("**/JellyMesh/Admin/Servers/*")
 
     hold = []
     page.route("**/JellyMesh/Admin/Servers/*", lambda route: hold.append(route) if route.request.method == "DELETE" else route.continue_())
@@ -2592,9 +2642,18 @@ def overview_damaged(s, width):
 
     page = s.open("fresh", width, route=unconfigured)
     shown = " ".join(alarms(page))
-    check(name + " reports the titles", "5 titles come from servers missing from the settings. They are kept." in shown, shown)
+    check(name + " reports the titles", "5 titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog." in shown, shown)
     catalog = text(page, u.ALERTS_WITH_DATA[1])
     check(name + " says how to get them back", "were not removed on this page" in catalog and "restore them" in catalog, catalog)
+    check(name + " says they can be forgotten", "forget them below" in catalog, catalog)
+    forget_missing(page, name)
+    u.close(page)
+
+    name = width + " overview nothing missing"
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", linked))
+    u.show_tab(page, "catalog")
+    until(page, lambda: text(page, "#jmSyncStatus").startswith("Last sync"))
+    check(name + " offers nothing to forget", page.locator(FORGET_MISSING).is_hidden())
     u.close(page)
 
     name = width + " overview stale"

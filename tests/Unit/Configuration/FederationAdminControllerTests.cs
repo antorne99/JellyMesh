@@ -107,8 +107,10 @@ public class FederationAdminControllerTests
         sync.Verify(service => service.RemoveServerAsync(It.IsAny<Guid>(), It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    [Fact]
-    public async Task A_removal_that_cannot_be_saved_keeps_the_server_and_says_to_try_again()
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task A_removal_that_cannot_be_saved_keeps_the_server_and_says_to_try_again(Type saveFailure)
     {
         using var fixture = new RegistryFixture();
         var server = await fixture.AddServerAsync();
@@ -123,17 +125,87 @@ public class FederationAdminControllerTests
             new CoordinatorFixture().Coordinator,
             new FixedFederatedRootSource(null),
             sync.Object);
-        fixture.Store.SaveFailure = new IOException("disk full");
+        fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(saveFailure)!;
+
+        var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.RemovalFailedPlaybackStopped, failure.Failure);
+        Assert.Contains("playback from it was stopped", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_removal_whose_mark_cannot_be_saved_stops_nothing_and_says_to_try_again()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk full"));
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            sync.Object);
 
         var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
 
         Assert.Equal(500, result.StatusCode);
         var failure = Assert.IsType<FailureResponse>(result.Value);
         Assert.Equal(RemoteFailure.RemovalFailed, failure.Failure);
+        Assert.DoesNotContain("playback", failure.Message, StringComparison.Ordinal);
         Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
         Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
+    }
+
+    [Theory]
+    [InlineData(2, 1)]
+    [InlineData(0, 0)]
+    public async Task Forgetting_missing_servers_says_how_many_and_cleans_up_only_when_some_were_forgotten(int forgotten, int cleanups)
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(forgotten);
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = await controller.ForgetMissingServers(CancellationToken.None);
+
+        Assert.Equal(forgotten, Assert.IsType<ForgetResponse>(result.Value).Servers);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Exactly(cleanups));
+    }
+
+    [Fact]
+    public async Task Forgetting_missing_servers_that_cannot_be_saved_says_to_try_again()
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk full"));
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = Assert.IsType<ObjectResult>((await controller.ForgetMissingServers(CancellationToken.None)).Result);
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.ForgetFailed, failure.Failure);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
     }
+
+    private static FederationAdminController CreateController(RegistryFixture fixture, ICatalogSyncService sync) => new(
+        fixture.Registry,
+        fixture.Vault,
+        fixture.Store,
+        new RecordingChecker(FederatedFolderLinkState.NotChecked),
+        new CoordinatorFixture().Coordinator,
+        new FixedFederatedRootSource(null),
+        sync);
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
 

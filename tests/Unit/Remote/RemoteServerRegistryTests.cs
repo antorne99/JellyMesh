@@ -155,16 +155,19 @@ public class RemoteServerRegistryTests
         Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
     }
 
-    [Fact]
-    public async Task AServerWhoseRemovalCannotBeSavedStays()
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task AServerWhoseRemovalCannotBeSavedStays(Type failure)
     {
         using var fixture = new RegistryFixture();
         var first = await fixture.AddServerAsync();
         var server = await fixture.AddServerAsync();
         var last = await fixture.AddServerAsync();
-        fixture.Store.SaveFailure = new IOException("disk full");
+        fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(failure)!;
 
-        Assert.Throws<IOException>(() => fixture.Registry.Remove(server.Id));
+        Assert.Throws(failure, () => fixture.Registry.Remove(server.Id));
 
         Assert.Equal([first.Id, server.Id, last.Id], fixture.Registry.GetServers().Select(item => item.Id));
         fixture.Store.SaveFailure = null;

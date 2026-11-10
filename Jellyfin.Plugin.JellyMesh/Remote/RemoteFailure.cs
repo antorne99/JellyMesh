@@ -94,7 +94,17 @@ public enum RemoteFailure
     Busy,
 
     /// <summary>
-    /// Removing a server could not be saved. The server stays, with its titles.
+    /// Removing a server could not be saved. The server stays, with its titles, and nothing was stopped.
     /// </summary>
-    RemovalFailed
+    RemovalFailed,
+
+    /// <summary>
+    /// Removing a server could not be saved after its playback was stopped. The server stays, with its titles.
+    /// </summary>
+    RemovalFailedPlaybackStopped,
+
+    /// <summary>
+    /// Forgetting the servers missing from the settings could not be saved. Their titles stay.
+    /// </summary>
+    ForgetFailed
 }

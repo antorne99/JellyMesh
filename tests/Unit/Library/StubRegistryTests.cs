@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -34,6 +35,19 @@ public sealed class StubRegistryTests : IDisposable
         IdentityKey = "key",
         Sources = [new StubSource(Guid.NewGuid(), "item", "source")]
     };
+
+    private static async Task SeedAsync(StubRegistry registry, StubState state)
+    {
+        await registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await registry.SaveAsync(state, CancellationToken.None);
+        }
+        finally
+        {
+            registry.Exit();
+        }
+    }
 
     [Fact]
     public void ARegistryWrittenBeforeTheLastEpisodeNumberExistedStillLoads()
@@ -96,6 +110,76 @@ public sealed class StubRegistryTests : IDisposable
         await Assert.ThrowsAsync<IOException>(() => registry.RemoveServerAsync(server, () => throw new IOException("disk full"), CancellationToken.None));
 
         Assert.Equal([server], registry.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task ForgettingMarksEveryServerMissingFromTheSettings()
+    {
+        var configured = Guid.NewGuid();
+        var inStubs = Guid.NewGuid();
+        var inSeries = Guid.NewGuid();
+        var inIndex = Guid.NewGuid();
+        var markedBefore = Guid.NewGuid();
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, StubState.Empty with
+            {
+                Stubs = [Entry("a", "A.strm") with { Sources = [new StubSource(configured, "1", "1"), new StubSource(inStubs, "2", "2")] }],
+                Series = [new SeriesStub { Id = "s", RelativePath = "S", WorkKey = "w", Sources = [new StubSource(inSeries, "3", "3")] }],
+                RemovedServers = [markedBefore]
+            });
+
+            var forgotten = await registry.ForgetServersAsync(() => new HashSet<Guid> { configured }, [inIndex, configured, markedBefore], CancellationToken.None);
+
+            Assert.Equal(3, forgotten);
+        }
+
+        using var restarted = Create();
+        Assert.Equal(new HashSet<Guid> { markedBefore, inStubs, inSeries, inIndex }, restarted.State.RemovedServers.ToHashSet());
+    }
+
+    [Fact]
+    public async Task ForgettingWithNoServerMissingMarksNothing()
+    {
+        var configured = Guid.NewGuid();
+        using var registry = Create();
+        await SeedAsync(registry, StubState.Empty with { Stubs = [Entry("a", "A.strm") with { Sources = [new StubSource(configured, "1", "1")] }] });
+
+        Assert.Equal(0, await registry.ForgetServersAsync(() => new HashSet<Guid> { configured }, [configured], CancellationToken.None));
+
+        Assert.Empty(registry.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task ForgettingWaitsForTheLock()
+    {
+        using var registry = Create();
+        await registry.EnterAsync(CancellationToken.None);
+
+        var forgetting = registry.ForgetServersAsync(() => new HashSet<Guid>(), [Guid.NewGuid()], CancellationToken.None);
+        await Task.Delay(50);
+        var waited = !forgetting.IsCompleted;
+        registry.Exit();
+
+        Assert.True(waited);
+        Assert.Equal(1, await forgetting);
+    }
+
+    [Fact]
+    public async Task ForgettingReadsTheSettingsOnlyUnderTheLock()
+    {
+        var restored = Guid.NewGuid();
+        var configured = new HashSet<Guid>();
+        using var registry = Create();
+        await registry.EnterAsync(CancellationToken.None);
+
+        var forgetting = registry.ForgetServersAsync(() => configured, [restored], CancellationToken.None);
+        await Task.Delay(50);
+        configured.Add(restored);
+        registry.Exit();
+
+        Assert.Equal(0, await forgetting);
+        Assert.Empty(registry.State.RemovedServers);
     }
 
     [Fact]

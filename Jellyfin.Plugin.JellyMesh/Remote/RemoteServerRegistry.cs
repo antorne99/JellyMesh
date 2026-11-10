@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
@@ -177,7 +176,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 }
             });
         }
-        catch (Exception exception) when (removed is not null && exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (removed is not null && exception is not OperationCanceledException)
         {
             Restore(removed, position);
             throw;
@@ -342,7 +341,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             _store.Update(config => config.Servers.Insert(Math.Min(position, config.Servers.Count), server));
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Cannot save the configuration again after a failed removal: {Error}", exception.GetType().Name);
         }

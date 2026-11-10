@@ -40,8 +40,17 @@ public interface ICatalogSyncService
     /// <param name="remove">What takes the server out of the configuration. False when there was no such server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether the server was removed.</returns>
-    /// <exception cref="System.IO.IOException">The record or the removal could not be saved. The server stays.</exception>
+    /// <exception cref="System.Exception">The record or the removal could not be saved. The server stays.</exception>
     Task<bool> RemoveServerAsync(Guid serverId, Func<Task<bool>> remove, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records as removed every server that left content but is missing from the settings, so that the next cleanup deletes
+    /// it as after a removal. Waits for a materialization that is running.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many servers were marked now.</returns>
+    /// <exception cref="System.IO.IOException">The marks could not be saved. Nothing is marked.</exception>
+    Task<int> ForgetMissingServersAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Starts deleting in the background what removed servers left: their catalogs and the stubs only they served. Titles
