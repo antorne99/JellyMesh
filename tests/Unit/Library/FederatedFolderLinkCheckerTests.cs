@@ -111,12 +111,24 @@ public sealed class FederatedFolderLinkCheckerTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData(CollectionTypeOptions.mixed)]
     [InlineData(CollectionTypeOptions.homevideos)]
-    public void AMixedOrOtherLibraryIsTheWrongType(CollectionTypeOptions? type)
+    [InlineData(CollectionTypeOptions.music)]
+    public void AnotherLibraryTypeIsTheWrongType(CollectionTypeOptions type)
     {
         Assert.Equal(FederatedPathLink.WrongLibraryType, Check(Folder, Library("Altro", type, true, "/federata/Film")).Movies.Link);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(CollectionTypeOptions.mixed)]
+    public void BothPathsInMixedLibrariesAreLinked(CollectionTypeOptions? type)
+    {
+        var report = Check(Folder, Library("PuppyNas", type, true, "/federata/Film", "/federata/Serie"));
+
+        Assert.Equal(FederatedPathLink.Linked, report.Movies.Link);
+        Assert.Equal(["PuppyNas"], report.Movies.Libraries);
+        Assert.Equal(FederatedPathLink.Linked, report.Series.Link);
+        Assert.Equal(FederatedFolderLinkState.Linked, report.State);
     }
 
     [Fact]
