@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/antorne99/JellyMesh/main/assets/jellymesh.png",
     "versions": [
       {
+        "version": "0.4.1.0",
+        "changelog": "- Stock streaming, subtitle, attachment and trickplay requests check the federated title they name, also as the version picked with mediaSourceId, videoId or the legacy params: without a signed-in user they get 401, and a user who cannot see the title gets 404.\n- A stock stream can no longer reuse the play session of a federated title to reach it from another title.\n- An anonymous attachment request no longer makes the server refresh a federated title.\n- The page no longer warns about a library that holds the federated folder together with other folders: it counts as linked.\n- The README explains that a user connected as a server cannot use that server from an app or the web client.\n\nNot verified: a play session reused from another title is covered by unit tests only, not on a running server.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/antorne99/JellyMesh/releases/download/v0.4.1.0/jellymesh_0.4.1.0.zip",
+        "checksum": "89819db1b180b6c6c8f9e4d761fb4e3d",
+        "timestamp": "2026-11-10T21:49:23Z"
+      },
+      {
         "version": "0.4.0.0",
         "changelog": "The credential key now lives in a file the plugin creates in its data folder, so JELLYMESH_SECRET_KEY is no longer needed: credentials saved with it move to the file once at startup. If saved passwords can no longer be read, the page asks for them again on each server. On Windows the key file gets an explicit access list (the account running Jellyfin, SYSTEM, Administrators); this is not yet tried on a Windows server. Only removing a server from the page deletes its content, so an emptied settings file no longer wipes the federated folder; the Catalog tab offers to forget servers missing from the settings. A server whose removal cannot be saved stays configured, and a removed server's copies leave the manual merges. Films that a remote groups into collections now reach the library, large catalogs materialize much faster, and sync reads retry brief remote errors. The .strm endpoint refuses requests that come through a proxy; the README covers the reverse proxy case.",
         "targetAbi": "12.0.0.0",
