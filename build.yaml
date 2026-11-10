@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.3.0.0"
+version: "0.4.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -19,11 +19,16 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: >
-  Redesigns the plugin page around the JellyMesh identity, in a dark and a light
-  scheme that follow the Jellyfin theme, and shows it in English or Italian
-  according to the language set in Jellyfin. After connecting a server, the page
-  goes straight to choosing its libraries. Removing a server now deletes its
-  content right away, while titles also on another server stay and move to it.
-  The first setup step says what to do about the secret key. Remote playback is
-  checked only on 12.4, with jellyfin-web only: real Android and TV clients and
-  QSV are not yet tested.
+  The credential key now lives in a file the plugin creates in its data folder,
+  so JELLYMESH_SECRET_KEY is no longer needed: credentials saved with it move to
+  the file once at startup. If saved passwords can no longer be read, the page
+  asks for them again on each server. On Windows the key file gets an explicit
+  access list (the account running Jellyfin, SYSTEM, Administrators); this is
+  not yet tried on a Windows server. Only removing a server from the page
+  deletes its content, so an emptied settings file no longer wipes the
+  federated folder; the Catalog tab offers to forget servers missing from the
+  settings. A server whose removal cannot be saved stays configured, and a
+  removed server's copies leave the manual merges. Films that a remote groups
+  into collections now reach the library, large catalogs materialize much
+  faster, and sync reads retry brief remote errors. The .strm endpoint refuses
+  requests that come through a proxy; the README covers the reverse proxy case.
