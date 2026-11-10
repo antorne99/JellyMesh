@@ -290,12 +290,13 @@ public sealed class PlaybackCoordinator
     /// Records the stock play session of a stub played on this server, so that only its user can stop it.
     /// </summary>
     /// <param name="userId">The user.</param>
+    /// <param name="itemId">The stub.</param>
     /// <param name="playSessionId">The play session.</param>
-    public void RecordLocalPlaySession(Guid userId, string? playSessionId)
+    public void RecordLocalPlaySession(Guid userId, Guid itemId, string? playSessionId)
     {
         if (!string.IsNullOrEmpty(playSessionId))
         {
-            _sessions.RecordLocal(userId, playSessionId);
+            _sessions.RecordLocal(userId, playSessionId, itemId);
         }
     }
 

@@ -505,7 +505,7 @@ public class PlaybackFiltersTests
     [InlineData("Playstate", "OnPlaybackStoppedLegacy")]
     public async Task Another_user_cannot_stop_a_stub_played_on_this_server(string controller, string action)
     {
-        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
         var context = Context(controller, action, ("playSessionId", "local-play"));
 
         var passed = await RunAsync(GuardFilter(), context);
@@ -517,7 +517,7 @@ public class PlaybackFiltersTests
     [Fact]
     public async Task Another_user_cannot_report_a_stub_played_on_this_server_as_stopped()
     {
-        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
         var context = Context("Playstate", "ReportPlaybackStopped", ("playbackStopInfo", new MediaBrowser.Model.Session.PlaybackStopInfo { PlaySessionId = "LOCAL-PLAY" }));
 
         var passed = await RunAsync(GuardFilter(), context);
@@ -533,7 +533,7 @@ public class PlaybackFiltersTests
     public async Task A_stream_cannot_name_the_local_play_session_of_another_user(string controller, string action)
     {
         CanSeeItem();
-        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
         var context = Context(controller, action, ("itemId", _itemId), ("playSessionId", "LOCAL-PLAY"));
 
         var passed = await RunAsync(GuardFilter(), context);
@@ -546,7 +546,7 @@ public class PlaybackFiltersTests
     public async Task A_stream_of_its_own_local_play_session_passes()
     {
         CanSeeItem();
-        _fixture.Sessions.RecordLocal(_user.Id, "local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
 
         Assert.True(await RunAsync(GuardFilter(), Context("DynamicHls", "GetHlsVideoSegment", ("itemId", _itemId), ("playSessionId", "local-play"))));
     }
@@ -554,7 +554,7 @@ public class PlaybackFiltersTests
     [Fact]
     public async Task Its_user_can_stop_a_stub_played_on_this_server()
     {
-        _fixture.Sessions.RecordLocal(_user.Id, "local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
 
         Assert.True(await RunAsync(GuardFilter(), Context("HlsSegment", "StopEncodingProcess", ("playSessionId", "local-play"))));
         Assert.True(await RunAsync(GuardFilter(), Context("Playstate", "ReportPlaybackStopped", ("playbackStopInfo", new MediaBrowser.Model.Session.PlaybackStopInfo { PlaySessionId = "local-play" }))));
@@ -567,7 +567,7 @@ public class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(), Context("Playstate", "OnPlaybackStopped", ("playSessionId", "real-title"))));
     }
 
-    // Stock reads the legacy params as fields split on ';', the version being field 2.
+    // Stock reads the legacy params as fields split on ';': the version is field 2, the play session field 20.
     private static string LegacyParams(int field, string value) => new string(';', field) + value;
 
     [Theory]
@@ -588,6 +588,49 @@ public class PlaybackFiltersTests
         Anonymous();
 
         Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("params", "profile;device;not-a-guid;true"))));
+    }
+
+    [Theory]
+    [InlineData("playSessionId", "LOCAL-PLAY")]
+    [InlineData("params", ";;;;;;;;;;;;;;;;;;;;local-play")]
+    public async Task A_local_play_session_of_a_stub_names_the_stub_without_a_user(string argument, string value)
+    {
+        Anonymous();
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+        var context = Context("Videos", "GetVideoStream", ("itemId", LocalItem()), (argument, value));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_local_play_session_of_a_stub_the_user_cannot_see_is_not_found()
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+        var context = Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("playSessionId", "local-play"));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_local_play_session_of_another_user_is_not_found_through_another_item()
+    {
+        CanSeeItem();
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("params", LegacyParams(20, "local-play")));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Its_user_can_name_the_local_play_session_of_a_stub_through_another_item()
+    {
+        CanSeeItem();
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("playSessionId", "local-play"))));
     }
 
     private ActionExecutingContext SegmentOfStub(string? playSessionId = null)

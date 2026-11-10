@@ -18,6 +18,11 @@ public sealed class StubLookup
     /// </summary>
     public const int LegacyMediaSourceField = 2;
 
+    /// <summary>
+    /// The field of the legacy <c>params</c> query string that stock reads as the play session, over <c>playSessionId</c>.
+    /// </summary>
+    public const int LegacyPlaySessionField = 20;
+
     private static readonly string[] _namingArguments = ["itemId", "routeItemId", "videoId", "mediaSourceId", "routeMediaSourceId"];
 
     private readonly ILibraryManager _libraryManager;

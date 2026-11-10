@@ -133,11 +133,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         await next().ConfigureAwait(false);
     }
 
-    // Finds every stub the action names, as the entity or as the version.
+    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub.
     private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context)
     {
         var stubs = new Dictionary<Guid, StubEntry>();
-        foreach (var id in StubLookup.NamedItemIdsOf(context))
+        var named = StubLookup.NamedItemIdsOf(context).ToList();
+        if (_sessions.LocalItemOf(PlaySessionOf(context)) is { } played)
+        {
+            named.Add(played);
+        }
+
+        foreach (var id in named)
         {
             if (_stubs.Find(id) is { } stub)
             {
@@ -166,6 +172,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return (report as PlaybackStopInfo)?.PlaySessionId;
         }
 
-        return context.ActionArguments.TryGetValue("playSessionId", out var value) ? value as string : null;
+        return StubLookup.LegacyParamOf(context, StubLookup.LegacyPlaySessionField)
+            ?? (context.ActionArguments.TryGetValue("playSessionId", out var value) ? value as string : null);
     }
 }
