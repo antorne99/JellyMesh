@@ -68,6 +68,19 @@ public class PlaySessionOwnersTests
     }
 
     [Fact]
+    public void The_item_of_a_session_is_known_to_anyone_who_names_it()
+    {
+        var item = Guid.NewGuid();
+        _owners.Add(_owner, "mine", item);
+        _owners.Add(_owner, "bare");
+
+        Assert.Equal(item, _owners.ItemOf("MINE"));
+        Assert.Null(_owners.ItemOf("bare"));
+        Assert.Null(_owners.ItemOf("unknown"));
+        Assert.Null(_owners.ItemOf(null));
+    }
+
+    [Fact]
     public void A_session_belongs_to_another_only_for_someone_else()
     {
         _owners.Add(_owner, "mine");
