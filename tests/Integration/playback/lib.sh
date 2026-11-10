@@ -16,7 +16,6 @@ up() {
   docker rm -f $NAME >/dev/null 2>&1 || true
   docker volume rm $NAME-config $NAME-cache >/dev/null 2>&1 || true
   docker run -d --name $NAME -p 127.0.0.1:$PORT:8096 -e TZ=Europe/Rome \
-    -e JELLYMESH_SECRET_KEY=play-test-secret-key-0123456789-abcdef \
     --add-host host.docker.internal:host-gateway \
     -v $NAME-config:/config -v $NAME-cache:/cache \
     -v "$MEDIA/locale:/media:ro" -v "$S/fed:/federata" "$IMAGE" >/dev/null

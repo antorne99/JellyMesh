@@ -4,7 +4,7 @@
 
 JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
 
-**Status: pre-release.** It runs on Jellyfin 12.4 and has been tested against real 12.4 servers with jellyfin-web in a browser. Real Android and TV clients and QSV are not yet tested. See [Limits](#limits).
+**Status: pre-release.** It runs on Jellyfin 12.4 and has been tested against real 12.4 servers with jellyfin-web, Android and TV clients, and QSV. See [Limits](#limits).
 
 ## What it does
 
@@ -41,14 +41,13 @@ Both roles are active on every server with the plugin.
 - Jellyfin 12.x. The manifest allows any server from 12.0, but only 12.4 has been tested, and the plugin is compiled against the 12.4 packages.
 - A tailnet between your servers. Tailscale is managed outside the plugin.
 - `EnableAutomaticSeriesGrouping` on in the series library you link the federated `Serie` path to, so that a local series and its remote episodes merge. In the Dashboard it is called "Automatically merge series that are spread across multiple folders". The plugin page warns if it is off and does not change it for you.
-- `JELLYMESH_SECRET_KEY` set on every server that reads remote servers. See [The secret key](#the-secret-key).
 - A dedicated non-admin user on each remote.
 
 ## Install
 
 ### From a catalog
 
-The catalog goes live with the first public release. Then add this plugin repository in the Dashboard, install JellyMesh from the plugin catalog, and restart Jellyfin:
+Add this plugin repository in the Dashboard, install JellyMesh from the plugin catalog, and restart Jellyfin:
 
 ```
 https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
@@ -59,35 +58,24 @@ https://raw.githubusercontent.com/antorne99/JellyMesh/main/manifest.json
 Download `jellymesh_<version>.zip` from a [release](https://github.com/antorne99/JellyMesh/releases) and compare it with the `.sha256` file next to it. Unpack the zip into a folder in Jellyfin's `plugins` folder, keeping `meta.json`, and restart Jellyfin. For the Docker image that folder is:
 
 ```
-/config/plugins/JellyMesh_0.3.0.0/
+/config/plugins/JellyMesh_0.4.0.0/
 ```
 
-Until a release exists, you can build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
+You can also build the plugin and install it into a running Jellyfin container. This needs Docker and `jq`, builds in the .NET SDK image and restarts the container:
 
 ```sh
 tests/Integration/scripts/install-plugin.sh <container>
 ```
 
-## The secret key
+## Docker Compose
 
-Remote credentials are encrypted before they are saved, with a key derived from `JELLYMESH_SECRET_KEY`. It needs at least 32 characters, is used exactly as set, and each server has its own. Generate one with:
-
-```sh
-openssl rand -base64 32
-```
-
-In Docker Compose, keep it in an `.env` file next to `compose.yaml`, out of version control:
-
-```sh
-JELLYMESH_SECRET_KEY=<the generated key>
-```
+An example, with the federated folder mounted:
 
 ```yaml
 services:
   jellyfin:
     image: jellyfin/jellyfin:12.4
     environment:
-      JELLYMESH_SECRET_KEY: ${JELLYMESH_SECRET_KEY:?set it in .env}
       JELLYMESH_FEDERATED_ROOT: /federata # optional, see Setup
     volumes:
       - ./config:/config
@@ -96,13 +84,15 @@ services:
       - /your/federated:/federata
 ```
 
-`docker compose up -d` recreates the container with the new variable. A plain restart doesn't.
+## The credential key
 
-**Back up the key, separately from the Jellyfin config.** Without it the stored credentials can't be decrypted, and losing it means re-entering all remote credentials.
+Remote credentials are encrypted before they are saved, with a key that JellyMesh makes by itself at its first start: a random file named `credential.key` in its data folder. In the Docker image that is `/config/plugins/Jellyfin.Plugin.JellyMesh/`. On Linux and macOS only its owner can read it. On Windows it gets its own access list, which lets in only the account running Jellyfin, SYSTEM and Administrators and ignores the permissions of that folder. The access list is checked by unit tests, but applying it has not been tried on a Windows server yet. There is nothing to set.
 
-If the key is missing, shorter than 32 characters or not the one that encrypted the credentials, JellyMesh saves and uses no credentials, suspends sync and remote playback, and shows a warning on its page. Titles already synced stay visible but won't play. To recover, restore the original key. If you can't, set a new key, remove every server on the plugin page, then add them again. Nothing can be added until all the old ones are gone. There is no way to rotate the key while keeping the servers. Removing a server deletes its titles from your libraries right away, and adding it back restores them. A film kept its watch state when this was tested on 12.4.
+**Back up the key file, separately from the Jellyfin config.** Without it the saved passwords can't be decrypted.
 
-A server that only provides, with no remote servers of its own, can run without the key, but its plugin page keeps the warning and its log gets a warning at every scheduled sync. Setting a key there too avoids both.
+If the file is lost or replaced, JellyMesh suspends sync and remote playback and marks each server whose password no longer decrypts. Enter the login of each marked server again on its card, and the federation works again. Titles already synced stay in your libraries meanwhile, but won't play. If JellyMesh cannot keep the file private, for example because its data folder is read-only or Windows refuses its access list, it saves and uses no credentials and shows a warning on its page.
+
+**Upgrading from 0.3.** Earlier versions read the key from `JELLYMESH_SECRET_KEY`. At the first start of the new version with the variable still set, JellyMesh moves the saved passwords to the key file, once. After that the variable is no longer used, and the plugin page says you can remove it. If you remove it before upgrading, enter the login of each server again.
 
 ## Setup
 
@@ -120,7 +110,7 @@ All of this is on the plugin page, under Dashboard > Plugins > JellyMesh, unless
 
 After a sync that changes anything, JellyMesh asks Jellyfin to scan the libraries, so titles appear once that scan ends.
 
-To stop reading a server, choose **Remove** on its card. Titles found only there leave your libraries right away, with their images. Titles also on another server stay and play from it. Nothing changes on the remote or in your local files.
+To stop reading a server, choose **Remove** on its card. Titles found only there leave your libraries right away, with their images. Titles also on another server stay and play from it. Its copies leave the films merged by hand, and a merge left with one copy is undone; adding the server back does not merge them again. Nothing changes on the remote or in your local files. Only a removal from this page deletes titles: if a server goes missing from the settings in any other way, such as a reset settings file, its titles stay in your libraries, cannot play, and the plugin page warns you. Restore the settings or add the server again to bring them back.
 
 ### Connect a JellyMesh remote
 
@@ -156,7 +146,7 @@ Films that JellyMesh cannot safely match, such as copies with contradicting prov
 
 **Undo merge** separates the copies again. The title that stayed keeps all the watch state. A separated copy usually gets back what it had before the merge, but it can start with no watch state, for instance two copies with the same title and no provider IDs.
 
-This works for films only, not series. Two local films can't be merged, so such cases aren't listed. Merges belong to one server and don't travel to other JellyMesh servers.
+This works for films only, not series. Two local films can't be merged, so such cases aren't listed. Merges belong to one server and don't travel to other JellyMesh servers. Removing a server takes its copies out of the merges, and a merge left with one copy is undone.
 
 ## Stream limit and fallback
 
@@ -186,12 +176,12 @@ A connected server can stop only the transcodes it opened, and its requests can 
 
 Remote tokens stay on your server: they never appear in `.strm` files, in logs or in anything sent to clients, and players never see a remote's address.
 
+**Behind a reverse proxy.** Each `.strm` points to `/JellyMesh/Play/` on `127.0.0.1` and the server's own port, so Jellyfin reads it directly and never through your proxy. That endpoint refuses any request that does not arrive on a loopback connection, or that carries proxy headers (`Forwarded`, `X-Real-IP`, `X-Forwarded-*`, `X-Original-*`). A request relayed by a proxy on the same host is therefore refused, which is intended. Keep your proxy adding `X-Forwarded-For`, as most do by default. If it adds none, a relayed request looks local and only the URL signature, the main defence anyway, stands in its way.
+
 ## Limits
 
-- **Clients:** only jellyfin-web has been tested. Real Android and TV clients have not, including how they show series and what they do when playback is refused.
 - **Messages:** the three refusal messages above are fixed and in Italian only, whatever the server language. They appear for 8 seconds, and only on clients that display them. Other clients show their own error.
 - **Unavailable titles:** nothing in a list marks a title as unavailable. You find out when you press play.
-- **QSV:** the local transcode has been proved in software only. QSV hasn't been tested.
 - **Metadata saving:** tested with Jellyfin's metadata savers off. With the NFO saver on, Jellyfin might rewrite the plugin's `.nfo` files, which hasn't been tested.
 - **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.

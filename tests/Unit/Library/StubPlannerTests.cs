@@ -343,9 +343,72 @@ public class StubPlannerTests
     [InlineData(IndexHealth.RestoredFromBackup)]
     public void AStubOfRemovedServersIsGoneWhateverTheIndexSays(IndexHealth health)
     {
-        var plan = Plan([], [], new StubState { Stubs = [ExistingStub("stub1", "k", _serverA, "m")] }, [Server(_serverB, Library)], health);
+        var state = new StubState { Stubs = [ExistingStub("stub1", "k", _serverA, "m")], RemovedServers = [_serverA] };
+
+        var plan = Plan([], [], state, [Server(_serverB, Library)], health);
 
         Assert.Single(plan.Removals);
+        Assert.Equal(0, plan.Unconfigured);
+    }
+
+    [Theory]
+    [InlineData(IndexHealth.Ok)]
+    [InlineData(IndexHealth.Corrupt)]
+    public void AStubOfServersMissingFromTheConfigurationStaysAndIsCounted(IndexHealth health)
+    {
+        var existing = ExistingStub("stub1", "k", _serverA, "m");
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete)], new StubState { Stubs = [existing] }, [], health);
+
+        Assert.Empty(plan.Removals);
+        Assert.Equal(1, plan.Unconfigured);
+        Assert.Equal(existing, Assert.Single(plan.State.Stubs));
+    }
+
+    [Fact]
+    public void AStubWithOneRemovedAndOneUnknownServerStays()
+    {
+        var existing = ExistingStub("stub1", "k", _serverA, "m") with
+        {
+            Sources = [new StubSource(_serverA, "m", "m") { LibraryId = Library }, new StubSource(_serverB, "z", "z") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [], new StubState { Stubs = [existing], RemovedServers = [_serverA] }, []);
+
+        Assert.Empty(plan.Removals);
+        Assert.Equal(1, plan.Unconfigured);
+    }
+
+    [Fact]
+    public void AMarkOnAServerStillConfiguredRemovesNothing()
+    {
+        var state = new StubState { Stubs = [ExistingStub("stub1", "k", _serverA, "m")], RemovedServers = [_serverA] };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Stale)], state);
+
+        Assert.Empty(plan.Removals);
+        Assert.Equal(0, plan.Unconfigured);
+    }
+
+    [Fact]
+    public void ThePlanKeepsTheRemovedServers()
+    {
+        var state = new StubState { Stubs = [ExistingStub("stub1", "k", _serverA, "m")], RemovedServers = [_serverA] };
+
+        var plan = Plan([Film("k", Source(_serverB, "z"))], [Catalog(_serverB, ServerSyncState.Complete, Film("z"))], state, [Server(_serverB, Library)]);
+
+        Assert.Equal([_serverA], plan.State.RemovedServers);
+    }
+
+    [Fact]
+    public void AMarkOnAServerConfiguredAgainIsDropped()
+    {
+        var state = new StubState { Stubs = [ExistingStub("stub1", "k", _serverA, "m")], RemovedServers = [_serverA, _serverB] };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Stale)], state, [Server(_serverA, Library)]);
+
+        Assert.Equal([_serverB], plan.State.RemovedServers);
+        Assert.Empty(plan.Removals);
     }
 
     [Fact]
@@ -417,12 +480,12 @@ public class StubPlannerTests
     }
 
     [Fact]
-    public void AServerTakenOutOfTheConfigurationReleasesItsStubs()
+    public void AServerTheAdministratorRemovedReleasesItsStubs()
     {
         var plan = Plan(
             [],
             [Catalog(_serverA, ServerSyncState.Complete)],
-            new StubState { Stubs = [ExistingStub("s1", "k1", _serverA, "m1")] },
+            new StubState { Stubs = [ExistingStub("s1", "k1", _serverA, "m1")], RemovedServers = [_serverA] },
             []);
 
         Assert.Single(plan.Removals);

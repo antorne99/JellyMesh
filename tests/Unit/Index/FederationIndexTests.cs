@@ -53,14 +53,14 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
-    public async Task KeepingServersDropsTheOthersForGood()
+    public async Task DroppingAServerRemovesItForGood()
     {
         using (var index = NewIndex())
         {
             await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
             await index.ReplaceServerAsync(_second, [Item("b")], _now, null, CancellationToken.None);
 
-            await index.KeepServersAsync(new HashSet<Guid> { _second }, CancellationToken.None);
+            await index.DropServersAsync(new HashSet<Guid> { _first }, CancellationToken.None);
         }
 
         using var restarted = NewIndex();
@@ -70,13 +70,13 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
-    public async Task KeepingEveryServerWritesNothing()
+    public async Task DroppingAServerNotThereWritesNothing()
     {
         using var index = NewIndex();
         await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
         File.Delete(MainPath);
 
-        Assert.True(await index.KeepServersAsync(new HashSet<Guid> { _first }, CancellationToken.None));
+        Assert.True(await index.DropServersAsync(new HashSet<Guid> { _second }, CancellationToken.None));
 
         Assert.False(File.Exists(MainPath));
     }
@@ -197,6 +197,22 @@ public sealed class FederationIndexTests : IDisposable
         Assert.Equal(_now, catalog.LastSuccessUtc);
         Assert.Equal(mark, catalog.Mark);
         Assert.True(index.Snapshot.IsAuthoritativeFor(_first));
+    }
+
+    [Fact]
+    public async Task AMergeWithNoChangesLeavesTheFileAsItWas()
+    {
+        using var index = NewIndex();
+        await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
+        var saved = await File.ReadAllBytesAsync(MainPath);
+        var later = _now.AddMinutes(15);
+        var mark = new SyncMark(later, ["library"]);
+
+        Assert.True(await index.MergeServerAsync(_first, [], later, mark, CancellationToken.None));
+
+        Assert.Equal(saved, await File.ReadAllBytesAsync(MainPath));
+        var catalog = index.Snapshot.Find(_first)!;
+        Assert.Equal((later, mark), (catalog.LastAttemptUtc, catalog.Mark));
     }
 
     [Fact]

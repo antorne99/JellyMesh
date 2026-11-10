@@ -228,6 +228,12 @@ public sealed class ProviderCatalog
             }
         }
 
+        // Watch state stays on this server (decision 41), even if a DTO came back with it.
+        foreach (var dto in dtos)
+        {
+            dto.UserData = null;
+        }
+
         // The file of a chapter image is a path of this server too.
         foreach (var chapter in dtos.SelectMany(dto => dto.Chapters ?? []))
         {

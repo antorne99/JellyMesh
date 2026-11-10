@@ -40,7 +40,7 @@ To install the plugin, run this with the instance running. It builds in the .NET
 ./scripts/install-plugin.sh jellymesh-test-locale-1
 ```
 
-Copy `.env.example` to `.env` to set `JELLYMESH_SECRET_KEY` or `BIND_ADDRESS`. Ports bind to loopback by default, so set `BIND_ADDRESS` to test from a phone or TV.
+Copy `.env.example` to `.env` to set `BIND_ADDRESS`. Ports bind to loopback by default, so set `BIND_ADDRESS` to test from a phone or TV.
 
 ## Folders
 
@@ -153,7 +153,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42 | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
@@ -218,6 +218,30 @@ MEDIA=<main checkout>/tests/Integration/media OLD=<folder> bash play/all.sh
 
 It leaves the containers up. `down` in `play/lib.sh` removes them and their volumes.
 
+`removal-series.sh` proves the promise of the removal dialog on a series, with its own `jm-rms-local` and `jm-rms-remote` containers on ports 18470-18471. Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without. The server is removed and added back, and every episode and series row keeps the same item ID and the same watch state. Jellyfin keeps the user data of removed items by key, so the promise holds as long as stub paths and the IDs in the `.nfo` stay the same. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/removal-series.sh
+```
+
+`watchstate.sh` proves decision 41 on its own, with fresh `jm-play-local` and `jm-play-remote` containers and the current build. It needs only `MEDIA`. A film watched or stopped on the consumer changes no user's watch state on the remote, and a film the dedicated user and another remote user watch stays unwatched on the consumer after a sync. The clips are shorter than the 300 seconds Jellyfin needs to keep a resume point, so a film stopped halfway counts as watched.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/watchstate.sh
+```
+
+`collections.sh` proves that films a remote groups into collections still reach the consumer, with its own `jm-col-local` and `jm-col-remote` containers on ports 18480-18481. The stock remote turns on "Group movies into collections" (`EnableGroupingMoviesIntoCollections`) and puts two films in a collection. Asked the sync query as the dedicated user, Jellyfin 12.4 answers the collection in place of both films, and one fewer in `TotalRecordCount`, unless the query carries `collapseBoxSetItems=false`. With it, the consumer gets a stub for each film and none for the collection. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/collections.sh
+```
+
+`keyfile.sh` proves decision 42. A consumer on 0.3.0.0, built from the `v0.3.0.0` tag with `git archive`, has `JELLYMESH_SECRET_KEY` set. It is upgraded to the current build with the variable still set, then started again without it, then its key file is deleted. The saved password moves to the key file once, and the stubs stay the same. Once the file is lost, the server asks for its password, and the federation works again after the password is entered. The saved password is read from the plugin XML, because the API never shows it.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media bash play/keyfile.sh
+```
+
 ### `merge/`
 
 Proves decision 20 on private containers named `jm-merge-*`, on ports 18441-18443:
@@ -248,7 +272,7 @@ bash ui/down.sh                   # removes containers, volumes, network and scr
 | `peer` | `UI_PORT+2` | `remoto-jellymesh` | Plugin, shares its libraries |
 | `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured |
 
-`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), and `nokey` and `key` for the secret key (on `fresh` by default). Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
+`check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), `nokey` to delete the credential key file (on `fresh` by default), `blockkey` to put a folder where the key file goes (on `first` by default), and `key` to fix either, entering the logins again. Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
 
 The browser runs on the private network of these servers and reaches them by container name. Through `host.docker.internal` a few new connections stayed in `SYN_SENT` for 7 to 45 seconds on Docker Desktop while the server answered others in milliseconds, which failed about one run in three with `urlopen timed out`.
 
@@ -271,7 +295,7 @@ What Jellyfin 12.4 was observed to do with these tabs:
 
 ## Not covered here
 
-- **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so the test needs the OPS pc.
+- **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so it cannot test QSV. Antonio verified it on the OPS pc: it works.
 - **Slow network, offline server, stream limit (§8):** belong to the Phase 6 task. To simulate an offline server, stop its service with `docker compose stop remoto-standard`.
 
 ## Licences
@@ -281,3 +305,16 @@ Source films are from the Blender Foundation under Creative Commons: Elephants D
 ## Hardening
 
 `hardening/run.sh` puts a real server with the plugin in front of `hardening/hostile.py`, a fake remote that sends huge bodies, redirects to another host, stalls after its headers and answers with poisoned URLs. It proves each case with what reached a second port standing for a third host (nothing), the memory of a container capped at 1500 MB, and a log at the most verbose level. `hardening/proofs.sh` runs the proofs in `provider/` on private servers to show the limits leave real playback alone, and `hardening/auth-statuses.sh` shows which statuses a real server gives, which is what decides when a new login is due. All of them use `jm-hard-*` containers on ports 18450-18459 and remove them at the end.
+
+## Scale
+
+`scale/run.sh` measures a consumer against a stock remote with a large synthetic catalog and no media: `scale/fake_remote.py` answers the calls the plugin makes (`/System/Info/Public`, `/Users/AuthenticateByName`, `/Users/Me`, `/UserViews`, paged `/Items` by type, by IDs and by `minDateLastSaved`, and image requests with a tiny JPEG). It builds each item from its number, by default 5,000 films and 500 series of 5 seasons × 20 episodes, about 3-5 kB of JSON each with provider IDs, one media source with five streams, people and chapters. One Jellyfin 12.4 with the plugin (`jm-scale-consumer`, port 18460) reads it from the host (port 18461), then the script runs a first sync, an incremental sync with no changes and a full sync with no changes, and `scale/analyze.py` cuts each one into read, index save and materialization from the sync status, the fake's request log, the plugin's log lines and the index file's mtime. Memory is sampled every second with `docker stats` and the process's `VmRSS`, and `VmHWM` gives the true peak. It takes about 25 minutes and removes its container and volumes at the end (`KEEP=1` keeps them).
+
+```sh
+./scale/run.sh                          # images on, results in ${TMPDIR:-/tmp}/jm-scale-run/results.txt
+SCALE_IMAGES=0 WORK=/tmp/off ./scale/run.sh   # no image tags, so no downloads: the difference is their cost
+SCALE_FILMS=100 SCALE_SERIES=10 ./scale/run.sh  # a quick check of the harness
+SCALE_SCAN=1 ./scale/run.sh             # also links the folder to two libraries, scans, and syncs again
+```
+
+`SCALE_IMAGE_BYTES` and `SCALE_IMAGE_DELAY_MS` make the images heavier or slower, to stand for real posters over a real link. The fake answers in under a millisecond, so every time measured is the consumer's; a real 12.4 remote is slower to page through 50,000 episodes. `scale/results-before-846.txt` holds the run of 2026-11-09 at 248abe4, before phase 846. In short, for 55,000 stubs: the read takes 13-16 s and is not the problem; the first materialization takes 98 s without images and 442 s with 61,000 of them; an incremental sync with nothing to do takes 3-6.5 minutes, and nearly 10 once the stubs are in a library; the process peaks at 2.0-2.4 GB; the index file is 182 MiB and is rewritten on every incremental sync. Stack samples taken with `scale/stacks.sh` (`dotnet-stack` from a container sharing the consumer's PID namespace) put 13 of 16 samples of the incremental in the per-stub list rebuild of `LibraryMaterializer.WriteStubAsync`. The scan of the linked folder is Jellyfin's own work, with no plugin frame in its samples, and was stopped at 92% after 58 minutes. `scale/results.txt` holds the runs after phase 846, which updates stub entries in place, looks up a stub's library item only when something has to reach it, reads remote images four at a time for each server and leaves the index file alone when an incremental sync brings no change. For the same 55,000 stubs the first sync takes 43 s with images, an incremental sync with nothing to do 6 s and a full read with no changes 12 s; the process peaks at 1.4-2.0 GB. A second run with 5,500 stubs, images that take 20 ms each and the folder scanned into libraries reads 6,100 images in 42 s instead of about 156 s one at a time, and its incremental sync on scanned stubs takes 0.5 s.

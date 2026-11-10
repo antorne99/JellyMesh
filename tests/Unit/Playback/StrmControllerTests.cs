@@ -62,6 +62,7 @@ public sealed class StrmControllerTests : IDisposable
     [InlineData("100.64.0.9", null)]
     [InlineData("127.0.0.1", "X-Forwarded-For")]
     [InlineData("127.0.0.1", "Forwarded")]
+    [InlineData("127.0.0.1", "X-Original-Host")]
     public async Task A_leaked_signature_grants_nothing_off_the_host(string address, string? header)
     {
         Assert.Equal(StatusCodes.Status403Forbidden, await CallAsync(StubId, _signer.Sign(StubId), address, header));

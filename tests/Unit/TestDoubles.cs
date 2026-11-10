@@ -43,8 +43,20 @@ internal sealed class InMemoryMergeStore : IManualMergeStore
 
     public bool IsDamaged { get; set; }
 
+    public int Updates { get; private set; }
+
+    public Exception? UpdateFailure { get; set; }
+
+    public void Set(params ManualMerge[] merges) => Merges = merges;
+
     public Task UpdateAsync(Func<IReadOnlyList<ManualMerge>, IReadOnlyList<ManualMerge>> change, CancellationToken cancellationToken)
     {
+        Updates++;
+        if (UpdateFailure is not null)
+        {
+            throw UpdateFailure;
+        }
+
         Merges = change(Merges);
         return Task.CompletedTask;
     }
@@ -61,6 +73,8 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 
     public int Saves { get; private set; }
 
+    public Exception? SaveFailure { get; set; }
+
     public event EventHandler? SettingsChanged;
 
     public void RaiseSettingsChanged() => SettingsChanged?.Invoke(this, EventArgs.Empty);
@@ -69,9 +83,24 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 
     public void Update(Action<PluginConfiguration> update)
     {
+        // Like the plugin, the change is made in memory before the save that may fail.
         update(Configuration);
+        if (SaveFailure is not null)
+        {
+            throw SaveFailure;
+        }
+
         Saves++;
     }
+}
+
+internal sealed class FixedLegacyKeySource : ILegacySecretKeySource
+{
+    public FixedLegacyKeySource(string? key) => Key = key;
+
+    public string? Key { get; set; }
+
+    public string? GetSecretKey() => Key;
 }
 
 internal sealed class FixedKeySource : ISecretKeySource
@@ -159,7 +188,7 @@ internal sealed class RegistryFixture : IDisposable
         Handler = handler ?? StubHandler.StockServer();
         KeySource = new FixedKeySource(key);
         Vault = new CredentialVault(KeySource, Store);
-        Client = new JellyfinRemoteClient(new StubHttpClientFactory(Handler));
+        Client = new JellyfinRemoteClient(new StubHttpClientFactory(Handler)) { Delay = (_, _) => Task.CompletedTask };
         Registry = new RemoteServerRegistry(Store, Vault, Client, Logger);
     }
 

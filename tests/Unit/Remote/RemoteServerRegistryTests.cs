@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Threading;
@@ -152,6 +153,25 @@ public class RemoteServerRegistryTests
             CancellationToken.None);
 
         Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
+    }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task AServerWhoseRemovalCannotBeSavedStays(Type failure)
+    {
+        using var fixture = new RegistryFixture();
+        var first = await fixture.AddServerAsync();
+        var server = await fixture.AddServerAsync();
+        var last = await fixture.AddServerAsync();
+        fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(failure)!;
+
+        Assert.Throws(failure, () => fixture.Registry.Remove(server.Id));
+
+        Assert.Equal([first.Id, server.Id, last.Id], fixture.Registry.GetServers().Select(item => item.Id));
+        fixture.Store.SaveFailure = null;
+        Assert.True(fixture.Registry.Remove(server.Id));
     }
 
     [Fact]
@@ -321,6 +341,65 @@ public class RemoteServerRegistryTests
         using var fixture = new RegistryFixture();
 
         var result = await fixture.Registry.TestAsync(Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.UnknownServer, result.Failure);
+    }
+
+    [Fact]
+    public async Task AfterTheKeyFileIsReplacedTheServerAsksForItsPasswordAndAcceptsItAgain()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        Assert.False(server.NeedsPassword);
+
+        fixture.KeySource.Key = TestValues.OtherKey;
+
+        Assert.True(Assert.Single(fixture.Registry.GetServers()).NeedsPassword);
+        Assert.Equal(KeyState.Wrong, fixture.Vault.GetKeyState());
+
+        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Failure.ToString());
+        Assert.False(Assert.Single(fixture.Registry.GetServers()).NeedsPassword);
+        Assert.Equal(KeyState.Ok, fixture.Vault.GetKeyState());
+        Assert.Equal(server.ImportedLibraryIds, Assert.Single(fixture.Registry.GetServers()).ImportedLibraryIds);
+    }
+
+    [Fact]
+    public async Task APasswordTheServerRefusesChangesNothing()
+    {
+        var refuse = false;
+        var handler = new StubHandler(request => refuse ? StubHandler.Status(HttpStatusCode.Unauthorized) : StubHandler.StockServer_Respond(request));
+        using var fixture = new RegistryFixture(handler);
+        var server = await fixture.AddServerAsync();
+        var stored = fixture.Store.Configuration.Servers.Single().EncryptedCredentials;
+        fixture.KeySource.Key = TestValues.OtherKey;
+        refuse = true;
+
+        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
+        Assert.Equal(stored, fixture.Store.Configuration.Servers.Single().EncryptedCredentials);
+    }
+
+    [Fact]
+    public async Task WithoutAKeyCredentialsCannotBeEnteredAgain()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        fixture.KeySource.Key = null;
+
+        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.Suspended, result.Failure);
+    }
+
+    [Fact]
+    public async Task CredentialsOfAnUnknownServerAreRefused()
+    {
+        using var fixture = new RegistryFixture();
+
+        var result = await fixture.Registry.UpdateCredentialsAsync(Guid.NewGuid(), TestValues.Credentials, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.UnknownServer, result.Failure);
     }

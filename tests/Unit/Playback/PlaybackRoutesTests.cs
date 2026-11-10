@@ -1,6 +1,8 @@
 using System;
 using System.Net;
+using System.Net.Sockets;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http;
 using Xunit;
 
@@ -104,8 +106,55 @@ public class PlaybackRoutesTests
     [InlineData("127.0.0.1", "Forwarded")]
     [InlineData("127.0.0.1", "X-Original-For")]
     [InlineData("127.0.0.1", "X-Real-IP")]
+    [InlineData("127.0.0.1", "X-Original-Host")]
+    [InlineData("127.0.0.1", "X-Original-Proto")]
+    [InlineData("127.0.0.1", "X-Original-Prefix")]
+    [InlineData("127.0.0.1", "x-original-for")]
+    [InlineData("127.0.0.1", "X-Forwarded-Prefix")]
+    [InlineData("127.0.0.1", "X-Forwarded-Port")]
     public void Forwarded_headers_never_allow_and_always_refuse(string address, string header)
     {
         Assert.False(LoopbackGuard.IsLocalRequest(Request(address, header)));
+    }
+
+    [Theory]
+    [InlineData("User-Agent")]
+    [InlineData("Range")]
+    [InlineData("Icy-MetaData")]
+    [InlineData("X-Emby-Authorization")]
+    public void Headers_the_server_sends_itself_are_not_proxy_headers(string header)
+    {
+        Assert.True(LoopbackGuard.IsLocalRequest(Request("127.0.0.1", header)));
+    }
+
+    [Fact]
+    public void A_socket_without_an_ip_endpoint_is_refused_whatever_the_connection_says()
+    {
+        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        var context = Request("127.0.0.1");
+        context.Features.Set<IConnectionSocketFeature>(new SocketFeature(socket));
+
+        Assert.False(LoopbackGuard.IsLocalRequest(context));
+    }
+
+    [Fact]
+    public void A_loopback_socket_wins_over_a_rewritten_connection_address()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        client.Connect((IPEndPoint)listener.LocalEndpoint);
+        using var accepted = listener.AcceptSocket();
+        listener.Stop();
+
+        var context = Request("203.0.113.9");
+        context.Features.Set<IConnectionSocketFeature>(new SocketFeature(accepted));
+
+        Assert.True(LoopbackGuard.IsLocalRequest(context));
+    }
+
+    private sealed class SocketFeature(Socket socket) : IConnectionSocketFeature
+    {
+        public Socket Socket { get; } = socket;
     }
 }

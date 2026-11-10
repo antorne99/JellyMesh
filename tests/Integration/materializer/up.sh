@@ -5,7 +5,7 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" "$NAME-extra" >/dev/null 2>&1 || true
 rm -f "$TOKEN_FILE"; TOKEN=
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:8096" --add-host host.docker.internal:host-gateway \
-  -e TZ=Europe/Rome -e JELLYMESH_SECRET_KEY=jm-mat-test-key-0123456789abcdef0123456789 \
+  -e TZ=Europe/Rome \
   -e 'JELLYFIN_Serilog__MinimumLevel__Override__MediaBrowser.MediaEncoding.Encoder.MediaEncoder=Debug' \
   -e 'JELLYFIN_Serilog__MinimumLevel__Override__Microsoft.AspNetCore.Hosting.Diagnostics=Information' \
   -v "$NAME-config:/config" -v "$NAME-cache:/cache" -v "$NAME-fed:/federata" -v "$NAME-extra:/local-extra" \

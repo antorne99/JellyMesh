@@ -22,4 +22,10 @@ public sealed record RemoteServerInfo(
     int ProtocolVersion,
     IReadOnlyList<string> ImportedLibraryIds,
     RemoteFailure? LastFailure,
-    DateTimeOffset? LastCheckedUtc);
+    DateTimeOffset? LastCheckedUtc)
+{
+    /// <summary>
+    /// Gets a value indicating whether the stored password no longer decrypts and must be entered again.
+    /// </summary>
+    public bool NeedsPassword { get; init; }
+}

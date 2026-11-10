@@ -108,6 +108,8 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+    public Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
+
     public Action? OnRemove { get; set; }
 
     public bool Remove(Guid serverId)

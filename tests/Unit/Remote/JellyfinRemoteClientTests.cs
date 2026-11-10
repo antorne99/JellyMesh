@@ -331,6 +331,28 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task ItemsKeepsFilmsThatARemoteGroupsIntoCollections()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+        await ItemsAsync(handler);
+
+        Assert.Contains("collapseBoxSetItems=false", handler.Requests[0].Uri.Query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ItemsNeverAsksForTheWatchStateOfTheRemoteUser()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+        await ItemsAsync(handler);
+
+        var query = handler.Requests[0].Uri.Query;
+        Assert.Contains("enableUserData=false", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("UserData", query.Replace("enableUserData", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ItemsLooksUpIdsWithoutALibrary()
     {
         var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));

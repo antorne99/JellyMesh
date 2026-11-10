@@ -103,21 +103,93 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
-    public bool Remove(Guid serverId)
+    public async Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken)
     {
-        var removed = false;
+        ArgumentNullException.ThrowIfNull(credentials);
+
+        if (_vault.GetKeyState() == KeyState.Missing)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
+        }
+
+        if (string.IsNullOrEmpty(credentials.Username))
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.InvalidServer);
+        }
+
+        var stored = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
+            ? new StoredServer(server.Id, server.Name, server.Url, server.EncryptedCredentials)
+            : null);
+        if (stored is null)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+        }
+
+        var login = await _client.AuthenticateAsync(EndpointOf(serverId, stored.Url), credentials, cancellationToken).ConfigureAwait(false);
+        if (!login.IsSuccess)
+        {
+            _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", stored.Name, login.Failure);
+            return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
+        }
+
+        var encrypted = _vault.Protect(serverId, credentials);
+        if (encrypted is null)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
+        }
+
+        var found = false;
         _store.Update(config =>
         {
-            var server = config.Servers.FirstOrDefault(candidate => candidate.Id == serverId);
-            if (server is not null)
+            if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
             {
-                removed = config.Servers.Remove(server);
+                server.EncryptedCredentials = encrypted;
+                found = true;
             }
         });
+        if (!found)
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+        }
+
+        var runtime = RuntimeOf(serverId);
+        runtime.Session = login.Value;
+        runtime.Record(RemoteFailure.None);
+        _logger.LogInformation("Updated the credentials of remote server {ServerName}", stored.Name);
+        return RemoteResult.Success(_store.Read(config => ToInfo(config.Servers.First(server => server.Id == serverId))));
+    }
+
+    /// <inheritdoc />
+    public bool Remove(Guid serverId)
+    {
+        RemoteServerConfig? removed = null;
+        var position = -1;
+        try
+        {
+            _store.Update(config =>
+            {
+                removed = config.Servers.FirstOrDefault(candidate => candidate.Id == serverId);
+                if (removed is not null)
+                {
+                    position = config.Servers.IndexOf(removed);
+                    config.Servers.RemoveAt(position);
+                }
+            });
+        }
+        catch (Exception exception) when (removed is not null && exception is not OperationCanceledException)
+        {
+            Restore(removed, position);
+            throw;
+        }
+
+        if (removed is null)
+        {
+            return false;
+        }
 
         // Not disposed here: a call may still hold its login gate. The registry disposes the rest.
         _runtimes.TryRemove(serverId, out _);
-        return removed;
+        return true;
     }
 
     /// <inheritdoc />
@@ -262,6 +334,19 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
+    // Puts back in memory a server whose removal was not saved: the file still has it.
+    private void Restore(RemoteServerConfig server, int position)
+    {
+        try
+        {
+            _store.Update(config => config.Servers.Insert(Math.Min(position, config.Servers.Count), server));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot save the configuration again after a failed removal: {Error}", exception.GetType().Name);
+        }
+    }
+
     private static RemoteEndpoint EndpointOf(Guid serverId, string url)
     {
         return new RemoteEndpoint(new Uri(url + "/"), $"jellymesh-{serverId:N}");
@@ -356,7 +441,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             server.ProtocolVersion,
             server.ImportedLibraryIds.ToList(),
             runtime?.LastFailure,
-            runtime?.LastCheckedUtc);
+            runtime?.LastCheckedUtc)
+        {
+            NeedsPassword = !_vault.CanDecrypt(server.Id, server.EncryptedCredentials)
+        };
     }
 
     private ServerRuntime RuntimeOf(Guid serverId) => _runtimes.GetOrAdd(serverId, _ => new ServerRuntime());

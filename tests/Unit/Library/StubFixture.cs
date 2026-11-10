@@ -28,10 +28,12 @@ internal sealed class StubFixture : IDisposable
     public StubFixture()
     {
         Root = Path.Combine(_data, "federata");
+        Sync = new SyncFixture(stubFolder: Path.Combine(_data, "plugin"));
         Sync.Store.Configuration.FederatedFolderPath = Root;
-        Registry = new StubRegistry(Path.Combine(_data, "plugin"), Sync.Store, new CapturingLogger<StubRegistry>());
+        Registry = Sync.Stubs;
         Merges = new ManualMergeStore(Path.Combine(_data, "plugin"), new CapturingLogger<ManualMergeStore>());
         Resolver = new FederationResolver(Sync.Index, LocalCatalog, Sync.Registry, Merges);
+        Hooked = new HookedResolver(Resolver, () => AfterResolve?.Invoke());
 
         Network.Setup(configuration => configuration.GetConfiguration("network")).Returns(new NetworkConfiguration());
         Host.Setup(host => host.HttpPort).Returns(8096);
@@ -42,7 +44,7 @@ internal sealed class StubFixture : IDisposable
         Remover = new StubRemover(Library.Object);
         Materializer = new LibraryMaterializer(
             Registry,
-            Resolver,
+            Hooked,
             Sync.Index,
             Sync.Registry,
             Sync.Client,
@@ -56,7 +58,7 @@ internal sealed class StubFixture : IDisposable
             Logger);
     }
 
-    public SyncFixture Sync { get; } = new();
+    public SyncFixture Sync { get; }
 
     public string Root { get; }
 
@@ -79,6 +81,12 @@ internal sealed class StubFixture : IDisposable
     public ManualMergeStore Merges { get; }
 
     public FederationResolver Resolver { get; }
+
+    /// <summary>Gets the resolver the materializer calls.</summary>
+    public HookedResolver Hooked { get; }
+
+    /// <summary>Gets or sets what happens right after the materializer resolves the catalog.</summary>
+    public Action? AfterResolve { get; set; }
 
     public StubItemUpdater Updater { get; }
 
@@ -111,6 +119,28 @@ internal sealed class StubFixture : IDisposable
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);
+        }
+    }
+
+    internal sealed class HookedResolver(IFederationResolver inner, Action after) : IFederationResolver
+    {
+        /// <summary>Gets the servers of the last call, or null if it read them by itself.</summary>
+        public IReadOnlyList<RemoteServerInfo>? LastServers { get; private set; }
+
+        public FederationView Resolve()
+        {
+            LastServers = null;
+            var view = inner.Resolve();
+            after();
+            return view;
+        }
+
+        public FederationView Resolve(IndexSnapshot snapshot, IReadOnlyList<RemoteServerInfo> servers)
+        {
+            LastServers = servers;
+            var view = inner.Resolve(snapshot, servers);
+            after();
+            return view;
         }
     }
 

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -9,6 +10,8 @@ using System.Threading.Tasks;
 using System.Xml.Serialization;
 using Jellyfin.Extensions.Json;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
@@ -16,6 +19,7 @@ using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Moq;
 using Xunit;
@@ -40,7 +44,9 @@ public class FederationAdminControllerTests
             checker ?? new RecordingChecker(FederatedFolderLinkState.NotChecked),
             new CoordinatorFixture().Coordinator,
             new FixedFederatedRootSource(federatedRoot),
-            Mock.Of<ICatalogSyncService>());
+            Mock.Of<ICatalogSyncService>(),
+            new InMemoryMergeStore(),
+            new CapturingLogger<FederationAdminController>());
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -50,8 +56,22 @@ public class FederationAdminControllerTests
         playback.Registry.AddJellyMesh(source.ServerId);
         await playback.OpenAsync(PlaybackValues.Stub(source));
         var releasedBeforeRemoval = -1;
-        playback.Registry.OnRemove = () => releasedBeforeRemoval = playback.Client.Released.Count;
+        var markedBeforeRemoval = false;
+        var marked = false;
+        var releasedWhenMarked = -1;
+        playback.Registry.OnRemove = () =>
+        {
+            releasedBeforeRemoval = playback.Client.Released.Count;
+            markedBeforeRemoval = marked;
+        };
         var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(source.ServerId, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, Func<Task<bool>>, CancellationToken>((_, remove, _) =>
+            {
+                marked = true;
+                releasedWhenMarked = playback.Client.Released.Count;
+                return remove();
+            });
         var controller = new FederationAdminController(
             playback.Registry,
             new RegistryFixture().Vault,
@@ -59,12 +79,16 @@ public class FederationAdminControllerTests
             new RecordingChecker(FederatedFolderLinkState.NotChecked),
             playback.Coordinator,
             new FixedFederatedRootSource(null),
-            sync.Object);
+            sync.Object,
+            new InMemoryMergeStore(),
+            new CapturingLogger<FederationAdminController>());
 
-        var result = await controller.RemoveServer(source.ServerId);
+        var result = await controller.RemoveServer(source.ServerId, CancellationToken.None);
 
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(1, releasedBeforeRemoval);
+        Assert.True(markedBeforeRemoval);
+        Assert.Equal(0, releasedWhenMarked);
         Assert.Empty(playback.Sessions.All);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
     }
@@ -81,13 +105,220 @@ public class FederationAdminControllerTests
             new RecordingChecker(FederatedFolderLinkState.NotChecked),
             new CoordinatorFixture().Coordinator,
             new FixedFederatedRootSource(null),
-            sync.Object);
+            sync.Object,
+            new InMemoryMergeStore(),
+            new CapturingLogger<FederationAdminController>());
 
-        var result = await controller.RemoveServer(Guid.NewGuid());
+        var result = await controller.RemoveServer(Guid.NewGuid(), CancellationToken.None);
 
         Assert.Equal(404, Assert.IsType<ObjectResult>(result).StatusCode);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+        sync.Verify(service => service.RemoveServerAsync(It.IsAny<Guid>(), It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task A_removal_that_cannot_be_saved_keeps_the_server_and_says_to_try_again(Type saveFailure)
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, Func<Task<bool>>, CancellationToken>((_, remove, _) => remove());
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            sync.Object,
+            new InMemoryMergeStore(),
+            new CapturingLogger<FederationAdminController>());
+        fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(saveFailure)!;
+
+        var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.RemovalFailedPlaybackStopped, failure.Failure);
+        Assert.Contains("playback from it was stopped", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_removal_whose_mark_cannot_be_saved_stops_nothing_and_says_to_try_again()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk full"));
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            sync.Object,
+            new InMemoryMergeStore(),
+            new CapturingLogger<FederationAdminController>());
+
+        var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.RemovalFailed, failure.Failure);
+        Assert.DoesNotContain("playback", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
+    }
+
+    [Theory]
+    [InlineData(2, 1)]
+    [InlineData(0, 0)]
+    public async Task Forgetting_missing_servers_says_how_many_and_cleans_up_only_when_some_were_forgotten(int forgotten, int cleanups)
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(forgotten);
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = await controller.ForgetMissingServers(CancellationToken.None);
+
+        Assert.Equal(forgotten, Assert.IsType<ForgetResponse>(result.Value).Servers);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Exactly(cleanups));
+    }
+
+    [Fact]
+    public async Task Forgetting_missing_servers_that_cannot_be_saved_says_to_try_again()
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk full"));
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = Assert.IsType<ObjectResult>((await controller.ForgetMissingServers(CancellationToken.None)).Result);
+
+        Assert.Equal(500, result.StatusCode);
+        var failure = Assert.IsType<FailureResponse>(result.Value);
+        Assert.Equal(RemoteFailure.ForgetFailed, failure.Failure);
+        Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+    }
+
+    [Fact]
+    public async Task Removing_a_server_takes_its_copies_out_of_the_manual_merges()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var removed = server.Id.ToString("N");
+        const string Other = "0123456789abcdef0123456789abcdef";
+        var withLocal = Merge(Copy("local", "l1", isLocal: true), Copy(removed, "a"));
+        var remotesOnly = Merge(Copy(Other, "b"), Copy(removed, "c"));
+        var threeCopies = Merge(Copy("local", "l2", isLocal: true), Copy(removed, "d"), Copy(Other, "e"));
+        var untouched = Merge(Copy(Other, "f"), Copy("local", "l3", isLocal: true));
+        var merges = new InMemoryMergeStore();
+        merges.Set(withLocal, remotesOnly, threeCopies, untouched);
+        var sync = RemovingSync(server.Id);
+        var mergesAtCleanup = -1;
+        sync.Setup(service => service.StartRemovalCleanup()).Callback(() => mergesAtCleanup = merges.Merges.Count);
+        var controller = CreateController(fixture, sync.Object, merges);
+
+        var result = await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(2, merges.Merges.Count);
+        Assert.Equal(2, mergesAtCleanup);
+        var kept = Assert.Single(merges.Merges, merge => merge.Id == threeCopies.Id);
+        Assert.Equal(threeCopies.CreatedUtc, kept.CreatedUtc);
+        Assert.Equal(["l2", "e"], kept.Copies.Select(copy => copy.ItemId));
+        Assert.Same(untouched, Assert.Single(merges.Merges, merge => merge.Id == untouched.Id));
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_removal_that_fails_keeps_the_manual_merges()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var merges = new InMemoryMergeStore();
+        merges.Set(Merge(Copy("local", "l1", isLocal: true), Copy(server.Id.ToString("N"), "a")));
+        var sync = RemovingSync(server.Id);
+        var controller = CreateController(fixture, sync.Object, merges);
+        fixture.Store.SaveFailure = new IOException("disk full");
+
+        var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.Equal(500, result.StatusCode);
+        Assert.Single(merges.Merges);
+        Assert.Equal(0, merges.Updates);
+    }
+
+    [Fact]
+    public async Task A_removal_whose_server_has_no_merge_writes_no_merges()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var merges = new InMemoryMergeStore { IsDamaged = true };
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, merges);
+
+        var result = await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(0, merges.Updates);
+        Assert.True(merges.IsDamaged);
+    }
+
+    [Fact]
+    public async Task Merges_that_cannot_be_saved_after_a_removal_leave_the_server_removed_and_are_logged()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var merges = new InMemoryMergeStore { UpdateFailure = new IOException("disk full at " + TestValues.Host) };
+        merges.Set(Merge(Copy("local", "l1", isLocal: true), Copy(server.Id.ToString("N"), "a")));
+        var logger = new CapturingLogger<FederationAdminController>();
+        var sync = RemovingSync(server.Id);
+        var controller = CreateController(fixture, sync.Object, merges, logger);
+
+        var result = await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Empty(fixture.Registry.GetServers());
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
+        var line = Assert.Single(logger.Lines);
+        Assert.Contains("IOException", line, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
+    }
+
+    private static Mock<ICatalogSyncService> RemovingSync(Guid serverId)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(serverId, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, Func<Task<bool>>, CancellationToken>((_, remove, _) => remove());
+        return sync;
+    }
+
+    private static MergedCopy Copy(string serverId, string itemId, bool isLocal = false)
+        => new() { ServerId = serverId, ItemId = itemId, IsLocal = isLocal };
+
+    private static ManualMerge Merge(params MergedCopy[] copies)
+        => new() { Id = Guid.NewGuid(), CreatedUtc = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), Copies = copies };
+
+    private static FederationAdminController CreateController(RegistryFixture fixture, ICatalogSyncService sync, IManualMergeStore? merges = null, ILogger<FederationAdminController>? logger = null) => new(
+        fixture.Registry,
+        fixture.Vault,
+        fixture.Store,
+        new RecordingChecker(FederatedFolderLinkState.NotChecked),
+        new CoordinatorFixture().Coordinator,
+        new FixedFederatedRootSource(null),
+        sync,
+        merges ?? new InMemoryMergeStore(),
+        logger ?? new CapturingLogger<FederationAdminController>());
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
 
@@ -189,7 +420,7 @@ public class FederationAdminControllerTests
 
     [Theory]
     [InlineData(null, KeyState.Missing)]
-    [InlineData("short", KeyState.TooShort)]
+    [InlineData("short", KeyState.Missing)]
     public async Task AnUnusableKeyIsReportedAndRefusesTheAdd(string? key, KeyState expected)
     {
         using var fixture = new RegistryFixture(key: key);
@@ -200,7 +431,7 @@ public class FederationAdminControllerTests
 
         Assert.Equal(expected, status.KeyState);
         Assert.True(status.Suspended);
-        Assert.Contains(EnvironmentSecretKeySource.VariableName, status.Warning, StringComparison.Ordinal);
+        Assert.Contains("key file", status.Warning, StringComparison.Ordinal);
         Assert.Equal(409, Assert.IsType<ObjectResult>(add.Result).StatusCode);
         Assert.Empty(fixture.Store.Configuration.Servers);
     }
@@ -223,6 +454,24 @@ public class FederationAdminControllerTests
         Assert.DoesNotContain(TestValues.OtherKey, status.Warning, StringComparison.Ordinal);
         Assert.Equal(409, Assert.IsType<ObjectResult>(test.Result).StatusCode);
         Assert.Empty(fixture.Handler.Requests);
+    }
+
+    [Fact]
+    public async Task AWrongKeyMarksTheServerAndTheNewPasswordClearsIt()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        fixture.KeySource.Key = TestValues.OtherKey;
+        var controller = ControllerFor(fixture);
+        Assert.True(controller.GetStatus().Value!.Servers.Single().NeedsPassword);
+
+        var result = await controller.UpdateCredentials(server.Id, new CredentialsRequest { Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+
+        Assert.False(result.Value!.NeedsPassword);
+        var status = controller.GetStatus().Value!;
+        Assert.Equal(KeyState.Ok, status.KeyState);
+        Assert.False(status.Suspended);
+        Assert.DoesNotContain(TestValues.Password, System.Text.Json.JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
     }
 
     [Fact]

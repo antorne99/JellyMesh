@@ -87,7 +87,7 @@ start() {
   docker volume rm "$name-config" "$name-cache" "$name-fed" "$name-extra" >/dev/null 2>&1 || true
   rm -f "$WORK/token-$s"
   docker run -d --name "$name" -p "127.0.0.1:$(port_of "$s"):8096" --add-host host.docker.internal:host-gateway \
-    -e TZ=Europe/Rome -e JELLYMESH_SECRET_KEY=jm-prov-test-key-0123456789abcdef0123456789 \
+    -e TZ=Europe/Rome \
     -v "$name-config:/config" -v "$name-cache:/cache" -v "$name-fed:/federata" -v "$name-extra:/extra" \
     -v "$MEDIA/$instance:/media:ro" "$IMAGE" >/dev/null
   wait_ready "$s"

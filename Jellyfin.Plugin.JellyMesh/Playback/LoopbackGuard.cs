@@ -11,7 +11,10 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// </summary>
 public static class LoopbackGuard
 {
-    private static readonly string[] _forwardingHeaders = ["Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Original-For", "X-Real-IP"];
+    private static readonly string[] _forwardingHeaders = ["Forwarded", "X-Real-IP"];
+
+    // X-Original-* is what the forwarded headers middleware leaves after consuming X-Forwarded-*.
+    private static readonly string[] _forwardingPrefixes = ["X-Forwarded-", "X-Original-"];
 
     /// <summary>
     /// Judges a request by its socket. Forwarded headers never allow anything, and any of them refuses: the server never
@@ -23,15 +26,19 @@ public static class LoopbackGuard
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        if (_forwardingHeaders.Any(context.Request.Headers.ContainsKey))
+        if (context.Request.Headers.Keys.Any(IsForwardingHeader))
         {
             return false;
         }
 
         // The connection address is rewritten by the forwarded headers middleware, the socket is not.
-        var socket = context.Features.Get<IConnectionSocketFeature>()?.Socket;
-        var address = socket?.RemoteEndPoint is IPEndPoint endpoint ? endpoint.Address : context.Connection.RemoteIpAddress;
-        return IsLoopback(address);
+        // A socket without an IP endpoint, such as a Unix socket, is refused rather than judged by that address.
+        if (context.Features.Get<IConnectionSocketFeature>()?.Socket is { } socket)
+        {
+            return socket.RemoteEndPoint is IPEndPoint endpoint && IsLoopback(endpoint.Address);
+        }
+
+        return IsLoopback(context.Connection.RemoteIpAddress);
     }
 
     /// <summary>
@@ -48,4 +55,9 @@ public static class LoopbackGuard
 
         return IPAddress.IsLoopback(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address);
     }
+
+    // Tells whether a header name is one that a proxy adds or that the forwarded headers middleware leaves.
+    private static bool IsForwardingHeader(string name)
+        => _forwardingHeaders.Any(header => header.Equals(name, StringComparison.OrdinalIgnoreCase))
+            || _forwardingPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 }

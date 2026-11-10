@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -13,6 +14,7 @@ using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
@@ -32,6 +34,8 @@ public class FederationAdminController : ControllerBase
     private readonly PlaybackCoordinator _playback;
     private readonly IFederatedRootSource _rootSource;
     private readonly ICatalogSyncService _sync;
+    private readonly IManualMergeStore _merges;
+    private readonly ILogger<FederationAdminController> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -43,6 +47,8 @@ public class FederationAdminController : ControllerBase
     /// <param name="playback">The playback coordinator.</param>
     /// <param name="rootSource">The source of the federated folder.</param>
     /// <param name="sync">The sync service, which deletes what a removed server left.</param>
+    /// <param name="merges">The manual merges, which lose the copies of a removed server.</param>
+    /// <param name="logger">The logger.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -50,7 +56,9 @@ public class FederationAdminController : ControllerBase
         IFederatedFolderLinkChecker linkChecker,
         PlaybackCoordinator playback,
         IFederatedRootSource rootSource,
-        ICatalogSyncService sync)
+        ICatalogSyncService sync,
+        IManualMergeStore merges,
+        ILogger<FederationAdminController> logger)
     {
         _registry = registry;
         _vault = vault;
@@ -59,6 +67,8 @@ public class FederationAdminController : ControllerBase
         _playback = playback;
         _rootSource = rootSource;
         _sync = sync;
+        _merges = merges;
+        _logger = logger;
     }
 
     /// <summary>
@@ -75,7 +85,10 @@ public class FederationAdminController : ControllerBase
             keyState != KeyState.Ok,
             KeyWarning(keyState),
             GetFederatedFolder(),
-            _registry.GetServers().Select(ToStatus).ToList());
+            _registry.GetServers().Select(ToStatus).ToList())
+        {
+            LegacyKeySet = _vault.IsLegacyKeySet
+        };
     }
 
     /// <summary>
@@ -99,23 +112,103 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Removes a server and starts deleting its content. Works whatever the state of the key.
+    /// Removes a server and starts deleting its content. Works whatever the state of the key. The removal is recorded before
+    /// the server leaves the configuration: only recorded servers lose their content (decision 44). If the removal cannot be
+    /// saved, the record is taken back and the server stays; the answer says whether its playback was already stopped.
     /// </summary>
     /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Nothing.</returns>
     [HttpDelete("Servers/{serverId:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId)
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult> RemoveServer([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
-        await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
-        if (!_registry.Remove(serverId))
+        if (_registry.GetServers().All(server => server.Id != serverId))
         {
             return Failed(RemoteFailure.UnknownServer);
         }
 
+        bool removed;
+        var stopping = false;
+        try
+        {
+            // Marking may wait for a materialization, so sessions close after it, right before the server goes.
+            removed = await _sync.RemoveServerAsync(
+                serverId,
+                async () =>
+                {
+                    stopping = true;
+                    await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
+                    return _registry.Remove(serverId);
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed);
+        }
+
+        if (!removed)
+        {
+            return Failed(RemoteFailure.UnknownServer);
+        }
+
+        await RemoveFromMergesAsync(serverId).ConfigureAwait(false);
         _sync.StartRemovalCleanup();
         return NoContent();
+    }
+
+    /// <summary>
+    /// Forgets the servers missing from the settings that still left titles, as if they had been removed on this page, and
+    /// starts deleting what they left (decision 44). A server added back to the settings wins over this.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many servers were forgotten.</returns>
+    [HttpPost("MissingServers/Forget")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ForgetResponse>> ForgetMissingServers(CancellationToken cancellationToken)
+    {
+        int forgotten;
+        try
+        {
+            forgotten = await _sync.ForgetMissingServersAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return Failed(RemoteFailure.ForgetFailed);
+        }
+
+        if (forgotten > 0)
+        {
+            _sync.StartRemovalCleanup();
+        }
+
+        return new ForgetResponse(forgotten);
+    }
+
+    /// <summary>
+    /// Enters the dedicated user of a server again, after logging in with it. This is how a lost key file is fixed.
+    /// </summary>
+    /// <param name="serverId">The server to update.</param>
+    /// <param name="request">The dedicated user.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The server with its new credentials.</returns>
+    [HttpPost("Servers/{serverId:guid}/Credentials")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<ServerStatus>> UpdateCredentials([FromRoute] Guid serverId, [FromBody] CredentialsRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
+        var result = await _registry.UpdateCredentialsAsync(serverId, credentials, cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
     }
 
     /// <summary>
@@ -178,13 +271,11 @@ public class FederationAdminController : ControllerBase
 
     internal static string? KeyWarning(KeyState state)
     {
-        const string Consequence = "Remote credentials cannot be saved or used, and sync and remote playback are suspended.";
         return state switch
         {
             KeyState.Ok => null,
-            KeyState.Missing => $"{EnvironmentSecretKeySource.VariableName} is not set. {Consequence}",
-            KeyState.TooShort => $"{EnvironmentSecretKeySource.VariableName} must have at least {CredentialCipher.MinimumKeyLength} characters. {Consequence}",
-            _ => $"{EnvironmentSecretKeySource.VariableName} does not decrypt the stored credentials: it changed, or they were altered. {Consequence} Restore the original key, or remove the servers and add them again."
+            KeyState.Missing => "The plugin cannot keep its key file in its data folder. Remote credentials cannot be saved or used, and sync and remote playback are suspended.",
+            _ => "The saved passwords do not decrypt with the key file: it was lost or replaced, or they were altered. Sync and remote playback are suspended until the password of each marked server is entered again."
         };
     }
 
@@ -207,6 +298,9 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.LibraryUnavailable => "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.",
             RemoteFailure.CatalogChanged => "The catalog kept changing while it was read. Try again.",
             RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
+            RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
+            RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
+            RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
             _ => "The operation failed."
         };
     }
@@ -232,7 +326,10 @@ public class FederationAdminController : ControllerBase
             server.ProtocolVersion,
             server.ImportedLibraryIds,
             ConnectionOf(server.LastFailure),
-            server.LastCheckedUtc);
+            server.LastCheckedUtc)
+        {
+            NeedsPassword = server.NeedsPassword
+        };
     }
 
     private ObjectResult Failed(RemoteFailure failure)
@@ -242,10 +339,32 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.Suspended => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
+            RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status502BadGateway
         };
 
         return StatusCode(status, new FailureResponse(failure, FailureMessage(failure)));
+    }
+
+    // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure
+    // is only logged and the merges show its copies as not found, as before.
+    private async Task RemoveFromMergesAsync(Guid serverId)
+    {
+        var server = serverId.ToString("N");
+        if (!_merges.Merges.Any(merge => ManualMergeService.HasCopyOn(merge, server)))
+        {
+            return;
+        }
+
+        try
+        {
+            await _merges.UpdateAsync(current => ManualMergeService.WithoutServer(current, server), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path or an address.
+            _logger.LogError("Could not take the removed server out of the manual merges: {Error}", exception.GetType().Name);
+        }
     }
 
     private FederatedFolderStatus GetFederatedFolder()

@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
@@ -21,6 +24,9 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed class LibraryMaterializer : ILibraryMaterializer
 {
+    // How many images of one server are read at once. A choice of Claude's, under the 8 reads per peer of decision 31.
+    private const int ImageReadsAtOnce = 4;
+
     private readonly StubRegistry _registry;
     private readonly IFederationResolver _resolver;
     private readonly IFederationIndex _index;
@@ -86,7 +92,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     public MaterializationReport? LastReport => _lastReport;
 
     /// <inheritdoc />
-    public async Task<MaterializationReport> MaterializeAsync(CancellationToken cancellationToken)
+    public Task<MaterializationReport> MaterializeAsync(CancellationToken cancellationToken) => MaterializeAsync(false, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<MaterializationReport> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
         var (root, isProtected) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection));
         if (root.Length == 0)
@@ -99,7 +108,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var report = await RunAsync(root, isProtected, cancellationToken).ConfigureAwait(false);
+            var report = await RunAsync(root, isProtected, verifyEveryStub, cancellationToken).ConfigureAwait(false);
             _lastReport = report;
             return report;
         }
@@ -151,7 +160,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     }
 
     private static Task WriteTextAsync(string path, string text, CancellationToken cancellationToken)
-        => WriteFileAsync(path, System.Text.Encoding.UTF8.GetBytes(text), cancellationToken);
+        => WriteFileAsync(path, Encoding.UTF8.GetBytes(text), cancellationToken);
 
     private static void DeleteOtherExtensions(string stem, string keep)
     {
@@ -168,19 +177,29 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    private static List<T> ReplaceAll<T>(IEnumerable<T> items, Func<T, bool> match, T replacement)
+    private static string UrlTagOf(string url)
     {
-        return items.Select(item => match(item) ? replacement : item).ToList();
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)), 0, 16);
     }
 
-    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, CancellationToken cancellationToken)
+    // The URL is confirmed while it is the one to write and nobody has written the file since: a new signing key changes the
+    // first, a hand edit or an older version the second.
+    private static bool IsUrlConfirmed(StubEntry stub, string strm, string urlTag)
     {
-        var view = _resolver.Resolve();
+        return string.Equals(stub.UrlTag, urlTag, StringComparison.Ordinal) && stub.StrmWrittenUtc == File.GetLastWriteTimeUtc(strm);
+    }
+
+    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool verifyEveryStub, CancellationToken cancellationToken)
+    {
+        // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
+        var snapshot = _index.Snapshot;
+        var servers = _servers.GetServers();
+        var view = _resolver.Resolve(snapshot, servers);
         var plan = StubPlanner.Plan(new StubPlanInput(
             view,
-            _index.Snapshot,
+            snapshot,
             _registry.State,
-            _servers.GetServers(),
+            servers,
             isProtected,
             _urls.Build,
             workKey => LocalSeriesOf(view, workKey)));
@@ -190,7 +209,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 
-        var run = new Run(root, plan.State);
+        var run = new Run(root, plan.State) { VerifyEveryStub = verifyEveryStub };
+        await FetchImagesAsync(run, plan, cancellationToken).ConfigureAwait(false);
         foreach (var series in plan.Series)
         {
             await WriteSeriesAsync(run, series, cancellationToken).ConfigureAwait(false);
@@ -208,10 +228,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             await SignStubAsync(run, stub, cancellationToken).ConfigureAwait(false);
         }
 
-        foreach (var stub in plan.Removals)
-        {
-            RemoveGone(run, stub);
-        }
+        run.Commit();
+        RemoveGone(run, plan.Removals);
 
         await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
 
@@ -239,7 +257,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             run.Updated,
             run.Removed,
             run.Failed);
-        return new MaterializationReport(_timeProvider.GetUtcNow(), true, run.Created, run.Updated, run.Removed, run.Failed, plan.Unplaceable, plan.Held);
+        return new MaterializationReport(_timeProvider.GetUtcNow(), true, run.Created, run.Updated, run.Removed, run.Failed, plan.Unplaceable, plan.Held)
+        {
+            Unconfigured = plan.Unconfigured
+        };
     }
 
     private LocalSeries? LocalSeriesOf(FederationView view, string workKey)
@@ -272,28 +293,27 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var folder = FederatedPaths.Resolve(run.Root, entry.RelativePath);
         try
         {
-            var existing = work.IsNew ? null : _library.FindByPath(folder, true);
+            var existing = new LazyItem(_library, folder, true, work.IsNew);
             if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(nfo))
             {
                 await WriteTextAsync(nfo, work.Nfo, cancellationToken).ConfigureAwait(false);
-                if (existing is not null)
+                if (existing.Value is { } item)
                 {
-                    await _updater.ApplyMetadataAsync(existing, work.Metadata, cancellationToken).ConfigureAwait(false);
+                    await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
                 }
 
                 // The merge key may have changed, and only a scan regroups the rows (Phase 0, V10).
-                entry = entry with { ContentHash = work.ContentHash, NeedsRefresh = entry.NeedsRefresh || existing is not null };
+                entry = entry with { ContentHash = work.ContentHash, NeedsRefresh = entry.NeedsRefresh || existing.Value is not null };
                 run.NeedsScan = true;
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing, cancellationToken).ConfigureAwait(false))
+                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
 
-            var saved = entry;
-            run.State = run.State with { Series = ReplaceAll(run.State.Series, item => string.Equals(item.Id, saved.Id, StringComparison.Ordinal), saved) };
+            run.Put(entry);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -308,15 +328,17 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var strm = FederatedPaths.Resolve(run.Root, entry.RelativePath);
         try
         {
-            var existing = work.IsNew ? null : _library.FindByPath(strm, false);
+            // The item is looked up only when something has to reach it: on a large catalog one lookup per stub was most of a run.
+            var existing = new LazyItem(_library, strm, false, work.IsNew);
             var changed = false;
+            var written = false;
             if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(strm))
             {
                 await WriteTextAsync(strm, work.StrmUrl, cancellationToken).ConfigureAwait(false);
                 await WriteTextAsync(FederatedPaths.Resolve(run.Root, work.NfoPath), work.Nfo, cancellationToken).ConfigureAwait(false);
-                if (existing is not null)
+                if (existing.Value is { } item)
                 {
-                    await _updater.ApplyMetadataAsync(existing, work.Metadata, cancellationToken).ConfigureAwait(false);
+                    await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -325,30 +347,35 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
                 entry = entry with { ContentHash = work.ContentHash };
                 changed = true;
+                written = true;
             }
 
-            changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing, cancellationToken).ConfigureAwait(false);
+            var urlTag = UrlTagOf(work.StrmUrl);
+            if (written || run.VerifyEveryStub || !IsUrlConfirmed(entry, strm, urlTag))
+            {
+                changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing.Value, cancellationToken).ConfigureAwait(false);
+                entry = entry with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) };
+            }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing, cancellationToken).ConfigureAwait(false))
+                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
 
             if (!string.Equals(entry.TechnicalTag, work.TechnicalTag, StringComparison.Ordinal))
             {
-                if (existing is not null)
+                if (existing.Value is { } item)
                 {
-                    _technical.WriteItemAndStreams(existing, entry, cancellationToken);
-                    _technical.WriteStreamsAndChapters(existing, entry, cancellationToken);
-                    await _updater.SaveAsync(existing, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
+                    _technical.WriteItemAndStreams(item, entry, cancellationToken);
+                    _technical.WriteStreamsAndChapters(item, entry, cancellationToken);
+                    await _updater.SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
                 }
 
                 entry = entry with { TechnicalTag = work.TechnicalTag };
             }
 
-            var saved = entry;
-            run.State = run.State with { Stubs = ReplaceAll(run.State.Stubs, item => string.Equals(item.Id, saved.Id, StringComparison.Ordinal), saved) };
+            run.Put(entry);
             run.Created += work.IsNew ? 1 : 0;
             run.Updated += !work.IsNew && changed ? 1 : 0;
         }
@@ -364,9 +391,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var strm = FederatedPaths.Resolve(run.Root, stub.RelativePath);
         try
         {
-            if (File.Exists(strm))
+            var url = _urls.Build(stub.Id);
+            var urlTag = UrlTagOf(url);
+            if (File.Exists(strm) && (run.VerifyEveryStub || !IsUrlConfirmed(stub, strm, urlTag)))
             {
-                await ApplyStrmUrlAsync(strm, _urls.Build(stub.Id), _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
+                await ApplyStrmUrlAsync(strm, url, _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
+                run.Put(stub with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) });
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -425,63 +455,140 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
         else
         {
-            if (image.ServerId is not { } serverId || image.ItemId is not { } itemId || run.UnreachableServers.Contains(serverId))
-            {
-                return null;
-            }
-
-            var read = await _servers.RunWithSessionAsync(
-                serverId,
-                (endpoint, session, token) => _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
-                cancellationToken).ConfigureAwait(false);
-            if (!read.IsSuccess)
-            {
-                // One timeout per image would hold a whole run back. They are tried again at the next one.
-                if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout)
-                {
-                    run.UnreachableServers.Add(serverId);
-                }
-
-                return null;
-            }
-
-            path = stem + ExtensionOf(read.Value!.ContentType);
-            await WriteFileAsync(path, read.Value.Content, cancellationToken).ConfigureAwait(false);
+            return run.Fetched.TryRemove(image.RelativeStem, out var fetched)
+                ? fetched
+                : await DownloadImageAsync(run, image, cancellationToken).ConfigureAwait(false);
         }
 
         DeleteOtherExtensions(stem, path);
         return path;
     }
 
-    private void RemoveGone(Run run, StubEntry stub)
+    // Remote images are read before the stubs are written, a few at a time for each server; the stubs stay one at a time.
+    // A server's first image goes alone, so a server that does not answer still costs one timeout.
+    private async Task FetchImagesAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
     {
-        try
+        var wanted = plan.Series
+            .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
+            .SelectMany(work => work.Images)
+            .Concat(plan.Stubs
+                .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
+                .SelectMany(work => work.Images))
+            .Where(image => image.LocalPath is null && image.ServerId is not null && image.ItemId is not null);
+        var options = new ParallelOptions { MaxDegreeOfParallelism = ImageReadsAtOnce, CancellationToken = cancellationToken };
+        foreach (var server in wanted.GroupBy(image => image.ServerId!.Value))
         {
-            run.State = _remover.Remove(run.Root, run.State, stub);
-            run.Removed++;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            run.Failed++;
-            _logger.LogError("Cannot remove a stub: {Error}", exception.GetType().Name);
+            var images = server.ToList();
+            await FetchImageAsync(run, images[0], cancellationToken).ConfigureAwait(false);
+            await Parallel.ForEachAsync(images.Skip(1), options, async (image, token) => await FetchImageAsync(run, image, token).ConfigureAwait(false)).ConfigureAwait(false);
         }
     }
 
+    private async Task FetchImageAsync(Run run, StubImage image, CancellationToken cancellationToken)
+    {
+        try
+        {
+            run.Fetched[image.RelativeStem] = await DownloadImageAsync(run, image, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Left to the write of its stub, which reads it again and counts the failure.
+        }
+    }
+
+    private async Task<string?> DownloadImageAsync(Run run, StubImage image, CancellationToken cancellationToken)
+    {
+        var stem = FederatedPaths.Resolve(run.Root, image.RelativeStem);
+        if (image.ServerId is not { } serverId || image.ItemId is not { } itemId || run.UnreachableServers.ContainsKey(serverId))
+        {
+            return null;
+        }
+
+        var read = await _servers.RunWithSessionAsync(
+            serverId,
+            (endpoint, session, token) => _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
+            cancellationToken).ConfigureAwait(false);
+        if (!read.IsSuccess)
+        {
+            // One timeout per image would hold a whole run back. They are tried again at the next one.
+            if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout)
+            {
+                run.UnreachableServers.TryAdd(serverId, true);
+            }
+
+            return null;
+        }
+
+        var path = stem + ExtensionOf(read.Value!.ContentType);
+        await WriteFileAsync(path, read.Value.Content, cancellationToken).ConfigureAwait(false);
+        DeleteOtherExtensions(stem, path);
+        return path;
+    }
+
+    private void RemoveGone(Run run, IReadOnlyList<StubEntry> stubs)
+    {
+        var removal = _remover.RemoveAll(run.Root, run.State, stubs);
+        run.State = removal.State;
+        run.Removed += removal.Removed;
+        run.Failed += removal.Failures.Count;
+        foreach (var failure in removal.Failures)
+        {
+            _logger.LogError("Cannot remove a stub: {Error}", failure.GetType().Name);
+        }
+    }
+
+    // The library item of a path, looked up on first use. A stub minted by this run has none yet.
+    private sealed class LazyItem(ILibraryManager library, string path, bool isFolder, bool isNew)
+    {
+        private bool _looked = isNew;
+        private BaseItem? _item;
+
+        public BaseItem? Value
+        {
+            get
+            {
+                if (!_looked)
+                {
+                    _looked = true;
+                    _item = library.FindByPath(path, isFolder);
+                }
+
+                return _item;
+            }
+        }
+    }
+
+    // Entries change in place by position, and the state is rebuilt once: a new list per stub made a run quadratic.
     private sealed class Run
     {
+        private readonly List<StubEntry> _stubs;
+        private readonly List<SeriesStub> _series;
+        private readonly Dictionary<string, int> _stubAt;
+        private readonly Dictionary<string, int> _seriesAt;
+
         public Run(string root, StubState state)
         {
             Root = root;
             State = state;
+            _stubs = [.. state.Stubs];
+            _series = [.. state.Series];
+            _stubAt = Positions(_stubs, stub => stub.Id);
+            _seriesAt = Positions(_series, series => series.Id);
         }
 
         public string Root { get; }
 
         public StubState State { get; set; }
 
-        public HashSet<Guid> UnreachableServers { get; } = [];
+        public ConcurrentDictionary<Guid, bool> UnreachableServers { get; } = new();
+
+        /// <summary>Gets the remote images read ahead, by relative stem, with null for one that could not be read.</summary>
+        public ConcurrentDictionary<string, string?> Fetched { get; } = new(StringComparer.Ordinal);
 
         public bool NeedsScan { get; set; }
+
+        /// <summary>Gets a value indicating whether every stub gets its item checked, as the nightly safety net.</summary>
+        public bool VerifyEveryStub { get; init; }
 
         public int Created { get; set; }
 
@@ -490,5 +597,35 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public int Removed { get; set; }
 
         public int Failed { get; set; }
+
+        public void Put(StubEntry stub)
+        {
+            if (_stubAt.TryGetValue(stub.Id, out var at))
+            {
+                _stubs[at] = stub;
+            }
+        }
+
+        public void Put(SeriesStub series)
+        {
+            if (_seriesAt.TryGetValue(series.Id, out var at))
+            {
+                _series[at] = series;
+            }
+        }
+
+        /// <summary>Applies every <see cref="Put(StubEntry)"/> to <see cref="State"/>.</summary>
+        public void Commit() => State = State with { Stubs = [.. _stubs], Series = [.. _series] };
+
+        private static Dictionary<string, int> Positions<T>(List<T> items, Func<T, string> id)
+        {
+            var positions = new Dictionary<string, int>(items.Count, StringComparer.Ordinal);
+            for (var i = 0; i < items.Count; i++)
+            {
+                positions.TryAdd(id(items[i]), i);
+            }
+
+            return positions;
+        }
     }
 }

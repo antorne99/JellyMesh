@@ -23,4 +23,9 @@ public sealed record StubPlan(
     /// Gets how many stubs were merged into another. They stay until the post-scan task has handed their watch state over.
     /// </summary>
     public int MergedStubs { get; init; }
+
+    /// <summary>
+    /// Gets how many stubs are kept because none of their servers is configured and none was removed from the page.
+    /// </summary>
+    public int Unconfigured { get; init; }
 }

@@ -51,7 +51,7 @@ login() {
   mv "$WORK/token-$1.new" "$WORK/token-$1"
 }
 
-# start <server> <media mount>
+# start <server> <media mount>: START_ENV adds environment options, such as the variable of an older version.
 start() {
   local s=$1 mount=$2 name
   name=$(name_of "$s")
@@ -59,7 +59,7 @@ start() {
   docker volume rm "$name-config" "$name-cache" "$name-fed" >/dev/null 2>&1 || true
   rm -f "$WORK/token-$s"
   docker run -d --name "$name" -p "127.0.0.1:$(port_of "$s"):8096" --add-host host.docker.internal:host-gateway \
-    -e TZ=Europe/Rome -e JELLYMESH_SECRET_KEY=jm-play-test-key-0123456789abcdef0123456789 \
+    -e TZ=Europe/Rome ${START_ENV:-} \
     -v "$name-config:/config" -v "$name-cache:/cache" -v "$name-fed:/federata" -v "$mount" "$IMAGE" >/dev/null
   wait_ready "$s"
   post "$s" /Startup/Configuration '{"UICulture":"en-US","MetadataCountryCode":"IT","PreferredMetadataLanguage":"it"}' >/dev/null

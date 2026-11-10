@@ -90,11 +90,11 @@ def first(s, width):
 
 
 def first_nokey(s, width):
-    """A server with nothing configured and no secret key."""
+    """A server with nothing configured that cannot keep its key file."""
     name = width + " first run without a key"
     page = s.open("first", width)
     warning = text(page, u.WARNING) if page.locator(u.WARNING).is_visible() else ""
-    check(name + " warns", "JELLYMESH_SECRET_KEY" in warning, warning)
+    check(name + " warns", "key file" in warning, warning)
     check(name + " is suspended", "suspended" in text(page, u.STATUS).lower(), text(page, u.STATUS))
     check(name + " cannot add a server", page.locator(u.ADD_SUBMIT).is_disabled())
     u.show_tab(page, "servers")
@@ -404,11 +404,11 @@ def offline(s, width):
 
 
 def nokey(s, width):
-    """Servers saved, and the secret key gone."""
+    """Servers saved, and the key file lost."""
     name = width + " no key"
     page = s.open("fresh", width)
     warning = text(page, u.WARNING) if page.locator(u.WARNING).is_visible() else ""
-    check(name + " warns", "JELLYMESH_SECRET_KEY" in warning and "suspended" in warning, warning)
+    check(name + " warns", "key file" in warning and "suspended" in warning, warning)
     check(name + " is suspended", "suspended" in text(page, u.STATUS).lower(), text(page, u.STATUS))
     check(name + " cannot add a server", page.locator(u.ADD_SUBMIT).is_disabled())
     check(name + " cannot sync", page.locator(u.SYNC_NOW).is_disabled())
@@ -529,6 +529,39 @@ def fake(page, path, change):
         route.fulfill(response=response, json=data)
 
     page.route("**/JellyMesh/Admin/" + path, answer)
+
+
+FORGET_MISSING = "#jmForgetMissing"
+
+
+def forget_missing(page, name):
+    """Forgetting the servers missing from the settings asks first, says what it did, and says to try again on a failure."""
+    u.show_tab(page, "catalog")
+    check(name + " offers to forget the missing servers", page.locator(FORGET_MISSING).is_visible())
+    u.shot(page, "catalog-forget-" + name.split()[0])
+    route = "**/JellyMesh/Admin/MissingServers/Forget"
+    answers = [
+        (lambda r: r.fulfill(status=200, json={"Servers": 2}), "The missing servers are forgotten.", "forgets"),
+        (lambda r: r.fulfill(status=500, json={"Failure": "ForgetFailed", "Message": "The missing servers could not be forgotten. Their titles stay. Try again."}),
+         "Their titles stay. Try again.", "a failed forget"),
+        (None, "No server was left to forget.", "a real forget with nothing missing"),
+    ]
+    for answer, said, label in answers:
+        if answer:
+            page.route(route, answer)
+        page.locator(FORGET_MISSING).click()
+        page.wait_for_selector(u.CONFIRM, timeout=15000)
+        title = page.locator(u.CONFIRM_TITLE).inner_text()
+        body = page.locator(u.CONFIRM_TEXT).inner_text()
+        check(name + " " + label + " asks first", "Forget the servers missing from the settings?" in title, title)
+        check(name + " " + label + " says what goes and what stays", "5 titles that only those servers have" in body and "without those backups" in body, body)
+        check(name + " " + label + " says how to get them back", "brings the same titles and watch state" in body, body)
+        page.locator(u.CONFIRM_OK).click()
+        page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
+        shown = until(page, lambda said=said: said in u.message(page))
+        check(name + " " + label + " says what happened", shown, u.message(page))
+        if answer:
+            page.unroute(route)
 
 
 def quiet(s, width):
@@ -729,6 +762,19 @@ def outcome(page, name, kind, says=""):
     return shown
 
 
+def refusing_removal(failure):
+    """Answers a removal with a failure, and lets every other call through."""
+    failed = {"Failure": failure, "Message": "The server could not be removed."}
+
+    def answer(route):
+        if route.request.method == "DELETE":
+            route.fulfill(status=500, json=failed)
+        else:
+            route.continue_()
+
+    return answer
+
+
 def outcomes_shown(page, name):
     """Outcomes of the actions, where they appear, and when they go."""
     check(name + " the region is rendered before it has text", page.locator(u.MESSAGE).evaluate(
@@ -748,6 +794,22 @@ def outcomes_shown(page, name):
     outcome(page, name + " a connection test", "Done", "connected")
     done = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
     check(name + " an error and a success differ in colour", error != done, done)
+
+    failures = [
+        ("RemovalFailed", "a failed removal", "with its titles. Try again."),
+        ("RemovalFailedPlaybackStopped", "a removal failed after stopping playback", "any playback from it was stopped. Try again."),
+    ]
+    for failure, label, said in failures:
+        page.route("**/JellyMesh/Admin/Servers/*", refusing_removal(failure))
+        u.button(u.server_row(page, "stock"), "remove").click()
+        page.locator(u.CONFIRM_OK).click()
+        until(page, lambda said=said: u.message(page).startswith("Error") and said in u.message(page))
+        page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
+        until(page, lambda: u.in_view(page, u.OUTCOME), 3)
+        shown = outcome(page, name + " " + label, "Error", "Removing stock failed")
+        check(name + " " + label + " says what happened and to try again", said in shown, shown)
+        check(name + " " + label + " keeps the server", u.server_row(page, "stock").count() == 1)
+        page.unroute("**/JellyMesh/Admin/Servers/*")
 
     hold = []
     page.route("**/JellyMesh/Admin/Servers/*", lambda route: hold.append(route) if route.request.method == "DELETE" else route.continue_())
@@ -2271,13 +2333,15 @@ def cards_offline(s, width):
 
 
 def cards_nokey(s, width):
-    """The cards with the secret key really gone, which is also a restart."""
+    """The cards with the key file really lost, which is also a restart."""
     name = width + " cards without a key"
     page = s.open("fresh", width)
     for server in ["stock", "peer"]:
         row = u.server_row(page, server)
-        check(f"{name} {server} is suspended", u.state_of(row) == "Suspended", u.state_of(row))
-        check(f"{name} {server} says why", "until the secret key is fixed" in u.cause_of(row), u.cause_of(row))
+        check(f"{name} {server} asks for its password", u.state_of(row) == "Password needed", u.state_of(row))
+        check(f"{name} {server} says why", "Enter the login again below" in u.cause_of(row), u.cause_of(row))
+        check(f"{name} {server} is open on the form", row.evaluate("node => node.open") and u.button(row, "save_login").is_visible())
+        check(f"{name} {server} has a user and a password field", row.locator("input[type=text]").count() == 1 and row.locator("input[type=password]").count() == 1)
         check(f"{name} {server} keeps the counts", "films" in u.card_fact(row, "Catalog"), u.card_fact(row, "Catalog"))
         check(f"{name} {server} can still be removed", u.button(row, "remove").is_enabled())
     check(name + " is never not checked", "Not checked yet" not in text(page, u.SERVERS), text(page, u.SERVERS))
@@ -2570,6 +2634,28 @@ def overview_damaged(s, width):
     check(name + " keeps remote text as text", page.locator(u.SUMMARY + " b").count() == 0)
     u.close(page)
 
+    name = width + " overview unconfigured"
+
+    def unconfigured(context):
+        fake(context, "Status", linked)
+        fake(context, "Sync", lambda sync: sync.update(UnconfiguredStubs=5))
+
+    page = s.open("fresh", width, route=unconfigured)
+    shown = " ".join(alarms(page))
+    check(name + " reports the titles", "5 titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog." in shown, shown)
+    catalog = text(page, u.ALERTS_WITH_DATA[1])
+    check(name + " says how to get them back", "were not removed on this page" in catalog and "restore them" in catalog, catalog)
+    check(name + " says they can be forgotten", "forget them below" in catalog, catalog)
+    forget_missing(page, name)
+    u.close(page)
+
+    name = width + " overview nothing missing"
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", linked))
+    u.show_tab(page, "catalog")
+    until(page, lambda: text(page, "#jmSyncStatus").startswith("Last sync"))
+    check(name + " offers nothing to forget", page.locator(FORGET_MISSING).is_hidden())
+    u.close(page)
+
     name = width + " overview stale"
 
     def stale(context):
@@ -2591,16 +2677,15 @@ def overview_half(s, width):
         (half_done if state["half"] else linked)(status)
 
     page = s.open("fresh", width, route=lambda context: fake(context, "Status", half))
-    check(name + " has the six steps in order", page.locator(u.STEP_NAME).all_inner_texts() == u.STEPS, page.locator(u.STEP_NAME).all_inner_texts())
-    for label, shown in [("Set the secret key", "Done"), ("Add a remote server", "Done"), ("Choose libraries to import", "To do"),
+    check(name + " has the five steps in order", page.locator(u.STEP_NAME).all_inner_texts() == u.STEPS, page.locator(u.STEP_NAME).all_inner_texts())
+    for label, shown in [("Add a remote server", "Done"), ("Choose libraries to import", "To do"),
                          ("Choose the federated folder", "Done"), ("Run the first sync", "Done"), ("Link the two paths", "To do")]:
         check(f"{name} {label} is {shown}", step_state(page, label) == shown, step_state(page, label))
     libraries = u.step(page, "Choose libraries to import")
     check(name + " names the server waiting", "Still to choose: " + HOSTILE in libraries.inner_text(), libraries.inner_text())
     check(name + " keeps remote text as text", page.locator(u.SETUP + " b").count() == 0)
     check(name + " says what stays by hand", "by hand in Dashboard > Libraries" in u.step(page, "Link the two paths").inner_text())
-    check(name + " marks state in the text and the icon", u.step(page, "Set the secret key").locator(".check_circle").count() == 1)
-    check(name + " the key has no tab to open", u.step(page, "Set the secret key").locator(u.TAB_LINK).count() == 0)
+    check(name + " marks state in the text and the icon", u.step(page, "Add a remote server").locator(".check_circle").count() == 1)
     for label, tab in [("Add a remote server", "servers"), ("Choose libraries to import", "servers"), ("Choose the federated folder", "settings"),
                        ("Run the first sync", "catalog"), ("Link the two paths", "settings")]:
         opens(page, f"{name} {label}", u.step(page, label).locator(u.TAB_LINK), tab)
@@ -2617,14 +2702,45 @@ def overview_half(s, width):
     u.close(page)
 
 
+def relogin(s, width):
+    """The key file lost: a wrong password is refused, and the right one on each card brings the federation back."""
+    name = width + " login again"
+    page = s.open("fresh", width)
+    u.show_tab(page, "servers")
+    row = u.server_row(page, "stock")
+    row.locator("input[type=text]").fill("jellymesh")
+    row.locator("input[type=password]").fill("wrong")
+    u.button(row, "save_login").click()
+    outcome(page, name + " a wrong password", "Error", "refused the login")
+    check(name + " a wrong password keeps the form", u.state_of(row) == "Password needed", u.state_of(row))
+    empty = u.server_row(page, "peer")
+    u.button(empty, "save_login").click()
+    check(name + " an empty user is marked", until(page, lambda: empty.locator("input[aria-invalid=true]").count() == 1))
+    for server in ["stock", "peer"]:
+        row = u.server_row(page, server)
+        row.locator("input[type=text]").fill("jellymesh")
+        row.locator("input[type=password]").fill("jellymesh-test")
+        u.button(row, "save_login").click()
+        outcome(page, f"{name} {server}", "Done", server + ": login saved.")
+    check(name + " the warning goes", until(page, lambda: not page.locator(u.WARNING).is_visible(), 20))
+    for server in ["stock", "peer"]:
+        row = u.server_row(page, server)
+        check(f"{name} {server} no longer asks", until(page, lambda: u.state_of(row) != "Password needed"), u.state_of(row))
+        check(f"{name} {server} the form goes", row.locator("input[type=password]").count() == 0)
+    check(name + " no password is left in the page", "jellymesh-test" not in page.content())
+    healthy(page, name)
+    u.shot(page, f"relogin-{width}")
+    page.context.close()
+
+
 def overview_first(s, width):
     """A server with nothing configured: the steps show what is left, and nothing blocks the page."""
     name = width + " overview first run"
     page = s.open("first", width)
     shown = text(page, u.STATUS)
     check(name + " says setup is not finished", shown == "Active. Setup is not finished: 5 steps to do.", shown)
-    check(name + " has the key done", step_state(page, "Set the secret key") == "Done", step_state(page, "Set the secret key"))
-    for label in u.STEPS[1:]:
+    check(name + " has no key step", u.step(page, "Let JellyMesh keep its key file").count() == 0)
+    for label in u.STEPS:
         check(f"{name} {label} is to do", step_state(page, label) == "To do", step_state(page, label))
     check(name + " reports no problem yet", alarms(page) == [], alarms(page))
     check(name + " has no servers", fact_value(page, "Servers") == "None yet", fact_value(page, "Servers"))
@@ -2733,18 +2849,17 @@ def language(s, width):
 
 
 def overview_first_nokey(s, width):
-    """A server with nothing configured and no key: the key is a step, done outside the plugin."""
+    """A server with nothing configured that cannot keep its key file: that is a step, done outside the plugin."""
     name = width + " overview first run without a key"
     page = s.open("first", width)
     check(name + " is suspended", text(page, u.STATUS).startswith("Suspended."), text(page, u.STATUS))
-    key = u.step(page, "Set the secret key")
-    check(name + " has the key to do", step_state(page, "Set the secret key") == "To do", step_state(page, "Set the secret key"))
-    check(name + " says it is set outside the plugin", "JELLYMESH_SECRET_KEY" in key.inner_text() and "outside this plugin" in key.inner_text(), key.inner_text())
-    check(name + " says the sync waits", "waits for the secret key" in u.step(page, "Run the first sync").inner_text())
-    check(name + " says how to make a key", "openssl rand -base64 32" in key.inner_text(), key.inner_text())
-    check(name + " has three commands to copy", key.locator(u.STEP_COMMAND).count() == 3, key.locator(u.STEP_COMMAND).count())
-    check(name + " says a restart is not enough", "plain restart" in key.locator(u.STEP_AFTER).inner_text(), key.inner_text())
-    check(name + " every command has its own label", len({node.get_attribute("aria-label") for node in key.locator(u.STEP_COMMAND + " button").all()}) == 3)
+    label = "Let JellyMesh keep its key file"
+    key = u.step(page, label)
+    check(name + " has the key to do", step_state(page, label) == "To do", step_state(page, label))
+    check(name + " says where the file goes", "plugin data folder" in key.inner_text() and "restart Jellyfin" in key.inner_text(), key.inner_text())
+    check(name + " has no command to copy", key.locator(u.STEP_COMMAND).count() == 0, key.locator(u.STEP_COMMAND).count())
+    check(name + " the key has no tab to open", key.locator(u.TAB_LINK).count() == 0)
+    check(name + " says the sync waits", "waits until the stored logins can be used" in u.step(page, "Run the first sync").inner_text())
     healthy(page, name)
     u.shot(page, f"overview-first-nokey-{width}")
     page.context.close()
@@ -2756,9 +2871,11 @@ def overview_nokey(s, width):
     page = s.open("fresh", width)
     check(name + " is suspended", text(page, u.STATUS).startswith("Suspended."), text(page, u.STATUS))
     check(name + " does not count them as offline", fact_value(page, "Servers") == "2 servers, suspended", fact_value(page, "Servers"))
-    check(name + " reports no server problem", u.fact(page, "Servers").locator(u.ALARM).count() == 0, alarms(page))
+    notes = u.fact(page, "Servers").locator(u.ALARM).all_inner_texts()
+    check(name + " names each server whose login is needed", len(notes) == 2 and all("enter its login again" in note for note in notes), notes)
     check(name + " keeps a real date", re.search(r"\d", fact_value(page, "Last sync")) is not None, fact_value(page, "Last sync"))
-    check(name + " shows the key step", step_state(page, "Set the secret key") == "To do", step_state(page, "Set the secret key"))
+    check(name + " shows the passwords step", step_state(page, "Enter the passwords again") == "To do", step_state(page, "Enter the passwords again"))
+    opens(page, name + " the passwords step", u.step(page, "Enter the passwords again").locator(u.TAB_LINK), "servers")
     check(name + " a sync already done waits for nothing", "waits" not in u.step(page, "Run the first sync").inner_text(), u.step(page, "Run the first sync").inner_text())
     check(name + " does not repeat the warning", text(page, u.WARNING) not in text(page, u.SETUP) + text(page, u.SUMMARY))
     healthy(page, name)
@@ -2970,6 +3087,7 @@ SCENARIOS = {
     "cards-themes": (cards_all_themes, ["1280"]),
     "cards-offline": (cards_offline, WIDTHS),
     "cards-nokey": (cards_nokey, WIDTHS),
+    "relogin": (relogin, ["390"]),
     "cards-restart": (cards_restart, WIDTHS),
 }
 
