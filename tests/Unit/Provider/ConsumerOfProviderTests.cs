@@ -274,7 +274,7 @@ public class ProviderClientTests
     public async Task A_provider_that_does_not_answer_in_time_is_a_timeout()
     {
         var factory = new StubHttpClientFactory(new StubHandler(_ => throw new TaskCanceledException()));
-        var client = new JellyfinRemoteClient(factory);
+        var client = new JellyfinRemoteClient(factory) { Delay = (_, _) => Task.CompletedTask };
 
         var result = await client.GetChangesAsync(_endpoint, _session, null, CancellationToken.None);
 

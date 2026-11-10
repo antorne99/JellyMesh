@@ -42,7 +42,7 @@ public sealed class RealHandlerTests : IDisposable
 
     private JellyfinRemoteClient Catalog(TimeSpan? limit = null)
     {
-        return new JellyfinRemoteClient(_factory) { RequestLimit = limit ?? JellyfinRemoteClient.RequestTimeout };
+        return new JellyfinRemoteClient(_factory) { RequestLimit = limit ?? JellyfinRemoteClient.RequestTimeout, Delay = (_, _) => Task.CompletedTask };
     }
 
     private RemotePlaybackClient Playback() => new(_factory);
