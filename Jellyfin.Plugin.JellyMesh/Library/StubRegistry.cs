@@ -158,12 +158,12 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// Records as removed every server that the stubs or the index still name but the settings do not, under the lock, so
     /// that the cleanup after a removal deletes what they left (decision 44). A server configured again wins over its mark.
     /// </summary>
-    /// <param name="configured">The servers in the settings.</param>
+    /// <param name="configured">Reads the servers in the settings. It runs under the lock, so a removal in progress is never seen half done.</param>
     /// <param name="known">Other servers that left content, such as those with a catalog in the index.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>How many servers were marked now.</returns>
     /// <exception cref="IOException">The marks could not be saved. Nothing is marked.</exception>
-    public async Task<int> ForgetServersAsync(IReadOnlySet<Guid> configured, IEnumerable<Guid> known, CancellationToken cancellationToken)
+    public async Task<int> ForgetServersAsync(Func<IReadOnlySet<Guid>> configured, IEnumerable<Guid> known, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(configured);
         ArgumentNullException.ThrowIfNull(known);
@@ -172,11 +172,12 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         try
         {
             var state = State;
+            var settings = configured();
             var missing = state.Stubs.SelectMany(stub => stub.Sources)
                 .Concat(state.Series.SelectMany(series => series.Sources))
                 .Select(source => source.ServerId)
                 .Concat(known)
-                .Where(server => !configured.Contains(server) && !state.RemovedServers.Contains(server))
+                .Where(server => !settings.Contains(server) && !state.RemovedServers.Contains(server))
                 .Distinct()
                 .ToList();
             if (missing.Count > 0)

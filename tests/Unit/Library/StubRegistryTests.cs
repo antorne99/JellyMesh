@@ -129,7 +129,7 @@ public sealed class StubRegistryTests : IDisposable
                 RemovedServers = [markedBefore]
             });
 
-            var forgotten = await registry.ForgetServersAsync(new HashSet<Guid> { configured }, [inIndex, configured, markedBefore], CancellationToken.None);
+            var forgotten = await registry.ForgetServersAsync(() => new HashSet<Guid> { configured }, [inIndex, configured, markedBefore], CancellationToken.None);
 
             Assert.Equal(3, forgotten);
         }
@@ -145,7 +145,7 @@ public sealed class StubRegistryTests : IDisposable
         using var registry = Create();
         await SeedAsync(registry, StubState.Empty with { Stubs = [Entry("a", "A.strm") with { Sources = [new StubSource(configured, "1", "1")] }] });
 
-        Assert.Equal(0, await registry.ForgetServersAsync(new HashSet<Guid> { configured }, [configured], CancellationToken.None));
+        Assert.Equal(0, await registry.ForgetServersAsync(() => new HashSet<Guid> { configured }, [configured], CancellationToken.None));
 
         Assert.Empty(registry.State.RemovedServers);
     }
@@ -156,13 +156,30 @@ public sealed class StubRegistryTests : IDisposable
         using var registry = Create();
         await registry.EnterAsync(CancellationToken.None);
 
-        var forgetting = registry.ForgetServersAsync(new HashSet<Guid>(), [Guid.NewGuid()], CancellationToken.None);
+        var forgetting = registry.ForgetServersAsync(() => new HashSet<Guid>(), [Guid.NewGuid()], CancellationToken.None);
         await Task.Delay(50);
         var waited = !forgetting.IsCompleted;
         registry.Exit();
 
         Assert.True(waited);
         Assert.Equal(1, await forgetting);
+    }
+
+    [Fact]
+    public async Task ForgettingReadsTheSettingsOnlyUnderTheLock()
+    {
+        var restored = Guid.NewGuid();
+        var configured = new HashSet<Guid>();
+        using var registry = Create();
+        await registry.EnterAsync(CancellationToken.None);
+
+        var forgetting = registry.ForgetServersAsync(() => configured, [restored], CancellationToken.None);
+        await Task.Delay(50);
+        configured.Add(restored);
+        registry.Exit();
+
+        Assert.Equal(0, await forgetting);
+        Assert.Empty(registry.State.RemovedServers);
     }
 
     [Fact]

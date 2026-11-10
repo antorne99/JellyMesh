@@ -134,9 +134,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <inheritdoc />
     public Task<int> ForgetMissingServersAsync(CancellationToken cancellationToken)
     {
-        var configured = _registry.GetServers().Select(server => server.Id).ToHashSet();
         var known = _index.Snapshot.Servers.Select(catalog => catalog.ServerId).Concat(_feedCursors.Keys).ToList();
-        return _stubs?.ForgetServersAsync(configured, known, cancellationToken) ?? Task.FromResult(0);
+        return _stubs?.ForgetServersAsync(() => _registry.GetServers().Select(server => server.Id).ToHashSet(), known, cancellationToken)
+            ?? Task.FromResult(0);
     }
 
     /// <inheritdoc />
