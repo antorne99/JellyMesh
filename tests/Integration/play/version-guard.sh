@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Task 862: a stock route that names a stub by videoId or as the version it picks wants a local user who can see that
-# stub, as itemId does. Without it, anyone could ask for an attachment of a stub, which makes stock refresh the stub.
+# Task 862: a stock route that names a stub by videoId or as the version it picks, also in the legacy params, wants a
+# local user who can see that stub, as itemId does. Without it, anyone could ask for an attachment of a stub, which
+# makes stock refresh the stub.
 # Builds its own pair with the plugin of this checkout: PREFIX and PORT keep it off the jm-play-* pair.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-play-guard] [PORT=18436] [UP=0] [DOWN=0] version-guard.sh
 set -euo pipefail
@@ -108,6 +109,10 @@ check "a stream with a stub the user cannot see as its version is not found" 404
 subtitle="/Videos/$private/$stub_n/Subtitles/0/Stream.srt"
 check "an anonymous subtitle with a stub as its version is refused" 401 "$(as anonymous "$subtitle")"
 check "a subtitle with a stub the user cannot see as its version is not found" 404 "$(as outsider "$subtitle")"
+# Stock applies the legacy params first, and their field 2 picks the version over mediaSourceId.
+legacy="/Videos/$private/stream?static=true&mediaSourceId=$private_n&params=;;$stub_n"
+check "an anonymous stream with a stub as its version in the legacy params is refused" 401 "$(as anonymous "$legacy" -H 'Range: bytes=0-99')"
+check "a stream with a hidden stub as its version in the legacy params is not found" 404 "$(as outsider "$legacy" -H 'Range: bytes=0-99')"
 
 stream="/Videos/$stub/stream?static=true&mediaSourceId=$stub_n"
 check "an anonymous stream of a stub is refused" 401 "$(as anonymous "$stream" -H 'Range: bytes=0-99')"
