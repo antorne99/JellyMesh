@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.4.0.0"
+version: "0.4.1.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -19,16 +19,10 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - The credential key lives in a file the plugin creates in its data folder, so JELLYMESH_SECRET_KEY is no longer needed; credentials saved with it move to the file once at startup.
-  - If saved passwords can no longer be read, the page asks for them again on each server.
-  - On Windows the key file gets an explicit access list: the account running Jellyfin, SYSTEM and Administrators.
-  - Only removing a server from the page deletes its content, so an emptied settings file no longer wipes the federated folder.
-  - The Catalog tab offers to forget servers missing from the settings.
-  - A server whose removal cannot be saved stays configured.
-  - A removed server's copies leave the manual merges.
-  - Films that a remote groups into collections reach the library.
-  - Large catalogs materialize much faster.
-  - Sync reads retry brief remote errors.
-  - The .strm endpoint refuses requests that come through a proxy; the README covers the reverse proxy case.
+  - Stock streaming, subtitle, attachment and trickplay requests check the federated title they name, also as the version picked with mediaSourceId, videoId or the legacy params: without a signed-in user they get 401, and a user who cannot see the title gets 404.
+  - A stock stream can no longer reuse the play session of a federated title to reach it from another title.
+  - An anonymous attachment request no longer makes the server refresh a federated title.
+  - The page no longer warns about a library that holds the federated folder together with other folders: it counts as linked.
+  - The README explains that a user connected as a server cannot use that server from an app or the web client.
 
-  Not verified: the Windows access list is not yet tried on a Windows server.
+  Not verified: a play session reused from another title is covered by unit tests only, not on a running server.
