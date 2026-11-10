@@ -201,7 +201,8 @@ public class PlaybackFiltersTests
     [InlineData("Videos", "HeadVideoStream", "itemId")]
     [InlineData("Audio", "GetAudioStream", "itemId")]
     [InlineData("Subtitle", "GetSubtitle", "routeItemId")]
-    [InlineData("VideoAttachments", "GetAttachment", "itemId")]
+    [InlineData("VideoAttachments", "GetAttachment", "videoId")]
+    [InlineData("Trickplay", "GetTrickplayHlsPlaylist", "itemId")]
     [InlineData("Library", "GetDownload", "itemId")]
     public async Task A_stock_media_route_refuses_a_stub_without_a_user(string controller, string action, string argument)
     {
@@ -237,6 +238,72 @@ public class PlaybackFiltersTests
         _library.Setup(library => library.GetItemById(other)).Returns(new Movie());
 
         Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", other))));
+    }
+
+    private Guid LocalItem()
+    {
+        var local = Guid.NewGuid();
+        _library.Setup(library => library.GetItemById(local)).Returns(new Movie());
+        _library.Setup(library => library.GetItemById<BaseItem>(local, _user)).Returns(new Movie());
+        return local;
+    }
+
+    // The stock actions take a version as text, Trickplay as a Guid.
+    [Theory]
+    [InlineData("Videos", "GetVideoStream", "itemId", "mediaSourceId", true)]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", "itemId", "mediaSourceId", true)]
+    [InlineData("Subtitle", "GetSubtitle", "routeItemId", "routeMediaSourceId", true)]
+    [InlineData("VideoAttachments", "GetAttachment", "videoId", "mediaSourceId", true)]
+    [InlineData("Trickplay", "GetTrickplayHlsPlaylist", "itemId", "mediaSourceId", false)]
+    public async Task A_stock_media_route_refuses_a_stub_named_as_the_version_without_a_user(string controller, string action, string item, string version, bool asText)
+    {
+        var local = LocalItem();
+        Anonymous();
+        var context = Context(controller, action, (item, local), (version, asText ? _itemId.ToString("N") : _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stub_named_as_the_version_is_checked_and_not_the_item()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("mediaSourceId", _itemId.ToString("N")));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stub_named_as_the_version_serves_a_user_who_can_see_it()
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(GuardFilter(), Context("VideoAttachments", "GetAttachment", ("videoId", LocalItem()), ("mediaSourceId", _itemId.ToString("N")))));
+    }
+
+    [Fact]
+    public async Task Every_stub_a_route_names_must_be_visible()
+    {
+        CanSeeItem();
+        var hidden = Guid.NewGuid();
+        _library.Setup(library => library.GetItemById(hidden)).Returns(new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "hidden", "signature") });
+        _stubs.Setup(stubs => stubs.Find("hidden")).Returns(PlaybackValues.Stub(PlaybackValues.Source()) with { Id = "hidden" });
+        var context = Context("Subtitle", "GetSubtitle", ("routeItemId", _itemId), ("routeMediaSourceId", hidden.ToString("N")));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("not-a-guid")]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task A_version_that_names_no_stub_is_untouched(string? version)
+    {
+        Anonymous();
+
+        Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("mediaSourceId", version))));
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -12,6 +13,8 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// </summary>
 public sealed class StubLookup
 {
+    private static readonly string[] _namingArguments = ["itemId", "routeItemId", "videoId", "mediaSourceId", "routeMediaSourceId"];
+
     private readonly ILibraryManager _libraryManager;
     private readonly IStubRegistry _stubs;
 
@@ -44,6 +47,29 @@ public sealed class StubLookup
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Finds every item a stock action names, as its entity or as the version it picks.
+    /// </summary>
+    /// <param name="context">The action.</param>
+    /// <returns>The item identifiers, without repeats.</returns>
+    public static IReadOnlyCollection<Guid> NamedItemIdsOf(ActionExecutingContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var ids = new HashSet<Guid>();
+        foreach (var name in _namingArguments)
+        {
+            if (context.ActionArguments.TryGetValue(name, out var value)
+                && (value is Guid id || (value is string text && Guid.TryParse(text, out id)))
+                && !id.Equals(Guid.Empty))
+            {
+                ids.Add(id);
+            }
+        }
+
+        return ids;
     }
 
     /// <summary>
