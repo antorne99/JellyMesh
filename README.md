@@ -122,6 +122,8 @@ The other server must let you in first, or it looks like a stock remote and you 
 
 If you connect both ways, each server needs its own dedicated user on the other.
 
+Once a user is connected as a server, it can no longer use that server from an app or the web client. The login still works, but every other call gets 403: such a user can reach only what federation needs, that is the JellyMesh endpoints, playback, and images and subtitles of the shared titles. To watch the other server directly, use a separate personal account there.
+
 ### Settings
 
 | Setting | Default | Range |
