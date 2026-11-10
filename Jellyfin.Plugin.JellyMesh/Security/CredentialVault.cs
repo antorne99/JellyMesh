@@ -191,7 +191,7 @@ public sealed class CredentialVault : ICredentialVault
                 _logger.LogInformation("Moved the credentials of {Count} servers to the key file. JELLYMESH_SECRET_KEY is no longer used and can be removed", moved);
             }
         }
-        catch (Exception exception) when (exception is CryptographicException or IOException or InvalidOperationException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Moving the credentials to the key file failed: {Error}", exception.GetType().Name);
         }
