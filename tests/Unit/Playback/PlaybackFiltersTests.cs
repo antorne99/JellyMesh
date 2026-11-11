@@ -721,6 +721,7 @@ public class PlaybackFiltersTests
     {
         { "Playstate", "ReportPlaybackStart", "playbackStartInfo", new MediaBrowser.Model.Session.PlaybackStartInfo { PlaySessionId = "local-play" } },
         { "Playstate", "OnPlaybackStart", "playSessionId", "local-play" },
+        { "Playstate", "OnPlaybackStartLegacy", "playSessionId", "local-play" },
         { "Playstate", "ReportPlaybackProgress", "playbackProgressInfo", new MediaBrowser.Model.Session.PlaybackProgressInfo { PlaySessionId = "LOCAL-PLAY" } },
         { "Playstate", "OnPlaybackProgress", "playSessionId", "local-play" },
         { "Playstate", "OnPlaybackProgressLegacy", "playSessionId", "local-play" },
