@@ -63,11 +63,18 @@ segment() {
 check "of a local user on the device of the peer" 404 "$(segment "$mario_auth" "&DeviceId=$peer_device")"
 check "on the device in capitals" 404 "$(segment "$mario_auth" "&DeviceId=$(tr '[:lower:]' '[:upper:]' <<<"$peer_device")")"
 check "on the device in the legacy params" 404 "$(segment "$mario_auth" "&DeviceId=mario-device&params=;$peer_device")"
-check "on no device at all" 404 "$(segment "$mario_auth" "")"
 # Stock asks a segment for a user before any filter runs.
 check "of nobody on the device of the peer" 401 "$(segment "" "&DeviceId=$peer_device")"
 check "the peer keeps its ffmpeg" "$before" "$(ffmpeg_pids a)"
 check "and its stream goes on" 200 "$(peer_segment 2)"
+
+echo "--- a segment with no play session and no device, while the job of the peer has a device (Q95)"
+# Stock stops only the jobs without a device for it, so it goes to stock and starts an ffmpeg of its own.
+running=$(ffmpeg_pids a)
+check "of a local user goes to stock" 200 "$(segment "$mario_auth" "")"
+after=" $(ffmpeg_pids a) "
+check "the peer keeps its ffmpeg" 0 "$(for p in $running; do [[ "$after" == *" $p "* ]] || echo "$p"; done | grep -c . || true)"
+check "and its stream goes on" 200 "$(peer_segment 3)"
 
 echo "--- what a user of the provider sees of the peer"
 curl -sS -H "$ACCEPT" -H "Authorization: $mario_auth" "$base/Sessions" >"$WORK/mario-sessions"
