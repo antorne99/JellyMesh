@@ -294,9 +294,10 @@ public sealed class ProviderCatalog
         if (locations.Exists(location => IsWithin(root, location) && !IsWithin(location, root)))
         {
             var folders = federated.Prepend(root).Select(path => _library.FindByPath(path, true)).OfType<BaseItem>().Select(folder => folder.Id).ToArray();
+            // The folders themselves go too: a series library indexes a folder right under its path as a series.
             return folders.Length == 0
                 ? LibraryScope.Whole
-                : new LibraryScope([], _library.GetItemIds(new InternalItemsQuery { AncestorIds = folders, Recursive = true }).ToArray());
+                : new LibraryScope([], [.. folders, .. _library.GetItemIds(new InternalItemsQuery { AncestorIds = folders, Recursive = true })]);
         }
 
         if (federated.Count == 0)

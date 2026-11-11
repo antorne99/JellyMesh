@@ -176,8 +176,22 @@ public class ProviderCatalogTests
 
         _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
 
-        Assert.Equal([ProviderFixture.StubItem, season], seen()!.ExcludeItemIds);
+        Assert.Equal([root.Id, linked.Id, ProviderFixture.StubItem, season], seen()!.ExcludeItemIds);
         Assert.Empty(seen()!.AncestorIds);
+    }
+
+    [Fact]
+    public void A_page_of_a_library_above_the_federated_folder_leaves_out_the_folder_itself()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = "/media/federata";
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media");
+        var root = _fixture.WithFolder("/media/federata");
+        _fixture.Library.Setup(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>())).Returns([]);
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Series, 0, 10);
+
+        Assert.Contains(root.Id, seen()!.ExcludeItemIds);
     }
 
     [Fact]
@@ -192,7 +206,7 @@ public class ProviderCatalogTests
 
         _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
 
-        Assert.Equal([ProviderFixture.StubItem], seen()!.ExcludeItemIds);
+        Assert.Equal([root.Id, linked.Id, ProviderFixture.StubItem], seen()!.ExcludeItemIds);
         Assert.Empty(seen()!.AncestorIds);
     }
 
