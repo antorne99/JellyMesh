@@ -32,6 +32,7 @@ public sealed class PlaybackCoordinator
     private readonly IRemotePlaybackClient _client;
     private readonly PlaybackSessionStore _sessions;
     private readonly IPluginConfigurationStore _store;
+    private readonly ILastServedSourceStore _lastServed;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ConcurrentDictionary<string, StubSource> _workingSources = new(StringComparer.Ordinal);
@@ -47,6 +48,7 @@ public sealed class PlaybackCoordinator
     /// <param name="client">The playback client.</param>
     /// <param name="sessions">The sessions.</param>
     /// <param name="store">The configuration store.</param>
+    /// <param name="lastServed">The last server that served each stub to each user.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
     public PlaybackCoordinator(
@@ -54,6 +56,7 @@ public sealed class PlaybackCoordinator
         IRemotePlaybackClient client,
         PlaybackSessionStore sessions,
         IPluginConfigurationStore store,
+        ILastServedSourceStore lastServed,
         TimeProvider clock,
         ILogger<PlaybackCoordinator> logger)
     {
@@ -61,6 +64,7 @@ public sealed class PlaybackCoordinator
         _client = client;
         _sessions = sessions;
         _store = store;
+        _lastServed = lastServed;
         _clock = clock;
         _logger = logger;
     }
@@ -103,6 +107,7 @@ public sealed class PlaybackCoordinator
                 _workingSources[request.Stub.Id] = source;
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
                 await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
+                await RecordServedAsync(request, source).ConfigureAwait(false);
                 return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response);
             }
 
@@ -121,6 +126,7 @@ public sealed class PlaybackCoordinator
             {
                 _workingSources[request.Stub.Id] = source;
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
+                await RecordServedAsync(request, source).ConfigureAwait(false);
                 return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true);
             }
         }
@@ -292,11 +298,13 @@ public sealed class PlaybackCoordinator
     /// <param name="userId">The user.</param>
     /// <param name="itemId">The stub.</param>
     /// <param name="playSessionId">The play session.</param>
-    public void RecordLocalPlaySession(Guid userId, Guid itemId, string? playSessionId)
+    /// <param name="deviceIds">The devices it runs on.</param>
+    public void RecordLocalPlaySession(Guid userId, Guid itemId, string? playSessionId, IEnumerable<string?> deviceIds)
     {
+        ArgumentNullException.ThrowIfNull(deviceIds);
         if (!string.IsNullOrEmpty(playSessionId))
         {
-            _sessions.RecordLocal(userId, playSessionId, itemId);
+            _sessions.RecordLocal(userId, playSessionId, itemId, [.. deviceIds]);
         }
     }
 
@@ -444,6 +452,12 @@ public sealed class PlaybackCoordinator
             await CloseAsync(response.PlaySessionId!).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
         }
+    }
+
+    // Saved for the migration to the folders per server (D15). Not tied to the client: the answer is already settled.
+    private Task RecordServedAsync(PlaybackOpenRequest request, StubSource source)
+    {
+        return _lastServed.RecordAsync(request.Identity.UserId, request.Stub.Id, source.ServerId, CancellationToken.None);
     }
 
     private async Task ClosePreviousAsync(PlaybackSession? previous)

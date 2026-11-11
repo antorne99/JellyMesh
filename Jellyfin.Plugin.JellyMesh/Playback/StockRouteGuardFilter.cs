@@ -79,6 +79,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
+        if (controller == "DynamicHls" && string.IsNullOrWhiteSpace(PlaySessionOf(context)) && DeviceOf(context) is { } device)
+        {
+            // A segment without a play session makes stock stop every job of its device, whoever asks.
+            var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id ?? Guid.Empty;
+            if (_sessions.IsLocalDeviceOfAnother(caller, device))
+            {
+                context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
+                return;
+            }
+        }
+
         if (IsStop(controller, action))
         {
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id;
@@ -94,9 +105,32 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             {
                 await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
             }
+
+            await next().ConfigureAwait(false);
+            if (caller is { } stopper)
+            {
+                _sessions.EndLocal(stopper, playSessionId);
+            }
+
+            return;
+        }
+        else if (IsReport(controller, action) && _sessions.LocalItemOf(PlaySessionOf(context)) is not null)
+        {
+            if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is { } reporter)
+            {
+                // A report of another user would keep the stock job of the owner alive.
+                if (_sessions.IsLocalOfAnother(reporter.Id, PlaySessionOf(context)))
+                {
+                    context.Result = new NoContentResult();
+                    return;
+                }
+
+                _sessions.UseLocal(reporter.Id, PlaySessionOf(context));
+            }
         }
         else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
-            && StubsOf(context) is { Count: > 0 } stubs)
+            && StubsOf(context, out var recorded) is var stubs
+            && (stubs.Count > 0 || recorded))
         {
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
             if (authorization.User is not { } user)
@@ -112,6 +146,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
+            _sessions.UseLocal(user.Id, PlaySessionOf(context));
             var executed = await next().ConfigureAwait(false);
 
             // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
@@ -133,14 +168,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         await next().ConfigureAwait(false);
     }
 
-    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub.
-    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context)
+    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
+    // play session counts even when its stub no longer resolves.
+    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, out bool recorded)
     {
         var stubs = new Dictionary<Guid, StubEntry>();
         var named = StubLookup.NamedItemIdsOf(context).ToList();
-        if (_sessions.LocalItemOf(PlaySessionOf(context)) is { } played)
+        var played = _sessions.LocalItemOf(PlaySessionOf(context));
+        recorded = played is not null;
+        if (played is { } item)
         {
-            named.Add(played);
+            named.Add(item);
         }
 
         foreach (var id in named)
@@ -165,11 +203,33 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             || (controller == "Playstate" && action is "ReportPlaybackStopped" or "OnPlaybackStopped" or "OnPlaybackStoppedLegacy");
     }
 
+    // A start, a progress or a ping of its user keeps a local play session in use; one of another user gets 204.
+    private static bool IsReport(string controller, string action)
+    {
+        return controller == "Playstate"
+            && action is "ReportPlaybackStart" or "OnPlaybackStart" or "OnPlaybackStartLegacy"
+                or "ReportPlaybackProgress" or "OnPlaybackProgress" or "OnPlaybackProgressLegacy" or "PingPlaybackSession";
+    }
+
+    private static string? DeviceOf(ActionExecutingContext context)
+    {
+        return StubLookup.LegacyParamOf(context, StubLookup.LegacyDeviceField)
+            ?? (context.ActionArguments.TryGetValue("deviceId", out var value) ? value as string : null);
+    }
+
     private static string? PlaySessionOf(ActionExecutingContext context)
     {
         if (context.ActionArguments.TryGetValue("playbackStopInfo", out var report))
         {
             return (report as PlaybackStopInfo)?.PlaySessionId;
+        }
+
+        foreach (var name in new[] { "playbackProgressInfo", "playbackStartInfo" })
+        {
+            if (context.ActionArguments.TryGetValue(name, out var progress))
+            {
+                return (progress as PlaybackProgressInfo)?.PlaySessionId;
+            }
         }
 
         return StubLookup.LegacyParamOf(context, StubLookup.LegacyPlaySessionField)
