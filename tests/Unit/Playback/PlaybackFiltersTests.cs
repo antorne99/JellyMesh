@@ -675,12 +675,17 @@ public class PlaybackFiltersTests
     }
 
     [Fact]
-    public async Task A_local_play_session_stays_guarded_however_many_its_owner_opens()
+    public async Task A_local_play_session_its_owner_keeps_using_stays_guarded_however_many_they_open()
     {
         var owner = Guid.NewGuid();
         _fixture.Sessions.RecordLocal(owner, "local-play", _itemId);
         for (var index = 0; index <= PlaySessionOwners.MaxPerOwner; index++)
         {
+            if (index % 25 == 0)
+            {
+                _fixture.Sessions.UseLocal(owner, "local-play");
+            }
+
             _fixture.Sessions.RecordLocal(owner, "flood" + index, _itemId);
         }
 

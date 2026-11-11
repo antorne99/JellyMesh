@@ -9,9 +9,9 @@ namespace Jellyfin.Plugin.JellyMesh.Security;
 /// Who opened which play session. Stock Jellyfin stops a transcode for anyone who names its play session, so this is what
 /// stands between one user and the stream of another. It holds identifiers and nothing else, in memory: a restart ends the
 /// transcodes too. It has to outlive a stream, because the transcode of a finished or expired one still has to be closed.
-/// The record of the peers keeps the last <see cref="MaxPerOwner"/> play sessions of each, the least recently used going
-/// first, so whoever opens sessions in a loop only pushes out its own. The record of the local users has no limit: a
-/// session leaves it when its owner ends it or after it went unused for the idle time.
+/// Each record keeps the last <see cref="MaxPerOwner"/> play sessions of each owner, the least recently used going first,
+/// so whoever opens sessions in a loop only pushes out its own. In the record of the local users a session also leaves
+/// when its owner ends it or after it went unused for the session retention.
 /// </summary>
 public sealed class PlaySessionOwners
 {
@@ -22,7 +22,7 @@ public sealed class PlaySessionOwners
 
     private readonly Lock _lock = new();
     private readonly Dictionary<Guid, Dictionary<string, Entry>> _owners = [];
-    private readonly int? _limit;
+    private readonly int _limit;
     private readonly TimeProvider _clock;
     private long _uses;
 
@@ -35,22 +35,22 @@ public sealed class PlaySessionOwners
     {
     }
 
-    private PlaySessionOwners(int? limit, TimeProvider clock)
+    private PlaySessionOwners(int limit, TimeProvider clock)
     {
         _limit = limit;
         _clock = clock;
     }
 
     /// <summary>
-    /// Creates a record with no limit per owner, whose sessions leave when ended or idle.
+    /// Creates a record with <see cref="MaxPerOwner"/> sessions per owner, timed by a clock so that unused ones can leave.
     /// </summary>
     /// <param name="clock">The clock that times the last use of a session.</param>
     /// <returns>The record.</returns>
-    public static PlaySessionOwners WithoutLimit(TimeProvider clock)
+    public static PlaySessionOwners WithClock(TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(clock);
 
-        return new PlaySessionOwners(null, clock);
+        return new PlaySessionOwners(MaxPerOwner, clock);
     }
 
     /// <summary>
@@ -81,7 +81,7 @@ public sealed class PlaySessionOwners
             }
 
             sessions[playSessionId] = new Entry(++_uses, _clock.GetUtcNow(), itemId);
-            if (_limit is { } limit && sessions.Count > limit)
+            if (sessions.Count > _limit)
             {
                 sessions.Remove(sessions.MinBy(pair => pair.Value.Use).Key);
             }

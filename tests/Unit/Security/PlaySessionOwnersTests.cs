@@ -92,20 +92,6 @@ public class PlaySessionOwnersTests
     }
 
     [Fact]
-    public void A_record_without_a_limit_keeps_every_session_of_an_owner()
-    {
-        var owners = PlaySessionOwners.WithoutLimit(new ManualClock());
-        owners.Add(_owner, "oldest");
-
-        for (var index = 0; index < PlaySessionOwners.MaxPerOwner * 2; index++)
-        {
-            owners.Add(_owner, "flood" + index);
-        }
-
-        Assert.True(owners.BelongsToAnother(_other, "oldest"));
-    }
-
-    [Fact]
     public void A_session_leaves_when_its_owner_ends_it_and_only_then()
     {
         _owners.Add(_owner, "mine", Guid.NewGuid());
@@ -122,7 +108,7 @@ public class PlaySessionOwnersTests
     public void A_session_leaves_after_going_unused_for_the_idle_time()
     {
         var clock = new ManualClock();
-        var owners = PlaySessionOwners.WithoutLimit(clock);
+        var owners = PlaySessionOwners.WithClock(clock);
         var idle = TimeSpan.FromSeconds(90);
         owners.Add(_owner, "quiet");
         owners.Add(_owner, "used");

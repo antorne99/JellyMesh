@@ -1,5 +1,6 @@
 using System;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Security;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
@@ -40,5 +41,41 @@ public class PlaybackSessionStoreTests
         clock.Advance(TimeSpan.FromSeconds(1));
         sessions.ForgetUnusedLocal(_times);
         Assert.False(sessions.IsLocalOfAnother(_other, "local-play"));
+    }
+
+    [Fact]
+    public void An_unused_local_play_session_leaves_once_its_owner_opens_the_limit_more()
+    {
+        var sessions = new PlaybackSessionStore(new ManualClock());
+        sessions.RecordLocal(_owner, "local-play", _stub);
+        sessions.RecordLocal(_other, "of-another", _stub);
+
+        for (var index = 0; index < PlaySessionOwners.MaxPerOwner; index++)
+        {
+            sessions.RecordLocal(_owner, "flood" + index, _stub);
+        }
+
+        Assert.False(sessions.IsLocalOfAnother(_other, "local-play"));
+        Assert.True(sessions.IsLocalOfAnother(_other, "flood0"));
+        Assert.True(sessions.IsLocalOfAnother(_owner, "of-another"));
+    }
+
+    [Fact]
+    public void A_local_play_session_its_owner_keeps_using_stays_however_many_they_open()
+    {
+        var sessions = new PlaybackSessionStore(new ManualClock());
+        sessions.RecordLocal(_owner, "local-play", _stub);
+
+        for (var index = 0; index < PlaySessionOwners.MaxPerOwner * 2; index++)
+        {
+            if (index % 25 == 0)
+            {
+                sessions.UseLocal(_owner, "local-play");
+            }
+
+            sessions.RecordLocal(_owner, "flood" + index, _stub);
+        }
+
+        Assert.True(sessions.IsLocalOfAnother(_other, "local-play"));
     }
 }

@@ -20,7 +20,7 @@ public sealed class PlaybackSessionStore
     /// <param name="clock">The clock that times the local play sessions, the system clock if null.</param>
     public PlaybackSessionStore(TimeProvider? clock = null)
     {
-        _localOwners = PlaySessionOwners.WithoutLimit(clock ?? TimeProvider.System);
+        _localOwners = PlaySessionOwners.WithClock(clock ?? TimeProvider.System);
     }
 
     /// <summary>
