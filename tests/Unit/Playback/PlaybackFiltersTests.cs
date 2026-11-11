@@ -732,14 +732,14 @@ public class PlaybackFiltersTests
         var sessions = new PlaybackSessionStore(clock);
         sessions.RecordLocal(_user.Id, "local-play", _itemId);
 
-        clock.Advance(PlaybackTimeouts.Idle - TimeSpan.FromSeconds(1));
+        clock.Advance(PlaybackTimeouts.LocalIdleMinimum - TimeSpan.FromSeconds(1));
         Assert.True(await RunAsync(GuardFilter(sessions), Context(controller, action, ("itemId", _itemId), (argument, value))));
         clock.Advance(TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(PlaybackTimeouts.Idle);
+        sessions.ForgetIdleLocal(PlaybackTimeouts.LocalIdleMinimum);
         Assert.True(sessions.IsLocalOfAnother(Guid.NewGuid(), "local-play"));
 
-        clock.Advance(PlaybackTimeouts.Idle);
-        sessions.ForgetIdleLocal(PlaybackTimeouts.Idle);
+        clock.Advance(PlaybackTimeouts.LocalIdleMinimum);
+        sessions.ForgetIdleLocal(PlaybackTimeouts.LocalIdleMinimum);
         Assert.False(sessions.IsLocalOfAnother(Guid.NewGuid(), "local-play"));
     }
 
@@ -751,11 +751,11 @@ public class PlaybackFiltersTests
         var owner = Guid.NewGuid();
         sessions.RecordLocal(owner, "local-play", _itemId);
 
-        clock.Advance(PlaybackTimeouts.Idle - TimeSpan.FromSeconds(1));
+        clock.Advance(PlaybackTimeouts.LocalIdleMinimum - TimeSpan.FromSeconds(1));
         await RunAsync(GuardFilter(sessions), Context("Playstate", "PingPlaybackSession", ("playSessionId", "local-play")));
         await RunAsync(GuardFilter(sessions), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("playSessionId", "local-play")));
         clock.Advance(TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(PlaybackTimeouts.Idle);
+        sessions.ForgetIdleLocal(PlaybackTimeouts.LocalIdleMinimum);
 
         Assert.False(sessions.IsLocalOfAnother(_user.Id, "local-play"));
     }

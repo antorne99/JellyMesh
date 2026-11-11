@@ -72,12 +72,12 @@ public sealed class PlaybackSessionStore
     }
 
     /// <summary>
-    /// Forgets the stock play sessions of stubs nobody used for the idle time.
+    /// Forgets the stock play sessions of stubs nobody used for the idle time, never sooner than the local minimum.
     /// </summary>
     /// <param name="idle">The idle time.</param>
     public void ForgetIdleLocal(TimeSpan idle)
     {
-        _localOwners.ForgetIdle(idle);
+        _localOwners.ForgetIdle(idle > PlaybackTimeouts.LocalIdleMinimum ? idle : PlaybackTimeouts.LocalIdleMinimum);
     }
 
     /// <summary>
