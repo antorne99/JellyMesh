@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
@@ -78,7 +79,7 @@ public sealed class ProviderCatalog
         }
 
         var root = FederatedRoot();
-        return root is not null && !string.IsNullOrEmpty(item.Path) && PathIdentity.IsWithin(PathIdentity.Canonical(item.Path), root.Canonical, PathIdentity.Comparison);
+        return root is not null && !string.IsNullOrWhiteSpace(item.Path) && FolderPath.Of(item.Path).IsWithin(root);
     }
 
     /// <summary>
@@ -262,7 +263,7 @@ public sealed class ProviderCatalog
     private FolderPath? FederatedRoot()
     {
         var root = _store.Read(config => config.FederatedFolderPath);
-        return root.Length == 0 ? null : FolderPath.Of(root);
+        return string.IsNullOrWhiteSpace(root) ? null : FolderPath.Of(root);
     }
 
     /// <summary>
@@ -289,6 +290,7 @@ public sealed class ProviderCatalog
         {
             // Jellyfin names the federated folder after the path of the library, which may reach it by a link.
             var folders = above.Select(location => location.Below(root))
+                .OfType<string>()
                 .Prepend(root.Indexed)
                 .Concat(federated.Select(location => location.Indexed))
                 .Distinct(StringComparer.Ordinal)
@@ -322,16 +324,24 @@ public sealed class ProviderCatalog
         return real.Length == 0 ? null : new LibraryScope(real, []);
     }
 
-    // A path as Jellyfin indexes it, which is what it is looked up by, and as it is on disk, which is what it is compared by.
-    private sealed record FolderPath(string Indexed, string Canonical)
+    // A path as Jellyfin indexes it, which is what it is looked up by, and as it is on disk. It is within a folder if
+    // either form is, so that a link inside the federated folder pointing out of it does not let its content out.
+    private sealed record FolderPath(string Indexed, string Lexical, string Canonical)
     {
-        public static FolderPath Of(string path) => new(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), PathIdentity.Canonical(path));
+        public static FolderPath Of(string path)
+        {
+            var indexed = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            return new(indexed, indexed.Normalize(NormalizationForm.FormC), PathIdentity.Canonical(path));
+        }
 
-        public bool IsWithin(FolderPath folder) => PathIdentity.IsWithin(Canonical, folder.Canonical, PathIdentity.Comparison);
+        public bool IsWithin(FolderPath folder) =>
+            PathIdentity.IsWithin(Lexical, folder.Lexical, PathIdentity.Comparison) || PathIdentity.IsWithin(Canonical, folder.Canonical, PathIdentity.Comparison);
 
-        // A folder within this one, named from the indexed path of this one.
-        public string Below(FolderPath folder) =>
-            Path.Join(Indexed, folder.Canonical[Canonical.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        // A folder within this one on disk, named from the indexed path of this one. Null if it is not within on disk.
+        public string? Below(FolderPath folder) =>
+            PathIdentity.IsWithin(folder.Canonical, Canonical, PathIdentity.Comparison)
+                ? Path.Join(Indexed, folder.Canonical[Canonical.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                : null;
     }
 
     // The query terms of a page: the folders to read under and the items to leave out.

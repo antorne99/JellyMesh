@@ -96,6 +96,42 @@ public sealed class ProviderCatalogAliasTests : IDisposable
         Assert.Empty(seen()!.AncestorIds);
     }
 
+    [Fact]
+    public void What_the_federated_folder_holds_through_a_link_out_of_it_stays_federated()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "ssd", "serie"));
+        var inner = Path.Combine(_folder, "real", "federata", "Out");
+        Directory.CreateSymbolicLink(inner, Path.Combine(_folder, "ssd", "serie"));
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns([Library("Inner", inner), Library("Real", Real)]);
+
+        Assert.True(_fixture.Catalog.IsFederated(new Series { Path = Path.Combine(inner, "Show") }));
+        Assert.Equal(["Real"], _fixture.Catalog.ReadLibraries().Select(library => library.Name));
+    }
+
+    [Fact]
+    public void A_page_of_a_library_above_a_federated_folder_that_is_a_link_out_of_it_leaves_out_the_folder()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "lib"));
+        Directory.CreateDirectory(Path.Combine(_folder, "outside", "fed"));
+        var root = Path.Combine(_folder, "lib", "federata");
+        Directory.CreateSymbolicLink(root, Path.Combine(_folder, "outside", "fed"));
+        _fixture.Store.Configuration.FederatedFolderPath = root;
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, Path.Combine(_folder, "lib"));
+        var federated = _fixture.WithFolder(root);
+        _fixture.Library.Setup(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>())).Returns([]);
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Series, 0, 10);
+
+        Assert.Equal([federated.Id], seen()!.ExcludeItemIds);
+    }
+
+    [Fact]
+    public void A_blank_path_is_not_federated()
+    {
+        Assert.False(_fixture.Catalog.IsFederated(new Series { Path = "  " }));
+    }
+
     private static VirtualFolderInfo Library(string name, params string[] locations) =>
         new() { Name = name, ItemId = Guid.NewGuid().ToString(), CollectionType = CollectionTypeOptions.tvshows, Locations = locations };
 
