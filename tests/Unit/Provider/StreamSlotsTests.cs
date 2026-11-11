@@ -756,6 +756,19 @@ public class StreamSlotsTests
     }
 
     [Fact]
+    public void The_play_sessions_of_other_peers_outlive_their_slots()
+    {
+        var reservation = _slots.TryReserve(_peer, 1, null)!;
+        _slots.Confirm(_peer, reservation, "play", _kept, ["peer-device"]);
+
+        _slots.Release(_peer, "play");
+
+        Assert.Equal(["play"], _slots.SessionsOfOthers(_other));
+        Assert.Equal(["play"], _slots.SessionsOfOthers(Guid.Empty));
+        Assert.Empty(_slots.SessionsOfOthers(_peer));
+    }
+
+    [Fact]
     public void A_reservation_that_was_never_confirmed_runs_on_no_device()
     {
         var reservation = _slots.TryReserve(_peer, 1, null)!;

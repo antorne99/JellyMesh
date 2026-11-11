@@ -91,7 +91,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             // jobs that run without one.
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id ?? Guid.Empty;
             var device = DeviceOf(context);
-            if (_sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
+            if (string.IsNullOrWhiteSpace(device)
+                ? HasJobWithoutDevice(_sessions.LocalSessionsOfOthers(caller).Concat(_peerSlots.SessionsOfOthers(caller)))
+                : _sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
@@ -174,6 +176,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         await next().ConfigureAwait(false);
+    }
+
+    // Tells whether one of the play sessions has a live stock job without a device.
+    private bool HasJobWithoutDevice(IEnumerable<string> playSessionIds)
+    {
+        return playSessionIds.Any(id => _transcodes.GetTranscodingJob(id) is { } job && string.IsNullOrWhiteSpace(job.DeviceId));
     }
 
     // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
