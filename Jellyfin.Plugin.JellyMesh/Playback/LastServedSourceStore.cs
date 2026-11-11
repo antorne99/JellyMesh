@@ -128,7 +128,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IDisposable
         {
             using var stream = File.OpenRead(_path);
             var file = JsonSerializer.Deserialize<LastServedFile>(stream, _options);
-            if (file?.Version == CurrentVersion)
+            if (file?.Version == CurrentVersion && file.Entries.All(entry => entry is not null))
             {
                 return file.Entries;
             }

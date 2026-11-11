@@ -114,6 +114,7 @@ public sealed class LastServedSourceStoreTests : IDisposable
     [InlineData("{\"Version\":99,\"Entries\":[]}")]
     [InlineData("{\"Version\":1}")]
     [InlineData("{\"Version\":1,\"Entries\":[{\"UserId\":\"11111111-1111-1111-1111-111111111111\"}]}")]
+    [InlineData("{\"Version\":1,\"Entries\":[null]}")]
     public void ABadFileIsSetAside(string content)
     {
         Directory.CreateDirectory(_folder);
