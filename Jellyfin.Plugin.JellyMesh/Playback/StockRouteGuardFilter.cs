@@ -96,7 +96,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
         }
         else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
-            && StubsOf(context) is { Count: > 0 } stubs)
+            && StubsOf(context, out var recorded) is var stubs
+            && (stubs.Count > 0 || recorded))
         {
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
             if (authorization.User is not { } user)
@@ -133,14 +134,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         await next().ConfigureAwait(false);
     }
 
-    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub.
-    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context)
+    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
+    // play session counts even when its stub no longer resolves.
+    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, out bool recorded)
     {
         var stubs = new Dictionary<Guid, StubEntry>();
         var named = StubLookup.NamedItemIdsOf(context).ToList();
-        if (_sessions.LocalItemOf(PlaySessionOf(context)) is { } played)
+        var played = _sessions.LocalItemOf(PlaySessionOf(context));
+        recorded = played is not null;
+        if (played is { } item)
         {
-            named.Add(played);
+            named.Add(item);
         }
 
         foreach (var id in named)

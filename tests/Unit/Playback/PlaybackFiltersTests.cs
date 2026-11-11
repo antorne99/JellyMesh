@@ -633,6 +633,45 @@ public class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("playSessionId", "local-play"))));
     }
 
+    private void StubGone()
+    {
+        _library.Setup(library => library.GetItemById(_itemId)).Returns((BaseItem?)null);
+    }
+
+    [Theory]
+    [InlineData("playSessionId", "LOCAL-PLAY")]
+    [InlineData("params", ";;;;;;;;;;;;;;;;;;;;local-play")]
+    public async Task A_local_play_session_of_another_user_stays_guarded_when_its_stub_is_gone(string argument, string value)
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        StubGone();
+        var context = Context("Videos", "GetVideoStream", ("itemId", LocalItem()), (argument, value));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_local_play_session_whose_stub_is_gone_still_wants_a_user()
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+        StubGone();
+        Anonymous();
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("playSessionId", "local-play"));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Its_user_can_name_the_local_play_session_of_a_stub_that_is_gone()
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+        StubGone();
+
+        Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("playSessionId", "local-play"))));
+    }
+
     private ActionExecutingContext SegmentOfStub(string? playSessionId = null)
     {
         CanSeeItem();
