@@ -278,5 +278,37 @@ check "and the owner's transcode job is still there" 1 "$(job_hashes | grep -qx 
 check "a segment of their own film with their own device goes to stock" 200 "$(as outsider "$(segment_of_private DeviceId=jm-play-outsider)")"
 kill_encodings viewer "$victim" >/dev/null
 
+# Q89: one with no play session and no device stops every job without a device, so it is not found while another user
+# has a local play session. A segment's stop keeps a job's files; the owner's DELETE removes them only while it runs.
+open_bare() { # open_bare: opens the stub with no device in its URL and plays a segment; sets bare, bare_url and bare_job
+  local before
+  before=$(job_hashes)
+  bare=$(open_local viewer)
+  bare_url=$(transcode_url | perl -pe 's/(?<=[?&])DeviceId=[^&]*(&|$)//i; s/[?&]$//')
+  as viewer "/videos/$stub/master.m3u8?${bare_url#*\?}" >/dev/null
+  as viewer "/videos/$stub/$(grep -v '^#' "$WORK/as-body" | head -1)" >/dev/null
+  as viewer "/videos/$stub/$(grep -v '^#' "$WORK/as-body" | head -1)" >/dev/null
+  bare_job=$(comm -13 <(echo "$before") <(job_hashes) | head -1)
+}
+still_ran() { # still_ran: 1 if the owner's DELETE ActiveEncodings found the job of bare running and removed its files
+  local hashes
+  [ -n "$bare_job" ] || { echo "no job"; return; }
+  kill_encodings viewer "$bare" >/dev/null
+  sleep 2
+  hashes=$(job_hashes)
+  grep -qx "$bare_job" <<<"$hashes" && echo 0 || echo 1
+}
+open_bare
+check "a local play session without a device in its URL runs its own transcode job" 1 \
+  "$(echo "$bare_url" | grep -qi "PlaySessionId=$bare" && ! echo "$bare_url" | grep -qi "DeviceId=" && [ -n "$bare_job" ] && echo 1 || echo 0)"
+check "another user's segment of their own film with no device and no play session is not found" 404 \
+  "$(as outsider "$(segment_of_private "")")"
+check "nor with an empty device" 404 "$(as outsider "$(segment_of_private DeviceId=)")"
+check "nor with an empty device in the legacy params" 404 "$(as outsider "$(segment_of_private "params=;;$private_n")")"
+check "and the owner's job without a device still runs" 1 "$(still_ran)"
+open_bare
+check "the owner's own such segment goes to stock" 200 "$(as viewer "$(segment_of_private "")")"
+check "and stock stops their job without a device" 0 "$(still_ran)"
+
 [ "${DOWN:-0}" = 1 ] && down
 exit $FAILED
