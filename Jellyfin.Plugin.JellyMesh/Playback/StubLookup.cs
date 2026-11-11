@@ -102,12 +102,23 @@ public sealed class StubLookup
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        if (!context.ActionArguments.TryGetValue("params", out var value) || value is not string text)
+        return LegacyParamOf(context.ActionArguments.TryGetValue("params", out var value) ? (value as string) : null, field);
+    }
+
+    /// <summary>
+    /// Reads one field of a legacy <c>params</c> value, which stock splits on ';' and applies first.
+    /// </summary>
+    /// <param name="parameters">The value, as stock binds it.</param>
+    /// <param name="field">The field, from zero.</param>
+    /// <returns>The field, null when it is missing or blank, since stock skips it then.</returns>
+    public static string? LegacyParamOf(string? parameters, int field)
+    {
+        if (parameters is null)
         {
             return null;
         }
 
-        var fields = text.Split(';');
+        var fields = parameters.Split(';');
         return field < fields.Length && !string.IsNullOrWhiteSpace(fields[field]) ? fields[field] : null;
     }
 
