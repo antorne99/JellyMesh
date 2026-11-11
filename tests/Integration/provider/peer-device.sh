@@ -127,4 +127,29 @@ echo "devices answered $(status) to a user"
 echo "--- a segment with no play session on a device of nobody else still passes"
 check "of a local user on its own device" 200 "$(segment "$mario_auth" "&DeviceId=mario-device")"
 
+# --- Q99: LiveStreamId (begin) ---
+echo "--- a peer names a live stream on its own play session, which stock would serve in place of the item (Q99)"
+# A made-up id: stock looks a live stream up by id alone, and answers 404 for one that is not open.
+live=$(openssl rand -hex 16)
+# field22 <value>: a legacy params whose field 22, the live stream, is the value.
+field22() { printf '%s' "$(printf '%%3B%.0s' $(seq 1 22))$1"; }
+check "a segment with it in the query" 403 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&LiveStreamId=$live")"
+check "a segment with it in field 22" 403 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field22 "$live")")"
+check "a segment with it in the query and a blank field 22" 403 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&LiveStreamId=$live&params=$(field22 '%20')%3Bx")"
+check "a segment with it under the bound name of an encoded query" 403 "$(encoded "$peer2_auth" "/Videos/$real/hls1/main/40.ts" "$hls&DeviceId=$peer2_device&playSessionId=$own&liveStreamId=$live")"
+static_stream() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 60 -r 0-1023 -H "Authorization: $peer2_auth" "$base/Videos/$real/stream?static=true&MediaSourceId=$real&PlaySessionId=$own$1"
+}
+check "a progressive stream with it in the query" 403 "$(static_stream "&LiveStreamId=$live")"
+check "the same progressive stream without it" 206 "$(static_stream "")"
+check "the same segment without it" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own")"
+playback_info() {
+  curl -sS -o /dev/null -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer2_auth" -H 'Content-Type: application/json' \
+    -d "$2" "$base/Items/$real/PlaybackInfo$1"
+}
+check "a PlaybackInfo with it in the query" 403 "$(playback_info "?LiveStreamId=$live" "$PROFILE_ENCODE")"
+check "a PlaybackInfo with it in the body" 403 "$(playback_info "" "$(jq -c --arg l "$live" '. + {LiveStreamId: $l}' <<<"$PROFILE_ENCODE")")"
+check "the same PlaybackInfo without it" 200 "$(playback_info "" "$PROFILE_ENCODE")"
+# --- Q99: LiveStreamId (end) ---
+
 exit "$FAILED"
