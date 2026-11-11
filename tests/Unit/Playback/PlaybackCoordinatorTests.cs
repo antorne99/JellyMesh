@@ -951,7 +951,7 @@ public class PlaybackCoordinatorTests
     {
         var logger = new CapturingLogger<PlaybackCoordinator>();
         var fixture = new CoordinatorFixture();
-        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, fixture.Store, fixture.Clock, logger);
+        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, fixture.Store, fixture.LastServed, fixture.Clock, logger);
         fixture.Client.Policy = new RemoteTranscodePolicy("qsv\r\nforged line", true, true, true);
         var stub = PlaybackValues.Stub(PlaybackValues.Source());
 

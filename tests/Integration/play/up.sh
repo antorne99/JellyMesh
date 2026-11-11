@@ -15,7 +15,8 @@ library remote Serie tvshows /media/serie
 user remote jellymesh >/dev/null
 scan remote
 
-start local jm-play-media:/media
+# The plugin before signing keeps remote servers suspended without the secret key variable.
+START_ENV=${START_ENV:--e JELLYMESH_SECRET_KEY=jm-play-test-key-0123456789abcdef0123456789} start local jm-play-media:/media
 docker exec jm-play-local sh -c 'mkdir -p /media/film /media/privata && touch /media/film/.keep /media/privata/.keep'
 library local Film movies /media/film /federata/Film
 library local Privato movies /media/privata

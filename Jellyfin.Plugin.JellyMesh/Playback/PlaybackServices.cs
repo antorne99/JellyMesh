@@ -3,6 +3,7 @@ using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -20,6 +21,9 @@ public static class PlaybackServices
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<IRemotePlaybackClient, RemotePlaybackClient>();
         services.AddSingleton<PlaybackSessionStore>();
+        services.AddSingleton<ILastServedSourceStore>(provider => new LastServedSourceStore(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<LastServedSourceStore>>()));
         services.AddSingleton<PlaybackCoordinator>();
         services.AddSingleton<PlaybackRefusal>();
         services.AddSingleton<StubLookup>();

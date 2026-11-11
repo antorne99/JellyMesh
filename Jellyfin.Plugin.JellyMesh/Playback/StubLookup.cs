@@ -14,6 +14,11 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 public sealed class StubLookup
 {
     /// <summary>
+    /// The field of the legacy <c>params</c> query string that stock reads as the device, over <c>deviceId</c>.
+    /// </summary>
+    public const int LegacyDeviceField = 1;
+
+    /// <summary>
     /// The field of the legacy <c>params</c> query string that stock reads as the version, over <c>mediaSourceId</c>.
     /// </summary>
     public const int LegacyMediaSourceField = 2;
