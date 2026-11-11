@@ -33,11 +33,15 @@ public static class StubPlanner
         ArgumentNullException.ThrowIfNull(input);
 
         var catalog = IndexItemLookup.Build(input.Snapshot);
-        var matcher = new StubMatcher(input.State.Stubs);
+
+        // Stubs of the server folders belong to PlanByServer alone.
+        var flat = input.State.Stubs.Where(stub => stub.ServerId is null).ToList();
+        var flatSeries = input.State.Series.Where(series => series.ServerId is null).ToList();
+        var matcher = new StubMatcher(flat);
         var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
 
-        var paths = new PathAllocator(input.State.Stubs, input.State.Series, FederatedPaths.MovieFolder, FederatedPaths.SeriesFolderOf);
-        var scope = new SeriesScope(null, input.State.Series, input.View.Contents, paths.SeriesFolder, input.LocalSeriesOf);
+        var paths = new PathAllocator(flat, flatSeries, FederatedPaths.MovieFolder, FederatedPaths.SeriesFolderOf);
+        var scope = new SeriesScope(null, flatSeries, input.View.Contents, paths.SeriesFolder, input.LocalSeriesOf);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
         var works = new List<StubWork>();
         var unplaceable = 0;
@@ -68,7 +72,7 @@ public static class StubPlanner
 
         var seriesWorks = seriesPlans.Values.Select(plan => plan.Work).ToList();
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
-        var unclaimed = input.State.Stubs.Where(stub => !matcher.IsClaimed(stub)).ToList();
+        var unclaimed = flat.Where(stub => !matcher.IsClaimed(stub)).ToList();
 
         var held = new Dictionary<(Guid ServerId, string LibraryId), int>();
         var servers = input.Servers.ToDictionary(server => server.Id);
