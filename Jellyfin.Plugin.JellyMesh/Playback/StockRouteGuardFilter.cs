@@ -21,7 +21,8 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// reads the <c>.strm</c> from loopback, so without this anyone with an item ID would read remote data. Also learns of a
 /// stop from <c>DELETE /Videos/ActiveEncodings</c>, which is how jellyfin-web ends a transcode. Stock stops a play session
 /// for anyone who names it, so a stub played on this server is kept out of the reach of other users here. So are the
-/// devices of the streams a peer opened here, since stock stops every job of a device for a segment with no play session.
+/// play sessions a peer opened here and their devices, since stock stops every job of a device for a segment with no play
+/// session.
 /// </summary>
 public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
@@ -104,7 +105,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         {
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id;
             var playSessionId = PlaySessionOf(context);
-            if (caller is { } user && _sessions.IsLocalOfAnother(user, playSessionId))
+            if (caller is { } user && (_sessions.IsLocalOfAnother(user, playSessionId) || _peerSlots.IsOfAnother(user, playSessionId)))
             {
                 // What stock answers for a play session it does not know.
                 context.Result = new NoContentResult();
@@ -124,12 +125,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
             return;
         }
-        else if (IsReport(controller, action) && _sessions.LocalItemOf(PlaySessionOf(context)) is not null)
+        else if (IsReport(controller, action) && IsRecorded(PlaySessionOf(context)))
         {
             if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is { } reporter)
             {
                 // A report of another user would keep the stock job of the owner alive.
-                if (_sessions.IsLocalOfAnother(reporter.Id, PlaySessionOf(context)))
+                if (_sessions.IsLocalOfAnother(reporter.Id, PlaySessionOf(context)) || _peerSlots.IsOfAnother(reporter.Id, PlaySessionOf(context)))
                 {
                     context.Result = new NoContentResult();
                     return;
@@ -138,7 +139,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 _sessions.UseLocal(reporter.Id, PlaySessionOf(context));
             }
         }
-        else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
+        else if (IsMedia(controller, action) && await PeerSessionRefusalAsync(context).ConfigureAwait(false) is { } refusal)
+        {
+            context.Result = refusal;
+            return;
+        }
+        else if (IsMedia(controller, action)
             && StubsOf(context, out var recorded) is var stubs
             && (stubs.Count > 0 || recorded))
         {
@@ -178,6 +184,31 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         await next().ConfigureAwait(false);
     }
 
+    // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.
+    private bool IsRecorded(string? playSessionId)
+    {
+        return _sessions.LocalItemOf(playSessionId) is not null || _peerSlots.IsOfAnother(Guid.Empty, playSessionId);
+    }
+
+    // Refuses a stream that names the play session of a peer, as one that names the local play session of another user.
+    // Null when the peer itself names it, or when no peer recorded it.
+    private async Task<IActionResult?> PeerSessionRefusalAsync(ActionExecutingContext context)
+    {
+        var playSessionId = PlaySessionOf(context);
+        if (!_peerSlots.IsOfAnother(Guid.Empty, playSessionId))
+        {
+            return null;
+        }
+
+        var user = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User;
+        if (user is null)
+        {
+            return new StatusCodeResult(StatusCodes.Status401Unauthorized);
+        }
+
+        return _peerSlots.IsOfAnother(user.Id, playSessionId) ? new StatusCodeResult(StatusCodes.Status404NotFound) : null;
+    }
+
     // Tells whether one of the play sessions has a live stock job without a device.
     private bool HasJobWithoutDevice(IEnumerable<string> playSessionIds)
     {
@@ -206,6 +237,11 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         return stubs;
+    }
+
+    private static bool IsMedia(string controller, string action)
+    {
+        return _mediaControllers.Contains(controller) || IsFileAction(controller, action);
     }
 
     private static bool IsFileAction(string controller, string action)
