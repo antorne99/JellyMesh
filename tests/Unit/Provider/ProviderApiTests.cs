@@ -30,6 +30,10 @@ public class ProviderCatalogTests
     [Theory]
     [InlineData("/federata/Film/x/x.strm", null, true)]
     [InlineData("/federata/Serie/x", null, true)]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film/x/x - Server.strm", null, true)]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show/Season 01", null, true)]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e", null, true)]
+    [InlineData("/federata", null, true)]
     [InlineData("/elsewhere/x.strm", "http://127.0.0.1:8096/JellyMesh/Play/stub", true)]
     [InlineData("/elsewhere/x.strm", "http://127.0.0.1:8096/JellyMesh/Play/stub?sig=0123456789abcdef", true)]
     [InlineData("/media/film/x.mkv", null, false)]
@@ -73,26 +77,148 @@ public class ProviderCatalogTests
         Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, ProviderFixture.SharedItem));
     }
 
-    [Fact]
-    public void A_page_excludes_stubs_in_the_query_so_the_total_is_true()
+    [Theory]
+    [InlineData("/federata/Film")]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film")]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Serie")]
+    [InlineData("/federata")]
+    public void A_page_of_a_library_with_federated_paths_reads_only_under_its_real_paths(string federated)
     {
-        var folder = new Folder { Id = Guid.NewGuid() };
-        var stubs = new List<Guid> { ProviderFixture.StubItem };
-        _fixture.Library.Setup(manager => manager.FindByPath("/federata/Film", true)).Returns(folder);
-        _fixture.Library.Setup(manager => manager.GetItemIds(It.Is<InternalItemsQuery>(query => query.AncestorIds.Contains(folder.Id)))).Returns(stubs);
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", federated, "/media/more/");
+        var film = _fixture.WithFolder("/media/film");
+        var more = _fixture.WithFolder("/media/more");
+        var seen = CaptureQuery();
+
+        var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Equal([film.Id, more.Id], seen()!.AncestorIds);
+        Assert.Empty(seen()!.ExcludeItemIds);
+        Assert.Equal(ProviderFixture.SharedLibrary, seen()!.ParentId);
+        Assert.True(seen()!.Recursive);
+        Assert.Equal([BaseItemKind.Movie], seen()!.IncludeItemTypes);
+        Assert.Equal(1, page.TotalRecordCount);
+    }
+
+    [Fact]
+    public void A_page_of_a_library_with_only_real_paths_is_not_narrowed()
+    {
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", "/federata-other/Film");
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Empty(seen()!.AncestorIds);
+        Assert.Empty(seen()!.ExcludeItemIds);
+        _fixture.Library.Verify(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("/federata/Film", "/federata/Serie")]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film", "/federata/7c9e6679-7425-40de-944b-e07fc1f90ae7/Film")]
+    [InlineData("/federata", "/federata/Film")]
+    public void A_library_with_only_federated_paths_reads_as_empty(string first, string second)
+    {
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, first, second);
+
+        var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Empty(page.Items);
+        Assert.Equal(0, page.TotalRecordCount);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_library_whose_real_paths_are_not_indexed_yet_reads_as_empty()
+    {
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", "/federata/Film");
+
+        var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Equal(0, page.TotalRecordCount);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_library_that_is_gone_reads_as_empty()
+    {
+        _fixture.WithLibrary(ProviderFixture.PrivateLibrary, "/media/film");
+
+        var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Equal(0, page.TotalRecordCount);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_page_of_a_library_above_the_federated_folder_excludes_everything_under_it_in_the_query()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = "/media/federata/";
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media", "/media/federata/Film");
+        var root = _fixture.WithFolder("/media/federata");
+        var linked = _fixture.WithFolder("/media/federata/Film");
+        var season = Guid.NewGuid();
+        _fixture.Library.Setup(manager => manager.GetItemIds(It.Is<InternalItemsQuery>(query => query.AncestorIds.SequenceEqual(new[] { root.Id, linked.Id }) && query.Recursive)))
+            .Returns([ProviderFixture.StubItem, season]);
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Equal([ProviderFixture.StubItem, season], seen()!.ExcludeItemIds);
+        Assert.Empty(seen()!.AncestorIds);
+    }
+
+    [Fact]
+    public void Without_a_federated_folder_a_page_is_not_narrowed()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", "/federata/Film");
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Empty(seen()!.AncestorIds);
+        Assert.Empty(seen()!.ExcludeItemIds);
+    }
+
+    [Fact]
+    public void Libraries_with_only_federated_paths_are_not_offered()
+    {
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+        [
+            Library("Mixed", CollectionTypeOptions.movies, "/media/film", "/federata/Film"),
+            Library("Flat", CollectionTypeOptions.movies, "/federata/Film"),
+            Library("PerServer", CollectionTypeOptions.tvshows, "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Serie", "/federata/7c9e6679-7425-40de-944b-e07fc1f90ae7/Serie/"),
+            Library("Root", CollectionTypeOptions.movies, "/federata"),
+            Library("Above", CollectionTypeOptions.movies, "/"),
+            Library("Sibling", CollectionTypeOptions.movies, "/federata-other/Film"),
+            Library("NoPaths", CollectionTypeOptions.movies)
+        ]);
+
+        var names = _fixture.Catalog.ReadLibraries().Select(library => library.Name);
+
+        Assert.Equal(["Mixed", "Above", "Sibling", "NoPaths"], names);
+    }
+
+    [Fact]
+    public void Without_a_federated_folder_every_library_is_offered()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns([Library("Flat", CollectionTypeOptions.movies, "/federata/Film")]);
+
+        Assert.Equal(["Flat"], _fixture.Catalog.ReadLibraries().Select(library => library.Name));
+    }
+
+    private static VirtualFolderInfo Library(string name, CollectionTypeOptions type, params string[] locations) =>
+        new() { Name = name, ItemId = Guid.NewGuid().ToString(), CollectionType = type, Locations = locations };
+
+    private Func<InternalItemsQuery?> CaptureQuery()
+    {
         InternalItemsQuery? seen = null;
         _fixture.Library.Setup(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()))
             .Callback<InternalItemsQuery>(query => seen = query)
             .Returns(new QueryResult<BaseItem>(0, 1, [new Movie { Path = "/media/film/a.mkv" }]));
         _fixture.WithDtos();
-
-        var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
-
-        Assert.Contains(ProviderFixture.StubItem, seen!.ExcludeItemIds);
-        Assert.Equal(ProviderFixture.SharedLibrary, seen.ParentId);
-        Assert.True(seen.Recursive);
-        Assert.Equal([BaseItemKind.Movie], seen.IncludeItemTypes);
-        Assert.Equal(1, page.TotalRecordCount);
+        return () => seen;
     }
 
     [Fact]
@@ -254,6 +380,16 @@ public class ProviderControllerTests
         var library = Assert.Single(result.Value!.Items);
         Assert.Equal(ProviderFixture.SharedLibrary.ToString("N"), library.Id);
         Assert.Equal("movies", library.CollectionType);
+    }
+
+    [Fact]
+    public async Task A_shared_library_left_with_only_federated_paths_is_neither_listed_nor_read()
+    {
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film");
+
+        Assert.Empty((await _controller.GetLibraries()).Value!.Items);
+        Assert.Equal(0, (await _controller.GetItems(RemoteItemType.Movie, ProviderFixture.SharedLibrary, null)).Value!.TotalRecordCount);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
     }
 
     [Fact]
@@ -445,6 +581,15 @@ public class PeerAdminControllerTests
     public void A_limit_must_be_positive(int limit)
     {
         Assert.IsType<BadRequestResult>(_controller.SetPeer(_fixture.Peer.Id, Request(limit)));
+    }
+
+    [Fact]
+    public void A_library_with_only_federated_paths_cannot_be_shared()
+    {
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/federata/Film");
+
+        Assert.Empty(_controller.GetOptions().Value!.Libraries);
+        Assert.IsType<BadRequestResult>(_controller.SetPeer(_fixture.Peer.Id, Request()));
     }
 
     [Fact]

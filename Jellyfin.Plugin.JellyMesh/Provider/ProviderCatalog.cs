@@ -5,7 +5,6 @@ using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
-using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Dto;
@@ -41,6 +40,8 @@ public sealed class ProviderCatalog
         ItemFields.Chapters
     ];
 
+    private static readonly StringComparison _pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     private readonly ILibraryManager _library;
     private readonly IDtoService _dto;
     private readonly IPluginConfigurationStore _store;
@@ -73,24 +74,20 @@ public sealed class ProviderCatalog
             return true;
         }
 
-        var folder = _store.Read(config => config.FederatedFolderPath);
-        if (folder.Length == 0 || string.IsNullOrEmpty(item.Path))
-        {
-            return false;
-        }
-
-        var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar;
-        return item.Path.StartsWith(prefix, StringComparison.Ordinal);
+        var root = FederatedRoot();
+        return root is not null && !string.IsNullOrEmpty(item.Path) && IsWithin(item.Path, root);
     }
 
     /// <summary>
-    /// Lists the film and series libraries of this server.
+    /// Lists the film and series libraries of this server, except those whose paths are all federated.
     /// </summary>
     /// <returns>The libraries.</returns>
     public IReadOnlyList<ProviderLibrary> ReadLibraries()
     {
+        var root = FederatedRoot();
         return _library.GetVirtualFolders()
             .Where(folder => folder.CollectionType is CollectionTypeOptions.movies or CollectionTypeOptions.tvshows && Guid.TryParse(folder.ItemId, out _))
+            .Where(folder => root is null || !IsOnlyFederated(folder, root))
             .Select(folder => new ProviderLibrary(Guid.Parse(folder.ItemId).ToString("N"), folder.Name ?? string.Empty, folder.CollectionType!.Value == CollectionTypeOptions.movies ? "movies" : "tvshows"))
             .ToList();
     }
@@ -142,13 +139,19 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
 
         // The exclusion is in the query so that the total stays true for the paging of the consumer.
+        if (ScopeOf(libraryId) is not { } scope)
+        {
+            return new ProviderItemsResponse([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
+        }
+
         var query = new InternalItemsQuery(caller.User)
         {
             ParentId = libraryId,
             Recursive = true,
             IncludeItemTypes = [KindOf(type)],
             IsVirtualItem = false,
-            ExcludeItemIds = FederatedItemIds(),
+            AncestorIds = scope.AncestorIds,
+            ExcludeItemIds = scope.ExcludeItemIds,
             OrderBy = [(ItemSortBy.DateCreated, SortOrder.Ascending), (ItemSortBy.SortName, SortOrder.Ascending)],
             StartIndex = startIndex,
             Limit = limit,
@@ -243,23 +246,70 @@ public sealed class ProviderCatalog
         return new ProviderItemsResponse(dtos, total, quality);
     }
 
-    private Guid[] FederatedItemIds()
+    private static bool IsOnlyFederated(VirtualFolderInfo library, string root)
+    {
+        var locations = Locations(library);
+        return locations.Count > 0 && locations.All(location => IsWithin(location, root));
+    }
+
+    // The paths of a library, normalized as the federated folder is.
+    private static List<string> Locations(VirtualFolderInfo library) =>
+        (library.Locations ?? []).Where(location => !string.IsNullOrWhiteSpace(location)).Select(Normalized).ToList();
+
+    // Whether a path is the folder or anywhere below it, compared as Jellyfin compares paths.
+    private static bool IsWithin(string path, string folder) =>
+        string.Equals(path, folder, _pathComparison) || path.StartsWith(folder + Path.DirectorySeparatorChar, _pathComparison);
+
+    private static string Normalized(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private string? FederatedRoot()
     {
         var root = _store.Read(config => config.FederatedFolderPath);
-        if (root.Length == 0)
+        return root.Length == 0 ? null : Normalized(root);
+    }
+
+    /// <summary>
+    /// Narrows a page of a library to what is outside the federated folder, at any depth. Null when there is nothing to read.
+    /// </summary>
+    private LibraryScope? ScopeOf(Guid libraryId)
+    {
+        if (FederatedRoot() is not { } root)
         {
-            return [];
+            return LibraryScope.Whole;
         }
 
-        var ids = new List<Guid>();
-        foreach (var path in new[] { FederatedFolderLayout.MoviesPath(root), FederatedFolderLayout.SeriesPath(root) })
+        var library = _library.GetVirtualFolders().Find(folder => Guid.TryParse(folder.ItemId, out var id) && id == libraryId);
+        if (library is null)
         {
-            if (_library.FindByPath(path, true) is { } folder)
-            {
-                ids.AddRange(_library.GetItemIds(new InternalItemsQuery { AncestorIds = [folder.Id], Recursive = true }));
-            }
+            return null;
         }
 
-        return ids.ToArray();
+        var locations = Locations(library);
+        var federated = locations.Where(location => IsWithin(location, root)).ToList();
+        if (locations.Exists(location => IsWithin(root, location) && !IsWithin(location, root)))
+        {
+            var folders = federated.Prepend(root).Select(path => _library.FindByPath(path, true)).OfType<BaseItem>().Select(folder => folder.Id).ToArray();
+            return folders.Length == 0
+                ? LibraryScope.Whole
+                : new LibraryScope([], _library.GetItemIds(new InternalItemsQuery { AncestorIds = folders, Recursive = true }).ToArray());
+        }
+
+        if (federated.Count == 0)
+        {
+            return LibraryScope.Whole;
+        }
+
+        var real = locations.Except(federated)
+            .Select(path => _library.FindByPath(path, true))
+            .OfType<BaseItem>()
+            .Select(folder => folder.Id)
+            .ToArray();
+        return real.Length == 0 ? null : new LibraryScope(real, []);
+    }
+
+    // The query terms of a page: the folders to read under and the items to leave out.
+    private sealed record LibraryScope(Guid[] AncestorIds, Guid[] ExcludeItemIds)
+    {
+        public static LibraryScope Whole { get; } = new([], []);
     }
 }
