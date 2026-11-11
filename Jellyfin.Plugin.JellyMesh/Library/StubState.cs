@@ -8,8 +8,11 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed record StubState
 {
-    /// <summary>The current file format.</summary>
-    public const int CurrentVersion = 1;
+    /// <summary>The current file format. Version 2 adds the server of each stub and the version groups.</summary>
+    public const int CurrentVersion = 2;
+
+    /// <summary>The format of the flat layout, which reads as the current one with no server and no group.</summary>
+    public const int FlatLayoutVersion = 1;
 
     /// <summary>Gets an empty registry.</summary>
     public static StubState Empty { get; } = new();
@@ -22,6 +25,9 @@ public sealed record StubState
 
     /// <summary>Gets the stub series.</summary>
     public IReadOnlyList<SeriesStub> Series { get; init; } = [];
+
+    /// <summary>Gets the version groups, the source of truth for linking the versions of a title.</summary>
+    public IReadOnlyList<VersionGroup> Groups { get; init; } = [];
 
     /// <summary>
     /// Gets the servers the administrator removed from the page. Only their stubs and catalogs are deleted: a server missing
