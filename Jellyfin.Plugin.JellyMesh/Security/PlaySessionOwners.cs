@@ -191,14 +191,27 @@ public sealed class PlaySessionOwners
     }
 
     /// <summary>
-    /// Tells whether a play session of someone else runs on a device.
+    /// Lists the play sessions someone else opened, as they are now.
+    /// </summary>
+    /// <param name="user">The user.</param>
+    /// <returns>The play sessions of the other users.</returns>
+    public IReadOnlyList<string> SessionsOfOthers(Guid user)
+    {
+        lock (_lock)
+        {
+            return _owners.Where(pair => !pair.Key.Equals(user)).SelectMany(pair => pair.Value.Keys).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Tells whether a play session of someone else runs on a device. No device, or a blank one, names none.
     /// </summary>
     /// <param name="user">The user.</param>
     /// <param name="device">The device.</param>
     /// <returns>Whether a play session of another user runs on it.</returns>
     public bool DeviceOfAnother(Guid user, string? device)
     {
-        if (string.IsNullOrEmpty(device))
+        if (string.IsNullOrWhiteSpace(device))
         {
             return false;
         }

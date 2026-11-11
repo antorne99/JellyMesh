@@ -107,14 +107,24 @@ public sealed class PlaybackSessionStore
 
     /// <summary>
     /// Tells whether the stock play session of a stub played on this server by someone else runs on a device. Stock stops
-    /// every job of a device for a segment that names no play session.
+    /// every job of a device for a segment that names no play session. No device, or a blank one, names none.
     /// </summary>
     /// <param name="userId">The user.</param>
-    /// <param name="deviceId">The device.</param>
+    /// <param name="deviceId">The device, null if the request names none.</param>
     /// <returns>Whether another user played a stub here from it.</returns>
     public bool IsLocalDeviceOfAnother(Guid userId, string? deviceId)
     {
         return _localOwners.DeviceOfAnother(userId, deviceId);
+    }
+
+    /// <summary>
+    /// Lists the stock play sessions of the stubs other users play on this server.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <returns>The play sessions of the other users.</returns>
+    public IReadOnlyList<string> LocalSessionsOfOthers(Guid userId)
+    {
+        return _localOwners.SessionsOfOthers(userId);
     }
 
     /// <summary>

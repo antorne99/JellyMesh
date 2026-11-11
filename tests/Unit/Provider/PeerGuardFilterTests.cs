@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Provider;
@@ -14,6 +15,7 @@ using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Primitives;
 using Moq;
 using Xunit;
 
@@ -31,11 +33,25 @@ public class PeerGuardFilterTests
 
     private static string Route(Guid id) => id.ToString("N");
 
-    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, string method, Guid? item, string query = "", Action? during = null, Action<DefaultHttpContext>? ends = null, Exception? failure = null)
+    // What Jellyfin makes of a query sent as one encoded key: keys that differ by case, read by stock's binder as they are.
+    private static Dictionary<string, StringValues> Decoded(params (string Key, string Value)[] pairs)
+    {
+        return pairs.ToDictionary(pair => pair.Key, pair => new StringValues(pair.Value), StringComparer.Ordinal);
+    }
+
+    // The legacy params query parameter with the play session in field 20, the one stock reads over PlaySessionId.
+    private static string LegacyParams(string playSession) => "params=" + Uri.EscapeDataString(new string(';', 20)) + playSession;
+
+    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, string method, Guid? item, string query = "", Action? during = null, Action<DefaultHttpContext>? ends = null, Exception? failure = null, Dictionary<string, StringValues>? decoded = null)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = method;
         http.Request.QueryString = new QueryString(query);
+        if (decoded is not null)
+        {
+            http.Request.Query = new QueryCollection(decoded);
+        }
+
         var route = new RouteData();
         if (item is { } id)
         {
@@ -229,6 +245,137 @@ public class PeerGuardFilterTests
         Assert.False(ran);
         Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(context));
         Assert.Equal(0, Slots);
+    }
+
+    [Theory]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist")]
+    [InlineData("DynamicHls", "GetVariantHlsVideoPlaylist")]
+    [InlineData("Videos", "GetVideoStream")]
+    public async Task A_stream_cannot_hide_a_play_session_of_someone_else_in_the_legacy_params(string controller, string action)
+    {
+        _fixture.Own("play");
+        _fixture.Own("theirs", Guid.NewGuid());
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", ProviderFixture.SharedItem, "?PlaySessionId=play&" + LegacyParams("theirs"));
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(context));
+        Assert.Equal(0, Slots);
+    }
+
+    [Theory]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("Videos", "GetVideoStream")]
+    public async Task A_play_session_in_the_legacy_params_is_the_one_of_the_stream(string controller, string action)
+    {
+        _fixture.Own("play");
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 1, "play");
+
+        var (_, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", ProviderFixture.SharedItem, "?" + LegacyParams("play"));
+
+        Assert.True(ran);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("%20")]
+    public async Task A_blank_play_session_in_the_legacy_params_leaves_the_query_in_charge(string blank)
+    {
+        _fixture.Own("play");
+        _fixture.Own("theirs", Guid.NewGuid());
+        var segment = ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment");
+
+        var (_, own) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, "?PlaySessionId=play&" + LegacyParams(blank) + "%3Bx");
+        var (refused, theirs) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, "?PlaySessionId=theirs&" + LegacyParams(blank) + "%3Bx");
+
+        Assert.True(own);
+        Assert.False(theirs);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(refused));
+    }
+
+    [Fact]
+    public async Task Only_the_first_legacy_params_counts_as_on_stock()
+    {
+        _fixture.Own("play");
+        _fixture.Own("theirs", Guid.NewGuid());
+        var segment = ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment");
+
+        var (first, firstRan) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, "?PlaySessionId=play&" + LegacyParams("theirs") + "&params=x");
+        var (second, secondRan) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, "?PlaySessionId=theirs&params=x&" + LegacyParams("play"));
+
+        Assert.False(firstRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(first));
+        Assert.False(secondRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(second));
+    }
+
+    [Fact]
+    public async Task A_failed_start_of_ffmpeg_clears_the_play_session_of_the_legacy_params()
+    {
+        _fixture.Own("play");
+
+        await RunAsync(ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment"), "GET", ProviderFixture.SharedItem, "?" + LegacyParams("play"), failure: new FfmpegException("exited"));
+
+        VerifyClosed("play", Times.Once());
+    }
+
+    [Fact]
+    public async Task A_stream_reads_the_play_session_under_the_name_stock_binds_in_a_decoded_query()
+    {
+        _fixture.Own("play");
+        _fixture.Own("theirs", Guid.NewGuid());
+        var segment = ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment");
+
+        var (refused, theirsRan) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, decoded: Decoded(("playSessionId", "theirs"), ("PlaySessionId", "play")));
+        var (_, ownRan) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, decoded: Decoded(("playSessionId", "play"), ("PlaySessionId", "theirs")));
+
+        Assert.False(theirsRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(refused));
+        Assert.True(ownRan);
+    }
+
+    [Fact]
+    public async Task A_stream_reads_the_legacy_params_under_the_name_stock_binds_in_a_decoded_query()
+    {
+        _fixture.Own("play");
+        _fixture.Own("theirs", Guid.NewGuid());
+        var twenty = new string(';', 20);
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment"), "GET", ProviderFixture.SharedItem, decoded: Decoded(("playSessionId", "play"), ("Params", twenty + "play"), ("params", twenty + "theirs")));
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task The_close_route_reads_the_play_session_under_the_name_stock_binds_in_a_decoded_query()
+    {
+        _fixture.Own("play");
+        _fixture.Own("theirs", Guid.NewGuid());
+        var close = ProviderFixture.Stock("HlsSegment", "StopEncodingProcess");
+
+        var (refused, theirsRan) = await RunAsync(close, "DELETE", null, decoded: Decoded(("deviceId", "d"), ("playSessionId", "theirs"), ("PlaySessionId", "play")));
+        var (_, ownRan) = await RunAsync(close, "DELETE", null, decoded: Decoded(("deviceId", "d"), ("playSessionId", "play"), ("PlaySessionId", "theirs")));
+
+        Assert.False(theirsRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(refused));
+        Assert.True(ownRan);
+    }
+
+    [Fact]
+    public async Task The_close_route_reads_only_the_query_as_stock_does()
+    {
+        _fixture.Own("play");
+        _fixture.Own("theirs", Guid.NewGuid());
+        var close = ProviderFixture.Stock("HlsSegment", "StopEncodingProcess");
+
+        var (refused, theirsRan) = await RunAsync(close, "DELETE", null, "?deviceId=d&playSessionId=theirs&" + LegacyParams("play"));
+        var (_, ownRan) = await RunAsync(close, "DELETE", null, "?deviceId=d&playSessionId=play&" + LegacyParams("theirs"));
+
+        Assert.False(theirsRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(refused));
+        Assert.True(ownRan);
     }
 
     [Fact]
@@ -846,6 +993,83 @@ public class PeerGuardFilterTests
         hold.SetResult();
         await Task.WhenAll(running);
     }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    public async Task A_stream_naming_a_live_stream_in_the_query_is_refused_on_its_own_play_session(string controller, string action)
+    {
+        _fixture.Own("play");
+        var stream = ProviderFixture.Stock(controller, action);
+
+        var (refused, liveRan) = await RunAsync(stream, "GET", ProviderFixture.SharedItem, "?playSessionId=play&liveStreamId=0123456789abcdef0123456789abcdef");
+        var slotsAfterRefusal = Slots;
+        var (_, ownRan) = await RunAsync(stream, "GET", ProviderFixture.SharedItem, "?playSessionId=play");
+
+        Assert.False(liveRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(refused));
+        Assert.False(refused.HttpContext.Response.Headers.ContainsKey(ProviderProtocol.RefusalHeader));
+        Assert.Equal(0, slotsAfterRefusal);
+        Assert.True(ownRan);
+    }
+
+    // A legacy params with the live stream in field 22, the one stock reads over LiveStreamId.
+    private static string LiveStreamField(string liveStream) => "params=" + Uri.EscapeDataString(new string(';', 22) + liveStream);
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    public async Task A_stream_naming_a_live_stream_in_the_legacy_params_is_refused(string controller, string action)
+    {
+        _fixture.Own("play");
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", ProviderFixture.SharedItem, "?playSessionId=play&" + LiveStreamField("0123456789abcdef0123456789abcdef"));
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(context));
+        Assert.Equal(0, Slots);
+    }
+
+    [Theory]
+    [InlineData("&liveStreamId=live&params=%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%20")]
+    [InlineData("&params=%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3Blive&params=x")]
+    [InlineData("&liveStreamId=&liveStreamId=live")]
+    public async Task A_stream_is_refused_wherever_stock_may_read_a_live_stream(string query)
+    {
+        _fixture.Own("play");
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment"), "GET", ProviderFixture.SharedItem, "?playSessionId=play" + query);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("&liveStreamId=%20")]
+    [InlineData("&params=%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%20")]
+    [InlineData("&params=x&params=%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3B%3Blive")]
+    public async Task A_stream_whose_live_stream_stock_skips_passes(string query)
+    {
+        _fixture.Own("play");
+
+        var (_, ran) = await RunAsync(ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment"), "GET", ProviderFixture.SharedItem, "?playSessionId=play" + query);
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task A_stream_reads_the_live_stream_under_the_name_stock_binds_in_a_decoded_query()
+    {
+        _fixture.Own("play");
+        var segment = ProviderFixture.Stock("DynamicHls", "GetHlsVideoSegment");
+
+        var (refused, boundRan) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, decoded: Decoded(("playSessionId", "play"), ("liveStreamId", "live")));
+        var (_, unboundRan) = await RunAsync(segment, "GET", ProviderFixture.SharedItem, decoded: Decoded(("playSessionId", "play"), ("LiveStreamId", "live")));
+
+        Assert.False(boundRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, StatusOf(refused));
+        Assert.True(unboundRan);
+    }
 }
 
 public class PeerPlaybackInfoFilterTests
@@ -858,12 +1082,19 @@ public class PeerPlaybackInfoFilterTests
         _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots);
     }
 
-    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false)
+    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null, bool bodyBound = true)
     {
-        return RunAsync(ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"), result, replaces, failure, consumerLeft);
+        // Stock binds the posted body of every consumer PlaybackInfo, so the tests post one unless told otherwise.
+        arguments ??= new Dictionary<string, object?>();
+        if (bodyBound)
+        {
+            arguments.TryAdd("playbackInfoDto", new PostedBody());
+        }
+
+        return RunAsync(ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"), result, replaces, failure, consumerLeft, arguments);
     }
 
-    private async Task<(ActionExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false)
+    private async Task<(ActionExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = "POST";
@@ -873,7 +1104,7 @@ public class PeerPlaybackInfoFilterTests
         }
 
         var actionContext = new ActionContext(http, new RouteData(), action);
-        var context = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), new Dictionary<string, object?>(), new object());
+        var context = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), arguments ?? new Dictionary<string, object?>(), new object());
         var ran = false;
         await _filter.OnActionExecutionAsync(context, () =>
         {
@@ -1000,5 +1231,110 @@ public class PeerPlaybackInfoFilterTests
 
         Assert.True(ran);
         Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    private static OkObjectResult AnswerWithTranscode(string transcodingUrl)
+    {
+        var answer = new PlaybackInfoResponse { PlaySessionId = "play" };
+        answer.MediaSources = [new MediaBrowser.Model.Dto.MediaSourceInfo { TranscodingUrl = transcodingUrl }];
+        return new OkObjectResult(answer);
+    }
+
+    [Fact]
+    public async Task A_playback_records_the_device_of_the_peer_and_the_one_its_transcoding_url_names()
+    {
+        _fixture.CallerDevice = "consumer-device";
+
+        await RunAsync(AnswerWithTranscode("/videos/x/master.m3u8?DeviceId=Url+Device%2B&DeviceId=second&PlaySessionId=play"));
+
+        var other = Guid.NewGuid();
+        Assert.True(_fixture.Slots.IsDeviceOfAnother(other, "CONSUMER-DEVICE"));
+        Assert.True(_fixture.Slots.IsDeviceOfAnother(other, "url device+"));
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(other, "second"));
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(_fixture.Peer.Id, "consumer-device"));
+    }
+
+    [Fact]
+    public async Task A_consumer_that_left_during_the_call_records_no_device()
+    {
+        _fixture.CallerDevice = "consumer-device";
+
+        await RunAsync(AnswerWithTranscode("/videos/x/master.m3u8?DeviceId=url-device"), consumerLeft: true);
+
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(Guid.NewGuid(), "consumer-device"));
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(Guid.NewGuid(), "url-device"));
+    }
+
+    // The posted body as stock binds it: PlaybackInfoDto lives in Jellyfin.Api, which is not a NuGet package.
+    private sealed class PostedBody
+    {
+        public string? LiveStreamId { get; init; }
+    }
+
+    [Theory]
+    [InlineData("liveStreamId")]
+    [InlineData("playbackInfoDto")]
+    public async Task A_playback_naming_a_live_stream_is_refused_before_it_takes_a_slot(string where)
+    {
+        await RunAsync(Answer("old"));
+        var arguments = new Dictionary<string, object?>
+        {
+            [where] = where == "liveStreamId" ? "0123456789abcdef0123456789abcdef" : new PostedBody { LiveStreamId = "0123456789abcdef0123456789abcdef" }
+        };
+
+        var (context, ran) = await RunAsync(Answer("new"), "old", arguments: arguments);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, (context.Result as StatusCodeResult)?.StatusCode);
+        Assert.False(context.HttpContext.Response.Headers.ContainsKey(ProviderProtocol.RefusalHeader));
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "old"));
+        Assert.False(_fixture.Slots.Owns(_fixture.Peer.Id, "new"));
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    // A body whose live stream has another name or type: a later Jellyfin that changed it, so the check cannot see it.
+    private sealed class RenamedBody
+    {
+        public string? LiveStream { get; init; }
+
+        public int LiveStreamId { get; init; }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_playback_whose_body_cannot_be_checked_for_a_live_stream_is_refused(bool bodyBound)
+    {
+        var arguments = new Dictionary<string, object?>();
+        if (bodyBound)
+        {
+            arguments["playbackInfoDto"] = new RenamedBody { LiveStream = "0123456789abcdef0123456789abcdef" };
+        }
+
+        var (context, ran) = await RunAsync(Answer(), arguments: arguments, bodyBound: false);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, (context.Result as StatusCodeResult)?.StatusCode);
+        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public async Task A_playback_with_a_null_body_passes()
+    {
+        var (_, ran) = await RunAsync(Answer(), arguments: new Dictionary<string, object?> { ["playbackInfoDto"] = null });
+
+        Assert.True(ran);
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "play"));
+    }
+
+    [Fact]
+    public async Task A_playback_whose_live_stream_is_blank_passes()
+    {
+        var arguments = new Dictionary<string, object?> { ["liveStreamId"] = " ", ["playbackInfoDto"] = new PostedBody { LiveStreamId = string.Empty } };
+
+        var (_, ran) = await RunAsync(Answer(), arguments: arguments);
+
+        Assert.True(ran);
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "play"));
     }
 }

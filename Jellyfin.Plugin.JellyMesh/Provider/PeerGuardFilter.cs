@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Common;
 using Microsoft.AspNetCore.Http;
@@ -17,7 +18,10 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public sealed class PeerGuardFilter : IAsyncResourceFilter
 {
-    private const string PlaySessionParameter = "PlaySessionId";
+    // The names stock binds: a query sent as one encoded key comes out of Jellyfin with keys that differ by case.
+    private const string PlaySessionParameter = "playSessionId";
+    private const string LegacyParameters = "params";
+    private const string LiveStreamParameter = "liveStreamId";
     private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
 
     private static readonly string[] _itemRouteValues = ["itemId", "routeItemId"];
@@ -122,7 +126,14 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        var playSession = PlaySessionOf(http);
+        // Stock would serve that live stream instead of the item, found by its id alone, and close it with the job.
+        if (NamesLiveStream(http))
+        {
+            context.Result = RefusePlaySession();
+            return;
+        }
+
+        var playSession = StreamPlaySessionOf(http);
         var hasSession = !string.IsNullOrEmpty(playSession);
 
         // HLS without a play session would also kill every job of the device on this server.
@@ -166,7 +177,29 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     // repeated parameter and an empty one are never owned, so stock never gets to "every job of the device".
     private static StatusCodeResult RefusePlaySession() => new(StatusCodes.Status403Forbidden);
 
+    // The close route binds no legacy params, so stock stops the play session of the query alone.
     private static string PlaySessionOf(HttpContext http) => http.Request.Query[PlaySessionParameter].ToString();
+
+    // The play session stock acts on for a stream: field 20 of the first legacy params, else the query.
+    private static string StreamPlaySessionOf(HttpContext http)
+    {
+        return LegacyParamOfFirst(http, StubLookup.LegacyPlaySessionField) ?? PlaySessionOf(http);
+    }
+
+    // Stock binds the first of a repeated legacy params.
+    private static string? LegacyParamOfFirst(HttpContext http, int field)
+    {
+        var parameters = http.Request.Query[LegacyParameters];
+        return StubLookup.LegacyParamOf(parameters.Count > 0 ? parameters[0] : null, field);
+    }
+
+    // Stock serves a live stream for field 22 of the first legacy params, else the query, skipping a blank one.
+    // Any value of a repeated query counts, as for the play session.
+    private static bool NamesLiveStream(HttpContext http)
+    {
+        return LegacyParamOfFirst(http, StubLookup.LegacyLiveStreamField) is not null
+            || !string.IsNullOrWhiteSpace(http.Request.Query[LiveStreamParameter].ToString());
+    }
 
     private static bool Failed(ResourceExecutedContext executed)
     {

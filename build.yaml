@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.4.2.0"
+version: "0.4.3.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -19,10 +19,9 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - The plugin records which server last served each federated title to each user, ready for the per-server folders of 0.5.
-  - Another user can no longer stop, restart or keep alive a federated title you play through this server's own transcode by naming its play session, even during a long pause or after the title is renamed or removed.
-  - Start, progress and ping reports of another user on that play session are answered without effect.
-  - Another user can no longer stop that transcode with a request that names your device and no play session.
-  - Each user keeps at most 256 of these play sessions; beyond that the least recently used one leaves first.
+  - A request for a video segment that names no play session can no longer stop another user's transcode on this server: it is refused only when it names the device of another user's play session, or when it names no device while another user has a transcode without one. Playlists are not affected.
+  - Servers that play titles you share through JellyMesh can no longer reach each other's play sessions, including through the legacy params or a query with different letter case.
+  - Servers you share with can no longer open live TV through a shared title: their stream and PlaybackInfo requests that name a live stream are refused.
+  - Users of this server can no longer stop, restart or keep alive a stream that another JellyMesh server plays from it.
 
-  Not verified: a long pause on a real client, and the record of the last server across a plugin upgrade.
+  Not verified: that the end of an idle stream slot, rather than Jellyfin itself, closes a quiet transcode of another server, with the setting on or off; a music client that sends no device.

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Xunit;
@@ -92,6 +93,30 @@ public class PlaySessionOwnersTests
     }
 
     [Fact]
+    public void A_session_belongs_to_another_for_the_anonymous_too()
+    {
+        _owners.Add(_owner, "mine");
+
+        Assert.True(_owners.BelongsToAnother(Guid.Empty, "mine"));
+    }
+
+    [Fact]
+    public void Another_user_naming_a_session_does_not_keep_it()
+    {
+        var clock = new ManualClock();
+        var owners = PlaySessionOwners.WithClock(clock);
+        var idle = TimeSpan.FromSeconds(90);
+        owners.Add(_owner, "mine");
+
+        clock.Advance(idle - TimeSpan.FromSeconds(1));
+        Assert.True(owners.BelongsToAnother(_other, "mine"));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        owners.ForgetIdle(idle);
+
+        Assert.False(owners.BelongsToAnother(_other, "mine"));
+    }
+
+    [Fact]
     public void A_session_leaves_when_its_owner_ends_it_and_only_then()
     {
         _owners.Add(_owner, "mine", Guid.NewGuid());
@@ -122,5 +147,49 @@ public class PlaySessionOwnersTests
         owners.ForgetIdle(idle);
         Assert.False(owners.BelongsToAnother(_other, "quiet"));
         Assert.True(owners.BelongsToAnother(_other, "used"));
+    }
+
+    [Fact]
+    public void The_sessions_of_others_are_every_session_someone_else_opened()
+    {
+        Assert.Empty(_owners.SessionsOfOthers(_other));
+
+        _owners.Add(_owner, "mine", null, ["owner-device"]);
+        _owners.Add(_owner, "without-devices");
+        _owners.Add(_other, "theirs");
+
+        Assert.Equal(["mine", "without-devices"], _owners.SessionsOfOthers(_other).Order());
+        Assert.Equal(["mine", "theirs", "without-devices"], _owners.SessionsOfOthers(Guid.Empty).Order());
+        Assert.Equal(["theirs"], _owners.SessionsOfOthers(_owner));
+    }
+
+    [Fact]
+    public void A_session_stops_being_of_others_once_it_leaves()
+    {
+        var clock = new ManualClock();
+        var owners = PlaySessionOwners.WithClock(clock);
+        owners.Add(_owner, "ended");
+        owners.Add(_other, "quiet");
+
+        Assert.True(owners.Remove(_owner, "ended"));
+        Assert.Empty(owners.SessionsOfOthers(_other));
+        Assert.Equal(["quiet"], owners.SessionsOfOthers(_owner));
+
+        clock.Advance(TimeSpan.FromSeconds(90));
+        owners.ForgetIdle(TimeSpan.FromSeconds(90));
+        Assert.Empty(owners.SessionsOfOthers(_owner));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void No_device_names_no_device_of_another(string? device)
+    {
+        _owners.Add(_owner, "mine", null, ["owner-device"]);
+        _owners.Add(_owner, "without-devices");
+
+        Assert.False(_owners.DeviceOfAnother(_other, device));
+        Assert.False(_owners.DeviceOfAnother(_owner, device));
     }
 }

@@ -53,6 +53,6 @@ public sealed class PeerDirectory
         }
 
         var authorization = await _authorization.GetAuthorizationInfo(context).ConfigureAwait(false);
-        return authorization.User is { } user && Find(user.Id) is { } grant ? new PeerCaller(grant, user) : null;
+        return authorization.User is { } user && Find(user.Id) is { } grant ? new PeerCaller(grant, user, authorization.DeviceId) : null;
     }
 }
