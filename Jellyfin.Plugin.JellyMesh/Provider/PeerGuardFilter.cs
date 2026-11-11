@@ -18,7 +18,8 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public sealed class PeerGuardFilter : IAsyncResourceFilter
 {
-    private const string PlaySessionParameter = "PlaySessionId";
+    // The names stock binds: a query sent as one encoded key comes out of Jellyfin with keys that differ by case.
+    private const string PlaySessionParameter = "playSessionId";
     private const string LegacyParameters = "params";
     private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
 
