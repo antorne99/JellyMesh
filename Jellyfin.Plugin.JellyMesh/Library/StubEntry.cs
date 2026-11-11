@@ -13,6 +13,12 @@ public sealed record StubEntry
     /// </summary>
     public required string Id { get; init; }
 
+    /// <summary>
+    /// Gets the server whose folder holds the stub, the only server of its sources. Null for a stub of the flat layout,
+    /// whose sources can be on every server.
+    /// </summary>
+    public Guid? ServerId { get; init; }
+
     /// <summary>Gets the kind of stub.</summary>
     public required StubKind Kind { get; init; }
 
@@ -22,7 +28,10 @@ public sealed record StubEntry
     /// </summary>
     public required string RelativePath { get; init; }
 
-    /// <summary>Gets the sources: the winner first, then the backups, best first. Never empty.</summary>
+    /// <summary>
+    /// Gets the sources, best first, never empty. In the flat layout the winner, then the backups of every server; in a
+    /// server folder the best copy of the server, then its other copies as internal sources for the fallback.
+    /// </summary>
     public required IReadOnlyList<StubSource> Sources { get; init; }
 
     /// <summary>Gets the last identity key seen. Only a hint to find the stub again: a key can change.</summary>

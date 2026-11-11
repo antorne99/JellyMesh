@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -9,6 +10,9 @@ public sealed record SeriesStub
 {
     /// <summary>Gets the stable ID.</summary>
     public required string Id { get; init; }
+
+    /// <summary>Gets the server whose folder holds the series, null in the flat layout.</summary>
+    public Guid? ServerId { get; init; }
 
     /// <summary>Gets the folder relative to the federated folder. Fixed at creation, as for <see cref="StubEntry"/>.</summary>
     public required string RelativePath { get; init; }

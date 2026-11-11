@@ -262,4 +262,62 @@ public sealed class StubRegistryTests : IDisposable
 
         Assert.Null(registry.FindByPath("/federata/Film/A/A.strm"));
     }
+
+    [Fact]
+    public void ARegistryOfTheFlatLayoutLoadsAsTheCurrentVersionWithNoServerAndNoGroup()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, StubRegistry.FileName),
+            "{\"Version\":1,\"Stubs\":[{\"Id\":\"abc\",\"Kind\":\"Movie\",\"RelativePath\":\"Film/A/A.strm\",\"IdentityKey\":\"key\",\"Sources\":[]}],\"Series\":[{\"Id\":\"s\",\"RelativePath\":\"Serie/S\",\"WorkKey\":\"w\"}]}");
+
+        using var registry = Create();
+
+        Assert.Equal(2, registry.State.Version);
+        Assert.Null(registry.Find("abc")!.ServerId);
+        Assert.Null(Assert.Single(registry.State.Series).ServerId);
+        Assert.Empty(registry.State.Groups);
+    }
+
+    [Fact]
+    public void ARegistryOfAnUnknownVersionIsNotRead()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, StubRegistry.FileName), "{\"Version\":99,\"Stubs\":[],\"Series\":[]}");
+
+        using var registry = Create();
+
+        Assert.Empty(registry.State.Stubs);
+        Assert.Contains(_logger.Lines, line => line.Contains("unsupported format", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheServerOfAStubAndTheVersionGroupsSurviveARestart()
+    {
+        var server = Guid.NewGuid();
+        var local = Guid.NewGuid();
+        var group = new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["abc", "def"], LocalItemIds = [local], PrimaryStubId = "abc" };
+        using (var registry = Create())
+        {
+            await registry.SaveAsync(
+                new StubState
+                {
+                    Stubs = [Entry("abc", "x/Film/A/A - Casa.strm") with { ServerId = server }, Entry("def", "y/Film/A/A - Ufficio.strm")],
+                    Series = [new SeriesStub { Id = "s", RelativePath = "x/Serie/S", WorkKey = "w", ServerId = server }],
+                    Groups = [group],
+                    Labels = new Dictionary<Guid, string> { [server] = "Casa" }
+                },
+                CancellationToken.None);
+        }
+
+        using var reloaded = Create();
+
+        Assert.Equal("Casa", Assert.Single(reloaded.State.Labels, label => label.Key == server).Value);
+        Assert.Equal(server, reloaded.Find("abc")!.ServerId);
+        Assert.Equal(server, Assert.Single(reloaded.State.Series).ServerId);
+        var loaded = Assert.Single(reloaded.State.Groups);
+        Assert.Equal(("g", "key", "abc"), (loaded.Id, loaded.IdentityKey, loaded.PrimaryStubId));
+        Assert.Equal(["abc", "def"], loaded.StubIds);
+        Assert.Equal([local], loaded.LocalItemIds);
+    }
 }

@@ -226,6 +226,11 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
                 return state;
             }
 
+            if (state?.Version == StubState.FlatLayoutVersion)
+            {
+                return state with { Version = StubState.CurrentVersion };
+            }
+
             _logger.LogError("The stub registry has an unsupported format. Stubs are minted again at the next sync");
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
