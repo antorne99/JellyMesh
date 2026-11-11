@@ -38,7 +38,7 @@ Both roles are active on every server with the plugin.
 
 ## Requirements
 
-- Jellyfin 12.x. The manifest allows any server from 12.0, but only 12.4 has been tested, and the plugin is compiled against the 12.4 packages.
+- Jellyfin 12.1 or a later 12.x. The plugin is compiled against the 12.1 packages and the manifest allows any server from 12.1. It has been tested on 12.4; on 12.1 it has only been checked to install and load.
 - A tailnet between your servers. Tailscale is managed outside the plugin.
 - `EnableAutomaticSeriesGrouping` on in the series library you link the federated `Serie` path to, so that a local series and its remote episodes merge. In the Dashboard it is called "Automatically merge series that are spread across multiple folders". The plugin page warns if it is off and does not change it for you.
 - A dedicated non-admin user on each remote.
@@ -187,7 +187,7 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Metadata saving:** tested with Jellyfin's metadata savers off. With the NFO saver on, Jellyfin might rewrite the plugin's `.nfo` files, which hasn't been tested.
 - **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.
-- **Jellyfin versions:** tested on 12.4 only.
+- **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 only installing and loading the plugin has been checked.
 - **Provider restart:** a stream in progress ends when the provider restarts, and the client has to open the title again.
 
 ### Built-in limits
