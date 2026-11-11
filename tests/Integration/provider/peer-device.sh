@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A user of the provider cannot stop the transcode of a peer with a segment that names no play session: stock would stop
-# every job of the device the segment names. One private server of its own, removed at the end unless KEEP=1.
+# every job of the device the segment names. Nor can another peer, by naming that play session in the legacy params. One private server of its own, removed at the end unless KEEP=1.
 # usage: MEDIA=<main checkout>/tests/Integration/media WORK=<scratch folder> peer-device.sh
 set -uo pipefail
 export PREFIX=${PREFIX:-jm-q92} PORT_A=${PORT_A:-8280}
@@ -68,6 +68,45 @@ check "on no device at all" 404 "$(segment "$mario_auth" "")"
 check "of nobody on the device of the peer" 401 "$(segment "" "&DeviceId=$peer_device")"
 check "the peer keeps its ffmpeg" "$before" "$(ffmpeg_pids a)"
 check "and its stream goes on" 200 "$(peer_segment 2)"
+
+echo "--- another peer names the play session of the first in the legacy params, which stock reads first"
+post a /Users/New '{"Name":"peer2","Password":"jellymesh-test"}' >/dev/null
+req a PUT "/JellyMesh/Admin/Peers/$(user_id a peer2)" "$(jq -n --arg l "$(library_id a Film)" '{SharedLibraryIds: [$l], MaxStreams: 2}')" >/dev/null
+check "the second peer is granted" 204 "$(status)"
+peer2_device="jellymesh-$(openssl rand -hex 16)"
+peer2_auth="MediaBrowser Client=\"JellyMeshProv\", Device=\"JellyMesh\", DeviceId=\"$peer2_device\", Version=\"0.1\", Token=\"$(login_as a peer2 "$peer2_device")\""
+check "it opens a play session of its own" 200 "$(curl -sS -o "$WORK/peer2-open" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer2_auth" \
+  -H 'Content-Type: application/json' -d "$PROFILE_ENCODE" "$base/Items/$real/PlaybackInfo")"
+own=$(jq -r .PlaySessionId "$WORK/peer2-open")
+victim=$(jq -r .PlaySessionId "$WORK/peer-open")
+# field20 <value>: a legacy params whose field 20, the play session, is the value.
+field20() { printf '%s' "$(printf '%%3B%.0s' $(seq 1 20))$1"; }
+alive() { docker exec "$(container_of a)" sh -c "for p in $1; do test -d /proc/\$p || exit 1; done" && echo true || echo false; }
+pids=$(ffmpeg_pids a)
+echo "ffmpeg of the first peer: $pids"
+check "it still runs" true "$([ -n "$pids" ] && echo true || echo false)"
+check "its own in the query, the first peer's in field 20" 403 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field20 "$victim")")"
+check "the first peer's in the query, a blank field 20" 403 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$victim&params=$(field20 '%20')%3Bx")"
+hls="MediaSourceId=$real&VideoCodec=h264&AudioCodec=aac&runtimeTicks=1200000000&actualSegmentLengthTicks=30000000&SegmentContainer=ts"
+# encoded <auth> <path> <query> [method]: the query sent as one encoded key, which Jellyfin decodes with keys that differ by case.
+encoded() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 60 -X "${4:-GET}" -H "Authorization: $1" "$base$2?$(jq -rn --arg q "$3" '$q | @uri')"
+}
+check "the first peer's under the bound name of an encoded query" 403 "$(encoded "$peer2_auth" "/Videos/$real/hls1/main/40.ts" "$hls&DeviceId=$peer2_device&playSessionId=$victim&PlaySessionId=$own")"
+check "the same on the close route" 403 "$(encoded "$peer2_auth" /Videos/ActiveEncodings "deviceId=$peer2_device&playSessionId=$victim&PlaySessionId=$own" DELETE)"
+check "the first peer keeps its ffmpeg" true "$(alive "$pids")"
+# Stock binds the first of a repeated params: here its own, so it leaves the first peer's job alone.
+check "its own in the first params, the first peer's in the second" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field20 "$own")&params=$(field20 "$victim")")"
+check "the first peer still keeps its ffmpeg" true "$(alive "$pids")"
+check "its own in the query, a bare first params, the first peer's in the second" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=x&params=$(field20 "$victim")")"
+check "the first peer keeps its ffmpeg again" true "$(alive "$pids")"
+check "its own in field 20 alone" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&params=$(field20 "$own")")"
+check "its own in the query, a blank field 20" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field20 '')%3Bx")"
+check "the first peer keeps its ffmpeg to the end" true "$(alive "$pids")"
+check "and its stream goes on" 200 "$(peer_segment 3)"
+# The proof that stock acts on field 20: the first peer naming its own there with junk in the query restarts its job.
+check "the first peer with its own in field 20 and junk in the query" 200 "$(segment "$peer_auth" "&DeviceId=$peer_device&PlaySessionId=junk&params=$(field20 "$victim")")"
+check "restarts its own ffmpeg" false "$(alive "$pids")"
 
 echo "--- what a user of the provider sees of the peer"
 curl -sS -H "$ACCEPT" -H "Authorization: $mario_auth" "$base/Sessions" >"$WORK/mario-sessions"
