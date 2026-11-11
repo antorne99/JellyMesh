@@ -191,16 +191,31 @@ public sealed class PlaySessionOwners
     }
 
     /// <summary>
-    /// Tells whether a play session of someone else runs on a device.
+    /// Tells whether someone else has a play session recorded here.
+    /// </summary>
+    /// <param name="user">The user.</param>
+    /// <returns>Whether another user has one.</returns>
+    public bool AnyOfAnother(Guid user)
+    {
+        lock (_lock)
+        {
+            // An owner leaves the record with its last session.
+            return _owners.Keys.Any(owner => !owner.Equals(user));
+        }
+    }
+
+    /// <summary>
+    /// Tells whether a play session of someone else runs on a device. No device, or a blank one, names every device, as
+    /// stock stops the jobs that run without a device for a request that names none.
     /// </summary>
     /// <param name="user">The user.</param>
     /// <param name="device">The device.</param>
     /// <returns>Whether a play session of another user runs on it.</returns>
     public bool DeviceOfAnother(Guid user, string? device)
     {
-        if (string.IsNullOrEmpty(device))
+        if (string.IsNullOrWhiteSpace(device))
         {
-            return false;
+            return AnyOfAnother(user);
         }
 
         lock (_lock)
