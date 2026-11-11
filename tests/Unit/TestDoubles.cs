@@ -171,13 +171,18 @@ internal sealed class CapturingLogger<T> : ILogger<T>
 {
     public List<string> Lines { get; } = [];
 
+    public List<LogLevel> Levels { get; } = [];
+
     public IDisposable? BeginScope<TState>(TState state)
         where TState : notnull => null;
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        => Lines.Add(formatter(state, exception) + " " + exception);
+    {
+        Lines.Add(formatter(state, exception) + " " + exception);
+        Levels.Add(logLevel);
+    }
 }
 
 /// <summary>Real vault, client and registry over stubs for the key, the config and the network.</summary>

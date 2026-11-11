@@ -38,6 +38,6 @@ with sync_playwright() as p:
 
     # A real save with a changed time.
     page.evaluate("document.getElementById('jmPlaybackIdle').value = '95'")
-    page.evaluate("document.querySelector('#jmSettingsForm button[type=submit]').click()")
+    page.evaluate("document.getElementById('jmSaveSettings').click()")
     page.wait_for_timeout(2500)
     browser.close()

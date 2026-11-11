@@ -72,12 +72,13 @@ public class PeerAdminController : ControllerBase
 
     /// <summary>
     /// Connects a server, or changes what is shared with it. Taking a library away cuts what is playing from it, and a lower
-    /// limit what no longer fits.
+    /// limit what no longer fits. Libraries no longer offered, sent or saved before, are dropped from what is shared.
     /// </summary>
     /// <param name="userId">The dedicated user.</param>
     /// <param name="request">What to share.</param>
-    /// <returns>Nothing.</returns>
+    /// <returns>The dropped libraries, or nothing when none was dropped.</returns>
     [HttpPut("{userId:guid}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -90,12 +91,14 @@ public class PeerAdminController : ControllerBase
             return NotFound();
         }
 
-        var known = _catalog.ReadLibraries().Select(library => library.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (IsAdministrator(user) || request.MaxStreams < 1 || !request.SharedLibraryIds.All(known.Contains))
+        if (IsAdministrator(user) || request.MaxStreams < 1)
         {
             return BadRequest();
         }
 
+        var known = _catalog.ReadLibraries().Select(library => library.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var kept = request.SharedLibraryIds.Where(known.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var dropped = request.SharedLibraryIds.Where(id => !known.Contains(id)).ToList();
         var lowerLimit = false;
         var lostLibrary = false;
         _store.Update(config =>
@@ -107,11 +110,12 @@ public class PeerAdminController : ControllerBase
                 config.Peers.Add(peer);
             }
 
+            dropped.AddRange(peer.SharedLibraryIds.Where(id => !known.Contains(id)));
             lowerLimit = request.MaxStreams < peer.MaxStreams;
-            lostLibrary = peer.SharedLibraryIds.Except(request.SharedLibraryIds, StringComparer.OrdinalIgnoreCase).Any();
+            lostLibrary = peer.SharedLibraryIds.Except(kept, StringComparer.OrdinalIgnoreCase).Any();
             peer.MaxStreams = request.MaxStreams;
             peer.SharedLibraryIds.Clear();
-            foreach (var id in request.SharedLibraryIds.Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var id in kept)
             {
                 peer.SharedLibraryIds.Add(id);
             }
@@ -120,7 +124,7 @@ public class PeerAdminController : ControllerBase
         // What a library took away goes now. What is still shared keeps its slot, so that the limit goes on counting it.
         if (lostLibrary)
         {
-            var caller = new PeerCaller(new PeerGrant(userId, request.SharedLibraryIds.ToHashSet(StringComparer.OrdinalIgnoreCase), request.MaxStreams), user);
+            var caller = new PeerCaller(new PeerGrant(userId, kept.ToHashSet(StringComparer.OrdinalIgnoreCase), request.MaxStreams), user);
             _slots.Revoke(userId, item => _catalog.FindVisible(caller, item) is not null);
         }
 
@@ -130,7 +134,7 @@ public class PeerAdminController : ControllerBase
             _slots.CutToLimit(userId, request.MaxStreams);
         }
 
-        return NoContent();
+        return dropped.Count == 0 ? NoContent() : Ok(new SetPeerResponse(dropped.Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
     }
 
     /// <summary>

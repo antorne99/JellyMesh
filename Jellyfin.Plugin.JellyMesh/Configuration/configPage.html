@@ -1437,6 +1437,7 @@
                     "Last sync: {date}.": "Ultima sincronizzazione: {date}.",
                     "Length": "Durata",
                     "Libraries": "Librerie",
+                    "Libraries no longer offered are no longer shared with this server.": "Le librerie non più offerte non sono più condivise con questo server.",
                     "Libraries saved for {server}. The next sync reads them.": "Librerie salvate per {server}. La prossima sincronizzazione le legge.",
                     "Libraries to import": "Librerie da importare",
                     "Libraries to import from {server}": "Librerie da importare da {server}",
@@ -2952,6 +2953,13 @@
                     };
                 }
 
+                // Says a peer was saved, warning when libraries no longer offered were dropped from what it shares.
+                function peerSaved(text, result) {
+                    return result && result.DroppedLibraryIds && result.DroppedLibraryIds.length > 0
+                        ? text + ' ' + t('Libraries no longer offered are no longer shared with this server.')
+                        : text;
+                }
+
                 // Names a connected server, whose user can be deleted in the Dashboard while it stays connected.
                 function peerName(peer) {
                     return peer.UserName || t('A user no longer on this server');
@@ -2986,8 +2994,8 @@
                     row.jmUpdate(peer, libraries);
                     var actions = actionRow();
                     actions.appendChild(button(t('Save'), function () {
-                        act(editor.save().then(function () {
-                            showMessage(t('Saved {name}.', { name: peerName(peer) }));
+                        act(editor.save().then(function (result) {
+                            showMessage(peerSaved(t('Saved {name}.', { name: peerName(peer) }), result));
                             return loadPeers();
                         }));
                     }));
@@ -3050,8 +3058,8 @@
                     };
                     var actions = actionRow();
                     actions.appendChild(button(t('Connect'), function () {
-                        act(editor.save().then(function () {
-                            showMessage(t('Connected.'));
+                        act(editor.save().then(function (result) {
+                            showMessage(peerSaved(t('Connected.'), result));
                             editor.reset();
                             return loadPeers();
                         }));
