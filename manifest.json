@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/antorne99/JellyMesh/main/assets/jellymesh.png",
     "versions": [
       {
+        "version": "0.4.2.0",
+        "changelog": "- The plugin records which server last served each federated title to each user, ready for the per-server folders of 0.5.\n- Another user can no longer stop, restart or keep alive a federated title you play through this server's own transcode by naming its play session, even during a long pause or after the title is renamed or removed.\n- Start, progress and ping reports of another user on that play session are answered without effect.\n- Another user can no longer stop that transcode with a request that names your device and no play session.\n- Each user keeps at most 256 of these play sessions; beyond that the least recently used one leaves first.\n\nNot verified: a long pause on a real client, and the record of the last server across a plugin upgrade.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/antorne99/JellyMesh/releases/download/v0.4.2.0/jellymesh_0.4.2.0.zip",
+        "checksum": "ddebcc4efa73861aa6c474166250143f",
+        "timestamp": "2026-11-11T16:46:35Z"
+      },
+      {
         "version": "0.4.1.0",
         "changelog": "- Stock streaming, subtitle, attachment and trickplay requests check the federated title they name, also as the version picked with mediaSourceId, videoId or the legacy params: without a signed-in user they get 401, and a user who cannot see the title gets 404.\n- A stock stream can no longer reuse the play session of a federated title to reach it from another title.\n- An anonymous attachment request no longer makes the server refresh a federated title.\n- The page no longer warns about a library that holds the federated folder together with other folders: it counts as linked.\n- The README explains that a user connected as a server cannot use that server from an app or the web client.\n\nNot verified: a play session reused from another title is covered by unit tests only, not on a running server.",
         "targetAbi": "12.0.0.0",
