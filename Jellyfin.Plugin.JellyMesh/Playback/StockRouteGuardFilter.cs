@@ -85,7 +85,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
-        if (controller == "DynamicHls" && string.IsNullOrWhiteSpace(PlaySessionOf(context)))
+        if (IsSegment(controller, action) && string.IsNullOrWhiteSpace(PlaySessionOf(context)))
         {
             // A segment without a play session makes stock stop every job of its device, whoever asks; with no device, the
             // jobs that run without one.
@@ -203,6 +203,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private static bool IsFileAction(string controller, string action)
     {
         return controller == "Library" && action is "GetDownload" or "GetFile";
+    }
+
+    // Only a segment makes stock stop the jobs of a device; playlists and live.m3u8 stop none.
+    private static bool IsSegment(string controller, string action)
+    {
+        return controller == "DynamicHls" && action is "GetHlsVideoSegment" or "GetHlsAudioSegment";
     }
 
     private static bool IsStop(string controller, string action)

@@ -853,6 +853,21 @@ public class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(), context));
     }
 
+    [Theory]
+    [InlineData("GetMasterHlsVideoPlaylist", "deviceId", "owner-device")]
+    [InlineData("GetVariantHlsVideoPlaylist", "params", ";OWNER-DEVICE")]
+    [InlineData("GetMasterHlsAudioPlaylist", "deviceId", "consumer-device")]
+    [InlineData("GetVariantHlsAudioPlaylist", "deviceId", null)]
+    [InlineData("GetLiveHlsStream", "deviceId", "owner-device")]
+    public async Task A_playlist_without_a_play_session_passes_on_the_device_of_another_play_session(string action, string argument, string? device)
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context("DynamicHls", action, ("itemId", LocalItem()), (argument, device));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
     [Fact]
     public async Task A_segment_whose_play_session_is_blank_counts_as_one_without()
     {
@@ -868,7 +883,6 @@ public class PlaybackFiltersTests
     [InlineData("GetHlsVideoSegment", "deviceId", "")]
     [InlineData("GetHlsVideoSegment", "deviceId", " ")]
     [InlineData("GetHlsAudioSegment", "params", "; ;")]
-    [InlineData("GetMasterHlsVideoPlaylist", "params", "")]
     public async Task A_request_without_a_play_session_or_a_device_is_not_found_while_another_user_plays_here(string action, string argument, string? device)
     {
         _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
@@ -926,7 +940,7 @@ public class PlaybackFiltersTests
     [InlineData("GetHlsVideoSegment", "deviceId", "consumer-device")]
     [InlineData("GetHlsVideoSegment", "deviceId", "CONSUMER-DEVICE")]
     [InlineData("GetHlsVideoSegment", "params", ";consumer-device")]
-    [InlineData("GetMasterHlsVideoPlaylist", "deviceId", "url-device")]
+    [InlineData("GetHlsAudioSegment", "deviceId", "url-device")]
     public async Task A_request_without_a_play_session_on_the_device_of_a_peer_play_session_is_not_found(string action, string argument, string device)
     {
         PeerPlays(Guid.NewGuid(), "consumer-device", "url-device");
