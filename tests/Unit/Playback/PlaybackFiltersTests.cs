@@ -824,9 +824,21 @@ public class PlaybackFiltersTests
         _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
         var refused = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "mine"), ("params", ";owner-device"));
         var served = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "owner-device"), ("params", ";mine"));
+        var blank = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "owner-device"), ("params", "; ;"));
 
         Assert.False(await RunAsync(GuardFilter(), refused));
         Assert.True(await RunAsync(GuardFilter(), served));
+        Assert.False(await RunAsync(GuardFilter(), blank));
+    }
+
+    [Fact]
+    public async Task A_blank_device_in_the_legacy_params_leaves_the_device_of_a_peer_in_the_query()
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "consumer-device"), ("params", "; ;"));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
     [Fact]
