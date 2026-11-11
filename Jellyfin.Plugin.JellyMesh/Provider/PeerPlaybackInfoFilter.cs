@@ -19,6 +19,7 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
     private const string LiveStreamArgument = "liveStreamId";
     private const string BodyArgument = "playbackInfoDto";
     private const string LiveStreamProperty = "LiveStreamId";
+    private const string PostedAction = "GetPostedPlaybackInfo";
 
     private readonly PeerDirectory _peers;
     private readonly StreamSlots _slots;
@@ -90,11 +91,31 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
     }
 
     // Stock takes the live stream from the query, else from the posted body, whose type is not in a NuGet package.
+    // A posted body that is not bound, or has no string LiveStreamId, counts as naming one: a later Jellyfin renamed it.
     private static bool NamesLiveStream(ActionExecutingContext context)
     {
         var query = context.ActionArguments.TryGetValue(LiveStreamArgument, out var value) ? value as string : null;
-        var body = context.ActionArguments.TryGetValue(BodyArgument, out var posted) ? posted : null;
-        var fromBody = body?.GetType().GetProperty(LiveStreamProperty)?.GetValue(body) as string;
-        return !string.IsNullOrWhiteSpace(query) || !string.IsNullOrWhiteSpace(fromBody);
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            return true;
+        }
+
+        if (!string.Equals(context.ActionDescriptor is ControllerActionDescriptor action ? action.ActionName : null, PostedAction, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!context.ActionArguments.TryGetValue(BodyArgument, out var body))
+        {
+            return true;
+        }
+
+        if (body is null)
+        {
+            return false;
+        }
+
+        var property = body.GetType().GetProperty(LiveStreamProperty);
+        return property?.PropertyType != typeof(string) || !string.IsNullOrWhiteSpace(property.GetValue(body) as string);
     }
 }

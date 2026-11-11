@@ -1082,8 +1082,15 @@ public class PeerPlaybackInfoFilterTests
         _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots);
     }
 
-    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null)
+    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null, bool bodyBound = true)
     {
+        // Stock binds the posted body of every consumer PlaybackInfo, so the tests post one unless told otherwise.
+        arguments ??= new Dictionary<string, object?>();
+        if (bodyBound)
+        {
+            arguments.TryAdd("playbackInfoDto", new PostedBody());
+        }
+
         return RunAsync(ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"), result, replaces, failure, consumerLeft, arguments);
     }
 
@@ -1283,6 +1290,41 @@ public class PeerPlaybackInfoFilterTests
         Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "old"));
         Assert.False(_fixture.Slots.Owns(_fixture.Peer.Id, "new"));
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    // A body whose live stream has another name or type: a later Jellyfin that changed it, so the check cannot see it.
+    private sealed class RenamedBody
+    {
+        public string? LiveStream { get; init; }
+
+        public int LiveStreamId { get; init; }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_playback_whose_body_cannot_be_checked_for_a_live_stream_is_refused(bool bodyBound)
+    {
+        var arguments = new Dictionary<string, object?>();
+        if (bodyBound)
+        {
+            arguments["playbackInfoDto"] = new RenamedBody { LiveStream = "0123456789abcdef0123456789abcdef" };
+        }
+
+        var (context, ran) = await RunAsync(Answer(), arguments: arguments, bodyBound: false);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, (context.Result as StatusCodeResult)?.StatusCode);
+        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public async Task A_playback_with_a_null_body_passes()
+    {
+        var (_, ran) = await RunAsync(Answer(), arguments: new Dictionary<string, object?> { ["playbackInfoDto"] = null });
+
+        Assert.True(ran);
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "play"));
     }
 
     [Fact]
