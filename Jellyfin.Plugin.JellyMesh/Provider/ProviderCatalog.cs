@@ -258,7 +258,7 @@ public sealed class ProviderCatalog
 
     // Whether a path is the folder or anywhere below it, compared as Jellyfin compares paths.
     private static bool IsWithin(string path, string folder) =>
-        string.Equals(path, folder, _pathComparison) || path.StartsWith(folder + Path.DirectorySeparatorChar, _pathComparison);
+        string.Equals(path, folder, _pathComparison) || path.StartsWith(Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar, _pathComparison);
 
     private static string Normalized(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 

@@ -168,6 +168,22 @@ public class ProviderCatalogTests
     }
 
     [Fact]
+    public void A_page_of_a_library_on_the_filesystem_root_excludes_everything_under_the_federated_folder()
+    {
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/", "/federata/Film");
+        var root = _fixture.WithFolder("/federata");
+        var linked = _fixture.WithFolder("/federata/Film");
+        _fixture.Library.Setup(manager => manager.GetItemIds(It.Is<InternalItemsQuery>(query => query.AncestorIds.SequenceEqual(new[] { root.Id, linked.Id }))))
+            .Returns([ProviderFixture.StubItem]);
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Equal([ProviderFixture.StubItem], seen()!.ExcludeItemIds);
+        Assert.Empty(seen()!.AncestorIds);
+    }
+
+    [Fact]
     public void Without_a_federated_folder_a_page_is_not_narrowed()
     {
         _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
