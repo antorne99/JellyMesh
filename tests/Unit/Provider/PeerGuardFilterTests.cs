@@ -1082,12 +1082,12 @@ public class PeerPlaybackInfoFilterTests
         _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots);
     }
 
-    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false)
+    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null)
     {
-        return RunAsync(ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"), result, replaces, failure, consumerLeft);
+        return RunAsync(ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"), result, replaces, failure, consumerLeft, arguments);
     }
 
-    private async Task<(ActionExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false)
+    private async Task<(ActionExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = "POST";
@@ -1097,7 +1097,7 @@ public class PeerPlaybackInfoFilterTests
         }
 
         var actionContext = new ActionContext(http, new RouteData(), action);
-        var context = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), new Dictionary<string, object?>(), new object());
+        var context = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), arguments ?? new Dictionary<string, object?>(), new object());
         var ran = false;
         await _filter.OnActionExecutionAsync(context, () =>
         {
@@ -1256,5 +1256,43 @@ public class PeerPlaybackInfoFilterTests
 
         Assert.False(_fixture.Slots.IsDeviceOfAnother(Guid.NewGuid(), "consumer-device"));
         Assert.False(_fixture.Slots.IsDeviceOfAnother(Guid.NewGuid(), "url-device"));
+    }
+
+    // The posted body as stock binds it: PlaybackInfoDto lives in Jellyfin.Api, which is not a NuGet package.
+    private sealed class PostedBody
+    {
+        public string? LiveStreamId { get; init; }
+    }
+
+    [Theory]
+    [InlineData("liveStreamId")]
+    [InlineData("playbackInfoDto")]
+    public async Task A_playback_naming_a_live_stream_is_refused_before_it_takes_a_slot(string where)
+    {
+        await RunAsync(Answer("old"));
+        var arguments = new Dictionary<string, object?>
+        {
+            [where] = where == "liveStreamId" ? "0123456789abcdef0123456789abcdef" : new PostedBody { LiveStreamId = "0123456789abcdef0123456789abcdef" }
+        };
+
+        var (context, ran) = await RunAsync(Answer("new"), "old", arguments: arguments);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status403Forbidden, (context.Result as StatusCodeResult)?.StatusCode);
+        Assert.False(context.HttpContext.Response.Headers.ContainsKey(ProviderProtocol.RefusalHeader));
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "old"));
+        Assert.False(_fixture.Slots.Owns(_fixture.Peer.Id, "new"));
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public async Task A_playback_whose_live_stream_is_blank_passes()
+    {
+        var arguments = new Dictionary<string, object?> { ["liveStreamId"] = " ", ["playbackInfoDto"] = new PostedBody { LiveStreamId = string.Empty } };
+
+        var (_, ran) = await RunAsync(Answer(), arguments: arguments);
+
+        Assert.True(ran);
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "play"));
     }
 }
