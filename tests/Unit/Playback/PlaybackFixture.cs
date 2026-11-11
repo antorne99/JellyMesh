@@ -245,10 +245,13 @@ internal sealed class ManualClock : TimeProvider
 
 internal sealed class CoordinatorFixture
 {
-    public CoordinatorFixture()
+    public CoordinatorFixture(ILastServedSourceStore? lastServed = null)
     {
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, Clock, NullLogger<PlaybackCoordinator>.Instance);
+        LastServed = lastServed ?? new InMemoryLastServedStore();
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, NullLogger<PlaybackCoordinator>.Instance);
     }
+
+    public ILastServedSourceStore LastServed { get; }
 
     public FakeRegistry Registry { get; } = new();
 
