@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Fresh private servers with the plugin installed, and the gates between them. Each server gets the media of one remote.
-# usage: MEDIA=<main checkout>/tests/Integration/media WORK=<scratch folder> up.sh
+# Fresh private servers with the plugin installed. Each server gets the media of one remote. With STOCK=own, the private
+# stock remote too. usage: MEDIA=<main checkout>/tests/Integration/media WORK=<scratch folder> up.sh
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 rm -f "$WORK"/client-* "$WORK"/open-* "$WORK"/ws-* "$WORK"/seen-* "$WORK"/gate-*
 
+stock_up
 start a remoto-standard
 start b remoto-jellymesh
 install_plugin a

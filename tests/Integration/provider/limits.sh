@@ -9,8 +9,8 @@ SOLO="JM Solo Provider"
 REFUSED=' (403|404|429)$'
 
 # Never grep -q on a pipe here: with pipefail, grep leaving early makes a found line a failure.
-limit_lines() { docker logs jm-prov-b 2>&1 | grep -c 'is at its stream limit'; }
-transcode_files() { docker exec jm-prov-a sh -c 'ls /cache/transcodes | wc -l' | tr -d ' '; }
+limit_lines() { docker logs "$PREFIX-b" 2>&1 | grep -c 'is at its stream limit'; }
+transcode_files() { docker exec "$PREFIX-a" sh -c 'ls /cache/transcodes | wc -l' | tr -d ' '; }
 # wait_transcodes <files>: a removes them about 2 s after the stop.
 wait_transcodes() {
   local i
@@ -25,7 +25,7 @@ share a 1 Film Serie
 gate_mode a up
 gate_mode stock up
 
-docker exec jm-prov-a sh -c "mkdir -p '/extra/film/$SOLO (2026)' && cp \"\$(find '/media/film/Tears of Steel (2012)' -type f -name '*.m*' | head -1)\" '/extra/film/$SOLO (2026)/$SOLO (2026).mkv'"
+docker exec "$PREFIX-a" sh -c "mkdir -p '/extra/film/$SOLO (2026)' && cp \"\$(find '/media/film/Tears of Steel (2012)' -type f -name '*.m*' | head -1)\" '/extra/film/$SOLO (2026)/$SOLO (2026).mkv'"
 scan a
 sync_now b
 scan b
@@ -48,7 +48,7 @@ check "the stock remote served it" 1 "$(grep -c 'POST /Items/.*/PlaybackInfo 200
 check "a still holds one slot" 1 "$(active_streams)"
 sleep 1
 check "b logged the limit" true "$([ "$(limit_lines)" -gt "$logged" ] && echo true || echo false)"
-check "a client sees no remote address" 0 "$(cat "$WORK/open-c1" "$WORK/open-c2" | grep -c -E 'host\.docker\.internal|18412|18414')"
+check "a client sees no remote address" 0 "$(cat "$WORK/open-c1" "$WORK/open-c2" | grep -c -E "host\.docker\.internal|$GATE_A|$GATE_STOCK")"
 close_stream c2
 close_stream c1
 check "closing frees the slot at once" 0 "$(active_streams)"
@@ -56,8 +56,8 @@ check "closing frees the slot at once" 0 "$(active_streams)"
 echo "--- the provider enforces it, whatever the consumer does"
 for i in 1 2 3 4 5; do
   curl -sS -o "$WORK/race-$i" -w '%{http_code}\n' -D "$WORK/race-head-$i" -X POST -H "$ACCEPT" \
-    -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"jm-prov-probe\", Version=\"0.1\", Token=\"$token\"" \
-    "http://127.0.0.1:18410/Items/$real/PlaybackInfo" >"$WORK/race-code-$i" &
+    -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"$PREFIX-probe\", Version=\"0.1\", Token=\"$token\"" \
+    "http://127.0.0.1:$PORT_A/Items/$real/PlaybackInfo" >"$WORK/race-code-$i" &
 done
 wait
 check "five at once: one passes" 1 "$(cat "$WORK"/race-code-* | grep -c 200)"
@@ -189,7 +189,7 @@ url=$(stream_url c9)
 curl -sS -o /dev/null --limit-rate 50k "$url" &
 reader=$!
 sleep 3
-docker pause jm-prov-b >/dev/null
+docker pause "$PREFIX-b" >/dev/null
 freed=never
 for waited in $(seq 10 10 300); do
   sleep 10
@@ -198,7 +198,7 @@ for waited in $(seq 10 10 300); do
     break
   fi
 done
-docker unpause jm-prov-b >/dev/null
+docker unpause "$PREFIX-b" >/dev/null
 kill "$reader" 2>/dev/null
 wait "$reader" 2>/dev/null
 echo "slot of the frozen consumer freed after: $freed s"
@@ -214,10 +214,10 @@ wait_free() {
   done
   echo never
 }
-peer_auth="MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"jm-prov-probe\", Version=\"0.1\", Token=\"$token\""
+peer_auth="MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"$PREFIX-probe\", Version=\"0.1\", Token=\"$token\""
 # take_slot: another stream of the same peer asks. Prints the status; what it opened is in $WORK/taken.
 take_slot() {
-  curl -sS -o "$WORK/taken" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$real/PlaybackInfo"
+  curl -sS -o "$WORK/taken" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:$PORT_A/Items/$real/PlaybackInfo"
 }
 give_slot() {
   as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$WORK/taken")" >/dev/null
@@ -280,11 +280,11 @@ echo "--- a consumer that gives up on a PlaybackInfo: a finishes it for nobody, 
 # A local .strm is what makes the stock action slow: it runs ffprobe on its URL, here through the slowed gate. The peer calls
 # a directly, because a gate that blocks on the server would not pass the disconnect on.
 SLOW="JM Lento (2026)"
-docker exec jm-prov-a sh -c "mkdir -p '/extra/film/$SLOW' && echo 'http://host.docker.internal:18412/Videos/$real/stream?static=true' > '/extra/film/$SLOW/$SLOW.strm'"
+docker exec "$PREFIX-a" sh -c "mkdir -p '/extra/film/$SLOW' && echo 'http://host.docker.internal:$GATE_A/Videos/$real/stream?static=true' > '/extra/film/$SLOW/$SLOW.strm'"
 scan a
 slow=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select(.Path | contains("JM Lento"))][0].Id')
 gate_mode a slow:6000
-gave_up=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' -d "$PROFILE_DIRECT" "http://127.0.0.1:18410/Items/$slow/PlaybackInfo")
+gave_up=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' -d "$PROFILE_DIRECT" "http://127.0.0.1:$PORT_A/Items/$slow/PlaybackInfo")
 check "the consumer timed out with no answer" 000 "$gave_up"
 freed=$(wait_free 30)
 gate_mode a up
@@ -292,13 +292,13 @@ echo "slot of the abandoned PlaybackInfo freed after: $freed s"
 check "the slot went when the action ended" true "$([ "$freed" != never ] && [ "$freed" -le 8 ] && echo true || echo false)"
 check "the next stream gets it" 200 "$(take_slot)"
 give_slot
-docker exec jm-prov-a rm -rf "/extra/film/$SLOW"
+docker exec "$PREFIX-a" rm -rf "/extra/film/$SLOW"
 scan a
 
 echo "--- a stream that fails on a: its slot goes, and a retry in time keeps it"
 check "open" 200 "$(open_stream c17 "$solo" "$PROFILE_DIRECT")"
 solo_file="/extra/film/$SOLO (2026)/$SOLO (2026).mkv"
-docker exec jm-prov-a mv "$solo_file" "$solo_file.away"
+docker exec "$PREFIX-a" mv "$solo_file" "$solo_file.away"
 url=$(stream_url c17)
 status=$(curl -sS -o /dev/null -w '%{http_code}' "$url")
 echo "what the client of the broken stream got: $status"
@@ -311,7 +311,7 @@ check "the retry kept it" 1 "$(active_streams)"
 freed=$(wait_free 30)
 echo "slot of the failed stream freed after: $freed s"
 check "freed within seconds" true "$([ "$freed" != never ] && [ "$freed" -le 8 ] && echo true || echo false)"
-docker exec jm-prov-a mv "$solo_file.away" "$solo_file"
+docker exec "$PREFIX-a" mv "$solo_file.away" "$solo_file"
 close_stream c17
 
 echo "--- a connected server changed by the administrator keeps its slots, and removed loses them at once"
@@ -367,7 +367,7 @@ check "free again" 0 "$(wait_free 15)"
 # The cases that need a stream long enough to catch running. Encoding takes minutes on it, and no buffer on the way holds it.
 LONG="JM Lungo (2026)"
 OTHER="JM Altro (2026)"
-docker exec jm-prov-a sh -c "mkdir -p '/extra/film/$LONG' '/extra/altra/$OTHER' \
+docker exec "$PREFIX-a" sh -c "mkdir -p '/extra/film/$LONG' '/extra/altra/$OTHER' \
   && /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -loglevel error -nostdin -stream_loop 100 \
     -i \"\$(find '/media/film/Tears of Steel (2012)' -type f -name '*.m*' | head -1)\" -map 0 -c copy '/extra/film/$LONG/$LONG.mkv' \
   && ln '/extra/film/$LONG/$LONG.mkv' '/extra/altra/$OTHER/$OTHER.mkv'"
@@ -400,16 +400,16 @@ grows() {
 }
 # peer_read <item>: a peer playing an item by itself, slowly. The pid goes to $WORK/peer-reader.
 peer_read() {
-  curl -sS -o "$WORK/taken" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$1/PlaybackInfo"
+  curl -sS -o "$WORK/taken" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:$PORT_A/Items/$1/PlaybackInfo"
   curl -sS -o "$WORK/read-peer" --limit-rate "$READ_RATE" -H "Authorization: $peer_auth" \
-    "http://127.0.0.1:18410/Videos/$1/stream?static=true&MediaSourceId=$1&PlaySessionId=$(jq -r .PlaySessionId "$WORK/taken")" &
+    "http://127.0.0.1:$PORT_A/Videos/$1/stream?static=true&MediaSourceId=$1&PlaySessionId=$(jq -r .PlaySessionId "$WORK/taken")" &
   echo $! >"$WORK/peer-reader"
 }
 ffmpeg_pids() {
-  docker exec jm-prov-a sh -c 'for p in /proc/[0-9]*; do case "$(readlink "$p/exe" 2>/dev/null)" in *ffmpeg*) echo "${p#/proc/}" ;; esac; done' | sort | tr '\n' ' ' | sed 's/ $//'
+  docker exec "$PREFIX-a" sh -c 'for p in /proc/[0-9]*; do case "$(readlink "$p/exe" 2>/dev/null)" in *ffmpeg*) echo "${p#/proc/}" ;; esac; done' | sort | tr '\n' ' ' | sed 's/ $//'
 }
 ffmpeg_running() { case " $(ffmpeg_pids) " in *" $1 "*) echo true ;; *) echo false ;; esac; }
-ffmpeg_count() { docker exec jm-prov-a sh -c 'n=0; for p in /proc/[0-9]*; do case "$(readlink "$p/exe" 2>/dev/null)" in *ffmpeg*) n=$((n+1)) ;; esac; done; echo $n'; }
+ffmpeg_count() { docker exec "$PREFIX-a" sh -c 'n=0; for p in /proc/[0-9]*; do case "$(readlink "$p/exe" 2>/dev/null)" in *ffmpeg*) n=$((n+1)) ;; esac; done; echo $n'; }
 # no_ffmpeg <seconds>: seconds until a has none left, or never.
 no_ffmpeg() {
   local i
@@ -458,7 +458,7 @@ close_stream c22
 check "the stream of the library still shared keeps playing" true "$(grows "$WORK/read-peer")"
 # take_other: another stream of the peer, on the library it kept. Prints the status.
 take_other() {
-  curl -sS -o "$WORK/taken-other" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$other/PlaybackInfo"
+  curl -sS -o "$WORK/taken-other" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:$PORT_A/Items/$other/PlaybackInfo"
 }
 check "the limit of 2 has room for one more" 200 "$(take_other)"
 one_more=$(jq -r .PlaySessionId "$WORK/taken-other")
@@ -482,11 +482,11 @@ share a 1 Film Serie
 check "free again" 0 "$(wait_free 15)"
 
 # peer_open: a peer opening an HLS stream of the long film by itself. Sets opened, session and segment, its first segment.
-peer_get() { curl -sS -o "$2" -w '%{http_code}' --max-time 60 -H "Authorization: $peer_auth" "http://127.0.0.1:18410$1"; }
+peer_get() { curl -sS -o "$2" -w '%{http_code}' --max-time 60 -H "Authorization: $peer_auth" "http://127.0.0.1:$PORT_A$1"; }
 peer_open() {
   local url variant
   opened=$(curl -sS -o "$WORK/hls-open" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' \
-    -d "$PROFILE_ENCODE" "http://127.0.0.1:18410/Items/$long_on_a/PlaybackInfo")
+    -d "$PROFILE_ENCODE" "http://127.0.0.1:$PORT_A/Items/$long_on_a/PlaybackInfo")
   [ "$opened" = 200 ] || return 0
   session=$(jq -r .PlaySessionId "$WORK/hls-open")
   url=$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/hls-open")
@@ -500,7 +500,7 @@ peer_open() {
 # luck, and a stream a has finished sending shows no dropped connection. To the provider it is a request of that session.
 hold_session() {
   curl -sS -o /dev/null --limit-rate 20k -H "Authorization: $peer_auth" \
-    "http://127.0.0.1:18410/Videos/$long_on_a/stream?static=true&MediaSourceId=$long_on_a&PlaySessionId=$session" &
+    "http://127.0.0.1:$PORT_A/Videos/$long_on_a/stream?static=true&MediaSourceId=$long_on_a&PlaySessionId=$session" &
   echo $! >"$WORK/reader"
 }
 
@@ -593,15 +593,15 @@ check "free again" 0 "$(wait_free 15)"
 
 echo "--- a failed start of a transcode for a peer: a retry plays, it does not hang"
 solo_on_a=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$SOLO" '[.Items[] | select(.Path | contains($t))][0].Id')
-curl -sS -o "$WORK/retry-open" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' -d "$PROFILE_ENCODE" "http://127.0.0.1:18410/Items/$solo_on_a/PlaybackInfo"
+curl -sS -o "$WORK/retry-open" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" -H 'Content-Type: application/json' -d "$PROFILE_ENCODE" "http://127.0.0.1:$PORT_A/Items/$solo_on_a/PlaybackInfo"
 url=$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/retry-open")
 check "the master playlist" 200 "$(peer_get "$url" "$WORK/retry-master")"
 variant=$(folder_of "$url")$(grep -v '^#' "$WORK/retry-master" | head -1)
 check "the variant" 200 "$(peer_get "$variant" "$WORK/retry-variant")"
 segment=$(folder_of "$variant")$(grep -v '^#' "$WORK/retry-variant" | head -1)
-docker exec jm-prov-a mv "$solo_file" "$solo_file.away"
+docker exec "$PREFIX-a" mv "$solo_file" "$solo_file.away"
 status=$(peer_get "$segment" /dev/null)
-docker exec jm-prov-a mv "$solo_file.away" "$solo_file"
+docker exec "$PREFIX-a" mv "$solo_file.away" "$solo_file"
 echo "what the peer got from the failed start: $status"
 check "the start failed" true "$([ "$status" -ge 500 ] && echo true || echo false)"
 check "the retry plays" 200 "$(peer_get "$segment" /dev/null)"
@@ -634,8 +634,8 @@ sent_all() {
 }
 read_start() { curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -r 0-99 "$(stream_url "$1")"; }
 give_backs() { grep -c 'DELETE /JellyMesh/Provider/Streams/.* 204' "$WORK/gate-a.log"; }
-b_address_lines() { docker logs jm-prov-b 2>&1 | grep -c -E 'host\.docker\.internal|18412'; }
-slot_failures() { docker logs jm-prov-b 2>&1 | grep -c 'Could not give a stream slot back'; }
+b_address_lines() { docker logs "$PREFIX-b" 2>&1 | grep -c -E "host\.docker\.internal|$GATE_A"; }
+slot_failures() { docker logs "$PREFIX-b" 2>&1 | grep -c 'Could not give a stream slot back'; }
 PROFILE_HLS_ENCODE=$(jq -c '. + {AllowVideoStreamCopy: false}' <<<"$PROFILE_HLS")
 
 echo "--- a client of b that goes after a has sent everything: b tells a, and the session stays"
@@ -729,7 +729,7 @@ new_ffmpeg() { ffmpeg_pids | tr ' ' '\n' | grep -v -x -E "${1// /|}"; }
 # pid goes to $WORK/reader.
 hold_transcode() {
   curl -sS -o /dev/null --limit-rate 20k -H "Authorization: $peer_auth" \
-    "http://127.0.0.1:18410/Videos/$long_on_a/stream.ts?MediaSourceId=$long_on_a&PlaySessionId=$session&DeviceId=jm-prov-probe&VideoCodec=h264&AudioCodec=aac&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false" &
+    "http://127.0.0.1:$PORT_A/Videos/$long_on_a/stream.ts?MediaSourceId=$long_on_a&PlaySessionId=$session&DeviceId=$PREFIX-probe&VideoCodec=h264&AudioCodec=aac&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false" &
   echo $! >"$WORK/reader"
 }
 
@@ -773,9 +773,9 @@ check "free again" 0 "$(wait_free 15)"
 # peer_stream <name> <item>: as peer_read, for several at a time. What it opened is in $WORK/peer-open-<name>, its bytes in
 # $WORK/read-<name> and its pid in $WORK/pid-<name>.
 peer_stream() {
-  curl -sS -o "$WORK/peer-open-$1" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:18410/Items/$2/PlaybackInfo"
+  curl -sS -o "$WORK/peer-open-$1" -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" "http://127.0.0.1:$PORT_A/Items/$2/PlaybackInfo"
   curl -sS -o "$WORK/read-$1" --limit-rate "$READ_RATE" -H "Authorization: $peer_auth" \
-    "http://127.0.0.1:18410/Videos/$2/stream?static=true&MediaSourceId=$2&PlaySessionId=$(jq -r .PlaySessionId "$WORK/peer-open-$1")" &
+    "http://127.0.0.1:$PORT_A/Videos/$2/stream?static=true&MediaSourceId=$2&PlaySessionId=$(jq -r .PlaySessionId "$WORK/peer-open-$1")" &
   echo $! >"$WORK/pid-$1"
 }
 end_peer_stream() {
@@ -868,7 +868,7 @@ message=$(message_during c32 8 hls_back)
 check "the segment is refused" 503 "$(cat "$WORK/during-c32")"
 check "with the message of the limit" "$LIMIT_TEXT" "$message"
 check "a playlist is refused too" 503 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$(stream_url c32)")"
-check "nothing of the remote in the answer" 0 "$(curl -sS --max-time 30 "$segment" | grep -c -E 'host\.docker\.internal|18412')"
+check "nothing of the remote in the answer" 0 "$(curl -sS --max-time 30 "$segment" | grep -c -E "host\.docker\.internal|$GATE_A")"
 give_slot
 check "with the slot free the same URL plays" 200 "$(hls_back)"
 close_stream c32
@@ -908,7 +908,7 @@ check "no ffmpeg left" true "$(g=$(no_ffmpeg 15); [ "$g" != never ] && echo true
 check "free again" 0 "$(wait_free 15)"
 
 req a DELETE "/Library/VirtualFolders?name=Altra" >/dev/null
-docker exec jm-prov-a rm -rf "/extra/film/$LONG" /extra/altra
+docker exec "$PREFIX-a" rm -rf "/extra/film/$LONG" /extra/altra
 scan a
 
 exit "$FAILED"

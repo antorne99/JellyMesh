@@ -12,9 +12,9 @@ mkdir -p "$LOOK"
 cat "$WORK"/gate-*.tokens 2>/dev/null | sort -u >"$LOOK.tokens"
 check "the gates saw the tokens of the remotes" true "$([ -s "$LOOK.tokens" ] && echo true || echo false)"
 
-gateway=$(docker exec jm-prov-b getent hosts "$HOST_GATE" | awk '{print $1; exit}')
+gateway=$(docker exec "$PREFIX-b" getent hosts "$HOST_GATE" | awk '{print $1; exit}')
 check "the address of the gate is known" true "$([ -n "$gateway" ] && echo true || echo false)"
-addresses="$HOST_GATE|:1841[234]|${gateway//./\\.}"
+addresses="$HOST_GATE|:($GATE_A|$GATE_B|$GATE_STOCK)|${gateway//./\\.}"
 
 no_token() { check "no remote token in $1" 0 "$(cat "${@:2}" 2>/dev/null | grep -c -F -f "${TOKENS:-$LOOK.tokens}")"; }
 no_address() { check "no remote address in $1" 0 "$(cat "${@:2}" 2>/dev/null | grep -c -E "$addresses")"; }
@@ -29,9 +29,9 @@ clean "PlaybackInfo answers" "$WORK"/open-*
 clean "refusal messages" "$WORK"/ws-*
 clean "playlists" "$WORK"/seen-*
 
-mario=$(curl -sS -X POST -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"leaks\", DeviceId=\"jm-prov-leaks\", Version=\"0.1\"" \
-  -H 'Content-Type: application/json' -d '{"Username":"mario","Pw":"jellymesh-test"}' http://127.0.0.1:18411/Users/AuthenticateByName | jq -r .AccessToken)
-as_client() { curl -sS -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"leaks\", DeviceId=\"jm-prov-leaks\", Version=\"0.1\", Token=\"$mario\"" "http://127.0.0.1:18411$1"; }
+mario=$(curl -sS -X POST -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"leaks\", DeviceId=\"$PREFIX-leaks\", Version=\"0.1\"" \
+  -H 'Content-Type: application/json' -d '{"Username":"mario","Pw":"jellymesh-test"}' "http://127.0.0.1:$PORT_B/Users/AuthenticateByName" | jq -r .AccessToken)
+as_client() { curl -sS -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"leaks\", DeviceId=\"$PREFIX-leaks\", Version=\"0.1\", Token=\"$mario\"" "http://127.0.0.1:$PORT_B$1"; }
 as_client '/Items?Recursive=true&IncludeItemTypes=Movie,Series,Season,Episode&Fields=Path,MediaSources,MediaStreams,ProviderIds,ExternalUrls,Overview' >"$LOOK/client-items"
 check "the listing of a client is not empty" true "$(jq '.Items | length > 0' "$LOOK/client-items")"
 clean "the items a client lists" "$LOOK/client-items"

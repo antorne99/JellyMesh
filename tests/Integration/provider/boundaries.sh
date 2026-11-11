@@ -72,8 +72,8 @@ check "a real item is found by a peer" 1 "$(jq '.Items | length' "$WORK/body")"
 check "its versions come with quality" true "$(jq --arg m "$(jq -r '.Items[0].MediaSources[0].Id' "$WORK/body")" '.Quality[$m].Height > 0' "$WORK/body")"
 check "no file path is sent to a peer" 0 "$(jq '[.Items[].MediaSources[] | (.Path // empty), (.MediaStreams[]? | .Path // empty)] | length' "$WORK/body")"
 
-stubs_a=$(docker exec jm-prov-a sh -c 'find /federata -name "*.strm"')
-stubs_b=$(docker exec jm-prov-b sh -c 'find /federata -name "*.strm"')
+stubs_a=$(docker exec "$PREFIX-a" sh -c 'find /federata -name "*.strm"')
+stubs_b=$(docker exec "$PREFIX-b" sh -c 'find /federata -name "*.strm"')
 before_a=$(echo "$stubs_a" | wc -l | tr -d ' ')
 before_b=$(echo "$stubs_b" | wc -l | tr -d ' ')
 for round in 1 2 3; do
@@ -82,16 +82,16 @@ for round in 1 2 3; do
   scan a
   scan b
 done
-check "stubs on a stay after three rounds" "$before_a" "$(docker exec jm-prov-a sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
-check "stubs on b stay after three rounds" "$before_b" "$(docker exec jm-prov-b sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
+check "stubs on a stay after three rounds" "$before_a" "$(docker exec "$PREFIX-a" sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
+check "stubs on b stay after three rounds" "$before_b" "$(docker exec "$PREFIX-b" sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
 
 echo "--- others are not peers"
 mario=$(peer_token a mario)
 check "capabilities for an ordinary user" 404 "$(as_peer a "$mario" GET /JellyMesh/Capabilities)"
 check "ProviderApi for an ordinary user" 403 "$(as_peer a "$mario" GET /JellyMesh/Provider/Libraries)"
 check "an ordinary user keeps the stock API" 200 "$(as_peer a "$mario" GET /UserViews)"
-check "capabilities without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18410/JellyMesh/Capabilities)"
-check "ProviderApi without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18410/JellyMesh/Provider/Libraries)"
+check "capabilities without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT_A/JellyMesh/Capabilities")"
+check "ProviderApi without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT_A/JellyMesh/Provider/Libraries")"
 
 echo "--- shared libraries are enforced on the provider"
 serie=$(library_id a Serie)
