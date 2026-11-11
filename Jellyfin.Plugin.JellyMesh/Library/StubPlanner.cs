@@ -114,7 +114,7 @@ public static class StubPlanner
         var catalog = IndexItemLookup.Build(input.Snapshot);
         var labels = FederatedPaths.Labels(input.Servers.Select(server => (server.Id, (string?)server.Name)), input.State.Labels);
         var works = new List<StubWork>();
-        var placed = new List<(StubWork Work, ResolvedContent Content)>();
+        var placed = new List<(StubWork Work, ResolvedContent Content, IndexedItem Winner)>();
         var seriesWorks = new List<SeriesWork>();
         var claimed = new HashSet<string>(StringComparer.Ordinal);
         var merged = new HashSet<string>(StringComparer.Ordinal);
@@ -141,7 +141,7 @@ public static class StubPlanner
 
                 if (content.Identity.Kind == ContentKind.Movie)
                 {
-                    placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStub(server.Id, paths.MovieFolder(winner.Name, winner.ProductionYear, id), label)), content));
+                    placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStub(server.Id, paths.MovieFolder(winner.Name, winner.ProductionYear, id), label)), content, winner));
                 }
                 else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
                 {
@@ -150,7 +150,7 @@ public static class StubPlanner
                 else
                 {
                     var seriesPlan = SeriesPlanOf(input, content, winner, catalog, scope, seriesPlans);
-                    placed.Add((EpisodeWork(input, content, stub, winner, seriesPlan, catalog, server.Id, label), content));
+                    placed.Add((EpisodeWork(input, content, stub, winner, seriesPlan, catalog, server.Id, label), content, winner));
                 }
             }
 
@@ -205,7 +205,7 @@ public static class StubPlanner
 
     // Links the stubs of one title in different server folders, and its local copy, as versions. A group keeps its ID, and
     // its primary while that stays in it; a stub that got no work, such as one of a server still in doubt, keeps its group.
-    private static List<VersionGroup> Groups(StubPlanInput input, List<(StubWork Work, ResolvedContent Content)> placed, List<StubEntry> stubs, IEnumerable<string> gone)
+    private static List<VersionGroup> Groups(StubPlanInput input, List<(StubWork Work, ResolvedContent Content, IndexedItem Winner)> placed, List<StubEntry> stubs, IEnumerable<string> gone)
     {
         var written = placed.Select(entry => entry.Work.Entry.Id).ToHashSet(StringComparer.Ordinal);
         var left = gone.ToHashSet(StringComparer.Ordinal);
@@ -216,16 +216,18 @@ public static class StubPlanner
         var reused = new HashSet<string>(StringComparer.Ordinal);
         var groups = new List<VersionGroup>();
 
-        // Episodes join only with the same range: the key is the first episode and the last.
+        // Episodes join only when the files behind them cover the same range, whatever range the stubs show.
+        var covered = input.View.Contents
+            .SelectMany(content => content.RemoteItems.Select(item => (Item: item, content.Identity.Key)))
+            .ToLookup(entry => entry.Item, entry => entry.Key);
         var titles = placed
-            .GroupBy(entry => (entry.Content.Identity.Key, entry.Content.EpisodeNumberEnd))
-            .OrderBy(title => title.Key.Key, StringComparer.Ordinal)
-            .ThenBy(title => title.Key.EpisodeNumberEnd);
+            .GroupBy(entry => GroupKeyOf(entry.Content, entry.Winner, entry.Work.Entry.ServerId!.Value, covered), StringComparer.Ordinal)
+            .OrderBy(title => title.Key, StringComparer.Ordinal);
         foreach (var title in titles)
         {
-            var content = title.First().Content;
-            var stubIds = title.Select(entry => entry.Work.Entry.Id).ToList();
-            var local = LocalCopiesOf(input, content);
+            var (_, content, winner) = title.First();
+            var stubIds = title.DistinctBy(entry => entry.Work.Entry.ServerId).Select(entry => entry.Work.Entry.Id).ToList();
+            var local = LocalCopiesOf(input, content, winner);
             var old = input.State.Groups.FirstOrDefault(group => !reused.Contains(group.Id) && (group.StubIds.Any(stubIds.Contains) || group.LocalItemIds.Any(local.Contains)));
             if (old is not null)
             {
@@ -265,17 +267,32 @@ public static class StubPlanner
         });
     }
 
-    // The local copies of a stub. For episodes, only a local file that covers each episode of the stub and no other episode
-    // of the season in the view. The view holds no episode that is only local, so a longer local file can still pass.
-    private static List<Guid> LocalCopiesOf(StubPlanInput input, ResolvedContent content)
+    // The key of a version group: the title for a film, and for an episode the episodes the file behind the stub covers,
+    // which the dedup takes from its first and last number.
+    private static string GroupKeyOf(ResolvedContent content, IndexedItem winner, Guid serverId, ILookup<ResolvedItem, string> covered)
+    {
+        return content.Identity.Kind == ContentKind.Episode
+            ? string.Join('\n', covered[new ResolvedItem(serverId, winner.ItemId)].Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            : content.Identity.Key;
+    }
+
+    private static (int First, int Last) FileRangeOf(ResolvedContent content, IndexedItem winner)
+    {
+        var first = winner.IndexNumber ?? content.Identity.EpisodeNumber!.Value;
+        return (first, winner.IndexNumberEnd is { } end && end > first ? end : first);
+    }
+
+    // The local copies of a stub. For episodes, only a local file that covers each episode of the file behind the stub and
+    // no other episode of the season in the view. The view holds no episode that is only local, so a longer local file can
+    // still pass.
+    private static List<Guid> LocalCopiesOf(StubPlanInput input, ResolvedContent content, IndexedItem winner)
     {
         if (content.Identity.Kind != ContentKind.Episode)
         {
             return content.LocalItemIds.Where(id => id != Guid.Empty).Distinct().ToList();
         }
 
-        var first = content.Identity.EpisodeNumber!.Value;
-        var last = content.EpisodeNumberEnd ?? first;
+        var (first, last) = FileRangeOf(content, winner);
         var season = input.View.Contents
             .Where(entry => string.Equals(entry.Identity.WorkKey, content.Identity.WorkKey, StringComparison.Ordinal) && entry.Identity.SeasonNumber == content.Identity.SeasonNumber)
             .ToList();

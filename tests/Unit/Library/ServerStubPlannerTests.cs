@@ -442,20 +442,22 @@ public class ServerStubPlannerTests
     }
 
     [Fact]
-    public void AnEpisodeStubThatPlaysARangeFileIsLinkedByTheEpisodeItShows()
+    public void AnEpisodeStubIsLinkedByTheRangeOfTheFileBehindIt()
     {
-        // A's better E08 splits its E07-E08 file, so A shows a plain E07 stub that plays the whole file.
+        // C's better E08 splits its E07-E08 file, so C shows a plain E07 stub that plays the whole file.
         var plan = Plan(
-            [EpisodeTitle(7, OnA("ra"), OnB("b7")), EpisodeTitle(8, OnA("ra"), OnA("a8"))],
+            [EpisodeTitle(7, OnA("ra"), OnB("b7"), OnC("rc")), EpisodeTitle(8, OnA("ra"), OnC("rc"), OnC("c8"))],
             [
-                Catalog(_serverA, SeriesItem("sa"), EpisodeItem("ra", "sa", 7, 8), EpisodeItem("a8", "sa", 8) with { Versions = [Version("a8", 2160)] }),
-                Catalog(_serverB, SeriesItem("sb"), EpisodeItem("b7", "sb", 7))
-            ]);
+                Catalog(_serverA, SeriesItem("sa"), EpisodeItem("ra", "sa", 7, 8)),
+                Catalog(_serverB, SeriesItem("sb"), EpisodeItem("b7", "sb", 7)),
+                Catalog(_serverC, SeriesItem("sc"), EpisodeItem("rc", "sc", 7, 8), EpisodeItem("c8", "sc", 8) with { Versions = [Version("c8", 2160)] })
+            ],
+            servers: [Server(_serverA, "Casa"), Server(_serverB, "Ufficio"), Server(_serverC, "Mare")]);
 
-        var onA7 = plan.Stubs.Single(stub => stub.Entry.ServerId == _serverA && stub.Entry.EpisodeNumber == 7).Entry;
-        Assert.Null(onA7.EpisodeNumberEnd);
-        Assert.Equal("ra", onA7.Sources[0].ItemId);
-        Assert.Equal(new[] { onA7.Id, On(plan, _serverB).Entry.Id }.Order(), Assert.Single(plan.State.Groups).StubIds.Order());
+        var onC7 = plan.Stubs.Single(stub => stub.Entry.ServerId == _serverC && stub.Entry.EpisodeNumber == 7).Entry;
+        Assert.Null(onC7.EpisodeNumberEnd);
+        Assert.Equal("rc", onC7.Sources[0].ItemId);
+        Assert.Equal(new[] { onC7.Id, On(plan, _serverA).Entry.Id }.Order(), Assert.Single(plan.State.Groups).StubIds.Order());
     }
 
     [Fact]
