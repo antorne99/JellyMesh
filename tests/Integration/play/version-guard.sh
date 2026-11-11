@@ -176,6 +176,7 @@ check "anonymous cannot reach it either" 401 "$(through_private anonymous "$psid
 check "another user's DELETE ActiveEncodings is a 204" 204 "$(kill_encodings viewer2 "$psid")"
 check "another user's stop report is a 204" 204 "$(stop_report viewer2 "$psid")"
 sleep 2
+# Both stops would delete the files of the job. One from a segment would not: the owner's stop below proves it still ran.
 check "and its transcode job is still there for its owner" 1 "$(transcodes)"
 check "whose next segment is served" 200 "$(as viewer "/videos/$stub/${segment/0.ts/1.ts}")"
 # The legacy segment route belongs to D9 (F20): recorded here, not checked.
@@ -214,10 +215,10 @@ keep_job
 stub=$(stub_item local "$TITLE")
 stub_n=${stub//-/}
 
-# D11: the owner's stop ends the record.
+# D11: the owner's stop ends the record. It deletes the files of the job only if the job ran through all of the above.
 check "the owner's DELETE ActiveEncodings is served" 204 "$(kill_encodings viewer "$psid")"
 sleep 2
-check "and kills the transcode job" 0 "$(transcodes)"
+check "and finds the transcode job still running and kills it" 0 "$(transcodes)"
 check "after it the play session is out of the record" 206 "$(through_private outsider "$psid")"
 quit=$(open_local viewer)
 check "the owner's stop report is served" 204 "$(stop_report viewer "$quit")"
@@ -259,24 +260,53 @@ job_hashes() { docker exec "$PREFIX-local" sh -c 'ls /cache/transcodes 2>/dev/nu
 segment_of_private() { # segment_of_private <device query>: segment 3 of the private film, with no play session
   echo "/videos/$private/hls1/main/3.ts?$1&MediaSourceId=$private_n&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts&runtimeTicks=90000000&actualSegmentLengthTicks=30000000"
 }
-before=$(job_hashes)
-victim=$(open_local viewer)
-master=$(transcode_url)
-as viewer "/videos/$stub/master.m3u8?${master#*\?}" >/dev/null
-variant=$(grep -v '^#' "$WORK/as-body" | head -1)
-as viewer "/videos/$stub/$variant" >/dev/null
-check "a new local play session serves its first segment" 200 "$(as viewer "/videos/$stub/$(grep -v '^#' "$WORK/as-body" | head -1)")"
-victim_job=$(comm -13 <(echo "$before") <(job_hashes) | head -1)
-check "and runs its own transcode job" 1 "$([ -n "$victim_job" ] && echo 1 || echo 0)"
+# A stop from a segment keeps the files of a job, which the owner's DELETE ActiveEncodings removes only while it runs.
+open_job() { # open_job [bare]: the owner opens the stub and plays a segment, bare with no device in the URL; sets job*
+  local before
+  before=$(job_hashes)
+  job_session=$(open_local viewer)
+  job_url=$(transcode_url)
+  [ "${1:-}" = bare ] && job_url=$(echo "$job_url" | perl -pe 's/(?<=[?&])DeviceId=[^&]*(&|$)//i; s/[?&]$//')
+  as viewer "/videos/$stub/master.m3u8?${job_url#*\?}" >/dev/null
+  as viewer "/videos/$stub/$(grep -v '^#' "$WORK/as-body" | head -1)" >/dev/null
+  job_status=$(as viewer "/videos/$stub/$(grep -v '^#' "$WORK/as-body" | head -1)")
+  job=$(comm -13 <(echo "$before") <(job_hashes) | head -1)
+}
+still_ran() { # still_ran: 1 if the owner's DELETE ActiveEncodings found the job of open_job running and removed its files
+  local hashes
+  [ -n "$job" ] || { echo "no job"; return; }
+  kill_encodings viewer "$job_session" >/dev/null
+  sleep 2
+  hashes=$(job_hashes)
+  grep -qx "$job" <<<"$hashes" && echo 0 || echo 1
+}
+open_job
+check "a new local play session serves its first segment" 200 "$job_status"
+check "and runs its own transcode job" 1 "$([ -n "$job" ] && echo 1 || echo 0)"
 check "another user's segment of their own film with the owner's device and no play session is not found" 404 \
   "$(as outsider "$(segment_of_private DeviceId=jm-play-viewer)")"
 check "nor with the device in upper case" 404 "$(as outsider "$(segment_of_private DeviceId=JM-PLAY-VIEWER)")"
 check "nor with the device in the legacy params" 404 \
   "$(as outsider "$(segment_of_private "params=;jm-play-viewer;$private_n&DeviceId=someone-else")")"
-sleep 2
-check "and the owner's transcode job is still there" 1 "$(job_hashes | grep -qx "$victim_job" && echo 1 || echo 0)"
 check "a segment of their own film with their own device goes to stock" 200 "$(as outsider "$(segment_of_private DeviceId=jm-play-outsider)")"
-kill_encodings viewer "$victim" >/dev/null
+check "and the owner's transcode job still runs" 1 "$(still_ran)"
+open_job
+check "the owner's own such segment with their device goes to stock" 200 "$(as viewer "$(segment_of_private DeviceId=jm-play-viewer)")"
+check "and stock stops their transcode job" 0 "$(still_ran)"
+
+# Q89: one with no play session and no device stops every job without a device, so it is not found while another user
+# has a local play session. The owner's jobs here run without a device.
+open_job bare
+check "a local play session without a device in its URL runs its own transcode job" 1 \
+  "$(echo "$job_url" | grep -qi "PlaySessionId=$job_session" && ! echo "$job_url" | grep -qi "DeviceId=" && [ -n "$job" ] && echo 1 || echo 0)"
+check "another user's segment of their own film with no device and no play session is not found" 404 \
+  "$(as outsider "$(segment_of_private "")")"
+check "nor with an empty device" 404 "$(as outsider "$(segment_of_private DeviceId=)")"
+check "nor with an empty device in the legacy params" 404 "$(as outsider "$(segment_of_private "params=;;$private_n")")"
+check "and the owner's job without a device still runs" 1 "$(still_ran)"
+open_job bare
+check "the owner's own such segment goes to stock" 200 "$(as viewer "$(segment_of_private "")")"
+check "and stock stops their job without a device" 0 "$(still_ran)"
 
 [ "${DOWN:-0}" = 1 ] && down
 exit $FAILED
