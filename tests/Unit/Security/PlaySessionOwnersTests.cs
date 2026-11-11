@@ -123,4 +123,56 @@ public class PlaySessionOwnersTests
         Assert.False(owners.BelongsToAnother(_other, "quiet"));
         Assert.True(owners.BelongsToAnother(_other, "used"));
     }
+
+    [Fact]
+    public void Any_session_counts_as_another_users_only_for_someone_else()
+    {
+        Assert.False(_owners.AnyOfAnother(_other));
+
+        _owners.Add(_owner, "mine");
+
+        Assert.True(_owners.AnyOfAnother(_other));
+        Assert.True(_owners.AnyOfAnother(Guid.Empty));
+        Assert.False(_owners.AnyOfAnother(_owner));
+    }
+
+    [Fact]
+    public void Any_session_of_another_stops_counting_once_it_leaves()
+    {
+        var clock = new ManualClock();
+        var owners = PlaySessionOwners.WithClock(clock);
+        owners.Add(_owner, "ended");
+        owners.Add(_other, "quiet");
+
+        Assert.True(owners.Remove(_owner, "ended"));
+        Assert.False(owners.AnyOfAnother(_other));
+        Assert.True(owners.AnyOfAnother(_owner));
+
+        clock.Advance(TimeSpan.FromSeconds(90));
+        owners.ForgetIdle(TimeSpan.FromSeconds(90));
+        Assert.False(owners.AnyOfAnother(_owner));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void No_device_names_the_device_of_every_session_of_another(string? device)
+    {
+        _owners.Add(_owner, "mine", null, ["owner-device"]);
+        _owners.Add(_owner, "without-devices");
+
+        Assert.True(_owners.DeviceOfAnother(_other, device));
+        Assert.False(_owners.DeviceOfAnother(_owner, device));
+    }
+
+    [Fact]
+    public void No_device_names_nothing_while_no_one_else_has_a_session()
+    {
+        Assert.False(_owners.DeviceOfAnother(_other, null));
+
+        _owners.Add(_other, "theirs", null, ["their-device"]);
+
+        Assert.False(_owners.DeviceOfAnother(_other, " "));
+    }
 }

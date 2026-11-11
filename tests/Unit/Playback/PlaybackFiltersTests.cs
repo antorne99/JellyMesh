@@ -860,6 +860,58 @@ public class PlaybackFiltersTests
         Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
+    [Theory]
+    [InlineData("GetHlsVideoSegment", "deviceId", null)]
+    [InlineData("GetHlsVideoSegment", "deviceId", "")]
+    [InlineData("GetHlsVideoSegment", "deviceId", " ")]
+    [InlineData("GetHlsAudioSegment", "params", "; ;")]
+    [InlineData("GetMasterHlsVideoPlaylist", "params", "")]
+    public async Task A_request_without_a_play_session_or_a_device_is_not_found_while_another_user_plays_here(string action, string argument, string? device)
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var context = Context("DynamicHls", action, ("itemId", LocalItem()), (argument, device));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task An_anonymous_request_without_a_play_session_or_a_device_is_not_found_while_a_user_plays_here()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        Anonymous();
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_request_without_a_play_session_or_a_device_passes_while_no_one_plays_here()
+    {
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    [Fact]
+    public async Task A_request_without_a_play_session_or_a_device_passes_while_only_its_user_plays_here()
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "own-play", _itemId, "device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    [Fact]
+    public async Task A_request_without_a_device_that_names_a_play_session_passes_while_another_user_plays_here()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("playSessionId", "a-play-session"));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
     [Fact]
     public async Task A_local_play_session_is_recorded_with_the_device_its_transcoding_url_names()
     {

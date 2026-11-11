@@ -107,10 +107,10 @@ public sealed class PlaybackSessionStore
 
     /// <summary>
     /// Tells whether the stock play session of a stub played on this server by someone else runs on a device. Stock stops
-    /// every job of a device for a segment that names no play session.
+    /// every job of a device for a segment that names no play session. No device, or a blank one, names every device.
     /// </summary>
     /// <param name="userId">The user.</param>
-    /// <param name="deviceId">The device.</param>
+    /// <param name="deviceId">The device, null if the request names none.</param>
     /// <returns>Whether another user played a stub here from it.</returns>
     public bool IsLocalDeviceOfAnother(Guid userId, string? deviceId)
     {
