@@ -152,24 +152,36 @@ public static partial class FederatedPaths
     /// <summary>
     /// Builds the label of each server, the text after <c> - </c> in its stub names that clients show as the version
     /// name: the server name sanitized, with no word Jellyfin would read as an extra or as 3D, and with the start of the
-    /// GUID added when two servers would get the same label.
+    /// GUID added to a server that comes after another with the same label. A stored label never changes here.
     /// </summary>
-    /// <param name="servers">The name of each server.</param>
-    /// <returns>The label of each server.</returns>
-    public static IReadOnlyDictionary<Guid, string> Labels(IReadOnlyDictionary<Guid, string> servers)
+    /// <param name="servers">The name of each server, in the order of the configuration.</param>
+    /// <param name="stored">The labels given before.</param>
+    /// <returns>The stored labels, and one for each server that had none.</returns>
+    public static IReadOnlyDictionary<Guid, string> Labels(IEnumerable<(Guid ServerId, string? Name)> servers, IReadOnlyDictionary<Guid, string> stored)
     {
         ArgumentNullException.ThrowIfNull(servers);
+        ArgumentNullException.ThrowIfNull(stored);
 
-        var labels = servers.ToDictionary(server => server.Key, server => CleanLabel(server.Key, server.Value));
-        var shared = labels.Values
-            .GroupBy(label => label, StringComparer.OrdinalIgnoreCase)
-            .Where(group => group.Count() > 1)
-            .Select(group => group.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var labels = new Dictionary<Guid, string>(stored);
+        var taken = new HashSet<string>(stored.Values, StringComparer.OrdinalIgnoreCase);
+        foreach (var (serverId, name) in servers)
+        {
+            if (labels.ContainsKey(serverId))
+            {
+                continue;
+            }
 
-        return labels.ToDictionary(
-            entry => entry.Key,
-            entry => shared.Contains(entry.Value) ? entry.Value + " " + GuidStart(entry.Key) : entry.Value);
+            var label = CleanLabel(serverId, name);
+            if (!taken.Add(label))
+            {
+                label += " " + GuidStart(serverId);
+                taken.Add(label);
+            }
+
+            labels[serverId] = label;
+        }
+
+        return labels;
     }
 
     /// <summary>

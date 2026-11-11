@@ -457,4 +457,34 @@ public class ServerStubPlannerTests
         Assert.Equal("ra", onA7.Sources[0].ItemId);
         Assert.Equal(new[] { onA7.Id, On(plan, _serverB).Entry.Id }.Order(), Assert.Single(plan.State.Groups).StubIds.Order());
     }
+
+    [Fact]
+    public void AStateWithNoLabelsGetsThemInTheOrderOfTheConfiguration()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"), OnB("z"))],
+            [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))],
+            servers: [Server(_serverB, "Casa"), Server(_serverA, "Casa")]);
+
+        Assert.Equal("Casa", plan.State.Labels[_serverB]);
+        Assert.Equal("Casa aaaaaaaa", plan.State.Labels[_serverA]);
+        Assert.EndsWith("Film (2020) - Casa aaaaaaaa.strm", On(plan, _serverA).Entry.RelativePath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AServerThatArrivesWithAKnownNameGetsItsGuidAndTheOtherKeepsItsLabel()
+    {
+        var first = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], servers: [Server(_serverA, "Casa")]);
+
+        var second = Plan(
+            [Title("k", OnA("m"), OnB("z")), Title("k2", OnA("n"))],
+            [Catalog(_serverA, Film("m"), Film("n", "Altro")), Catalog(_serverB, Film("z"))],
+            first.State,
+            [Server(_serverB, "Casa"), Server(_serverA, "Casa")]);
+
+        Assert.Equal("Casa", second.State.Labels[_serverA]);
+        Assert.Equal("Casa bbbbbbbb", second.State.Labels[_serverB]);
+        Assert.EndsWith("Altro (2020) - Casa.strm", second.Stubs.Single(stub => stub.Entry.IdentityKey == "k2").Entry.RelativePath, StringComparison.Ordinal);
+        Assert.EndsWith("Film (2020) - Casa bbbbbbbb.strm", On(second, _serverB).Entry.RelativePath, StringComparison.Ordinal);
+    }
 }

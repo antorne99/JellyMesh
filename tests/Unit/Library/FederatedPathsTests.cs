@@ -79,6 +79,8 @@ public class FederatedPathsTests
         Assert.Null(FederatedPaths.RelativeTo(string.Empty, "/federata/Film/a.strm"));
     }
 
+    private static readonly Guid _other = Guid.Parse("9f8e7d6c-0000-0000-0000-000000000002");
+    private static readonly Guid _third = Guid.Parse("00000000-0000-0000-0000-000000000003");
     private static readonly Guid _server = Guid.Parse("1a2b3c4d-0000-0000-0000-000000000001");
 
     [Fact]
@@ -128,31 +130,42 @@ public class FederatedPathsTests
     [InlineData("Casa.HSBS mvc tab", "Casa")]
     public void ALabelIsTheServerNameWithoutExtrasSuffixesOr3DWords(string name, string expected)
     {
-        Assert.Equal(expected, FederatedPaths.Labels(new Dictionary<Guid, string> { [_server] = name })[_server]);
+        Assert.Equal(expected, Label(name));
     }
 
     [Fact]
     public void ALabelWithNothingLeftIsTheStartOfTheGuid()
     {
-        Assert.Equal("1a2b3c4d", FederatedPaths.Labels(new Dictionary<Guid, string> { [_server] = "trailer 3d" })[_server]);
+        Assert.Equal("1a2b3c4d", Label("trailer 3d"));
     }
 
     [Fact]
     public void ALongLabelIsCut()
     {
-        Assert.True(FederatedPaths.Labels(new Dictionary<Guid, string> { [_server] = new string('x', 500) })[_server].Length <= 40);
+        Assert.True(Label(new string('x', 500)).Length <= 40);
     }
 
     [Fact]
-    public void TwoServersWithTheSameNameAreToldApartByTheirGuid()
+    public void OnTheSameNameOnlyTheServerThatComesLaterGetsItsGuid()
     {
-        var other = Guid.Parse("9f8e7d6c-0000-0000-0000-000000000002");
-        var third = Guid.Parse("00000000-0000-0000-0000-000000000003");
+        var labels = FederatedPaths.Labels([(_server, "Casa"), (_other, "casa trailer"), (_third, "Ufficio")], new Dictionary<Guid, string>());
 
-        var labels = FederatedPaths.Labels(new Dictionary<Guid, string> { [_server] = "Casa", [other] = "casa trailer", [third] = "Ufficio" });
-
-        Assert.Equal("Casa 1a2b3c4d", labels[_server]);
-        Assert.Equal("casa 9f8e7d6c", labels[other]);
-        Assert.Equal("Ufficio", labels[third]);
+        Assert.Equal("Casa", labels[_server]);
+        Assert.Equal("casa 9f8e7d6c", labels[_other]);
+        Assert.Equal("Ufficio", labels[_third]);
     }
+
+    [Fact]
+    public void AStoredLabelStaysAndANewServerWithTheSameNameGetsItsGuid()
+    {
+        var stored = new Dictionary<Guid, string> { [_server] = "Casa", [_third] = "Vecchio" };
+
+        var labels = FederatedPaths.Labels([(_other, "Casa"), (_server, "Casa"), (_third, "Nuovo")], stored);
+
+        Assert.Equal("Casa", labels[_server]);
+        Assert.Equal("Casa 9f8e7d6c", labels[_other]);
+        Assert.Equal("Vecchio", labels[_third]);
+    }
+
+    private static string Label(string name) => FederatedPaths.Labels([(_server, name)], new Dictionary<Guid, string>())[_server];
 }

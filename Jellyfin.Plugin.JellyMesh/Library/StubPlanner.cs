@@ -112,7 +112,7 @@ public static class StubPlanner
         ArgumentNullException.ThrowIfNull(input);
 
         var catalog = IndexItemLookup.Build(input.Snapshot);
-        var labels = FederatedPaths.Labels(input.Servers.ToDictionary(server => server.Id, server => server.Name));
+        var labels = FederatedPaths.Labels(input.Servers.Select(server => (server.Id, (string?)server.Name)), input.State.Labels);
         var works = new List<StubWork>();
         var placed = new List<(StubWork Work, ResolvedContent Content)>();
         var seriesWorks = new List<SeriesWork>();
@@ -181,7 +181,7 @@ public static class StubPlanner
 
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
         var groups = Groups(input, placed, stubs, removals.Select(stub => stub.Id).Concat(merged));
-        var state = input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups };
+        var state = input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups, Labels = labels };
         return new StubPlan(state, works, seriesWorks, removals, HeldLibraries(input, held), unplaceable.Count)
         {
             MergedStubs = merged.Count,

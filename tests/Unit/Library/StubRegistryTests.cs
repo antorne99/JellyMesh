@@ -304,13 +304,15 @@ public sealed class StubRegistryTests : IDisposable
                 {
                     Stubs = [Entry("abc", "x/Film/A/A - Casa.strm") with { ServerId = server }, Entry("def", "y/Film/A/A - Ufficio.strm")],
                     Series = [new SeriesStub { Id = "s", RelativePath = "x/Serie/S", WorkKey = "w", ServerId = server }],
-                    Groups = [group]
+                    Groups = [group],
+                    Labels = new Dictionary<Guid, string> { [server] = "Casa" }
                 },
                 CancellationToken.None);
         }
 
         using var reloaded = Create();
 
+        Assert.Equal("Casa", Assert.Single(reloaded.State.Labels, label => label.Key == server).Value);
         Assert.Equal(server, reloaded.Find("abc")!.ServerId);
         Assert.Equal(server, Assert.Single(reloaded.State.Series).ServerId);
         var loaded = Assert.Single(reloaded.State.Groups);

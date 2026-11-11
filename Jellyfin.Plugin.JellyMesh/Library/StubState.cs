@@ -29,6 +29,9 @@ public sealed record StubState
     /// <summary>Gets the version groups, the source of truth for linking the versions of a title.</summary>
     public IReadOnlyList<VersionGroup> Groups { get; init; } = [];
 
+    /// <summary>Gets the label of each server, fixed once given: only a rename of the server changes it.</summary>
+    public IReadOnlyDictionary<Guid, string> Labels { get; init; } = new Dictionary<Guid, string>();
+
     /// <summary>
     /// Gets the servers the administrator removed from the page. Only their stubs and catalogs are deleted: a server missing
     /// from the configuration for any other reason, such as a reset file, keeps them (decision 44).
