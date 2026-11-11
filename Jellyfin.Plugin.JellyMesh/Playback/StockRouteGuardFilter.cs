@@ -85,13 +85,15 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
-        if (controller == "DynamicHls" && string.IsNullOrWhiteSpace(PlaySessionOf(context)))
+        if (IsSegment(controller, action) && string.IsNullOrWhiteSpace(PlaySessionOf(context)))
         {
             // A segment without a play session makes stock stop every job of its device, whoever asks; with no device, the
             // jobs that run without one.
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id ?? Guid.Empty;
             var device = DeviceOf(context);
-            if (_sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
+            if (string.IsNullOrWhiteSpace(device)
+                ? HasJobWithoutDevice(_sessions.LocalSessionsOfOthers(caller).Concat(_peerSlots.SessionsOfOthers(caller)))
+                : _sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
@@ -176,6 +178,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         await next().ConfigureAwait(false);
     }
 
+    // Tells whether one of the play sessions has a live stock job without a device.
+    private bool HasJobWithoutDevice(IEnumerable<string> playSessionIds)
+    {
+        return playSessionIds.Any(id => _transcodes.GetTranscodingJob(id) is { } job && string.IsNullOrWhiteSpace(job.DeviceId));
+    }
+
     // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
     // play session counts even when its stub no longer resolves.
     private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, out bool recorded)
@@ -203,6 +211,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private static bool IsFileAction(string controller, string action)
     {
         return controller == "Library" && action is "GetDownload" or "GetFile";
+    }
+
+    // Only a segment makes stock stop the jobs of a device; playlists and live.m3u8 stop none.
+    private static bool IsSegment(string controller, string action)
+    {
+        return controller == "DynamicHls" && action is "GetHlsVideoSegment" or "GetHlsAudioSegment";
     }
 
     private static bool IsStop(string controller, string action)

@@ -63,11 +63,20 @@ segment() {
 check "of a local user on the device of the peer" 404 "$(segment "$mario_auth" "&DeviceId=$peer_device")"
 check "on the device in capitals" 404 "$(segment "$mario_auth" "&DeviceId=$(tr '[:lower:]' '[:upper:]' <<<"$peer_device")")"
 check "on the device in the legacy params" 404 "$(segment "$mario_auth" "&DeviceId=mario-device&params=;$peer_device")"
-check "on no device at all" 404 "$(segment "$mario_auth" "")"
 # Stock asks a segment for a user before any filter runs.
 check "of nobody on the device of the peer" 401 "$(segment "" "&DeviceId=$peer_device")"
 check "the peer keeps its ffmpeg" "$before" "$(ffmpeg_pids a)"
 check "and its stream goes on" 200 "$(peer_segment 2)"
+
+echo "--- a segment with no play session and no device, while the job of the peer has a device (Q95)"
+# Stock stops only the jobs without a device for it, so it goes to stock and starts an ffmpeg of its own.
+running=$(ffmpeg_pids a)
+check "of a local user goes to stock" 200 "$(segment "$mario_auth" "")"
+after=" $(ffmpeg_pids a) "
+check "the peer keeps its ffmpeg" 0 "$(for p in $running; do [[ "$after" == *" $p "* ]] || echo "$p"; done | grep -c . || true)"
+check "and its stream goes on" 200 "$(peer_segment 3)"
+# The ffmpeg of that segment would end on its own in the middle of the checks below.
+docker exec "$(container_of a)" sh -c "kill $(for p in $after; do [[ " $running " == *" $p "* ]] || echo "$p"; done)" 2>/dev/null
 
 echo "--- another peer names the play session of the first in the legacy params, which stock reads first"
 post a /Users/New '{"Name":"peer2","Password":"jellymesh-test"}' >/dev/null
@@ -103,7 +112,7 @@ check "the first peer keeps its ffmpeg again" true "$(alive "$pids")"
 check "its own in field 20 alone" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&params=$(field20 "$own")")"
 check "its own in the query, a blank field 20" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field20 '')%3Bx")"
 check "the first peer keeps its ffmpeg to the end" true "$(alive "$pids")"
-check "and its stream goes on" 200 "$(peer_segment 3)"
+check "and its stream goes on" 200 "$(peer_segment 4)"
 # The proof that stock acts on field 20: the first peer naming its own there with junk in the query restarts its job.
 check "the first peer with its own in field 20 and junk in the query" 200 "$(segment "$peer_auth" "&DeviceId=$peer_device&PlaySessionId=junk&params=$(field20 "$victim")")"
 check "restarts its own ffmpeg" false "$(alive "$pids")"

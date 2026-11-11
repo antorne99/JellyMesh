@@ -191,22 +191,20 @@ public sealed class PlaySessionOwners
     }
 
     /// <summary>
-    /// Tells whether someone else has a play session recorded here.
+    /// Lists the play sessions someone else opened, as they are now.
     /// </summary>
     /// <param name="user">The user.</param>
-    /// <returns>Whether another user has one.</returns>
-    public bool AnyOfAnother(Guid user)
+    /// <returns>The play sessions of the other users.</returns>
+    public IReadOnlyList<string> SessionsOfOthers(Guid user)
     {
         lock (_lock)
         {
-            // An owner leaves the record with its last session.
-            return _owners.Keys.Any(owner => !owner.Equals(user));
+            return _owners.Where(pair => !pair.Key.Equals(user)).SelectMany(pair => pair.Value.Keys).ToList();
         }
     }
 
     /// <summary>
-    /// Tells whether a play session of someone else runs on a device. No device, or a blank one, names every device, as
-    /// stock stops the jobs that run without a device for a request that names none.
+    /// Tells whether a play session of someone else runs on a device. No device, or a blank one, names none.
     /// </summary>
     /// <param name="user">The user.</param>
     /// <param name="device">The device.</param>
@@ -215,7 +213,7 @@ public sealed class PlaySessionOwners
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            return AnyOfAnother(user);
+            return false;
         }
 
         lock (_lock)

@@ -88,12 +88,23 @@ public class PlaybackSessionStoreTests
         Assert.True(sessions.IsLocalDeviceOfAnother(_other, "OWNER-DEVICE"));
         Assert.False(sessions.IsLocalDeviceOfAnother(_owner, "owner-device"));
         Assert.False(sessions.IsLocalDeviceOfAnother(_other, "another-device"));
-        Assert.True(sessions.IsLocalDeviceOfAnother(_other, null));
-        Assert.False(sessions.IsLocalDeviceOfAnother(_owner, null));
+        Assert.False(sessions.IsLocalDeviceOfAnother(_other, null));
 
         sessions.EndLocal(_owner, "local-play");
 
         Assert.False(sessions.IsLocalDeviceOfAnother(_other, "owner-device"));
-        Assert.False(sessions.IsLocalDeviceOfAnother(_other, null));
+    }
+
+    [Fact]
+    public void The_local_play_sessions_of_others_are_those_their_owners_did_not_end()
+    {
+        var sessions = new PlaybackSessionStore(new ManualClock());
+        sessions.RecordLocal(_owner, "local-play", _stub, "owner-device");
+        sessions.RecordLocal(_owner, "ended", _stub);
+
+        sessions.EndLocal(_owner, "ended");
+
+        Assert.Equal(["local-play"], sessions.LocalSessionsOfOthers(_other));
+        Assert.Empty(sessions.LocalSessionsOfOthers(_owner));
     }
 }

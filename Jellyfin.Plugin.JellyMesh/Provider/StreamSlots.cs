@@ -129,6 +129,16 @@ public sealed class StreamSlots
     }
 
     /// <summary>
+    /// Lists the play sessions the peers other than the user opened through their own <c>PlaybackInfo</c>.
+    /// </summary>
+    /// <param name="userId">The user behind the request, <see cref="Guid.Empty"/> if anonymous.</param>
+    /// <returns>The play sessions of the other peers.</returns>
+    public IReadOnlyList<string> SessionsOfOthers(Guid userId)
+    {
+        return _owners.SessionsOfOthers(userId);
+    }
+
+    /// <summary>
     /// Records a stream request. A play session without a slot takes one: that is a paused stream resuming. A request with
     /// no play session holds a slot only while it runs.
     /// </summary>

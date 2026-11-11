@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Xunit;
@@ -125,19 +126,21 @@ public class PlaySessionOwnersTests
     }
 
     [Fact]
-    public void Any_session_counts_as_another_users_only_for_someone_else()
+    public void The_sessions_of_others_are_every_session_someone_else_opened()
     {
-        Assert.False(_owners.AnyOfAnother(_other));
+        Assert.Empty(_owners.SessionsOfOthers(_other));
 
-        _owners.Add(_owner, "mine");
+        _owners.Add(_owner, "mine", null, ["owner-device"]);
+        _owners.Add(_owner, "without-devices");
+        _owners.Add(_other, "theirs");
 
-        Assert.True(_owners.AnyOfAnother(_other));
-        Assert.True(_owners.AnyOfAnother(Guid.Empty));
-        Assert.False(_owners.AnyOfAnother(_owner));
+        Assert.Equal(["mine", "without-devices"], _owners.SessionsOfOthers(_other).Order());
+        Assert.Equal(["mine", "theirs", "without-devices"], _owners.SessionsOfOthers(Guid.Empty).Order());
+        Assert.Equal(["theirs"], _owners.SessionsOfOthers(_owner));
     }
 
     [Fact]
-    public void Any_session_of_another_stops_counting_once_it_leaves()
+    public void A_session_stops_being_of_others_once_it_leaves()
     {
         var clock = new ManualClock();
         var owners = PlaySessionOwners.WithClock(clock);
@@ -145,34 +148,24 @@ public class PlaySessionOwnersTests
         owners.Add(_other, "quiet");
 
         Assert.True(owners.Remove(_owner, "ended"));
-        Assert.False(owners.AnyOfAnother(_other));
-        Assert.True(owners.AnyOfAnother(_owner));
+        Assert.Empty(owners.SessionsOfOthers(_other));
+        Assert.Equal(["quiet"], owners.SessionsOfOthers(_owner));
 
         clock.Advance(TimeSpan.FromSeconds(90));
         owners.ForgetIdle(TimeSpan.FromSeconds(90));
-        Assert.False(owners.AnyOfAnother(_owner));
+        Assert.Empty(owners.SessionsOfOthers(_owner));
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData(" ")]
-    public void No_device_names_the_device_of_every_session_of_another(string? device)
+    public void No_device_names_no_device_of_another(string? device)
     {
         _owners.Add(_owner, "mine", null, ["owner-device"]);
         _owners.Add(_owner, "without-devices");
 
-        Assert.True(_owners.DeviceOfAnother(_other, device));
+        Assert.False(_owners.DeviceOfAnother(_other, device));
         Assert.False(_owners.DeviceOfAnother(_owner, device));
-    }
-
-    [Fact]
-    public void No_device_names_nothing_while_no_one_else_has_a_session()
-    {
-        Assert.False(_owners.DeviceOfAnother(_other, null));
-
-        _owners.Add(_other, "theirs", null, ["their-device"]);
-
-        Assert.False(_owners.DeviceOfAnother(_other, " "));
     }
 }

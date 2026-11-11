@@ -294,8 +294,24 @@ open_job
 check "the owner's own such segment with their device goes to stock" 200 "$(as viewer "$(segment_of_private DeviceId=jm-play-viewer)")"
 check "and stock stops their transcode job" 0 "$(still_ran)"
 
-# Q89: one with no play session and no device stops every job without a device, so it is not found while another user
-# has a local play session. The owner's jobs here run without a device.
+# Q94: playlists stop no job, so one with no play session goes to stock whatever its device. So does a segment with no
+# play session and no device while every job of another user has a device (Q95).
+playlist_of_private() { # playlist_of_private <master|main> <device query>: a playlist of the private film, no play session
+  echo "/videos/$private/$1.m3u8?$2&MediaSourceId=$private_n&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts"
+}
+open_job
+check "another user's master playlist of their own film with the owner's device and no play session goes to stock" 200 \
+  "$(as outsider "$(playlist_of_private master DeviceId=jm-play-viewer)")"
+check "and their variant playlist" 200 "$(as outsider "$(playlist_of_private main DeviceId=jm-play-viewer)")"
+check "and with the device in the legacy params" 200 \
+  "$(as outsider "$(playlist_of_private main "params=;jm-play-viewer;$private_n")")"
+# Its own user agent keeps the files of the job it starts apart from those of the owner's such segment below.
+check "another user's segment with no device and no play session goes to stock while the owner's job has a device" 200 \
+  "$(as outsider "$(segment_of_private "")" -A jm-q95-outsider)"
+check "and the owner's transcode job still runs" 1 "$(still_ran)"
+
+# Q89 as revised by Q95: one with no play session and no device stops every job without a device, so it is not found
+# while another user's local play session has a live job without one. The owner's job here runs without a device.
 open_job bare
 check "a local play session without a device in its URL runs its own transcode job" 1 \
   "$(echo "$job_url" | grep -qi "PlaySessionId=$job_session" && ! echo "$job_url" | grep -qi "DeviceId=" && [ -n "$job" ] && echo 1 || echo 0)"
@@ -303,6 +319,7 @@ check "another user's segment of their own film with no device and no play sessi
   "$(as outsider "$(segment_of_private "")")"
 check "nor with an empty device" 404 "$(as outsider "$(segment_of_private DeviceId=)")"
 check "nor with an empty device in the legacy params" 404 "$(as outsider "$(segment_of_private "params=;;$private_n")")"
+check "while their master playlist with no device goes to stock" 200 "$(as outsider "$(playlist_of_private master "")")"
 check "and the owner's job without a device still runs" 1 "$(still_ran)"
 open_job bare
 check "the owner's own such segment goes to stock" 200 "$(as viewer "$(segment_of_private "")")"
