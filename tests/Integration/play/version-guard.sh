@@ -252,5 +252,31 @@ check "a start report of that user without the play session is served" 204 "$(re
 check "and sets what they play" "$stub_n" "$(playing viewer2)"
 report viewer2 /Sessions/Playing/Stopped >/dev/null
 
+# Q83: a DynamicHls segment that names no play session makes stock stop every job of its device before it transcodes.
+# One with the device of another user's local play session is not found, on any item, the device in the legacy params
+# or in any case. The private film has a 3 s segment that no job encoded yet, so stock would start one for it.
+job_hashes() { docker exec "$PREFIX-local" sh -c 'ls /cache/transcodes 2>/dev/null | cut -c1-32 | sort -u'; }
+segment_of_private() { # segment_of_private <device query>: segment 3 of the private film, with no play session
+  echo "/videos/$private/hls1/main/3.ts?$1&MediaSourceId=$private_n&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts&runtimeTicks=90000000&actualSegmentLengthTicks=30000000"
+}
+before=$(job_hashes)
+victim=$(open_local viewer)
+master=$(transcode_url)
+as viewer "/videos/$stub/master.m3u8?${master#*\?}" >/dev/null
+variant=$(grep -v '^#' "$WORK/as-body" | head -1)
+as viewer "/videos/$stub/$variant" >/dev/null
+check "a new local play session serves its first segment" 200 "$(as viewer "/videos/$stub/$(grep -v '^#' "$WORK/as-body" | head -1)")"
+victim_job=$(comm -13 <(echo "$before") <(job_hashes) | head -1)
+check "and runs its own transcode job" 1 "$([ -n "$victim_job" ] && echo 1 || echo 0)"
+check "another user's segment of their own film with the owner's device and no play session is not found" 404 \
+  "$(as outsider "$(segment_of_private DeviceId=jm-play-viewer)")"
+check "nor with the device in upper case" 404 "$(as outsider "$(segment_of_private DeviceId=JM-PLAY-VIEWER)")"
+check "nor with the device in the legacy params" 404 \
+  "$(as outsider "$(segment_of_private "params=;jm-play-viewer;$private_n&DeviceId=someone-else")")"
+sleep 2
+check "and the owner's transcode job is still there" 1 "$(job_hashes | grep -qx "$victim_job" && echo 1 || echo 0)"
+check "a segment of their own film with their own device goes to stock" 200 "$(as outsider "$(segment_of_private DeviceId=jm-play-outsider)")"
+kill_encodings viewer "$victim" >/dev/null
+
 [ "${DOWN:-0}" = 1 ] && down
 exit $FAILED
