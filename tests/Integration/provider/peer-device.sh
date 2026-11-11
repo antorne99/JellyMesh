@@ -87,10 +87,19 @@ echo "ffmpeg of the first peer: $pids"
 check "it still runs" true "$([ -n "$pids" ] && echo true || echo false)"
 check "its own in the query, the first peer's in field 20" 403 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field20 "$victim")")"
 check "the first peer's in the query, a blank field 20" 403 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$victim&params=$(field20 '%20')%3Bx")"
+hls="MediaSourceId=$real&VideoCodec=h264&AudioCodec=aac&runtimeTicks=1200000000&actualSegmentLengthTicks=30000000&SegmentContainer=ts"
+# encoded <auth> <path> <query> [method]: the query sent as one encoded key, which Jellyfin decodes with keys that differ by case.
+encoded() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 60 -X "${4:-GET}" -H "Authorization: $1" "$base$2?$(jq -rn --arg q "$3" '$q | @uri')"
+}
+check "the first peer's under the bound name of an encoded query" 403 "$(encoded "$peer2_auth" "/Videos/$real/hls1/main/40.ts" "$hls&DeviceId=$peer2_device&playSessionId=$victim&PlaySessionId=$own")"
+check "the same on the close route" 403 "$(encoded "$peer2_auth" /Videos/ActiveEncodings "deviceId=$peer2_device&playSessionId=$victim&PlaySessionId=$own" DELETE)"
 check "the first peer keeps its ffmpeg" true "$(alive "$pids")"
 # Stock binds the first of a repeated params: here its own, so it leaves the first peer's job alone.
 check "its own in the first params, the first peer's in the second" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field20 "$own")&params=$(field20 "$victim")")"
 check "the first peer still keeps its ffmpeg" true "$(alive "$pids")"
+check "its own in the query, a bare first params, the first peer's in the second" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=x&params=$(field20 "$victim")")"
+check "the first peer keeps its ffmpeg again" true "$(alive "$pids")"
 check "its own in field 20 alone" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&params=$(field20 "$own")")"
 check "its own in the query, a blank field 20" 200 "$(segment "$peer2_auth" "&DeviceId=$peer2_device&PlaySessionId=$own&params=$(field20 '')%3Bx")"
 check "the first peer keeps its ffmpeg to the end" true "$(alive "$pids")"
