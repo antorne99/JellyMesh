@@ -122,7 +122,7 @@ public static class StubPlanner
 
         foreach (var server in input.Servers)
         {
-            var contents = ServerContents(input, catalog, server);
+            var contents = ServerContents(input.View, input.Snapshot, catalog, server);
             var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id).ToList();
             var matcher = new StubMatcher(own);
@@ -187,6 +187,29 @@ public static class StubPlanner
             MergedStubs = merged.Count,
             Unconfigured = unconfigured
         };
+    }
+
+    /// <summary>
+    /// Claims the stubs of each server folder against the contents as that server sees them, as <see cref="PlanByServer"/>
+    /// does: a merged stub is always merged into a stub of its own server. Stubs of the flat layout are left out.
+    /// </summary>
+    /// <param name="view">The resolved catalog.</param>
+    /// <param name="snapshot">The index the view was read from.</param>
+    /// <param name="servers">The configured servers.</param>
+    /// <param name="stubs">The stubs.</param>
+    /// <returns>The claims of every server.</returns>
+    public static IReadOnlyList<StubClaim> ClaimByServer(FederationView view, IndexSnapshot snapshot, IReadOnlyList<RemoteServerInfo> servers, IReadOnlyList<StubEntry> stubs)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(servers);
+        ArgumentNullException.ThrowIfNull(stubs);
+
+        var catalog = IndexItemLookup.Build(snapshot);
+        return servers
+            .SelectMany(server => new StubMatcher(stubs.Where(stub => stub.ServerId == server.Id))
+                .ClaimAll(StubContents.Group(ServerContents(view, snapshot, catalog, server))))
+            .ToList();
     }
 
     /// <summary>
@@ -362,16 +385,16 @@ public static class StubPlanner
 
     // The contents as one server sees them: its items only, its best copy as the winner and its other copies as backups,
     // whether or not a local copy exists.
-    private static List<ResolvedContent> ServerContents(StubPlanInput input, IndexItemLookup catalog, RemoteServerInfo server)
+    private static List<ResolvedContent> ServerContents(FederationView view, IndexSnapshot snapshot, IndexItemLookup catalog, RemoteServerInfo server)
     {
-        if (input.Snapshot.Find(server.Id) is not { } serverCatalog)
+        if (snapshot.Find(server.Id) is not { } serverCatalog)
         {
             return [];
         }
 
         var items = CatalogItemMapper.ToCatalogItems(serverCatalog).ToDictionary(item => item.ItemId, StringComparer.Ordinal);
         var contents = new List<ResolvedContent>();
-        foreach (var content in input.View.Contents)
+        foreach (var content in view.Contents)
         {
             var own = content.RemoteItems.Where(item => item.ServerId == server.Id).ToList();
             var ranked = QualityRanking.Rank(own.SelectMany(item => items.TryGetValue(item.ItemId, out var entry) ? entry.ToSources() : []))

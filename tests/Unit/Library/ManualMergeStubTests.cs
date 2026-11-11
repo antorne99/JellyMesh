@@ -60,17 +60,25 @@ public sealed class ManualMergeStubTests : IDisposable
         MediaSources = [TestItems.Source(id, height, height * 5000)]
     };
 
-    // A(1, a), B(1, b), C(2, b): they stay apart, each on a server of its own.
-    private async Task ChainAsync()
+    // A(1, a), B(1, b), C(2, b): they stay apart, each on a server of its own, or in three libraries of one server.
+    private async Task ChainAsync(bool oneServer = false)
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "B", "movies"));
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, Film("a", "Uno", 720, "1", "tta"));
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, Film("b", "Due", 1080, "1", "ttb"));
         _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, Film("c", "Tre", 480, "2", "ttb"));
-        await _fixture.Sync.AddServerAsync("A", "films");
-        await _fixture.Sync.AddServerAsync("B", "films-b");
-        await _fixture.Sync.AddServerAsync("C", "films-c");
+        if (oneServer)
+        {
+            await _fixture.Sync.AddServerAsync("A", "films", "films-b", "films-c");
+        }
+        else
+        {
+            await _fixture.Sync.AddServerAsync("A", "films");
+            await _fixture.Sync.AddServerAsync("B", "films-b");
+            await _fixture.Sync.AddServerAsync("C", "films-c");
+        }
+
         await _fixture.SyncAndMaterializeAsync();
         Assert.Equal(3, _fixture.Registry.State.Stubs.Count);
     }
@@ -84,6 +92,8 @@ public sealed class ManualMergeStubTests : IDisposable
     private StubCleanupTask Cleanup() => new(
         _fixture.Registry,
         _fixture.Resolver,
+        _fixture.Sync.Index,
+        _fixture.Sync.Registry,
         _fixture.Sync.Store,
         _fixture.Library.Object,
         _users.Object,
@@ -110,9 +120,9 @@ public sealed class ManualMergeStubTests : IDisposable
     }
 
     [Fact]
-    public async Task AMerge_KeepsOneStub_WithEveryCopyAsSource_BestFirst()
+    public async Task AMergeOnOneServer_KeepsOneStub_WithEveryCopyAsSource_BestFirst()
     {
-        await ChainAsync();
+        await ChainAsync(oneServer: true);
         var lowest = _fixture.Registry.State.Stubs.Single(stub => stub.RelativePath.Contains("Uno", StringComparison.Ordinal));
 
         Assert.Equal(ManualMergeOutcome.Merged, await MergeAllAsync());
@@ -125,9 +135,23 @@ public sealed class ManualMergeStubTests : IDisposable
     }
 
     [Fact]
-    public async Task AMerge_QueuesTheScanThatHandsTheStateOver()
+    public async Task AMergeAcrossServers_KeepsTheStubOfEach_InOneGroup()
     {
         await ChainAsync();
+        var before = _fixture.Registry.State.Stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal).ToList();
+
+        Assert.Equal(ManualMergeOutcome.Merged, await MergeAllAsync());
+        await ScanAsync();
+
+        Assert.Equal(before, _fixture.Registry.State.Stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal));
+        Assert.Equal(before, Assert.Single(_fixture.Registry.State.Groups).StubIds.Order(StringComparer.Ordinal));
+        Assert.Empty(_calls);
+    }
+
+    [Fact]
+    public async Task AMerge_QueuesTheScanThatHandsTheStateOver()
+    {
+        await ChainAsync(oneServer: true);
         _fixture.Library.Invocations.Clear();
 
         await MergeAllAsync();
@@ -138,7 +162,7 @@ public sealed class ManualMergeStubTests : IDisposable
     [Fact]
     public async Task TheScanHandsTheStateOverAndRemovesTheOtherStubs()
     {
-        await ChainAsync();
+        await ChainAsync(oneServer: true);
         var (uno, due, tre) = (Item("Uno"), Item("Due"), Item("Tre"));
         var survivor = Give(uno, new UserItemData { Key = "u" });
         Give(due, new UserItemData { Key = "d", Played = true, PlayCount = 2, LastPlayedDate = _yesterday });
@@ -160,7 +184,7 @@ public sealed class ManualMergeStubTests : IDisposable
     [Fact]
     public async Task AnUndo_GivesTheCopiesStubsAgain_AndTheSurvivorKeepsItsState()
     {
-        await ChainAsync();
+        await ChainAsync(oneServer: true);
         var (uno, due, tre) = (Item("Uno"), Item("Due"), Item("Tre"));
         var survivor = Give(uno, new UserItemData { Key = "u" });
         Give(due, new UserItemData { Key = "d", Played = true, PlayCount = 2, LastPlayedDate = _yesterday });
@@ -238,7 +262,7 @@ public sealed class ManualMergeStubTests : IDisposable
     }
 
     [Fact]
-    public async Task ALocalCopyMerged_WinsAndTakesTheState_AndAnUndoBringsTheStubBack()
+    public async Task ALocalCopyMerged_LeavesTheStubAndItsState_AndAnUndoChangesNothingOnDisk()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, Film("r", "Remoto", 1080, "1", "tt1"));
         await _fixture.Sync.AddServerAsync("A", "films");
@@ -254,10 +278,11 @@ public sealed class ManualMergeStubTests : IDisposable
         Assert.Equal(ManualMergeOutcome.Merged, await MergeAllAsync());
         await ScanAsync();
 
-        Assert.True(localState.Played);
-        Assert.Empty(_fixture.Registry.State.Stubs);
-        Assert.False(File.Exists(stub.Path));
-        Assert.DoesNotContain(_calls, call => call.StartsWith("delete /media", StringComparison.Ordinal));
+        Assert.False(localState.Played);
+        Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.True(File.Exists(stub.Path));
+        Assert.Empty(_calls);
+        Assert.Equal([local.Id], Assert.Single(_fixture.Registry.State.Groups).LocalItemIds);
 
         var copies = Assert.Single(_service.GetList().Merges).Copies;
         Assert.Single(copies, copy => copy.Copy.IsLocal);
@@ -266,7 +291,6 @@ public sealed class ManualMergeStubTests : IDisposable
 
         Assert.Single(_fixture.Registry.State.Stubs);
         Assert.True(File.Exists(stub.Path));
-        Assert.True(localState.Played);
     }
 
     [Fact]
