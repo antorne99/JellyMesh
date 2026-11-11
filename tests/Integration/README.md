@@ -153,7 +153,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42 | `jm-play-local`, `jm-play-remote`, `jm-play-peer` | 18430-18432 | A checkout in `OLD`, from before signing |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15) | `jm-play-local`, `jm-play-remote`, `jm-play-peer`; `$PREFIX-*` for `last-served.sh` | 18430-18432; `PORT` and the next two for `last-served.sh` | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
@@ -240,6 +240,12 @@ MEDIA=<main checkout>/tests/Integration/media bash play/collections.sh
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/keyfile.sh
+```
+
+`last-served.sh` proves that the last server that served a title is kept per user and stub across a restart (D15). Two stock remotes have the same film, so its stub has a winner and a backup. One user plays it with the winner stopped and another with both up; after a restart of the consumer, the file in the plugin data folder still names the backup for the first and the winner for the second, and holds no address, token or remote item. It makes its own containers, `$PREFIX-local`, `$PREFIX-a` and `$PREFIX-b` (default `jm-last`, on `PORT` and the next two, default 18436), and removes them at the end unless given `--keep`.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] bash play/last-served.sh
 ```
 
 ### `merge/`
