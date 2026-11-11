@@ -12,7 +12,16 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 public sealed class PlaybackSessionStore
 {
     private readonly ConcurrentDictionary<string, PlaybackSession> _sessions = new(StringComparer.Ordinal);
-    private readonly PlaySessionOwners _localOwners = new();
+    private readonly PlaySessionOwners _localOwners;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PlaybackSessionStore"/> class.
+    /// </summary>
+    /// <param name="clock">The clock that times the local play sessions, the system clock if null.</param>
+    public PlaybackSessionStore(TimeProvider? clock = null)
+    {
+        _localOwners = PlaySessionOwners.WithoutLimit(clock ?? TimeProvider.System);
+    }
 
     /// <summary>
     /// Gets a copy of the sessions.
@@ -40,6 +49,35 @@ public sealed class PlaybackSessionStore
     public void RecordLocal(Guid userId, string playSessionId, Guid itemId)
     {
         _localOwners.Add(userId, playSessionId, itemId);
+    }
+
+    /// <summary>
+    /// Counts a request of its user on the stock play session of a stub, which keeps it from going idle.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <param name="playSessionId">The play session.</param>
+    public void UseLocal(Guid userId, string? playSessionId)
+    {
+        _localOwners.Owns(userId, playSessionId);
+    }
+
+    /// <summary>
+    /// Forgets the stock play session of a stub its user ended.
+    /// </summary>
+    /// <param name="userId">The user who ended it.</param>
+    /// <param name="playSessionId">The play session.</param>
+    public void EndLocal(Guid userId, string? playSessionId)
+    {
+        _localOwners.Remove(userId, playSessionId);
+    }
+
+    /// <summary>
+    /// Forgets the stock play sessions of stubs nobody used for the idle time.
+    /// </summary>
+    /// <param name="idle">The idle time.</param>
+    public void ForgetIdleLocal(TimeSpan idle)
+    {
+        _localOwners.ForgetIdle(idle);
     }
 
     /// <summary>
