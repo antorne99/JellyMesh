@@ -88,7 +88,7 @@ public sealed class PlaybackSweeper : BackgroundService
         using var timer = new PeriodicTimer(PlaybackTimeouts.SweepInterval, _clock);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            _sessions.ForgetIdleLocal(_store.Read(PlaybackTimes.From).Idle);
+            _sessions.ForgetUnusedLocal(_store.Read(PlaybackTimes.From));
             await _coordinator.SweepAsync().ConfigureAwait(false);
         }
     }

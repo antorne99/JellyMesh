@@ -223,17 +223,15 @@ quit=$(open_local viewer)
 check "the owner's stop report is served" 204 "$(stop_report viewer "$quit")"
 check "and takes its play session out of the record" 206 "$(through_private outsider "$quit")"
 
-# D11: a play session left idle leaves the record, one its owner keeps reporting stays.
-# Row 88: a local play session stays guarded for at least 120 s idle, even under a shorter idle time.
+# D11 as changed by Q74: a local play session stays guarded through a pause longer than the idle time, until it ends
+# or the session retention (at least one hour) passes; leaving after the retention is covered by unit tests.
 settings local '.PlaybackIdleSeconds = 30' >/dev/null
-idle=$(open_local viewer)
+paused=$(open_local viewer)
 kept=$(open_local viewer)
-check "a fresh play session is out of reach of another user" 404 "$(through_private outsider "$idle")"
+check "a fresh play session is out of reach of another user" 404 "$(through_private outsider "$paused")"
 keep_reporting() { for _ in $(seq 1 "$1"); do as viewer "/Sessions/Playing/Ping?playSessionId=$kept" -X POST >/dev/null; sleep 10; done; }
-keep_reporting 6
-check "past a short idle time an unused play session is still guarded until the minimum" 404 "$(through_private outsider "$idle")"
-keep_reporting 8
-check "after the minimum an unused play session is out of the record" 206 "$(through_private outsider "$idle")"
+keep_reporting 14
+check "after a pause of two minutes past the idle time an unused play session is still guarded" 404 "$(through_private outsider "$paused")"
 check "one its owner kept reporting is still guarded" 404 "$(through_private outsider "$kept")"
 settings local '.PlaybackIdleSeconds = 90' >/dev/null
 

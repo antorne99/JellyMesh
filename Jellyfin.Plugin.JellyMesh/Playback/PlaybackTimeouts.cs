@@ -36,11 +36,6 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan Idle = TimeSpan.FromSeconds(90);
 
     /// <summary>
-    /// Shortest time a local play session of a stub stays guarded without use, longer than stock keeps an HLS job alive.
-    /// </summary>
-    public static readonly TimeSpan LocalIdleMinimum = TimeSpan.FromSeconds(120);
-
-    /// <summary>
     /// How often the sessions are checked.
     /// </summary>
     public static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(10);

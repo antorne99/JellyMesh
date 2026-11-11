@@ -72,12 +72,13 @@ public sealed class PlaybackSessionStore
     }
 
     /// <summary>
-    /// Forgets the stock play sessions of stubs nobody used for the idle time, never sooner than the local minimum.
+    /// Forgets the stock play sessions of stubs nobody used for the session retention, so a long pause keeps them.
     /// </summary>
-    /// <param name="idle">The idle time.</param>
-    public void ForgetIdleLocal(TimeSpan idle)
+    /// <param name="times">The playback times.</param>
+    public void ForgetUnusedLocal(PlaybackTimes times)
     {
-        _localOwners.ForgetIdle(idle > PlaybackTimeouts.LocalIdleMinimum ? idle : PlaybackTimeouts.LocalIdleMinimum);
+        ArgumentNullException.ThrowIfNull(times);
+        _localOwners.ForgetIdle(times.SessionRetention);
     }
 
     /// <summary>

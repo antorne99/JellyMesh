@@ -10,42 +10,35 @@ public class PlaybackSessionStoreTests
     private static readonly Guid _other = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private static readonly Guid _stub = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
 
+    private static readonly PlaybackTimes _times = new(
+        TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromHours(1), TimeSpan.FromHours(1));
+
     [Fact]
-    public void A_local_play_session_outlives_a_short_idle_time_until_the_minimum()
+    public void A_local_play_session_stays_guarded_through_a_pause_longer_than_the_idle_time()
     {
         var clock = new ManualClock();
         var sessions = new PlaybackSessionStore(clock);
         sessions.RecordLocal(_owner, "local-play", _stub);
 
-        clock.Advance(PlaybackTimeouts.LocalIdleMinimum - TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(TimeSpan.FromSeconds(30));
-        Assert.True(sessions.IsLocalOfAnother(_other, "local-play"));
+        clock.Advance(TimeSpan.FromMinutes(30));
+        sessions.ForgetUnusedLocal(_times);
 
-        clock.Advance(TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(TimeSpan.FromSeconds(30));
-        Assert.False(sessions.IsLocalOfAnother(_other, "local-play"));
+        Assert.True(sessions.IsLocalOfAnother(_other, "local-play"));
     }
 
     [Fact]
-    public void A_local_play_session_follows_an_idle_time_above_the_minimum()
+    public void A_local_play_session_leaves_after_the_session_retention()
     {
         var clock = new ManualClock();
         var sessions = new PlaybackSessionStore(clock);
         sessions.RecordLocal(_owner, "local-play", _stub);
-        var idle = PlaybackTimeouts.LocalIdleMinimum + TimeSpan.FromSeconds(60);
 
-        clock.Advance(idle - TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(idle);
+        clock.Advance(_times.SessionRetention - TimeSpan.FromSeconds(1));
+        sessions.ForgetUnusedLocal(_times);
         Assert.True(sessions.IsLocalOfAnother(_other, "local-play"));
 
         clock.Advance(TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(idle);
+        sessions.ForgetUnusedLocal(_times);
         Assert.False(sessions.IsLocalOfAnother(_other, "local-play"));
-    }
-
-    [Fact]
-    public void The_local_idle_minimum_outlasts_a_stock_hls_job()
-    {
-        Assert.Equal(TimeSpan.FromSeconds(120), PlaybackTimeouts.LocalIdleMinimum);
     }
 }

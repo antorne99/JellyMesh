@@ -713,6 +713,10 @@ public class PlaybackFiltersTests
         Assert.False(_fixture.Sessions.IsLocalOfAnother(Guid.NewGuid(), "local-play"));
     }
 
+    private static readonly TimeSpan Retention = TimeSpan.FromHours(1);
+
+    private static readonly PlaybackTimes RetentionTimes = new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), Retention, Retention);
+
     public static TheoryData<string, string, string, object> UsesOfAPlaySession => new()
     {
         { "DynamicHls", "GetHlsVideoSegment", "playSessionId", "local-play" },
@@ -732,14 +736,14 @@ public class PlaybackFiltersTests
         var sessions = new PlaybackSessionStore(clock);
         sessions.RecordLocal(_user.Id, "local-play", _itemId);
 
-        clock.Advance(PlaybackTimeouts.LocalIdleMinimum - TimeSpan.FromSeconds(1));
+        clock.Advance(Retention - TimeSpan.FromSeconds(1));
         Assert.True(await RunAsync(GuardFilter(sessions), Context(controller, action, ("itemId", _itemId), (argument, value))));
         clock.Advance(TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(PlaybackTimeouts.LocalIdleMinimum);
+        sessions.ForgetUnusedLocal(RetentionTimes);
         Assert.True(sessions.IsLocalOfAnother(Guid.NewGuid(), "local-play"));
 
-        clock.Advance(PlaybackTimeouts.LocalIdleMinimum);
-        sessions.ForgetIdleLocal(PlaybackTimeouts.LocalIdleMinimum);
+        clock.Advance(Retention);
+        sessions.ForgetUnusedLocal(RetentionTimes);
         Assert.False(sessions.IsLocalOfAnother(Guid.NewGuid(), "local-play"));
     }
 
@@ -751,11 +755,10 @@ public class PlaybackFiltersTests
         var owner = Guid.NewGuid();
         sessions.RecordLocal(owner, "local-play", _itemId);
 
-        clock.Advance(PlaybackTimeouts.LocalIdleMinimum - TimeSpan.FromSeconds(1));
-        await RunAsync(GuardFilter(sessions), Context("Playstate", "PingPlaybackSession", ("playSessionId", "local-play")));
+        clock.Advance(Retention - TimeSpan.FromSeconds(1));
         await RunAsync(GuardFilter(sessions), Context("Videos", "GetVideoStream", ("itemId", LocalItem()), ("playSessionId", "local-play")));
         clock.Advance(TimeSpan.FromSeconds(1));
-        sessions.ForgetIdleLocal(PlaybackTimeouts.LocalIdleMinimum);
+        sessions.ForgetUnusedLocal(RetentionTimes);
 
         Assert.False(sessions.IsLocalOfAnother(_user.Id, "local-play"));
     }
