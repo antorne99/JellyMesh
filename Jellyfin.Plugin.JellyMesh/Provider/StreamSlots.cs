@@ -208,7 +208,7 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Frees a slot. An unknown one is ignored: it may have expired.
+    /// Frees a slot. An unknown one is ignored: it may have expired. One whose transcode is being closed goes with it.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="key">The play session or reservation.</param>
@@ -216,7 +216,11 @@ public sealed class StreamSlots
     {
         lock (_lock)
         {
-            SlotsOf(peerId).Remove(key);
+            var slots = SlotsOf(peerId);
+            if (!(slots.TryGetValue(key, out var slot) && slot.Closing))
+            {
+                slots.Remove(key);
+            }
         }
     }
 

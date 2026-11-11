@@ -562,6 +562,20 @@ public class StreamSlotsTests
     }
 
     [Fact]
+    public void A_release_leaves_a_slot_being_closed_to_its_close()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Assert.Equal(["one"], _slots.TakeClosing());
+
+        _slots.Release(_peer, "one");
+
+        Assert.Equal(1, _slots.Count(_peer));
+        _slots.Closed("one");
+        Assert.Equal(0, _slots.Count(_peer));
+    }
+
+    [Fact]
     public void Closing_a_slot_in_use_or_unknown_does_nothing()
     {
         Hold("one");
