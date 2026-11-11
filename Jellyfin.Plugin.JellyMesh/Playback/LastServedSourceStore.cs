@@ -33,7 +33,8 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IDisposable
     private readonly string _path;
     private readonly ILogger<LastServedSourceStore> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly ConcurrentDictionary<(Guid UserId, string StubId), Guid> _servers;
+    private readonly ConcurrentDictionary<(Guid UserId, string StubId), Guid> _servers = new();
+    private volatile bool _unsaved;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LastServedSourceStore"/> class.
@@ -44,8 +45,10 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IDisposable
     {
         _path = Path.Combine(folder, FileName);
         _logger = logger;
-        _servers = new ConcurrentDictionary<(Guid UserId, string StubId), Guid>(
-            Load().Select(entry => KeyValuePair.Create((entry.UserId, entry.StubId), entry.ServerId)));
+        foreach (var entry in Load())
+        {
+            _servers[(entry.UserId, entry.StubId)] = entry.ServerId;
+        }
     }
 
     /// <inheritdoc />
@@ -60,7 +63,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IDisposable
         ArgumentNullException.ThrowIfNull(stubId);
 
         var key = (userId, stubId);
-        if (_servers.TryGetValue(key, out var known) && known == serverId)
+        if (!_unsaved && _servers.TryGetValue(key, out var known) && known == serverId)
         {
             return;
         }
@@ -70,9 +73,11 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IDisposable
         {
             _servers[key] = serverId;
             await SaveAsync(cancellationToken).ConfigureAwait(false);
+            _unsaved = false;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            _unsaved = true;
             _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
         }
         finally

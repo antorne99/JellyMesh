@@ -140,6 +140,54 @@ public sealed class LastServedSourceStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AFailedSave_IsTriedAgainWithTheSameServer()
+    {
+        await File.WriteAllTextAsync(_folder, "in the way");
+        using var store = Store();
+        await store.RecordAsync(_user, "stub", _server, CancellationToken.None);
+        File.Delete(_folder);
+
+        await store.RecordAsync(_user, "stub", _server, CancellationToken.None);
+
+        using var reloaded = Store();
+        Assert.Equal(_server, reloaded.Find(_user, "stub"));
+    }
+
+    [Fact]
+    public async Task ARecordAfterARestart_KeepsTheOnesBefore()
+    {
+        using (var store = Store())
+        {
+            await store.RecordAsync(_user, "stub", _server, CancellationToken.None);
+        }
+
+        using (var restarted = Store())
+        {
+            await restarted.RecordAsync(_otherUser, "stub", _otherServer, CancellationToken.None);
+        }
+
+        using var reloaded = Store();
+
+        Assert.Equal(_server, reloaded.Find(_user, "stub"));
+        Assert.Equal(_otherServer, reloaded.Find(_otherUser, "stub"));
+    }
+
+    [Fact]
+    public async Task ARepeatedEntry_DoesNotStopTheStore()
+    {
+        Directory.CreateDirectory(_folder);
+        await File.WriteAllTextAsync(
+            FilePath,
+            "{\"Version\":1,\"Entries\":["
+            + "{\"UserId\":\"" + _user + "\",\"StubId\":\"stub\",\"ServerId\":\"" + _server + "\"},"
+            + "{\"UserId\":\"" + _user + "\",\"StubId\":\"stub\",\"ServerId\":\"" + _otherServer + "\"}]}");
+
+        using var store = Store();
+
+        Assert.Equal(_otherServer, store.Find(_user, "stub"));
+    }
+
+    [Fact]
     public async Task TheFileNamesTheServerById_AndHoldsNothingElseOfIt()
     {
         using (var store = Store())
