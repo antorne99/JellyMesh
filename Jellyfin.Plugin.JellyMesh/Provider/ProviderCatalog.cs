@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Dto;
@@ -41,8 +43,6 @@ public sealed class ProviderCatalog
         ItemFields.Chapters
     ];
 
-    private static readonly StringComparison _pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
     private readonly ILibraryManager _library;
     private readonly IDtoService _dto;
     private readonly IPluginConfigurationStore _store;
@@ -65,7 +65,7 @@ public sealed class ProviderCatalog
 
     /// <summary>
     /// Tells whether an item is one this server federates itself. §4.4: such an item never leaves it. The URL covers
-    /// films and episodes wherever they are, and the path covers the series and seasons, which have no URL.
+    /// films and episodes wherever they are, and the path, with its links resolved, covers the series and seasons, which have no URL.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>Whether it is a stub.</returns>
@@ -79,7 +79,7 @@ public sealed class ProviderCatalog
         }
 
         var root = FederatedRoot();
-        return root is not null && !string.IsNullOrEmpty(item.Path) && IsWithin(item.Path, root);
+        return root is not null && !string.IsNullOrWhiteSpace(item.Path) && FolderPath.Of(item.Path).IsWithin(root);
     }
 
     /// <summary>
@@ -250,26 +250,20 @@ public sealed class ProviderCatalog
         return new ProviderItemsResponse(dtos, total, quality);
     }
 
-    private static bool IsOnlyFederated(VirtualFolderInfo library, string root)
+    private static bool IsOnlyFederated(VirtualFolderInfo library, FolderPath root)
     {
         var locations = Locations(library);
-        return locations.Count > 0 && locations.All(location => IsWithin(location, root));
+        return locations.Count > 0 && locations.All(location => location.IsWithin(root));
     }
 
     // The paths of a library, normalized as the federated folder is.
-    private static List<string> Locations(VirtualFolderInfo library) =>
-        (library.Locations ?? []).Where(location => !string.IsNullOrWhiteSpace(location)).Select(Normalized).ToList();
+    private static List<FolderPath> Locations(VirtualFolderInfo library) =>
+        (library.Locations ?? []).Where(location => !string.IsNullOrWhiteSpace(location)).Select(FolderPath.Of).ToList();
 
-    // Whether a path is the folder or anywhere below it, compared as Jellyfin compares paths.
-    private static bool IsWithin(string path, string folder) =>
-        string.Equals(path, folder, _pathComparison) || path.StartsWith(Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar, _pathComparison);
-
-    private static string Normalized(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-
-    private string? FederatedRoot()
+    private FolderPath? FederatedRoot()
     {
         var root = _store.Read(config => config.FederatedFolderPath);
-        return root.Length == 0 ? null : Normalized(root);
+        return string.IsNullOrWhiteSpace(root) ? null : FolderPath.Of(root);
     }
 
     /// <summary>
@@ -290,10 +284,21 @@ public sealed class ProviderCatalog
         }
 
         var locations = Locations(library);
-        var federated = locations.Where(location => IsWithin(location, root)).ToList();
-        if (locations.Exists(location => IsWithin(root, location) && !IsWithin(location, root)))
+        var federated = locations.Where(location => location.IsWithin(root)).ToList();
+        var above = locations.Where(location => root.IsWithin(location) && !location.IsWithin(root)).ToList();
+        if (above.Count > 0)
         {
-            var folders = federated.Prepend(root).Select(path => _library.FindByPath(path, true)).OfType<BaseItem>().Select(folder => folder.Id).ToArray();
+            // Jellyfin names the federated folder after the path of the library, which may reach it by a link.
+            var folders = above.Select(location => location.Below(root))
+                .OfType<string>()
+                .Prepend(root.Indexed)
+                .Concat(federated.Select(location => location.Indexed))
+                .Distinct(StringComparer.Ordinal)
+                .Select(path => _library.FindByPath(path, true))
+                .OfType<BaseItem>()
+                .Select(folder => folder.Id)
+                .Distinct()
+                .ToArray();
             // The folders themselves go too: a series library indexes a folder right under its path as a series.
             return folders.Length == 0
                 ? LibraryScope.Whole
@@ -305,7 +310,7 @@ public sealed class ProviderCatalog
             return LibraryScope.Whole;
         }
 
-        var paths = locations.Except(federated).ToList();
+        var paths = locations.Except(federated).Select(location => location.Indexed).ToList();
         var real = paths
             .Select(path => _library.FindByPath(path, true))
             .OfType<BaseItem>()
@@ -317,6 +322,26 @@ public sealed class ProviderCatalog
         }
 
         return real.Length == 0 ? null : new LibraryScope(real, []);
+    }
+
+    // A path as Jellyfin indexes it, which is what it is looked up by, and as it is on disk. It is within a folder if
+    // either form is, so that a link inside the federated folder pointing out of it does not let its content out.
+    private sealed record FolderPath(string Indexed, string Lexical, string Canonical)
+    {
+        public static FolderPath Of(string path)
+        {
+            var indexed = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            return new(indexed, indexed.Normalize(NormalizationForm.FormC), PathIdentity.Canonical(path));
+        }
+
+        public bool IsWithin(FolderPath folder) =>
+            PathIdentity.IsWithin(Lexical, folder.Lexical, PathIdentity.Comparison) || PathIdentity.IsWithin(Canonical, folder.Canonical, PathIdentity.Comparison);
+
+        // A folder within this one on disk, named from the indexed path of this one. Null if it is not within on disk.
+        public string? Below(FolderPath folder) =>
+            PathIdentity.IsWithin(folder.Canonical, Canonical, PathIdentity.Comparison)
+                ? Path.Join(Indexed, folder.Canonical[Canonical.Length..].TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                : null;
     }
 
     // The query terms of a page: the folders to read under and the items to leave out.
