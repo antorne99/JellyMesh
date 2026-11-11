@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.4.1.0"
+version: "0.4.2.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -19,10 +19,10 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - Stock streaming, subtitle, attachment and trickplay requests check the federated title they name, also as the version picked with mediaSourceId, videoId or the legacy params: without a signed-in user they get 401, and a user who cannot see the title gets 404.
-  - A stock stream can no longer reuse the play session of a federated title to reach it from another title.
-  - An anonymous attachment request no longer makes the server refresh a federated title.
-  - The page no longer warns about a library that holds the federated folder together with other folders: it counts as linked.
-  - The README explains that a user connected as a server cannot use that server from an app or the web client.
+  - The plugin records which server last served each federated title to each user, ready for the per-server folders of 0.5.
+  - Another user can no longer stop, restart or keep alive a federated title you play through this server's own transcode by naming its play session, even during a long pause or after the title is renamed or removed.
+  - Start, progress and ping reports of another user on that play session are answered without effect.
+  - Another user can no longer stop that transcode with a request that names your device and no play session.
+  - Each user keeps at most 256 of these play sessions; beyond that the least recently used one leaves first.
 
-  Not verified: a play session reused from another title is covered by unit tests only, not on a running server.
+  Not verified: a long pause on a real client, and the record of the last server across a plugin upgrade.
