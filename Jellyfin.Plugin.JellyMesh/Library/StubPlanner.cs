@@ -265,8 +265,8 @@ public static class StubPlanner
         });
     }
 
-    // The local copies of a stub. For episodes, only a local file that covers each episode of the range and no other
-    // episode of the season in the view: the view holds no episode that is only local.
+    // The local copies of a stub. For episodes, only a local file that covers each episode of the stub and no other episode
+    // of the season in the view. The view holds no episode that is only local, so a longer local file can still pass.
     private static List<Guid> LocalCopiesOf(StubPlanInput input, ResolvedContent content)
     {
         if (content.Identity.Kind != ContentKind.Episode)
@@ -274,15 +274,27 @@ public static class StubPlanner
             return content.LocalItemIds.Where(id => id != Guid.Empty).Distinct().ToList();
         }
 
-        var first = content.Identity.EpisodeNumber;
+        var first = content.Identity.EpisodeNumber!.Value;
         var last = content.EpisodeNumberEnd ?? first;
         var season = input.View.Contents
             .Where(entry => string.Equals(entry.Identity.WorkKey, content.Identity.WorkKey, StringComparison.Ordinal) && entry.Identity.SeasonNumber == content.Identity.SeasonNumber)
             .ToList();
         var inside = season.Where(entry => entry.Identity.EpisodeNumber >= first && entry.Identity.EpisodeNumber <= last).ToList();
         var outside = season.Except(inside).SelectMany(entry => entry.LocalItemIds).ToHashSet();
-        return inside
-            .Select(entry => entry.LocalItemIds.AsEnumerable())
+
+        // Only the contents of the stub's own remote items: another copy of the same episode, matched by its item alone,
+        // has its own stub.
+        var episodes = inside
+            .Where(entry => entry.RemoteItems.Intersect(content.RemoteItems).Any())
+            .GroupBy(entry => entry.Identity.EpisodeNumber)
+            .Select(episode => episode.SelectMany(entry => entry.LocalItemIds))
+            .ToList();
+        if (episodes.Count != last - first + 1)
+        {
+            return [];
+        }
+
+        return episodes
             .Aggregate((common, next) => common.Intersect(next))
             .Where(id => id != Guid.Empty && !outside.Contains(id))
             .Distinct()

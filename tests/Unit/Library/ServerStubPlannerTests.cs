@@ -422,4 +422,39 @@ public class ServerStubPlannerTests
         Assert.Equal(second.Stubs.Select(stub => stub.Entry.Id).Order(), group.StubIds.Order());
         Assert.Contains(group.Id, first.State.Groups.Select(entry => entry.Id));
     }
+
+    [Fact]
+    public void ALocalEpisodeIsNotLinkedToACopyMatchedByItsItemAlone()
+    {
+        var l7 = Guid.NewGuid();
+        var alone = new ResolvedContent(new ContentIdentity("Episode|item:a7", "show", ContentKind.Episode, MatchKind.ItemOnly, 1, 7), false, null, [])
+        {
+            RemoteItems = [OnA("a7")]
+        };
+
+        var plan = Plan(
+            [Local(EpisodeTitle(7, OnB("b7")), l7), alone],
+            [Catalog(_serverA, SeriesItem("sa"), EpisodeItem("a7", "sa", 7)), Catalog(_serverB, SeriesItem("sb"), EpisodeItem("b7", "sb", 7))]);
+
+        var group = Assert.Single(plan.State.Groups);
+        Assert.Equal([l7], group.LocalItemIds);
+        Assert.Equal([On(plan, _serverB).Entry.Id], group.StubIds);
+    }
+
+    [Fact]
+    public void AnEpisodeStubThatPlaysARangeFileIsLinkedByTheEpisodeItShows()
+    {
+        // A's better E08 splits its E07-E08 file, so A shows a plain E07 stub that plays the whole file.
+        var plan = Plan(
+            [EpisodeTitle(7, OnA("ra"), OnB("b7")), EpisodeTitle(8, OnA("ra"), OnA("a8"))],
+            [
+                Catalog(_serverA, SeriesItem("sa"), EpisodeItem("ra", "sa", 7, 8), EpisodeItem("a8", "sa", 8) with { Versions = [Version("a8", 2160)] }),
+                Catalog(_serverB, SeriesItem("sb"), EpisodeItem("b7", "sb", 7))
+            ]);
+
+        var onA7 = plan.Stubs.Single(stub => stub.Entry.ServerId == _serverA && stub.Entry.EpisodeNumber == 7).Entry;
+        Assert.Null(onA7.EpisodeNumberEnd);
+        Assert.Equal("ra", onA7.Sources[0].ItemId);
+        Assert.Equal(new[] { onA7.Id, On(plan, _serverB).Entry.Id }.Order(), Assert.Single(plan.State.Groups).StubIds.Order());
+    }
 }
