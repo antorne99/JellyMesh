@@ -94,6 +94,21 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             {
                 await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
             }
+
+            await next().ConfigureAwait(false);
+            if (caller is { } stopper)
+            {
+                _sessions.EndLocal(stopper, playSessionId);
+            }
+
+            return;
+        }
+        else if (IsReport(controller, action) && _sessions.LocalItemOf(PlaySessionOf(context)) is not null)
+        {
+            if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is { } reporter)
+            {
+                _sessions.UseLocal(reporter.Id, PlaySessionOf(context));
+            }
         }
         else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
             && StubsOf(context, out var recorded) is var stubs
@@ -113,6 +128,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
+            _sessions.UseLocal(user.Id, PlaySessionOf(context));
             var executed = await next().ConfigureAwait(false);
 
             // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
@@ -169,11 +185,27 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             || (controller == "Playstate" && action is "ReportPlaybackStopped" or "OnPlaybackStopped" or "OnPlaybackStoppedLegacy");
     }
 
+    // A start or a progress of its user keeps a local play session from going idle, as it keeps the stock job alive.
+    private static bool IsReport(string controller, string action)
+    {
+        return controller == "Playstate"
+            && action is "ReportPlaybackStart" or "OnPlaybackStart" or "OnPlaybackStartLegacy"
+                or "ReportPlaybackProgress" or "OnPlaybackProgress" or "OnPlaybackProgressLegacy" or "PingPlaybackSession";
+    }
+
     private static string? PlaySessionOf(ActionExecutingContext context)
     {
         if (context.ActionArguments.TryGetValue("playbackStopInfo", out var report))
         {
             return (report as PlaybackStopInfo)?.PlaySessionId;
+        }
+
+        foreach (var name in new[] { "playbackProgressInfo", "playbackStartInfo" })
+        {
+            if (context.ActionArguments.TryGetValue(name, out var progress))
+            {
+                return (progress as PlaybackProgressInfo)?.PlaySessionId;
+            }
         }
 
         return StubLookup.LegacyParamOf(context, StubLookup.LegacyPlaySessionField)

@@ -89,7 +89,7 @@ public class LogLeakTests
         await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
         var session = Assert.Single(fixture.Sessions.All);
         fixture.Client.OnStop = () => throw new HttpRequestException(SecretText);
-        using var sweeper = new PlaybackSweeper(fixture.Coordinator, sessions.Object, TimeProvider.System, logger);
+        using var sweeper = new PlaybackSweeper(fixture.Coordinator, sessions.Object, fixture.Sessions, fixture.Store, TimeProvider.System, logger);
         using var stop = new CancellationTokenSource();
         await sweeper.StartAsync(stop.Token);
 

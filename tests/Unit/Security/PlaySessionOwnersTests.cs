@@ -1,5 +1,6 @@
 using System;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Security;
@@ -88,5 +89,52 @@ public class PlaySessionOwnersTests
         Assert.True(_owners.BelongsToAnother(_other, "mine"));
         Assert.True(_owners.BelongsToAnother(_other, "MINE"));
         Assert.False(_owners.BelongsToAnother(_owner, "mine"));
+    }
+
+    [Fact]
+    public void A_record_without_a_limit_keeps_every_session_of_an_owner()
+    {
+        var owners = PlaySessionOwners.WithoutLimit(new ManualClock());
+        owners.Add(_owner, "oldest");
+
+        for (var index = 0; index < PlaySessionOwners.MaxPerOwner * 2; index++)
+        {
+            owners.Add(_owner, "flood" + index);
+        }
+
+        Assert.True(owners.BelongsToAnother(_other, "oldest"));
+    }
+
+    [Fact]
+    public void A_session_leaves_when_its_owner_ends_it_and_only_then()
+    {
+        _owners.Add(_owner, "mine", Guid.NewGuid());
+
+        Assert.False(_owners.Remove(_other, "mine"));
+        Assert.True(_owners.BelongsToAnother(_other, "mine"));
+
+        Assert.True(_owners.Remove(_owner, "MINE"));
+        Assert.False(_owners.BelongsToAnother(_other, "mine"));
+        Assert.Null(_owners.ItemOf("mine"));
+    }
+
+    [Fact]
+    public void A_session_leaves_after_going_unused_for_the_idle_time()
+    {
+        var clock = new ManualClock();
+        var owners = PlaySessionOwners.WithoutLimit(clock);
+        var idle = TimeSpan.FromSeconds(90);
+        owners.Add(_owner, "quiet");
+        owners.Add(_owner, "used");
+
+        clock.Advance(idle - TimeSpan.FromSeconds(1));
+        Assert.True(owners.Owns(_owner, "used"));
+        owners.ForgetIdle(idle);
+        Assert.True(owners.BelongsToAnother(_other, "quiet"));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        owners.ForgetIdle(idle);
+        Assert.False(owners.BelongsToAnother(_other, "quiet"));
+        Assert.True(owners.BelongsToAnother(_other, "used"));
     }
 }

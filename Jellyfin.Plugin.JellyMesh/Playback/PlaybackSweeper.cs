@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
@@ -13,12 +14,15 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// <summary>
 /// Closes what clients leave open: on a reported stop right away, after the grace on a JellyMesh remote when a client
 /// dropped its connection, and after the idle time when the client simply went away. Nothing pings the remote during a
-/// pause: its job ends, and resuming restarts it.
+/// pause: its job ends, and resuming restarts it. Also forgets the stock play session of a stub when its user stops it or
+/// leaves it idle.
 /// </summary>
 public sealed class PlaybackSweeper : BackgroundService
 {
     private readonly PlaybackCoordinator _coordinator;
     private readonly ISessionManager _sessionManager;
+    private readonly PlaybackSessionStore _sessions;
+    private readonly IPluginConfigurationStore _store;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackSweeper> _logger;
 
@@ -27,12 +31,22 @@ public sealed class PlaybackSweeper : BackgroundService
     /// </summary>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="sessionManager">The session manager.</param>
+    /// <param name="sessions">The sessions.</param>
+    /// <param name="store">The configuration store.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
-    public PlaybackSweeper(PlaybackCoordinator coordinator, ISessionManager sessionManager, TimeProvider clock, ILogger<PlaybackSweeper> logger)
+    public PlaybackSweeper(
+        PlaybackCoordinator coordinator,
+        ISessionManager sessionManager,
+        PlaybackSessionStore sessions,
+        IPluginConfigurationStore store,
+        TimeProvider clock,
+        ILogger<PlaybackSweeper> logger)
     {
         _coordinator = coordinator;
         _sessionManager = sessionManager;
+        _sessions = sessions;
+        _store = store;
         _clock = clock;
         _logger = logger;
     }
@@ -74,6 +88,7 @@ public sealed class PlaybackSweeper : BackgroundService
         using var timer = new PeriodicTimer(PlaybackTimeouts.SweepInterval, _clock);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
+            _sessions.ForgetIdleLocal(_store.Read(PlaybackTimes.From).Idle);
             await _coordinator.SweepAsync().ConfigureAwait(false);
         }
     }
@@ -102,6 +117,11 @@ public sealed class PlaybackSweeper : BackgroundService
     {
         if (e.PlaySessionId is { } playSessionId)
         {
+            foreach (var user in e.Users)
+            {
+                _sessions.EndLocal(user.Id, playSessionId);
+            }
+
             _ = CloseAsync(playSessionId, e.Users.Select(user => user.Id).ToList());
         }
     }
