@@ -43,10 +43,9 @@ public static class PathIdentity
     /// </summary>
     /// <param name="path">The path.</param>
     /// <param name="folder">The folder.</param>
+    /// <param name="comparison">How names compare, <see cref="Comparison"/> on this system.</param>
     /// <returns>Whether the path is within the folder.</returns>
-    public static bool IsWithin(string path, string folder) => IsWithin(path, folder, Comparison);
-
-    internal static bool IsWithin(string path, string folder, StringComparison comparison) =>
+    public static bool IsWithin(string path, string folder, StringComparison comparison) =>
         string.Equals(path, folder, comparison)
         || path.StartsWith(Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar, comparison);
 
