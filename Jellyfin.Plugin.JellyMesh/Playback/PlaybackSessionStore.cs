@@ -46,9 +46,10 @@ public sealed class PlaybackSessionStore
     /// <param name="userId">The user who opened it.</param>
     /// <param name="playSessionId">The play session.</param>
     /// <param name="itemId">The stub it plays.</param>
-    public void RecordLocal(Guid userId, string playSessionId, Guid itemId)
+    /// <param name="deviceId">The device that opened it, null if it is not known.</param>
+    public void RecordLocal(Guid userId, string playSessionId, Guid itemId, string? deviceId = null)
     {
-        _localOwners.Add(userId, playSessionId, itemId);
+        _localOwners.Add(userId, playSessionId, itemId, deviceId);
     }
 
     /// <summary>
@@ -100,6 +101,18 @@ public sealed class PlaybackSessionStore
     public bool IsLocalOfAnother(Guid userId, string? playSessionId)
     {
         return _localOwners.BelongsToAnother(userId, playSessionId);
+    }
+
+    /// <summary>
+    /// Tells whether a device opened the stock play session of a stub played on this server by someone else. Stock stops
+    /// every job of a device for a segment that names no play session.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <param name="deviceId">The device.</param>
+    /// <returns>Whether another user played a stub here from it.</returns>
+    public bool IsLocalDeviceOfAnother(Guid userId, string? deviceId)
+    {
+        return _localOwners.DeviceOfAnother(userId, deviceId);
     }
 
     /// <summary>

@@ -298,11 +298,12 @@ public sealed class PlaybackCoordinator
     /// <param name="userId">The user.</param>
     /// <param name="itemId">The stub.</param>
     /// <param name="playSessionId">The play session.</param>
-    public void RecordLocalPlaySession(Guid userId, Guid itemId, string? playSessionId)
+    /// <param name="deviceId">The device that opened it.</param>
+    public void RecordLocalPlaySession(Guid userId, Guid itemId, string? playSessionId, string? deviceId)
     {
         if (!string.IsNullOrEmpty(playSessionId))
         {
-            _sessions.RecordLocal(userId, playSessionId, itemId);
+            _sessions.RecordLocal(userId, playSessionId, itemId, deviceId);
         }
     }
 

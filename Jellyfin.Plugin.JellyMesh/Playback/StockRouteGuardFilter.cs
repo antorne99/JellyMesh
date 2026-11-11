@@ -79,6 +79,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
+        if (controller == "DynamicHls" && string.IsNullOrEmpty(PlaySessionOf(context)) && DeviceOf(context) is { } device)
+        {
+            // A segment without a play session makes stock stop every job of its device, whoever asks.
+            var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id ?? Guid.Empty;
+            if (_sessions.IsLocalDeviceOfAnother(caller, device))
+            {
+                context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
+                return;
+            }
+        }
+
         if (IsStop(controller, action))
         {
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id;
@@ -198,6 +209,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return controller == "Playstate"
             && action is "ReportPlaybackStart" or "OnPlaybackStart" or "OnPlaybackStartLegacy"
                 or "ReportPlaybackProgress" or "OnPlaybackProgress" or "OnPlaybackProgressLegacy" or "PingPlaybackSession";
+    }
+
+    private static string? DeviceOf(ActionExecutingContext context)
+    {
+        return StubLookup.LegacyParamOf(context, StubLookup.LegacyDeviceField)
+            ?? (context.ActionArguments.TryGetValue("deviceId", out var value) ? value as string : null);
     }
 
     private static string? PlaySessionOf(ActionExecutingContext context)

@@ -71,6 +71,18 @@ public sealed class PlaySessionOwners
     /// <param name="itemId">The item it plays, null if it is not known.</param>
     public void Add(Guid owner, string playSessionId, Guid? itemId)
     {
+        Add(owner, playSessionId, itemId, null);
+    }
+
+    /// <summary>
+    /// Records a play session, the item it plays and the device that opened it.
+    /// </summary>
+    /// <param name="owner">The user who opened it.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <param name="itemId">The item it plays, null if it is not known.</param>
+    /// <param name="device">The device that opened it, null if it is not known.</param>
+    public void Add(Guid owner, string playSessionId, Guid? itemId, string? device)
+    {
         lock (_lock)
         {
             if (!_owners.TryGetValue(owner, out var sessions))
@@ -80,7 +92,7 @@ public sealed class PlaySessionOwners
                 _owners[owner] = sessions;
             }
 
-            sessions[playSessionId] = new Entry(++_uses, _clock.GetUtcNow(), itemId);
+            sessions[playSessionId] = new Entry(++_uses, _clock.GetUtcNow(), itemId, device);
             if (sessions.Count > _limit)
             {
                 sessions.Remove(sessions.MinBy(pair => pair.Value.Use).Key);
@@ -179,6 +191,27 @@ public sealed class PlaySessionOwners
     }
 
     /// <summary>
+    /// Tells whether a device opened a play session of someone else.
+    /// </summary>
+    /// <param name="user">The user.</param>
+    /// <param name="device">The device.</param>
+    /// <returns>Whether another user opened a play session from it.</returns>
+    public bool DeviceOfAnother(Guid user, string? device)
+    {
+        if (string.IsNullOrEmpty(device))
+        {
+            return false;
+        }
+
+        lock (_lock)
+        {
+            // Stock compares devices ignoring case.
+            return _owners.Any(pair => !pair.Key.Equals(user)
+                && pair.Value.Values.Any(entry => string.Equals(entry.Device, device, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    /// <summary>
     /// Finds the item a play session was recorded with, whoever opened it.
     /// </summary>
     /// <param name="playSessionId">The play session.</param>
@@ -204,5 +237,5 @@ public sealed class PlaySessionOwners
         }
     }
 
-    private readonly record struct Entry(long Use, DateTimeOffset LastUse, Guid? Item);
+    private readonly record struct Entry(long Use, DateTimeOffset LastUse, Guid? Item, string? Device);
 }

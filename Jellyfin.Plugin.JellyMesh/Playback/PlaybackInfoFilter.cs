@@ -184,7 +184,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId);
+        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, request.Identity.DeviceId);
     }
 
     private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome)
@@ -212,7 +212,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId);
+        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, request.Identity.DeviceId);
     }
 
     private bool CleanLocalResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, PlaybackOutcome outcome)

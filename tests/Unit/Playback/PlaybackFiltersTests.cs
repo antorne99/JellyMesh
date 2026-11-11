@@ -801,6 +801,68 @@ public class PlaybackFiltersTests
         Assert.False(sessions.IsLocalOfAnother(_user.Id, "local-play"));
     }
 
+    [Theory]
+    [InlineData("GetHlsVideoSegment", "deviceId", "owner-device")]
+    [InlineData("GetHlsVideoSegment", "deviceId", "OWNER-DEVICE")]
+    [InlineData("GetHlsVideoSegment", "params", ";owner-device")]
+    [InlineData("GetHlsAudioSegment", "params", ";OWNER-DEVICE")]
+    public async Task A_segment_without_a_play_session_on_the_device_of_another_local_play_session_is_not_found(string action, string argument, string device)
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var context = Context("DynamicHls", action, ("itemId", LocalItem()), (argument, device));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_device_of_a_segment_is_the_one_in_the_legacy_params_over_the_query()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var refused = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "mine"), ("params", ";owner-device"));
+        var served = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "owner-device"), ("params", ";mine"));
+
+        Assert.False(await RunAsync(GuardFilter(), refused));
+        Assert.True(await RunAsync(GuardFilter(), served));
+    }
+
+    [Fact]
+    public async Task An_anonymous_segment_without_a_play_session_on_the_device_of_a_local_play_session_is_not_found()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        Anonymous();
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "owner-device"));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("device", null)]
+    [InlineData("unknown-device", null)]
+    [InlineData("owner-device", "a-play-session")]
+    public async Task A_segment_that_stops_no_local_play_session_of_another_user_passes(string device, string? playSessionId)
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "own-play", _itemId, "device");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", device), ("playSessionId", playSessionId));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    [Fact]
+    public async Task A_local_play_session_is_recorded_with_the_device_that_opened_it()
+    {
+        Offline();
+        LocalCopyArrived();
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId), ("mediaSourceId", _itemId.ToString("N")));
+
+        await RunStockAsync(context, LocalFile(directPlay: true));
+
+        Assert.True(_fixture.Sessions.IsLocalDeviceOfAnother(Guid.NewGuid(), "DEVICE"));
+        Assert.False(_fixture.Sessions.IsLocalDeviceOfAnother(_user.Id, "device"));
+    }
+
     private ActionExecutingContext SegmentOfStub(string? playSessionId = null)
     {
         CanSeeItem();
