@@ -717,6 +717,38 @@ public class PlaybackFiltersTests
 
     private static readonly PlaybackTimes RetentionTimes = new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), Retention, Retention);
 
+    public static TheoryData<string, string, string, object> ReportsOfAPlaySession => new()
+    {
+        { "Playstate", "ReportPlaybackStart", "playbackStartInfo", new MediaBrowser.Model.Session.PlaybackStartInfo { PlaySessionId = "local-play" } },
+        { "Playstate", "OnPlaybackStart", "playSessionId", "local-play" },
+        { "Playstate", "ReportPlaybackProgress", "playbackProgressInfo", new MediaBrowser.Model.Session.PlaybackProgressInfo { PlaySessionId = "LOCAL-PLAY" } },
+        { "Playstate", "OnPlaybackProgress", "playSessionId", "local-play" },
+        { "Playstate", "OnPlaybackProgressLegacy", "playSessionId", "local-play" },
+        { "Playstate", "PingPlaybackSession", "playSessionId", "local-play" }
+    };
+
+    [Theory]
+    [MemberData(nameof(ReportsOfAPlaySession))]
+    public async Task A_report_of_another_user_on_a_local_play_session_is_answered_without_effect(string controller, string action, string argument, object value)
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = Context(controller, action, (argument, value));
+
+        var passed = await RunAsync(GuardFilter(), context);
+
+        Assert.False(passed);
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Theory]
+    [MemberData(nameof(ReportsOfAPlaySession))]
+    public async Task A_report_of_its_user_on_a_local_play_session_reaches_stock(string controller, string action, string argument, object value)
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), Context(controller, action, (argument, value))));
+    }
+
     public static TheoryData<string, string, string, object> UsesOfAPlaySession => new()
     {
         { "DynamicHls", "GetHlsVideoSegment", "playSessionId", "local-play" },

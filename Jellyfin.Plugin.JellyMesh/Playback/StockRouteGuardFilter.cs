@@ -107,6 +107,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         {
             if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is { } reporter)
             {
+                // A report of another user would keep the stock job of the owner alive.
+                if (_sessions.IsLocalOfAnother(reporter.Id, PlaySessionOf(context)))
+                {
+                    context.Result = new NoContentResult();
+                    return;
+                }
+
                 _sessions.UseLocal(reporter.Id, PlaySessionOf(context));
             }
         }
@@ -185,7 +192,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             || (controller == "Playstate" && action is "ReportPlaybackStopped" or "OnPlaybackStopped" or "OnPlaybackStoppedLegacy");
     }
 
-    // A start or a progress of its user keeps a local play session from going idle, as it keeps the stock job alive.
+    // A start, a progress or a ping of its user keeps a local play session in use; one of another user gets 204.
     private static bool IsReport(string controller, string action)
     {
         return controller == "Playstate"
