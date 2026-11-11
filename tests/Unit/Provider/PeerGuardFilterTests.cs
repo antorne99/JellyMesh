@@ -1225,6 +1225,31 @@ public class PeerPlaybackInfoFilterTests
     }
 
     [Fact]
+    public async Task A_playback_that_comes_while_the_timer_closes_the_abandoned_transcode_waits_for_it()
+    {
+        var peer = _fixture.Peer.Id;
+        _fixture.Slots.Confirm(peer, _fixture.Slots.TryReserve(peer, 1, null)!, "gone");
+        var request = _fixture.Slots.TryEnter(peer, 1, "gone")!;
+        request.Abandon();
+        request.Dispose();
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace);
+        var killing = new TaskCompletionSource();
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "gone", It.IsAny<Func<string, bool>>())).Returns(killing.Task);
+        var timer = _fixture.Closer.CloseAbandonedAsync();
+
+        var (context, ran) = await RunAsync(Answer("next"));
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, (context.Result as StatusCodeResult)?.StatusCode);
+
+        killing.SetResult();
+        await timer;
+        var (_, ranAfter) = await RunAsync(Answer("next"));
+
+        Assert.True(ranAfter);
+    }
+
+    [Fact]
     public async Task An_answer_with_an_error_holds_no_slot()
     {
         await RunAsync(Answer(error: PlaybackErrorCode.NoCompatibleStream));
