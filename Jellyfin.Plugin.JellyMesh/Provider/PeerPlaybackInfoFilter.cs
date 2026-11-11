@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Model.MediaInfo;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -15,6 +16,10 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
 {
+    private const string LiveStreamArgument = "liveStreamId";
+    private const string BodyArgument = "playbackInfoDto";
+    private const string LiveStreamProperty = "LiveStreamId";
+
     private readonly PeerDirectory _peers;
     private readonly StreamSlots _slots;
 
@@ -40,6 +45,13 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
         if (!isPlaybackInfo || await _peers.FindCallerAsync(http).ConfigureAwait(false) is not { } caller)
         {
             await next().ConfigureAwait(false);
+            return;
+        }
+
+        // Stock would answer with that live stream, found by its id alone, in place of the item.
+        if (NamesLiveStream(context))
+        {
+            context.Result = new StatusCodeResult(StatusCodes.Status403Forbidden);
             return;
         }
 
@@ -75,5 +87,14 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
                 _slots.Release(peerId, reservation);
             }
         }
+    }
+
+    // Stock takes the live stream from the query, else from the posted body, whose type is not in a NuGet package.
+    private static bool NamesLiveStream(ActionExecutingContext context)
+    {
+        var query = context.ActionArguments.TryGetValue(LiveStreamArgument, out var value) ? value as string : null;
+        var body = context.ActionArguments.TryGetValue(BodyArgument, out var posted) ? posted : null;
+        var fromBody = body?.GetType().GetProperty(LiveStreamProperty)?.GetValue(body) as string;
+        return !string.IsNullOrWhiteSpace(query) || !string.IsNullOrWhiteSpace(fromBody);
     }
 }
