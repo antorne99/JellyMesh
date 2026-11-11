@@ -43,7 +43,7 @@ internal sealed class ProviderFixture
             .ReturnsAsync(() => new AuthorizationInfo { User = Caller });
 
         Directory = new PeerDirectory(Store, Authorization.Object);
-        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store);
+        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store, CatalogLogger);
 
         AddItem(SharedItem, new Movie { Path = "/media/film/a.mkv" }, SharedLibrary);
         AddItem(PrivateItem, new Movie { Path = "/other/film/b.mkv" }, PrivateLibrary);
@@ -76,6 +76,8 @@ internal sealed class ProviderFixture
     public PeerDirectory Directory { get; }
 
     public ProviderCatalog Catalog { get; }
+
+    public CapturingLogger<ProviderCatalog> CatalogLogger { get; } = new();
 
     public PeerCaller PeerCaller => new(Directory.Find(Peer.Id)!, Peer);
 

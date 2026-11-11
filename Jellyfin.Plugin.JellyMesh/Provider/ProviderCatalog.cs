@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Provider;
 
@@ -45,6 +46,7 @@ public sealed class ProviderCatalog
     private readonly ILibraryManager _library;
     private readonly IDtoService _dto;
     private readonly IPluginConfigurationStore _store;
+    private readonly ILogger<ProviderCatalog> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ProviderCatalog"/> class.
@@ -52,11 +54,13 @@ public sealed class ProviderCatalog
     /// <param name="library">The library manager.</param>
     /// <param name="dto">The DTO service.</param>
     /// <param name="store">The configuration store.</param>
-    public ProviderCatalog(ILibraryManager library, IDtoService dto, IPluginConfigurationStore store)
+    /// <param name="logger">The logger.</param>
+    public ProviderCatalog(ILibraryManager library, IDtoService dto, IPluginConfigurationStore store, ILogger<ProviderCatalog> logger)
     {
         _library = library;
         _dto = dto;
         _store = store;
+        _logger = logger;
     }
 
     /// <summary>
@@ -281,6 +285,7 @@ public sealed class ProviderCatalog
         var library = _library.GetVirtualFolders().Find(folder => Guid.TryParse(folder.ItemId, out var id) && id == libraryId);
         if (library is null)
         {
+            _logger.LogDebug("Library {LibraryId} is no longer on this server, so a page of it reads as empty", libraryId);
             return null;
         }
 
@@ -299,11 +304,17 @@ public sealed class ProviderCatalog
             return LibraryScope.Whole;
         }
 
-        var real = locations.Except(federated)
+        var paths = locations.Except(federated).ToList();
+        var real = paths
             .Select(path => _library.FindByPath(path, true))
             .OfType<BaseItem>()
             .Select(folder => folder.Id)
             .ToArray();
+        if (real.Length == 0 && paths.Count > 0)
+        {
+            _logger.LogDebug("The real paths of library {LibraryId} are not indexed yet, so a page of it reads as empty", libraryId);
+        }
+
         return real.Length == 0 ? null : new LibraryScope(real, []);
     }
 

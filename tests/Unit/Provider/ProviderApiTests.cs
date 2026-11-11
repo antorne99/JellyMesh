@@ -18,6 +18,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -125,6 +126,7 @@ public class ProviderCatalogTests
         Assert.Empty(page.Items);
         Assert.Equal(0, page.TotalRecordCount);
         _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+        Assert.Empty(_fixture.CatalogLogger.Lines);
     }
 
     [Fact]
@@ -136,6 +138,7 @@ public class ProviderCatalogTests
 
         Assert.Equal(0, page.TotalRecordCount);
         _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+        AssertDebugLineWithoutPaths();
     }
 
     [Fact]
@@ -147,6 +150,16 @@ public class ProviderCatalogTests
 
         Assert.Equal(0, page.TotalRecordCount);
         _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+        AssertDebugLineWithoutPaths();
+    }
+
+    // One Debug line naming the shared library by id and no path.
+    private void AssertDebugLineWithoutPaths()
+    {
+        var line = Assert.Single(_fixture.CatalogLogger.Lines);
+        Assert.Equal(LogLevel.Debug, Assert.Single(_fixture.CatalogLogger.Levels));
+        Assert.Contains(ProviderFixture.SharedLibrary.ToString(), line, StringComparison.Ordinal);
+        Assert.DoesNotContain("/", line, StringComparison.Ordinal);
     }
 
     [Fact]
