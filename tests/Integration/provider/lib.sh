@@ -20,8 +20,9 @@ PROFILE_DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayPro
 PROFILE_HLS='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 mkdir -p "$WORK"
 
-port_of() { case $1 in a) echo 18410 ;; b) echo 18411 ;; esac; }
-container_of() { echo "jm-prov-$1"; }
+# PREFIX, PORT_A and PORT_B move the servers elsewhere, for a script that runs beside another stack.
+port_of() { case $1 in a) echo "${PORT_A:-18410}" ;; b) echo "${PORT_B:-18411}" ;; esac; }
+container_of() { echo "${PREFIX:-jm-prov}-$1"; }
 token_of() { cat "$WORK/token-$1" 2>/dev/null || true; }
 
 # req <a|b> <method> <path> [body]: prints the body; the status goes to $WORK/status.

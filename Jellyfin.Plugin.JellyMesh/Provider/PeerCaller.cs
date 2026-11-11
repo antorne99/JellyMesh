@@ -7,4 +7,5 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 /// <param name="Grant">What it may do.</param>
 /// <param name="User">The dedicated local user.</param>
-public sealed record PeerCaller(PeerGrant Grant, User User);
+/// <param name="DeviceId">The device its authorization header names, null if none or not from a request.</param>
+public sealed record PeerCaller(PeerGrant Grant, User User, string? DeviceId = null);

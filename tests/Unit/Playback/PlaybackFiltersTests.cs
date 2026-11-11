@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Common;
@@ -47,6 +48,7 @@ public class PlaybackFiltersTests
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly Mock<IFederationResolver> _resolver = new();
     private readonly User _user = new("viewer", "auth", "reset");
+    private readonly StreamSlots _peerSlots = new(TimeProvider.System, new InMemoryConfigurationStore());
     private readonly StubEntry _stub;
 
     public PlaybackFiltersTests()
@@ -96,7 +98,8 @@ public class PlaybackFiltersTests
             _fixture.Coordinator,
             sessions ?? _fixture.Sessions,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
-            _transcodes.Object);
+            _transcodes.Object,
+            _peerSlots);
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
@@ -858,6 +861,122 @@ public class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(), context));
         Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("GetHlsVideoSegment", "deviceId", null)]
+    [InlineData("GetHlsVideoSegment", "deviceId", "")]
+    [InlineData("GetHlsVideoSegment", "deviceId", " ")]
+    [InlineData("GetHlsAudioSegment", "params", "; ;")]
+    [InlineData("GetMasterHlsVideoPlaylist", "params", "")]
+    public async Task A_request_without_a_play_session_or_a_device_is_not_found_while_another_user_plays_here(string action, string argument, string? device)
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var context = Context("DynamicHls", action, ("itemId", LocalItem()), (argument, device));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task An_anonymous_request_without_a_play_session_or_a_device_is_not_found_while_a_user_plays_here()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        Anonymous();
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_request_without_a_play_session_or_a_device_passes_while_no_one_plays_here()
+    {
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    [Fact]
+    public async Task A_request_without_a_play_session_or_a_device_passes_while_only_its_user_plays_here()
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "own-play", _itemId, "device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    [Fact]
+    public async Task A_request_without_a_device_that_names_a_play_session_passes_while_another_user_plays_here()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("playSessionId", "a-play-session"));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    // A peer play session, as the PlaybackInfo of a peer confirms it on the provider.
+    private void PeerPlays(Guid peer, params string[] devices)
+    {
+        var reservation = _peerSlots.TryReserve(peer, 1, null)!;
+        _peerSlots.Confirm(peer, reservation, "peer-play", _itemId, devices);
+    }
+
+    [Theory]
+    [InlineData("GetHlsVideoSegment", "deviceId", "consumer-device")]
+    [InlineData("GetHlsVideoSegment", "deviceId", "CONSUMER-DEVICE")]
+    [InlineData("GetHlsVideoSegment", "params", ";consumer-device")]
+    [InlineData("GetMasterHlsVideoPlaylist", "deviceId", "url-device")]
+    public async Task A_request_without_a_play_session_on_the_device_of_a_peer_play_session_is_not_found(string action, string argument, string device)
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device", "url-device");
+        var context = Context("DynamicHls", action, ("itemId", LocalItem()), (argument, device));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task An_anonymous_request_without_a_play_session_on_the_device_of_a_peer_play_session_is_not_found()
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        Anonymous();
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "consumer-device"));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_request_without_a_play_session_or_a_device_is_not_found_while_a_peer_plays_here()
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("consumer-device")]
+    [InlineData(null)]
+    public async Task A_request_of_a_peer_without_a_play_session_on_its_own_devices_passes(string? device)
+    {
+        PeerPlays(_user.Id, "consumer-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", device));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    [Theory]
+    [InlineData("unknown-device", null)]
+    [InlineData("consumer-device", "a-play-session")]
+    public async Task A_request_that_stops_no_peer_play_session_passes(string device, string? playSessionId)
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", device), ("playSessionId", playSessionId));
+
+        Assert.True(await RunAsync(GuardFilter(), context));
     }
 
     [Fact]

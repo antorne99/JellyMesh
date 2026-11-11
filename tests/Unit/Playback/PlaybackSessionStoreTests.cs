@@ -88,10 +88,12 @@ public class PlaybackSessionStoreTests
         Assert.True(sessions.IsLocalDeviceOfAnother(_other, "OWNER-DEVICE"));
         Assert.False(sessions.IsLocalDeviceOfAnother(_owner, "owner-device"));
         Assert.False(sessions.IsLocalDeviceOfAnother(_other, "another-device"));
-        Assert.False(sessions.IsLocalDeviceOfAnother(_other, null));
+        Assert.True(sessions.IsLocalDeviceOfAnother(_other, null));
+        Assert.False(sessions.IsLocalDeviceOfAnother(_owner, null));
 
         sessions.EndLocal(_owner, "local-play");
 
         Assert.False(sessions.IsLocalDeviceOfAnother(_other, "owner-device"));
+        Assert.False(sessions.IsLocalDeviceOfAnother(_other, null));
     }
 }

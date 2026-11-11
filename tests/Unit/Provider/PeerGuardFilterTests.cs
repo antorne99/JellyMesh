@@ -1001,4 +1001,36 @@ public class PeerPlaybackInfoFilterTests
         Assert.True(ran);
         Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
     }
+
+    private static OkObjectResult AnswerWithTranscode(string transcodingUrl)
+    {
+        var answer = new PlaybackInfoResponse { PlaySessionId = "play" };
+        answer.MediaSources = [new MediaBrowser.Model.Dto.MediaSourceInfo { TranscodingUrl = transcodingUrl }];
+        return new OkObjectResult(answer);
+    }
+
+    [Fact]
+    public async Task A_playback_records_the_device_of_the_peer_and_the_one_its_transcoding_url_names()
+    {
+        _fixture.CallerDevice = "consumer-device";
+
+        await RunAsync(AnswerWithTranscode("/videos/x/master.m3u8?DeviceId=Url+Device%2B&DeviceId=second&PlaySessionId=play"));
+
+        var other = Guid.NewGuid();
+        Assert.True(_fixture.Slots.IsDeviceOfAnother(other, "CONSUMER-DEVICE"));
+        Assert.True(_fixture.Slots.IsDeviceOfAnother(other, "url device+"));
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(other, "second"));
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(_fixture.Peer.Id, "consumer-device"));
+    }
+
+    [Fact]
+    public async Task A_consumer_that_left_during_the_call_records_no_device()
+    {
+        _fixture.CallerDevice = "consumer-device";
+
+        await RunAsync(AnswerWithTranscode("/videos/x/master.m3u8?DeviceId=url-device"), consumerLeft: true);
+
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(Guid.NewGuid(), "consumer-device"));
+        Assert.False(_fixture.Slots.IsDeviceOfAnother(Guid.NewGuid(), "url-device"));
+    }
 }

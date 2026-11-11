@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -19,7 +20,8 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// Covers the stock media routes for stubs. Several of them are anonymous in Jellyfin, and for a stub the server itself
 /// reads the <c>.strm</c> from loopback, so without this anyone with an item ID would read remote data. Also learns of a
 /// stop from <c>DELETE /Videos/ActiveEncodings</c>, which is how jellyfin-web ends a transcode. Stock stops a play session
-/// for anyone who names it, so a stub played on this server is kept out of the reach of other users here.
+/// for anyone who names it, so a stub played on this server is kept out of the reach of other users here. So are the
+/// devices of the streams a peer opened here, since stock stops every job of a device for a segment with no play session.
 /// </summary>
 public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
@@ -43,6 +45,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly PlaybackSessionStore _sessions;
     private readonly PlaybackRefusal _refusal;
     private readonly ITranscodeManager _transcodes;
+    private readonly StreamSlots _peerSlots;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
@@ -54,6 +57,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="sessions">The sessions.</param>
     /// <param name="refusal">The refusal.</param>
     /// <param name="transcodes">The transcode manager.</param>
+    /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
     public StockRouteGuardFilter(
         StubLookup stubs,
         ILibraryManager libraryManager,
@@ -61,7 +65,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackCoordinator coordinator,
         PlaybackSessionStore sessions,
         PlaybackRefusal refusal,
-        ITranscodeManager transcodes)
+        ITranscodeManager transcodes,
+        StreamSlots peerSlots)
     {
         _stubs = stubs;
         _libraryManager = libraryManager;
@@ -70,6 +75,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         _sessions = sessions;
         _refusal = refusal;
         _transcodes = transcodes;
+        _peerSlots = peerSlots;
     }
 
     /// <inheritdoc />
@@ -79,11 +85,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
-        if (controller == "DynamicHls" && string.IsNullOrWhiteSpace(PlaySessionOf(context)) && DeviceOf(context) is { } device)
+        if (controller == "DynamicHls" && string.IsNullOrWhiteSpace(PlaySessionOf(context)))
         {
-            // A segment without a play session makes stock stop every job of its device, whoever asks.
+            // A segment without a play session makes stock stop every job of its device, whoever asks; with no device, the
+            // jobs that run without one.
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id ?? Guid.Empty;
-            if (_sessions.IsLocalDeviceOfAnother(caller, device))
+            var device = DeviceOf(context);
+            if (_sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
