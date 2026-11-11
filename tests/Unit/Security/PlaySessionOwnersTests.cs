@@ -93,6 +93,30 @@ public class PlaySessionOwnersTests
     }
 
     [Fact]
+    public void A_session_belongs_to_another_for_the_anonymous_too()
+    {
+        _owners.Add(_owner, "mine");
+
+        Assert.True(_owners.BelongsToAnother(Guid.Empty, "mine"));
+    }
+
+    [Fact]
+    public void Another_user_naming_a_session_does_not_keep_it()
+    {
+        var clock = new ManualClock();
+        var owners = PlaySessionOwners.WithClock(clock);
+        var idle = TimeSpan.FromSeconds(90);
+        owners.Add(_owner, "mine");
+
+        clock.Advance(idle - TimeSpan.FromSeconds(1));
+        Assert.True(owners.BelongsToAnother(_other, "mine"));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        owners.ForgetIdle(idle);
+
+        Assert.False(owners.BelongsToAnother(_other, "mine"));
+    }
+
+    [Fact]
     public void A_session_leaves_when_its_owner_ends_it_and_only_then()
     {
         _owners.Add(_owner, "mine", Guid.NewGuid());

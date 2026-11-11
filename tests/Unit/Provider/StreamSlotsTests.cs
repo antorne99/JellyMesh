@@ -769,6 +769,40 @@ public class StreamSlotsTests
     }
 
     [Fact]
+    public void A_play_session_of_a_peer_belongs_to_anyone_else_and_not_to_the_peer()
+    {
+        var reservation = _slots.TryReserve(_peer, 1, null)!;
+        _slots.Confirm(_peer, reservation, "play", _kept, ["peer-device"]);
+
+        Assert.True(_slots.IsOfAnother(_other, "play"));
+        Assert.True(_slots.IsOfAnother(_other, "PLAY"));
+        Assert.True(_slots.IsOfAnother(Guid.Empty, "play"));
+        Assert.False(_slots.IsOfAnother(_peer, "play"));
+        Assert.False(_slots.IsOfAnother(_other, "unknown"));
+        Assert.False(_slots.IsOfAnother(_other, null));
+    }
+
+    [Fact]
+    public void A_play_session_of_a_peer_stays_its_own_after_its_slot()
+    {
+        var reservation = _slots.TryReserve(_peer, 1, null)!;
+        _slots.Confirm(_peer, reservation, "play", _kept);
+
+        _slots.Release(_peer, "play");
+        _clock.Advance(TimeSpan.FromHours(1));
+
+        Assert.True(_slots.IsOfAnother(_other, "play"));
+    }
+
+    [Fact]
+    public void A_reservation_that_was_never_confirmed_belongs_to_nobody()
+    {
+        var reservation = _slots.TryReserve(_peer, 1, null)!;
+
+        Assert.False(_slots.IsOfAnother(_other, reservation));
+    }
+
+    [Fact]
     public void A_reservation_that_was_never_confirmed_runs_on_no_device()
     {
         var reservation = _slots.TryReserve(_peer, 1, null)!;
