@@ -600,18 +600,64 @@ public class PeerAdminControllerTests
     }
 
     [Fact]
-    public void A_library_with_only_federated_paths_cannot_be_shared()
+    public void A_library_with_only_federated_paths_is_dropped_from_a_save_and_reported()
     {
         _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/federata/Film");
 
         Assert.Empty(_controller.GetOptions().Value!.Libraries);
-        Assert.IsType<BadRequestResult>(_controller.SetPeer(_fixture.Peer.Id, Request()));
+        var result = Assert.IsType<OkObjectResult>(_controller.SetPeer(_fixture.Peer.Id, Request()));
+
+        Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], Assert.IsType<SetPeerResponse>(result.Value).DroppedLibraryIds);
+        Assert.Empty(Assert.Single(_fixture.Store.Configuration.Peers).SharedLibraryIds);
     }
 
     [Fact]
-    public void An_unknown_library_is_refused()
+    public void An_unknown_library_is_dropped_and_what_is_offered_is_saved()
     {
-        Assert.IsType<BadRequestResult>(_controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest([Guid.NewGuid().ToString("N")], 1)));
+        TwoLibraries();
+        var unknown = Guid.NewGuid().ToString("N");
+
+        var result = Assert.IsType<OkObjectResult>(_controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest([unknown, ProviderFixture.PrivateLibrary.ToString("N")], 1)));
+
+        Assert.Equal([unknown], Assert.IsType<SetPeerResponse>(result.Value).DroppedLibraryIds);
+        Assert.Equal([ProviderFixture.PrivateLibrary.ToString("N")], Assert.Single(_fixture.Store.Configuration.Peers).SharedLibraryIds);
+    }
+
+    [Fact]
+    public void A_saved_library_no_longer_offered_is_dropped_on_the_next_save_and_reported()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+        [
+            new VirtualFolderInfo { Name = "Altra", ItemId = ProviderFixture.PrivateLibrary.ToString(), CollectionType = CollectionTypeOptions.movies }
+        ]);
+
+        var result = Assert.IsType<OkObjectResult>(_controller.SetPeer(_fixture.Peer.Id, OnlyPrivate()));
+
+        Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], Assert.IsType<SetPeerResponse>(result.Value).DroppedLibraryIds);
+        Assert.Equal([ProviderFixture.PrivateLibrary.ToString("N")], Assert.Single(_fixture.Store.Configuration.Peers).SharedLibraryIds);
+    }
+
+    [Fact]
+    public void A_save_with_nothing_to_drop_reports_nothing()
+    {
+        TwoLibraries();
+        _controller.SetPeer(_fixture.Peer.Id, Both());
+
+        Assert.IsType<NoContentResult>(_controller.SetPeer(_fixture.Peer.Id, OnlyPrivate()));
+    }
+
+    [Fact]
+    public void Dropping_a_library_no_longer_offered_frees_the_slots_on_it_even_when_it_is_sent_again()
+    {
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play", ProviderFixture.SharedItem)!.Dispose();
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/federata/Film");
+
+        _controller.SetPeer(_fixture.Peer.Id, Request());
+
+        Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]
