@@ -368,7 +368,7 @@ check "free again" 0 "$(wait_free 15)"
 LONG="JM Lungo (2026)"
 OTHER="JM Altro (2026)"
 docker exec jm-prov-a sh -c "mkdir -p '/extra/film/$LONG' '/extra/altra/$OTHER' \
-  && /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -loglevel error -nostdin -stream_loop 40 \
+  && /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -loglevel error -nostdin -stream_loop 100 \
     -i \"\$(find '/media/film/Tears of Steel (2012)' -type f -name '*.m*' | head -1)\" -map 0 -c copy '/extra/film/$LONG/$LONG.mkv' \
   && ln '/extra/film/$LONG/$LONG.mkv' '/extra/altra/$OTHER/$OTHER.mkv'"
 post a "/Library/VirtualFolders?name=Altra&collectionType=movies&refreshLibrary=false&paths=/extra/altra" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
@@ -725,17 +725,6 @@ check "free again" 0 "$(wait_free 15)"
 
 # new_ffmpeg <known pids>: the ffmpeg of a that is not among them.
 new_ffmpeg() { ffmpeg_pids | tr ' ' '\n' | grep -v -x -E "${1// /|}"; }
-# ping_job <play session>: the stock ping, every few seconds, in the background. Stock closes an HLS ffmpeg by itself, 60 or 120 s
-# after its last request as its timer falls, so only with this is the expiry surely what closes it. No consumer sends it.
-ping_job() {
-  (
-    while [ ! -e "$WORK/stop-pinging" ]; do
-      curl -sS -o /dev/null --max-time 5 -X POST -H "$ACCEPT" -H "Authorization: $AUTH, Token=\"$(token_of a)\"" "http://127.0.0.1:18410/Sessions/Playing/Ping?playSessionId=$1"
-      sleep 5
-    done
-  ) &
-  echo $! >"$WORK/pinger"
-}
 # hold_transcode: a progressive transcode of the play session, read slowly in the background: an ffmpeg with a running request. The
 # pid goes to $WORK/reader.
 hold_transcode() {
@@ -744,7 +733,9 @@ hold_transcode() {
   echo $! >"$WORK/reader"
 }
 
-echo "--- 120 s with no request and no renewal: the slot goes and its ffmpeg with it, and a running request keeps its own"
+# Stock closes a quiet HLS ffmpeg by itself 60 s after its last request, and nobody else may renew a job of a peer (rows 96
+# and 107), so what the expiry closes is proven in the unit tests.
+echo "--- 120 s with no request and no renewal: the slots go, stock has closed their ffmpeg, and a running request keeps its own"
 share a 3 Film Serie
 peer_open
 check "open a stream that goes quiet, as a frozen consumer" 200 "$opened"
@@ -752,13 +743,11 @@ check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
 stock_ffmpeg=$(ffmpeg_pids)
 stock_session=$session
 peer_open
-check "open another, whose job stock is kept from closing" 200 "$opened"
+check "open another" 200 "$opened"
 check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
 quiet_ffmpeg=$(new_ffmpeg "$stock_ffmpeg")
 quiet_segment=$segment
 quiet_session=$session
-rm -f "$WORK/stop-pinging"
-ping_job "$quiet_session"
 peer_open
 check "open one with a request that stays running" 200 "$opened"
 hold_transcode
@@ -766,13 +755,9 @@ sleep 5
 read_ffmpeg=$(new_ffmpeg "$stock_ffmpeg $quiet_ffmpeg")
 check "three ffmpeg" 3 "$(ffmpeg_count)"
 sleep 95
-touch "$WORK/stop-pinging"
-echo "the ffmpeg nothing pings is still running before the expiry: $(ffmpeg_running "$stock_ffmpeg")"
-check "the other is alive before the expiry" true "$(ffmpeg_running "$quiet_ffmpeg")"
+check "stock closed the quiet ffmpeg before the expiry" "false false" "$(ffmpeg_running "$stock_ffmpeg") $(ffmpeg_running "$quiet_ffmpeg")"
 sleep 25
-wait "$(cat "$WORK/pinger")" 2>/dev/null
 check "two slots expired" 1 "$(active_streams)"
-check "and the ffmpeg is gone" false "$(ffmpeg_running "$quiet_ffmpeg")"
 check "the stream with a running request keeps its ffmpeg" true "$(ffmpeg_running "$read_ffmpeg")"
 check "the same URL plays, with a slot free" 200 "$(peer_get "$quiet_segment" /dev/null)"
 check "and holds it" 2 "$(active_streams)"
@@ -894,7 +879,7 @@ close_at_expiry() {
   post a "/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration" "$(get a /Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration | jq --argjson on "$1" '.CloseTranscodeAtSlotExpiry = $on')" >/dev/null
 }
 
-echo "--- the close at the expiry turned off: the slot goes and its ffmpeg stays, and a real drop still closes"
+echo "--- the close at the expiry turned off: the slot goes, and a real drop still closes"
 share a 2 Film Serie
 close_at_expiry false
 peer_open
@@ -902,8 +887,6 @@ check "open a stream that goes quiet" 200 "$opened"
 check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
 quiet_ffmpeg=$(ffmpeg_pids)
 quiet_session=$session
-rm -f "$WORK/stop-pinging"
-ping_job "$quiet_session"
 peer_open
 check "open a stream that drops" 200 "$opened"
 check "its first segment" 200 "$(peer_get "$segment" /dev/null)"
@@ -915,9 +898,6 @@ sleep 10
 check "the drop closed its ffmpeg" false "$(ffmpeg_running "$drop_ffmpeg")"
 sleep 113
 check "the quiet slot expired" 0 "$(active_streams)"
-check "and its ffmpeg was left alone" true "$(ffmpeg_running "$quiet_ffmpeg")"
-touch "$WORK/stop-pinging"
-wait "$(cat "$WORK/pinger")" 2>/dev/null
 close_at_expiry true
 for ended_session in "$quiet_session" "$session"; do
   as_peer a "$token" DELETE "/Videos/ActiveEncodings?deviceId=x&playSessionId=$ended_session" >/dev/null

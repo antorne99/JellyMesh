@@ -27,3 +27,11 @@ _Avoid_: source (except for a playback source), backup, copy (except for the fil
 **Stub**:
 The `.strm` file, with its `.nfo` and images, that the plugin writes for one version in a server folder.
 _Avoid_: placeholder
+
+**Local play session**:
+A playback of a stub that this server serves itself, from a local copy or with a local transcode, with the user who started it.
+_Avoid_: stub session, plugin session (that is a playback the plugin proxies from a remote server)
+
+**Peer**:
+Another JellyMesh server that plays this server's titles through a dedicated user. It acts for its own users.
+_Avoid_: remote (that is a server this one reads from), client

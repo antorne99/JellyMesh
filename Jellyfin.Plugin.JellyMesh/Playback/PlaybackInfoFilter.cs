@@ -59,6 +59,28 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         _localCopies = localCopies;
     }
 
+    /// <summary>
+    /// Finds the devices a play session runs on: the device of the request and the ones of the transcoding URLs, read as a
+    /// segment request binds them. Stock writes the decoded header device into the URL unencoded, so the two can differ.
+    /// </summary>
+    /// <param name="response">The answer of <c>PlaybackInfo</c>.</param>
+    /// <param name="deviceId">The device of the request, from its authorization header.</param>
+    /// <returns>The devices, some of them null or repeated.</returns>
+    public static IEnumerable<string?> DevicesOf(PlaybackInfoResponse response, string? deviceId)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+
+        yield return deviceId;
+        foreach (var source in response.MediaSources ?? [])
+        {
+            if (source.TranscodingUrl?.Split('?', 2) is [_, var query]
+                && QueryHelpers.ParseQuery(query).TryGetValue("DeviceId", out var devices))
+            {
+                yield return devices.FirstOrDefault();
+            }
+        }
+    }
+
     /// <inheritdoc />
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
@@ -185,7 +207,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request));
+        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
     }
 
     private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome)
@@ -213,7 +235,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request));
+        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
     }
 
     private bool CleanLocalResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, PlaybackOutcome outcome)
@@ -239,21 +261,6 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         return response.MediaSources.Count > 0;
-    }
-
-    // The device of the request and the ones of the transcoding URLs, read as a segment request binds them: stock
-    // writes the decoded header device into the URL unencoded, so the two can differ.
-    private static IEnumerable<string?> DevicesOf(PlaybackInfoResponse response, PlaybackOpenRequest request)
-    {
-        yield return request.Identity.DeviceId;
-        foreach (var source in response.MediaSources ?? [])
-        {
-            if (source.TranscodingUrl?.Split('?', 2) is [_, var query]
-                && QueryHelpers.ParseQuery(query).TryGetValue("DeviceId", out var devices))
-            {
-                yield return devices.FirstOrDefault();
-            }
-        }
     }
 
     private sealed class ArgumentReader

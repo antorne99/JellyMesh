@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -19,7 +20,9 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// Covers the stock media routes for stubs. Several of them are anonymous in Jellyfin, and for a stub the server itself
 /// reads the <c>.strm</c> from loopback, so without this anyone with an item ID would read remote data. Also learns of a
 /// stop from <c>DELETE /Videos/ActiveEncodings</c>, which is how jellyfin-web ends a transcode. Stock stops a play session
-/// for anyone who names it, so a stub played on this server is kept out of the reach of other users here.
+/// for anyone who names it, so a stub played on this server is kept out of the reach of other users here. So are the
+/// play sessions a peer opened here and their devices, since stock stops every job of a device for a segment with no play
+/// session.
 /// </summary>
 public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
@@ -43,6 +46,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly PlaybackSessionStore _sessions;
     private readonly PlaybackRefusal _refusal;
     private readonly ITranscodeManager _transcodes;
+    private readonly StreamSlots _peerSlots;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
@@ -54,6 +58,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="sessions">The sessions.</param>
     /// <param name="refusal">The refusal.</param>
     /// <param name="transcodes">The transcode manager.</param>
+    /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
     public StockRouteGuardFilter(
         StubLookup stubs,
         ILibraryManager libraryManager,
@@ -61,7 +66,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackCoordinator coordinator,
         PlaybackSessionStore sessions,
         PlaybackRefusal refusal,
-        ITranscodeManager transcodes)
+        ITranscodeManager transcodes,
+        StreamSlots peerSlots)
     {
         _stubs = stubs;
         _libraryManager = libraryManager;
@@ -70,6 +76,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         _sessions = sessions;
         _refusal = refusal;
         _transcodes = transcodes;
+        _peerSlots = peerSlots;
     }
 
     /// <inheritdoc />
@@ -79,11 +86,15 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
-        if (controller == "DynamicHls" && string.IsNullOrWhiteSpace(PlaySessionOf(context)) && DeviceOf(context) is { } device)
+        if (IsSegment(controller, action) && string.IsNullOrWhiteSpace(PlaySessionOf(context)))
         {
-            // A segment without a play session makes stock stop every job of its device, whoever asks.
+            // A segment without a play session makes stock stop every job of its device, whoever asks; with no device, the
+            // jobs that run without one.
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id ?? Guid.Empty;
-            if (_sessions.IsLocalDeviceOfAnother(caller, device))
+            var device = DeviceOf(context);
+            if (string.IsNullOrWhiteSpace(device)
+                ? HasJobWithoutDevice(_sessions.LocalSessionsOfOthers(caller).Concat(_peerSlots.SessionsOfOthers(caller)))
+                : _sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
@@ -94,7 +105,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         {
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id;
             var playSessionId = PlaySessionOf(context);
-            if (caller is { } user && _sessions.IsLocalOfAnother(user, playSessionId))
+            if (caller is { } user && (_sessions.IsLocalOfAnother(user, playSessionId) || _peerSlots.IsOfAnother(user, playSessionId)))
             {
                 // What stock answers for a play session it does not know.
                 context.Result = new NoContentResult();
@@ -114,12 +125,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
             return;
         }
-        else if (IsReport(controller, action) && _sessions.LocalItemOf(PlaySessionOf(context)) is not null)
+        else if (IsReport(controller, action) && IsRecorded(PlaySessionOf(context)))
         {
             if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is { } reporter)
             {
                 // A report of another user would keep the stock job of the owner alive.
-                if (_sessions.IsLocalOfAnother(reporter.Id, PlaySessionOf(context)))
+                if (_sessions.IsLocalOfAnother(reporter.Id, PlaySessionOf(context)) || _peerSlots.IsOfAnother(reporter.Id, PlaySessionOf(context)))
                 {
                     context.Result = new NoContentResult();
                     return;
@@ -128,7 +139,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 _sessions.UseLocal(reporter.Id, PlaySessionOf(context));
             }
         }
-        else if ((_mediaControllers.Contains(controller) || IsFileAction(controller, action))
+        else if (IsMedia(controller, action) && await PeerSessionRefusalAsync(context).ConfigureAwait(false) is { } refusal)
+        {
+            context.Result = refusal;
+            return;
+        }
+        else if (IsMedia(controller, action)
             && StubsOf(context, out var recorded) is var stubs
             && (stubs.Count > 0 || recorded))
         {
@@ -168,6 +184,37 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         await next().ConfigureAwait(false);
     }
 
+    // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.
+    private bool IsRecorded(string? playSessionId)
+    {
+        return _sessions.LocalItemOf(playSessionId) is not null || _peerSlots.IsOfAnother(Guid.Empty, playSessionId);
+    }
+
+    // Refuses a stream that names the play session of a peer, as one that names the local play session of another user.
+    // Null when the peer itself names it, or when no peer recorded it.
+    private async Task<IActionResult?> PeerSessionRefusalAsync(ActionExecutingContext context)
+    {
+        var playSessionId = PlaySessionOf(context);
+        if (!_peerSlots.IsOfAnother(Guid.Empty, playSessionId))
+        {
+            return null;
+        }
+
+        var user = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User;
+        if (user is null)
+        {
+            return new StatusCodeResult(StatusCodes.Status401Unauthorized);
+        }
+
+        return _peerSlots.IsOfAnother(user.Id, playSessionId) ? new StatusCodeResult(StatusCodes.Status404NotFound) : null;
+    }
+
+    // Tells whether one of the play sessions has a live stock job without a device.
+    private bool HasJobWithoutDevice(IEnumerable<string> playSessionIds)
+    {
+        return playSessionIds.Any(id => _transcodes.GetTranscodingJob(id) is { } job && string.IsNullOrWhiteSpace(job.DeviceId));
+    }
+
     // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
     // play session counts even when its stub no longer resolves.
     private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, out bool recorded)
@@ -192,9 +239,20 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return stubs;
     }
 
+    private static bool IsMedia(string controller, string action)
+    {
+        return _mediaControllers.Contains(controller) || IsFileAction(controller, action);
+    }
+
     private static bool IsFileAction(string controller, string action)
     {
         return controller == "Library" && action is "GetDownload" or "GetFile";
+    }
+
+    // Only a segment makes stock stop the jobs of a device; playlists and live.m3u8 stop none.
+    private static bool IsSegment(string controller, string action)
+    {
+        return controller == "DynamicHls" && action is "GetHlsVideoSegment" or "GetHlsAudioSegment";
     }
 
     private static bool IsStop(string controller, string action)

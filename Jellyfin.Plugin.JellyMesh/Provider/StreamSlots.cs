@@ -88,8 +88,10 @@ public sealed class StreamSlots
     /// <param name="reservation">The reservation.</param>
     /// <param name="playSessionId">The play session.</param>
     /// <param name="itemId">The item it plays.</param>
-    public void Confirm(Guid peerId, string reservation, string playSessionId, Guid itemId = default)
+    /// <param name="deviceIds">The devices it runs on: the one that opened it and the ones its transcoding URLs name.</param>
+    public void Confirm(Guid peerId, string reservation, string playSessionId, Guid itemId = default, IEnumerable<string?>? deviceIds = null)
     {
+        var devices = (deviceIds ?? []).Where(device => !string.IsNullOrEmpty(device)).Select(device => device!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         lock (_lock)
         {
             var slots = SlotsOf(peerId);
@@ -99,7 +101,7 @@ public sealed class StreamSlots
             }
         }
 
-        _owners.Add(peerId, playSessionId);
+        _owners.Add(peerId, playSessionId, null, devices);
     }
 
     /// <summary>
@@ -112,6 +114,39 @@ public sealed class StreamSlots
     public bool Owns(Guid peerId, string? playSessionId)
     {
         return _owners.Owns(peerId, playSessionId);
+    }
+
+    /// <summary>
+    /// Tells whether a play session is one a peer other than the user opened. Naming it does not count as a use.
+    /// </summary>
+    /// <param name="userId">The user behind the request, <see cref="Guid.Empty"/> if anonymous.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>Whether another peer opened it.</returns>
+    public bool IsOfAnother(Guid userId, string? playSessionId)
+    {
+        return _owners.BelongsToAnother(userId, playSessionId);
+    }
+
+    /// <summary>
+    /// Tells whether a play session a peer other than the user opened runs on a device. Stock stops every job of a device
+    /// for a segment that names no play session.
+    /// </summary>
+    /// <param name="userId">The user behind the request, <see cref="Guid.Empty"/> if anonymous.</param>
+    /// <param name="deviceId">The device.</param>
+    /// <returns>Whether a play session of another peer runs on it.</returns>
+    public bool IsDeviceOfAnother(Guid userId, string? deviceId)
+    {
+        return _owners.DeviceOfAnother(userId, deviceId);
+    }
+
+    /// <summary>
+    /// Lists the play sessions the peers other than the user opened through their own <c>PlaybackInfo</c>.
+    /// </summary>
+    /// <param name="userId">The user behind the request, <see cref="Guid.Empty"/> if anonymous.</param>
+    /// <returns>The play sessions of the other peers.</returns>
+    public IReadOnlyList<string> SessionsOfOthers(Guid userId)
+    {
+        return _owners.SessionsOfOthers(userId);
     }
 
     /// <summary>
