@@ -75,13 +75,13 @@ public sealed class PlaySessionOwners
     }
 
     /// <summary>
-    /// Records a play session, the item it plays and the device that opened it.
+    /// Records a play session, the item it plays and the devices it runs on.
     /// </summary>
     /// <param name="owner">The user who opened it.</param>
     /// <param name="playSessionId">The play session.</param>
     /// <param name="itemId">The item it plays, null if it is not known.</param>
-    /// <param name="device">The device that opened it, null if it is not known.</param>
-    public void Add(Guid owner, string playSessionId, Guid? itemId, string? device)
+    /// <param name="devices">The devices it runs on, null if they are not known.</param>
+    public void Add(Guid owner, string playSessionId, Guid? itemId, IReadOnlyCollection<string>? devices)
     {
         lock (_lock)
         {
@@ -92,7 +92,7 @@ public sealed class PlaySessionOwners
                 _owners[owner] = sessions;
             }
 
-            sessions[playSessionId] = new Entry(++_uses, _clock.GetUtcNow(), itemId, device);
+            sessions[playSessionId] = new Entry(++_uses, _clock.GetUtcNow(), itemId, devices);
             if (sessions.Count > _limit)
             {
                 sessions.Remove(sessions.MinBy(pair => pair.Value.Use).Key);
@@ -191,11 +191,11 @@ public sealed class PlaySessionOwners
     }
 
     /// <summary>
-    /// Tells whether a device opened a play session of someone else.
+    /// Tells whether a play session of someone else runs on a device.
     /// </summary>
     /// <param name="user">The user.</param>
     /// <param name="device">The device.</param>
-    /// <returns>Whether another user opened a play session from it.</returns>
+    /// <returns>Whether a play session of another user runs on it.</returns>
     public bool DeviceOfAnother(Guid user, string? device)
     {
         if (string.IsNullOrEmpty(device))
@@ -207,7 +207,7 @@ public sealed class PlaySessionOwners
         {
             // Stock compares devices ignoring case.
             return _owners.Any(pair => !pair.Key.Equals(user)
-                && pair.Value.Values.Any(entry => string.Equals(entry.Device, device, StringComparison.OrdinalIgnoreCase)));
+                && pair.Value.Values.Any(entry => entry.Devices?.Contains(device, StringComparer.OrdinalIgnoreCase) == true));
         }
     }
 
@@ -237,5 +237,5 @@ public sealed class PlaySessionOwners
         }
     }
 
-    private readonly record struct Entry(long Use, DateTimeOffset LastUse, Guid? Item, string? Device);
+    private readonly record struct Entry(long Use, DateTimeOffset LastUse, Guid? Item, IReadOnlyCollection<string>? Devices);
 }

@@ -46,10 +46,12 @@ public sealed class PlaybackSessionStore
     /// <param name="userId">The user who opened it.</param>
     /// <param name="playSessionId">The play session.</param>
     /// <param name="itemId">The stub it plays.</param>
-    /// <param name="deviceId">The device that opened it, null if it is not known.</param>
-    public void RecordLocal(Guid userId, string playSessionId, Guid itemId, string? deviceId = null)
+    /// <param name="deviceIds">The devices it runs on: the one that opened it and the ones its transcoding URLs name.</param>
+    public void RecordLocal(Guid userId, string playSessionId, Guid itemId, params string?[] deviceIds)
     {
-        _localOwners.Add(userId, playSessionId, itemId, deviceId);
+        ArgumentNullException.ThrowIfNull(deviceIds);
+        var devices = deviceIds.Where(device => !string.IsNullOrEmpty(device)).Select(device => device!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        _localOwners.Add(userId, playSessionId, itemId, devices);
     }
 
     /// <summary>
@@ -104,7 +106,7 @@ public sealed class PlaybackSessionStore
     }
 
     /// <summary>
-    /// Tells whether a device opened the stock play session of a stub played on this server by someone else. Stock stops
+    /// Tells whether the stock play session of a stub played on this server by someone else runs on a device. Stock stops
     /// every job of a device for a segment that names no play session.
     /// </summary>
     /// <param name="userId">The user.</param>

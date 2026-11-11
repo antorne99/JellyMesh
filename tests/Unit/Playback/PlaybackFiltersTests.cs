@@ -851,6 +851,32 @@ public class PlaybackFiltersTests
     }
 
     [Fact]
+    public async Task A_segment_whose_play_session_is_blank_counts_as_one_without()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId, "owner-device");
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("deviceId", "owner-device"), ("playSessionId", " "));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_local_play_session_is_recorded_with_the_device_its_transcoding_url_names()
+    {
+        Offline();
+        LocalCopyArrived();
+        var source = LocalFile(directPlay: false);
+        source.TranscodingUrl += "&DeviceId=Ab+Cd%2B&DeviceId=second";
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId), ("mediaSourceId", _itemId.ToString("N")));
+
+        await RunStockAsync(context, source);
+
+        Assert.True(_fixture.Sessions.IsLocalDeviceOfAnother(Guid.NewGuid(), "ab cd+"));
+        Assert.True(_fixture.Sessions.IsLocalDeviceOfAnother(Guid.NewGuid(), "device"));
+        Assert.False(_fixture.Sessions.IsLocalDeviceOfAnother(Guid.NewGuid(), "second"));
+    }
+
+    [Fact]
     public async Task A_local_play_session_is_recorded_with_the_device_that_opened_it()
     {
         Offline();

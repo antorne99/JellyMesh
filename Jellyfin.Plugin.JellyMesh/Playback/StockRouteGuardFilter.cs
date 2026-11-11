@@ -79,7 +79,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
-        if (controller == "DynamicHls" && string.IsNullOrEmpty(PlaySessionOf(context)) && DeviceOf(context) is { } device)
+        if (controller == "DynamicHls" && string.IsNullOrWhiteSpace(PlaySessionOf(context)) && DeviceOf(context) is { } device)
         {
             // A segment without a play session makes stock stop every job of its device, whoever asks.
             var caller = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User?.Id ?? Guid.Empty;
