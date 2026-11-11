@@ -62,6 +62,27 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task AServerWithNothingSelectedStillGetsItsFolders()
+    {
+        var a = await _fixture.Sync.AddServerAsync("A");
+        var b = await _fixture.Sync.AddServerAsync("B", "films");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(
+            new[]
+            {
+                StubFixture.In(a, "Film", ".jellymesh"),
+                StubFixture.In(a, "Serie", ".jellymesh"),
+                StubFixture.In(b, "Film", ".jellymesh"),
+                StubFixture.In(b, "Serie", ".jellymesh"),
+                Path.Combine("Film", ".jellymesh"),
+                Path.Combine("Serie", ".jellymesh")
+            }.Order(StringComparer.Ordinal),
+            _fixture.Files);
+    }
+
+    [Fact]
     public async Task AServerRemovedWhileARunPlansLeavesThatRunWhole()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());

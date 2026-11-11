@@ -215,7 +215,9 @@ public sealed class StubCleanupTaskTests : IDisposable
         Assert.Equal(["delete " + merged.Path], _calls);
         Assert.True(File.Exists(survivor.Path));
         Assert.True(File.Exists(otherPath));
-        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        var stubs = _fixture.Registry.State.Stubs;
+        Assert.Equal(2, stubs.Count);
+        Assert.Equal(stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal), Assert.Single(_fixture.Registry.State.Groups).StubIds.Order(StringComparer.Ordinal));
     }
 
     [Fact]
