@@ -235,5 +235,22 @@ check "after a pause of two minutes past the idle time an unused play session is
 check "one its owner kept reporting is still guarded" 404 "$(through_private outsider "$kept")"
 settings local '.PlaybackIdleSeconds = 90' >/dev/null
 
+# Q75: start, progress and ping reports of another user on a local play session get 204 and reach no stock code. A
+# report that reaches stock sets the now playing item of its user, so that item is the sign. Stock keeps a job whose
+# ffmpeg is done past 60 s without pings, so the job itself is not one.
+report() { # report <user> <path> [play session]: a Playstate report on the stub
+  as "$1" "$2" -X POST -H 'Content-Type: application/json' -d "{\"ItemId\":\"$stub\"${3:+,\"PlaySessionId\":\"$3\"}}"
+}
+playing() { get local /Sessions | jq -r --arg u "$1" '[.[] | select(.UserName == $u) | .NowPlayingItem.Id // empty] | join(",")'; }
+foreign=$(open_local viewer)
+check "before the reports another user plays nothing" "" "$(playing viewer2)"
+check "another user's start report is a 204" 204 "$(report viewer2 /Sessions/Playing "$foreign")"
+check "another user's progress report is a 204" 204 "$(report viewer2 /Sessions/Playing/Progress "$foreign")"
+check "another user's ping is a 204" 204 "$(as viewer2 "/Sessions/Playing/Ping?playSessionId=$foreign" -X POST)"
+check "and none of them reached stock" "" "$(playing viewer2)"
+check "a start report of that user without the play session is served" 204 "$(report viewer2 /Sessions/Playing)"
+check "and sets what they play" "$stub_n" "$(playing viewer2)"
+report viewer2 /Sessions/Playing/Stopped >/dev/null
+
 [ "${DOWN:-0}" = 1 ] && down
 exit $FAILED
