@@ -101,8 +101,9 @@ public static class StubPlanner
 
     /// <summary>
     /// Makes the plan of the layout with one folder per server. Each server folder holds one stub per title, with the best
-    /// copy of that server and its other copies as internal sources, even when a local copy exists. Stubs of the flat layout
-    /// are left as they are. Pure, like <see cref="Plan"/>.
+    /// copy of that server and its other copies as internal sources, even when a local copy exists. The stubs of one title,
+    /// and its local copy, form a version group; episodes only with the same range. Stubs of the flat layout are left as
+    /// they are. Pure, like <see cref="Plan"/>.
     /// </summary>
     /// <param name="input">What is known.</param>
     /// <returns>The plan.</returns>
@@ -113,6 +114,7 @@ public static class StubPlanner
         var catalog = IndexItemLookup.Build(input.Snapshot);
         var labels = FederatedPaths.Labels(input.Servers.ToDictionary(server => server.Id, server => server.Name));
         var works = new List<StubWork>();
+        var placed = new List<(StubWork Work, ResolvedContent Content)>();
         var seriesWorks = new List<SeriesWork>();
         var claimed = new HashSet<string>(StringComparer.Ordinal);
         var merged = new HashSet<string>(StringComparer.Ordinal);
@@ -139,7 +141,7 @@ public static class StubPlanner
 
                 if (content.Identity.Kind == ContentKind.Movie)
                 {
-                    works.Add(MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStub(server.Id, paths.MovieFolder(winner.Name, winner.ProductionYear, id), label)));
+                    placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStub(server.Id, paths.MovieFolder(winner.Name, winner.ProductionYear, id), label)), content));
                 }
                 else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
                 {
@@ -148,11 +150,12 @@ public static class StubPlanner
                 else
                 {
                     var seriesPlan = SeriesPlanOf(input, content, winner, catalog, scope, seriesPlans);
-                    works.Add(EpisodeWork(input, content, stub, winner, seriesPlan, catalog, server.Id, label));
+                    placed.Add((EpisodeWork(input, content, stub, winner, seriesPlan, catalog, server.Id, label), content));
                 }
             }
 
             seriesWorks.AddRange(seriesPlans.Values.Select(plan => plan.Work));
+            works.AddRange(placed.Skip(works.Count).Select(entry => entry.Work));
             claimed.UnionWith(own.Where(matcher.IsClaimed).Select(stub => stub.Id));
             merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
         }
@@ -177,7 +180,8 @@ public static class StubPlanner
             .ToList();
 
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
-        var state = input.State with { Stubs = stubs, Series = series, RemovedServers = marks };
+        var groups = Groups(input, placed, stubs, removals.Select(stub => stub.Id).Concat(merged));
+        var state = input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups };
         return new StubPlan(state, works, seriesWorks, removals, HeldLibraries(input, held), unplaceable.Count)
         {
             MergedStubs = merged.Count,
@@ -198,6 +202,92 @@ public static class StubPlanner
     // A signature is no change of content: a new key must not put remote metadata back on every item, and the materializer
     // keeps the file and the item on the current URL by itself.
     private static string Unsigned(string url) => url.Split('?', 2)[0];
+
+    // Links the stubs of one title in different server folders, and its local copy, as versions. A group keeps its ID, and
+    // its primary while that stays in it; a stub that got no work, such as one of a server still in doubt, keeps its group.
+    private static List<VersionGroup> Groups(StubPlanInput input, List<(StubWork Work, ResolvedContent Content)> placed, List<StubEntry> stubs, IEnumerable<string> gone)
+    {
+        var written = placed.Select(entry => entry.Work.Entry.Id).ToHashSet(StringComparer.Ordinal);
+        var left = gone.ToHashSet(StringComparer.Ordinal);
+        var kept = stubs
+            .Where(stub => stub.ServerId is not null && !written.Contains(stub.Id) && !left.Contains(stub.Id))
+            .ToDictionary(stub => stub.Id, StringComparer.Ordinal);
+        var assigned = new HashSet<string>(StringComparer.Ordinal);
+        var reused = new HashSet<string>(StringComparer.Ordinal);
+        var groups = new List<VersionGroup>();
+
+        // Episodes join only with the same range: the key is the first episode and the last.
+        var titles = placed
+            .GroupBy(entry => (entry.Content.Identity.Key, entry.Content.EpisodeNumberEnd))
+            .OrderBy(title => title.Key.Key, StringComparer.Ordinal)
+            .ThenBy(title => title.Key.EpisodeNumberEnd);
+        foreach (var title in titles)
+        {
+            var content = title.First().Content;
+            var stubIds = title.Select(entry => entry.Work.Entry.Id).ToList();
+            var local = LocalCopiesOf(input, content);
+            var old = input.State.Groups.FirstOrDefault(group => !reused.Contains(group.Id) && (group.StubIds.Any(stubIds.Contains) || group.LocalItemIds.Any(local.Contains)));
+            if (old is not null)
+            {
+                reused.Add(old.Id);
+                var servers = title.Select(entry => entry.Work.Entry.ServerId).ToHashSet();
+                stubIds.AddRange(old.StubIds.Where(id => kept.TryGetValue(id, out var stub) && servers.Add(stub.ServerId)));
+            }
+
+            AddGroup(groups, assigned, old?.Id ?? NewId(), content.Identity.Key, stubIds, local, old?.PrimaryStubId);
+        }
+
+        foreach (var old in input.State.Groups.Where(group => !reused.Contains(group.Id)))
+        {
+            AddGroup(groups, assigned, old.Id, old.IdentityKey, old.StubIds.Where(kept.ContainsKey).ToList(), old.LocalItemIds, old.PrimaryStubId);
+        }
+
+        return groups;
+    }
+
+    // Adds a group of the stubs not in one yet, if it still has two copies.
+    private static void AddGroup(List<VersionGroup> groups, HashSet<string> assigned, string id, string identityKey, List<string> stubIds, IReadOnlyList<Guid> local, string? primary)
+    {
+        var members = stubIds.Where(stub => !assigned.Contains(stub)).Distinct(StringComparer.Ordinal).ToList();
+        if (members.Count + (local.Count > 0 ? 1 : 0) < 2)
+        {
+            return;
+        }
+
+        assigned.UnionWith(members);
+        groups.Add(new VersionGroup
+        {
+            Id = id,
+            IdentityKey = identityKey,
+            StubIds = members,
+            LocalItemIds = local,
+            PrimaryStubId = primary is not null && members.Contains(primary) ? primary : null
+        });
+    }
+
+    // The local copies of a stub. For episodes, only a local file that covers each episode of the range and no other
+    // episode of the season in the view: the view holds no episode that is only local.
+    private static List<Guid> LocalCopiesOf(StubPlanInput input, ResolvedContent content)
+    {
+        if (content.Identity.Kind != ContentKind.Episode)
+        {
+            return content.LocalItemIds.Where(id => id != Guid.Empty).Distinct().ToList();
+        }
+
+        var first = content.Identity.EpisodeNumber;
+        var last = content.EpisodeNumberEnd ?? first;
+        var season = input.View.Contents
+            .Where(entry => string.Equals(entry.Identity.WorkKey, content.Identity.WorkKey, StringComparison.Ordinal) && entry.Identity.SeasonNumber == content.Identity.SeasonNumber)
+            .ToList();
+        var inside = season.Where(entry => entry.Identity.EpisodeNumber >= first && entry.Identity.EpisodeNumber <= last).ToList();
+        var outside = season.Except(inside).SelectMany(entry => entry.LocalItemIds).ToHashSet();
+        return inside
+            .Select(entry => entry.LocalItemIds.AsEnumerable())
+            .Aggregate((common, next) => common.Intersect(next))
+            .Where(id => id != Guid.Empty && !outside.Contains(id))
+            .Distinct()
+            .ToList();
+    }
 
     // Sorts the unclaimed stubs into removals, kept stubs, and stubs whose servers are all unconfigured, which it counts.
     private static int Sweep(

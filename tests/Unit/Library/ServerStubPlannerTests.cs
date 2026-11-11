@@ -17,6 +17,7 @@ public class ServerStubPlannerTests
 
     private static readonly Guid _serverA = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
     private static readonly Guid _serverB = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000000");
+    private static readonly Guid _serverC = Guid.Parse("cccccccc-0000-0000-0000-000000000000");
     private static readonly DateTimeOffset _now = new(2026, 11, 11, 0, 0, 0, TimeSpan.Zero);
 
     private static string A => _serverA.ToString("D");
@@ -86,6 +87,8 @@ public class ServerStubPlannerTests
 
     private static ResolvedItem OnB(string itemId) => new(_serverB, itemId);
 
+    private static ResolvedItem OnC(string itemId) => new(_serverC, itemId);
+
     private static ServerCatalog Catalog(Guid server, params IndexedItem[] items) => new()
     {
         ServerId = server,
@@ -115,6 +118,9 @@ public class ServerStubPlannerTests
     }
 
     private static StubWork On(StubPlan plan, Guid server) => Assert.Single(plan.Stubs, stub => stub.Entry.ServerId == server);
+
+    private static (string Id, string Key, string Stubs, string Local, string? Primary) Shape(VersionGroup group)
+        => (group.Id, group.IdentityKey, string.Join(',', group.StubIds.Order()), string.Join(',', group.LocalItemIds), group.PrimaryStubId);
 
     private static ResolvedContent Local(ResolvedContent content, params Guid[] localIds) => content with { IsLocal = true, LocalItemIds = localIds };
 
@@ -286,5 +292,134 @@ public class ServerStubPlannerTests
         Assert.Null(work.Entry.ServerId);
         Assert.Contains(On(byServer, _serverA).Entry, flat.State.Stubs);
         Assert.Empty(flat.Removals);
+    }
+
+    [Fact]
+    public void TheStubsOfATitleOnTwoServersAndItsLocalCopyFormOneGroup()
+    {
+        var local = Guid.NewGuid();
+
+        var plan = Plan([Local(Title("k", OnA("m"), OnB("z")), local)], [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))]);
+
+        var group = Assert.Single(plan.State.Groups);
+        Assert.Equal(new[] { On(plan, _serverA).Entry.Id, On(plan, _serverB).Entry.Id }.Order(), group.StubIds.Order());
+        Assert.Equal([local], group.LocalItemIds);
+        Assert.Equal("k", group.IdentityKey);
+        Assert.Null(group.PrimaryStubId);
+    }
+
+    [Fact]
+    public void AGroupNeedsTwoCopies()
+    {
+        var local = Guid.NewGuid();
+
+        var plan = Plan(
+            [Title("alone", OnA("m")), Local(Title("unreadable", OnA("n")), Guid.Empty), Local(Title("local", OnA("o")), local)],
+            [Catalog(_serverA, Film("m"), Film("n", "Altro"), Film("o", "Terzo"))]);
+
+        var group = Assert.Single(plan.State.Groups);
+        Assert.Equal("local", group.IdentityKey);
+        Assert.Equal([plan.Stubs.Single(stub => stub.Entry.IdentityKey == "local").Entry.Id], group.StubIds);
+        Assert.Equal([local], group.LocalItemIds);
+    }
+
+    [Fact]
+    public void EpisodesAreLinkedOnlyWithTheSameRange()
+    {
+        var plan = Plan(
+            [EpisodeTitle(7, OnA("ra"), OnB("b7"), OnC("rc")), EpisodeTitle(8, OnA("ra"), OnB("b8"), OnC("rc"))],
+            [
+                Catalog(_serverA, SeriesItem("sa"), EpisodeItem("ra", "sa", 7, 8)),
+                Catalog(_serverB, SeriesItem("sb"), EpisodeItem("b7", "sb", 7), EpisodeItem("b8", "sb", 8)),
+                Catalog(_serverC, SeriesItem("sc"), EpisodeItem("rc", "sc", 7, 8))
+            ],
+            servers: [Server(_serverA, "Casa"), Server(_serverB, "Ufficio"), Server(_serverC, "Mare")]);
+
+        Assert.Equal(4, plan.Stubs.Count);
+        var group = Assert.Single(plan.State.Groups);
+        Assert.Equal(new[] { On(plan, _serverA).Entry.Id, On(plan, _serverC).Entry.Id }.Order(), group.StubIds.Order());
+        Assert.Equal(8, On(plan, _serverA).Entry.EpisodeNumberEnd);
+    }
+
+    [Fact]
+    public void ALocalEpisodeIsLinkedOnlyToAStubOfTheSameRange()
+    {
+        var (l7, l8) = (Guid.NewGuid(), Guid.NewGuid());
+        var catalogs = new[]
+        {
+            Catalog(_serverA, SeriesItem("sa"), EpisodeItem("ra", "sa", 7, 8)),
+            Catalog(_serverB, SeriesItem("sb"), EpisodeItem("b7", "sb", 7), EpisodeItem("b8", "sb", 8))
+        };
+
+        var separate = Plan([Local(EpisodeTitle(7, OnA("ra"), OnB("b7")), l7), Local(EpisodeTitle(8, OnA("ra"), OnB("b8")), l8)], catalogs);
+
+        Assert.Equal(
+            [(l7, 7), (l8, 8)],
+            separate.State.Groups
+                .Select(group => (Assert.Single(group.LocalItemIds), separate.State.Stubs.Single(stub => stub.Id == Assert.Single(group.StubIds)).EpisodeNumber!.Value))
+                .OrderBy(entry => entry.Item2));
+        Assert.All(separate.State.Groups, group => Assert.Equal(_serverB, separate.State.Stubs.Single(stub => stub.Id == group.StubIds[0]).ServerId));
+
+        var range = Guid.NewGuid();
+        var together = Plan([Local(EpisodeTitle(7, OnA("ra"), OnB("b7")), range), Local(EpisodeTitle(8, OnA("ra"), OnB("b8")), range)], catalogs);
+
+        var group = Assert.Single(together.State.Groups);
+        Assert.Equal([range], group.LocalItemIds);
+        Assert.Equal(_serverA, together.State.Stubs.Single(stub => stub.Id == Assert.Single(group.StubIds)).ServerId);
+    }
+
+    [Fact]
+    public void AGroupKeepsItsIdAndItsPrimaryAcrossPlans()
+    {
+        var contents = new[] { Title("k", OnA("m"), OnB("z")) };
+        var catalogs = new[] { Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z")) };
+        var first = Plan(contents, catalogs);
+        var group = Assert.Single(first.State.Groups) with { PrimaryStubId = On(first, _serverB).Entry.Id };
+
+        var second = Plan(contents, catalogs, first.State with { Groups = [group] });
+
+        Assert.Equal(Shape(group), Shape(Assert.Single(second.State.Groups)));
+    }
+
+    [Fact]
+    public void AStubThatGoesLeavesItsGroup()
+    {
+        var local = Guid.NewGuid();
+        var first = Plan([Local(Title("k", OnA("m"), OnB("z")), local)], [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))]);
+        var group = Assert.Single(first.State.Groups) with { PrimaryStubId = On(first, _serverB).Entry.Id };
+
+        var second = Plan(
+            [Local(Title("k", OnA("m")), local)],
+            [Catalog(_serverA, Film("m"))],
+            first.State with { Groups = [group], RemovedServers = [_serverB] },
+            [Server(_serverA, "Casa")]);
+
+        var kept = Assert.Single(second.State.Groups);
+        Assert.Equal(group.Id, kept.Id);
+        Assert.Equal([On(first, _serverA).Entry.Id], kept.StubIds);
+        Assert.Null(kept.PrimaryStubId);
+    }
+
+    [Fact]
+    public void AStubKeptForAServerMissingFromTheSettingsStaysInItsGroup()
+    {
+        var first = Plan([Title("k", OnA("m"), OnB("z"))], [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))]);
+
+        var second = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], first.State, [Server(_serverA, "Casa")]);
+
+        Assert.Equal(Shape(Assert.Single(first.State.Groups)), Shape(Assert.Single(second.State.Groups)));
+    }
+
+    [Fact]
+    public void AStubIsInOneGroupAtMost()
+    {
+        var catalogs = new[] { Catalog(_serverA, Film("m"), Film("n", "Altro")), Catalog(_serverB, Film("z"), Film("y", "Altro")) };
+        var first = Plan([Title("k1", OnA("m"), OnB("z")), Title("k2", OnA("n"), OnB("y"))], catalogs);
+
+        var second = Plan([Title("k1", OnA("m"), OnA("n"), OnB("z"), OnB("y"))], catalogs, first.State);
+
+        var group = Assert.Single(second.State.Groups);
+        Assert.Equal(second.Stubs.Select(stub => stub.Entry.Id).Order(), group.StubIds.Order());
+        Assert.Contains(group.Id, first.State.Groups.Select(entry => entry.Id));
     }
 }
