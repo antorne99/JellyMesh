@@ -1052,6 +1052,108 @@ public class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(), context));
     }
 
+    [Theory]
+    [InlineData("HlsSegment", "StopEncodingProcess", "playSessionId", "peer-play")]
+    [InlineData("HlsSegment", "StopEncodingProcess", "playSessionId", "PEER-PLAY")]
+    [InlineData("Playstate", "OnPlaybackStopped", "playSessionId", "peer-play")]
+    [InlineData("Playstate", "OnPlaybackStoppedLegacy", "playSessionId", "peer-play")]
+    public async Task A_local_user_cannot_stop_a_peer_play_session(string controller, string action, string argument, string value)
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context(controller, action, (argument, value));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task A_local_user_cannot_report_a_peer_play_session_as_stopped()
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context("Playstate", "ReportPlaybackStopped", ("playbackStopInfo", new MediaBrowser.Model.Session.PlaybackStopInfo { PlaySessionId = "PEER-PLAY" }));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    public static TheoryData<string, string, string, object> ReportsOfAPeerPlaySession => new()
+    {
+        { "Playstate", "ReportPlaybackStart", "playbackStartInfo", new MediaBrowser.Model.Session.PlaybackStartInfo { PlaySessionId = "peer-play" } },
+        { "Playstate", "OnPlaybackStart", "playSessionId", "peer-play" },
+        { "Playstate", "OnPlaybackStartLegacy", "playSessionId", "peer-play" },
+        { "Playstate", "ReportPlaybackProgress", "playbackProgressInfo", new MediaBrowser.Model.Session.PlaybackProgressInfo { PlaySessionId = "PEER-PLAY" } },
+        { "Playstate", "OnPlaybackProgress", "playSessionId", "peer-play" },
+        { "Playstate", "OnPlaybackProgressLegacy", "playSessionId", "peer-play" },
+        { "Playstate", "PingPlaybackSession", "playSessionId", "peer-play" }
+    };
+
+    [Theory]
+    [MemberData(nameof(ReportsOfAPeerPlaySession))]
+    public async Task A_report_of_a_local_user_on_a_peer_play_session_is_answered_without_effect(string controller, string action, string argument, object value)
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context(controller, action, (argument, value));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Theory]
+    [InlineData("DynamicHls", "GetHlsVideoSegment", "playSessionId", "peer-play")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment", "playSessionId", "PEER-PLAY")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment", "params", ";;;;;;;;;;;;;;;;;;;;peer-play")]
+    [InlineData("DynamicHls", "GetHlsAudioSegment", "playSessionId", "peer-play")]
+    [InlineData("DynamicHls", "GetVariantHlsVideoPlaylist", "playSessionId", "peer-play")]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", "playSessionId", "peer-play")]
+    [InlineData("Videos", "GetVideoStream", "playSessionId", "peer-play")]
+    [InlineData("Videos", "GetVideoStream", "params", ";;;;;;;;;;;;;;;;;;;;peer-play")]
+    [InlineData("Audio", "GetAudioStream", "playSessionId", "peer-play")]
+    public async Task A_stream_of_a_local_user_cannot_name_a_peer_play_session(string controller, string action, string argument, string value)
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        var context = Context(controller, action, ("itemId", LocalItem()), (argument, value));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stream_that_names_a_peer_play_session_wants_a_user()
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+        Anonymous();
+        var context = Context("DynamicHls", "GetHlsVideoSegment", ("itemId", LocalItem()), ("playSessionId", "peer-play"));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("HlsSegment", "StopEncodingProcess", "playSessionId", "peer-play")]
+    [InlineData("Playstate", "OnPlaybackProgress", "playSessionId", "peer-play")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment", "playSessionId", "PEER-PLAY")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment", "params", ";;;;;;;;;;;;;;;;;;;;peer-play")]
+    [InlineData("Videos", "GetVideoStream", "playSessionId", "peer-play")]
+    public async Task The_peer_uses_its_own_play_session(string controller, string action, string argument, string value)
+    {
+        PeerPlays(_user.Id, "consumer-device");
+
+        Assert.True(await RunAsync(GuardFilter(), Context(controller, action, ("itemId", LocalItem()), (argument, value))));
+    }
+
+    [Theory]
+    [InlineData("HlsSegment", "StopEncodingProcess")]
+    [InlineData("Playstate", "OnPlaybackStopped")]
+    [InlineData("Playstate", "OnPlaybackProgress")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("Videos", "GetVideoStream")]
+    public async Task A_play_session_no_peer_recorded_stays_with_stock(string controller, string action)
+    {
+        PeerPlays(Guid.NewGuid(), "consumer-device");
+
+        Assert.True(await RunAsync(GuardFilter(), Context(controller, action, ("itemId", LocalItem()), ("playSessionId", "real-title"))));
+    }
+
     [Fact]
     public async Task A_local_play_session_is_recorded_with_the_device_its_transcoding_url_names()
     {

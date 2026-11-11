@@ -117,6 +117,17 @@ public sealed class StreamSlots
     }
 
     /// <summary>
+    /// Tells whether a play session is one a peer other than the user opened. Naming it does not count as a use.
+    /// </summary>
+    /// <param name="userId">The user behind the request, <see cref="Guid.Empty"/> if anonymous.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <returns>Whether another peer opened it.</returns>
+    public bool IsOfAnother(Guid userId, string? playSessionId)
+    {
+        return _owners.BelongsToAnother(userId, playSessionId);
+    }
+
+    /// <summary>
     /// Tells whether a play session a peer other than the user opened runs on a device. Stock stops every job of a device
     /// for a segment that names no play session.
     /// </summary>

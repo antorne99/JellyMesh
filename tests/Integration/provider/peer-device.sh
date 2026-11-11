@@ -117,6 +117,37 @@ check "and its stream goes on" 200 "$(peer_segment 4)"
 check "the first peer with its own in field 20 and junk in the query" 200 "$(segment "$peer_auth" "&DeviceId=$peer_device&PlaySessionId=junk&params=$(field20 "$victim")")"
 check "restarts its own ffmpeg" false "$(alive "$pids")"
 
+# --- Q103: local user on a peer play session (begin) ---
+echo "--- a local user of the provider names the live play session of the peer (Q103)"
+# Stock answers 204 to a stop and a report whatever it does, so only the ffmpeg of the peer tells them apart.
+q103_before=" $(ffmpeg_pids a) "
+check "the peer opens another play session" 200 "$(curl -sS -o "$WORK/q103-open" -w '%{http_code}' -X POST -H "$ACCEPT" -H "Authorization: $peer_auth" \
+  -H 'Content-Type: application/json' -d "$PROFILE_ENCODE" "$base/Items/$real/PlaybackInfo")"
+q103_session=$(jq -r .PlaySessionId "$WORK/q103-open")
+q103_url="$base$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/q103-open")"
+curl -sS -H "Authorization: $peer_auth" "$q103_url" >"$WORK/q103-master"
+q103_variant=$(folder_of "$q103_url")$(grep -v '^#' "$WORK/q103-master" | head -1)
+curl -sS -H "Authorization: $peer_auth" "$q103_variant" >"$WORK/q103-variant"
+q103_segment() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 120 -H "Authorization: $peer_auth" "$(folder_of "$q103_variant")$(grep -v '^#' "$WORK/q103-variant" | sed -n "$1p")"
+}
+check "its first segment" 200 "$(q103_segment 1)"
+q103_pids=$(for p in $(ffmpeg_pids a); do [[ "$q103_before" == *" $p "* ]] || echo "$p"; done | tr '\n' ' ')
+echo "ffmpeg of that play session: $q103_pids"
+check "its transcode is running" true "$([ -n "$q103_pids" ] && echo true || echo false)"
+check "a local user closes its transcode" 204 "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: $mario_auth" \
+  "$base/Videos/ActiveEncodings?deviceId=mario-device&playSessionId=$q103_session")"
+check "the peer keeps its ffmpeg" true "$(alive "$q103_pids")"
+check "a local user reports it stopped" 204 "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: $mario_auth" -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg s "$q103_session" --arg i "$real" '{ItemId: $i, PlaySessionId: $s, PositionTicks: 0}')" "$base/Sessions/Playing/Stopped")"
+check "the peer still keeps its ffmpeg" true "$(alive "$q103_pids")"
+check "a local user asks a segment far ahead in it" 404 "$(segment "$mario_auth" "&DeviceId=mario-device&PlaySessionId=$q103_session")"
+check "the same in capitals" 404 "$(segment "$mario_auth" "&DeviceId=mario-device&PlaySessionId=$(tr '[:lower:]' '[:upper:]' <<<"$q103_session")")"
+check "the same in field 20" 404 "$(segment "$mario_auth" "&DeviceId=mario-device&params=$(field20 "$q103_session")")"
+check "the peer keeps its ffmpeg to the end" true "$(alive "$q103_pids")"
+check "and its stream goes on" 200 "$(q103_segment 2)"
+# --- Q103: local user on a peer play session (end) ---
+
 echo "--- what a user of the provider sees of the peer"
 curl -sS -H "$ACCEPT" -H "Authorization: $mario_auth" "$base/Sessions" >"$WORK/mario-sessions"
 check "its device is not in the sessions a user reads" 0 "$(grep -c "$peer_device" "$WORK/mario-sessions")"
