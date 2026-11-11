@@ -305,8 +305,9 @@ check "another user's master playlist of their own film with the owner's device 
 check "and their variant playlist" 200 "$(as outsider "$(playlist_of_private main DeviceId=jm-play-viewer)")"
 check "and with the device in the legacy params" 200 \
   "$(as outsider "$(playlist_of_private main "params=;jm-play-viewer;$private_n")")"
+# Its own user agent keeps the files of the job it starts apart from those of the owner's such segment below.
 check "another user's segment with no device and no play session goes to stock while the owner's job has a device" 200 \
-  "$(as outsider "$(segment_of_private "")")"
+  "$(as outsider "$(segment_of_private "")" -A jm-q95-outsider)"
 check "and the owner's transcode job still runs" 1 "$(still_ran)"
 
 # Q89 as revised by Q95: one with no play session and no device stops every job without a device, so it is not found
