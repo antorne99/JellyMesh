@@ -6,10 +6,10 @@
 #   a, b   $PREFIX-a/-b   $PORT+1/2  stock Jellyfin with the media of remoto-standard
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] last-served.sh [--keep]
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-
 PREFIX=${PREFIX:-jm-last}
 PORT=${PORT:-18436}
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 WORK=${WORK_LAST:-${TMPDIR:-/tmp}/$PREFIX-run}
 mkdir -p "$WORK"
 DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'

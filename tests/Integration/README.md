@@ -153,7 +153,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `$PREFIX-a`, `$PREFIX-b` (default `jm-prov`), `$PREFIX-s` with `STOCK=own` | `PORT_A` and the next one (default 18410-18411), gates on the next three | `remoto-standard` of this stack unless `STOCK=own`, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15) | `jm-play-local`, `jm-play-remote`, `jm-play-peer`; `$PREFIX-*` for `last-served.sh` | 18430-18432; `PORT` and the next two for `last-served.sh` | A checkout in `OLD`, from before signing |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15) | `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` (default `jm-play`) | `PORT` and the next two (default 18430-18432) | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
@@ -213,27 +213,27 @@ bash dedup/down.sh                # removes containers, volumes and network
 
 ### `play/`
 
-`MEDIA` and `OLD` are required. `OLD` is a checkout of a commit before the signed URLs, made with `git archive` and `tar`. `WORK` defaults to `$TMPDIR/jm-play-run`. `all.sh` runs everything from fresh containers, in the order the steps need: `up`, `upgrade`, `endpoint`, `fallback`, `settings`, `localcopy`, `cycle`, `leaks`. Scripts print `ok` or `FAIL`, and `all.sh` exits non-zero if a step failed.
+`MEDIA` and `OLD` are required. `OLD` is a checkout of a commit before the signed URLs, made with `git archive` and `tar`. `PREFIX` (default `jm-play`) names the containers and volumes, `PORT` (default 18430) is the port of `local`, and `remote` and `peer` take the next two. `WORK` defaults to `$TMPDIR/$PREFIX-run`. Every script in this folder reads `PREFIX` and `PORT`, with its own defaults where it makes its own containers, and `provider/` reads `PREFIX` too, so set them per command rather than exporting them. `all.sh` runs everything from fresh containers, in the order the steps need: `up`, `upgrade`, `endpoint`, `fallback`, `settings`, `localcopy`, `cycle`, `leaks`. Scripts print `ok` or `FAIL`, and `all.sh` exits non-zero if a step failed.
 
 ```sh
-MEDIA=<main checkout>/tests/Integration/media OLD=<folder> bash play/all.sh
+MEDIA=<main checkout>/tests/Integration/media OLD=<folder> [PREFIX=jm-play] [PORT=18430] bash play/all.sh
 ```
 
 It leaves the containers up. `down` in `play/lib.sh` removes them and their volumes.
 
-`removal-series.sh` proves the promise of the removal dialog on a series, with its own `jm-rms-local` and `jm-rms-remote` containers on ports 18470-18471. Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without. The server is removed and added back, and every episode and series row keeps the same item ID and the same watch state. Jellyfin keeps the user data of removed items by key, so the promise holds as long as stub paths and the IDs in the `.nfo` stay the same. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+`removal-series.sh` proves the promise of the removal dialog on a series, with its own `$PREFIX-local` and `$PREFIX-remote` containers (default `jm-rms`) on `PORT` and the next one (default 18470). Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without. The server is removed and added back, and every episode and series row keeps the same item ID and the same watch state. Jellyfin keeps the user data of removed items by key, so the promise holds as long as stub paths and the IDs in the `.nfo` stay the same. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/removal-series.sh
 ```
 
-`watchstate.sh` proves decision 41 on its own, with fresh `jm-play-local` and `jm-play-remote` containers and the current build. It needs only `MEDIA`. A film watched or stopped on the consumer changes no user's watch state on the remote, and a film the dedicated user and another remote user watch stays unwatched on the consumer after a sync. The clips are shorter than the 300 seconds Jellyfin needs to keep a resume point, so a film stopped halfway counts as watched.
+`watchstate.sh` proves decision 41 on its own, with fresh `$PREFIX-local` and `$PREFIX-remote` containers and the current build. It needs only `MEDIA`. A film watched or stopped on the consumer changes no user's watch state on the remote, and a film the dedicated user and another remote user watch stays unwatched on the consumer after a sync. The clips are shorter than the 300 seconds Jellyfin needs to keep a resume point, so a film stopped halfway counts as watched.
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/watchstate.sh
 ```
 
-`collections.sh` proves that films a remote groups into collections still reach the consumer, with its own `jm-col-local` and `jm-col-remote` containers on ports 18480-18481. The stock remote turns on "Group movies into collections" (`EnableGroupingMoviesIntoCollections`) and puts two films in a collection. Asked the sync query as the dedicated user, Jellyfin 12.4 answers the collection in place of both films, and one fewer in `TotalRecordCount`, unless the query carries `collapseBoxSetItems=false`. With it, the consumer gets a stub for each film and none for the collection. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+`collections.sh` proves that films a remote groups into collections still reach the consumer, with its own `$PREFIX-local` and `$PREFIX-remote` containers (default `jm-col`) on `PORT` and the next one (default 18480). The stock remote turns on "Group movies into collections" (`EnableGroupingMoviesIntoCollections`) and puts two films in a collection. Asked the sync query as the dedicated user, Jellyfin 12.4 answers the collection in place of both films, and one fewer in `TotalRecordCount`, unless the query carries `collapseBoxSetItems=false`. With it, the consumer gets a stub for each film and none for the collection. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/collections.sh
