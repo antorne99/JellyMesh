@@ -59,9 +59,11 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
 
             // A consumer that left never learns the play session: the slot would sit there under a name nobody knows.
             if (!http.RequestAborted.IsCancellationRequested
-                && executed.Result is ObjectResult { Value: PlaybackInfoResponse { ErrorCode: null, PlaySessionId: { } playSessionId } })
+                && executed.Result is ObjectResult { Value: PlaybackInfoResponse { ErrorCode: null, PlaySessionId: { } playSessionId } response })
             {
-                _slots.Confirm(peerId, reservation, playSessionId, StubLookup.ItemIdOf(context) ?? Guid.Empty);
+                // Stock stops every job of a device for a segment with no play session, so the devices are the peer's too.
+                var devices = PlaybackInfoFilter.DevicesOf(response, caller.DeviceId);
+                _slots.Confirm(peerId, reservation, playSessionId, StubLookup.ItemIdOf(context) ?? Guid.Empty, devices);
                 PeerGuardFilter.NotePlaybackInfo(http, playSessionId);
                 confirmed = true;
             }

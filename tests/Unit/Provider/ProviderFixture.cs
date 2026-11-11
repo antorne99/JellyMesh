@@ -38,7 +38,7 @@ internal sealed class ProviderFixture
         Closer = new AbandonedStreamCloser(Slots, Transcodes.Object, Clock, NullLogger<AbandonedStreamCloser>.Instance);
 
         Authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
-            .ReturnsAsync(() => new AuthorizationInfo { User = Caller });
+            .ReturnsAsync(() => new AuthorizationInfo { User = Caller, DeviceId = CallerDevice });
 
         Directory = new PeerDirectory(Store, Authorization.Object);
         Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store);
@@ -63,6 +63,9 @@ internal sealed class ProviderFixture
 
     /// <summary>The user behind the request, null for an anonymous one.</summary>
     public User? Caller { get; set; }
+
+    /// <summary>The device in the authorization header of the request, null if it names none.</summary>
+    public string? CallerDevice { get; set; }
 
     public StreamSlots Slots { get; }
 

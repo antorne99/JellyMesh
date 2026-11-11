@@ -728,4 +728,39 @@ public class StreamSlotsTests
 
         Assert.Equal(0, _slots.Count(_peer));
     }
+
+    [Fact]
+    public void A_play_session_of_a_peer_runs_on_the_devices_it_was_confirmed_with()
+    {
+        var reservation = _slots.TryReserve(_peer, 1, null)!;
+        _slots.Confirm(_peer, reservation, "play", _kept, ["peer-device", "Url Device+", null, string.Empty]);
+
+        Assert.True(_slots.IsDeviceOfAnother(_other, "PEER-DEVICE"));
+        Assert.True(_slots.IsDeviceOfAnother(_other, "url device+"));
+        Assert.True(_slots.IsDeviceOfAnother(Guid.Empty, "peer-device"));
+        Assert.False(_slots.IsDeviceOfAnother(_peer, "peer-device"));
+        Assert.False(_slots.IsDeviceOfAnother(_other, "unknown-device"));
+    }
+
+    [Fact]
+    public void The_devices_of_a_peer_outlive_its_slot()
+    {
+        var reservation = _slots.TryReserve(_peer, 1, null)!;
+        _slots.Confirm(_peer, reservation, "play", _kept, ["peer-device"]);
+
+        _slots.Release(_peer, "play");
+        _clock.Advance(TimeSpan.FromHours(1));
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.True(_slots.IsDeviceOfAnother(_other, "peer-device"));
+    }
+
+    [Fact]
+    public void A_reservation_that_was_never_confirmed_runs_on_no_device()
+    {
+        var reservation = _slots.TryReserve(_peer, 1, null)!;
+        _slots.Release(_peer, reservation);
+
+        Assert.False(_slots.IsDeviceOfAnother(_other, "peer-device"));
+    }
 }
