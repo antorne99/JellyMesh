@@ -21,7 +21,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// Runs after every library scan. When two copies of one server, shown apart until now, became one title, it hands the
 /// watch state of each user over to the stub that stays and only then removes the other: Jellyfin would not do it, and
 /// the rows of a deleted item stay behind a placeholder. A local copy no longer removes a stub (Q18 b). It is also where
-/// a new stub series gets its refresh, since the item exists only after the scan.
+/// a new stub series gets its refresh, since the item exists only after the scan, and where a new stub is first linked to
+/// its versions (Q145).
 /// </summary>
 /// <remarks>
 /// Stubs of the flat layout are left as they are until the migration. A corrupt index holds no decision at all.
@@ -40,6 +41,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     private readonly IFileSystem _fileSystem;
     private readonly StubRemover _remover;
     private readonly ILogger<StubCleanupTask> _logger;
+    private readonly IVersionLinker? _linker;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubCleanupTask"/> class.
@@ -56,6 +58,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     /// <param name="fileSystem">The file system.</param>
     /// <param name="remover">The stub remover.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="linker">The version linker, if any.</param>
     public StubCleanupTask(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -68,7 +71,8 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         IProviderManager providers,
         IFileSystem fileSystem,
         StubRemover remover,
-        ILogger<StubCleanupTask> logger)
+        ILogger<StubCleanupTask> logger,
+        IVersionLinker? linker = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -82,6 +86,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         _fileSystem = fileSystem;
         _remover = remover;
         _logger = logger;
+        _linker = linker;
     }
 
     /// <inheritdoc />
@@ -110,7 +115,26 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             _registry.Exit();
         }
 
+        await LinkAsync(cancellationToken).ConfigureAwait(false);
         progress.Report(100);
+    }
+
+    // The linker takes the registry itself, so it runs once the merged stubs are gone and the lock is free.
+    private async Task LinkAsync(CancellationToken cancellationToken)
+    {
+        if (_linker is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _linker.LinkAsync(false, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Could not link the versions of the titles after the scan: {Error}", exception.GetType().Name);
+        }
     }
 
     private StubState MergeStubs(string root, StubState state, CancellationToken cancellationToken)
