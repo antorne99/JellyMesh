@@ -428,46 +428,20 @@ public static class StubPlanner
     }
 
     // Only for a stub with a configured server: one whose servers are all missing is decided by the caller.
+    // A damaged index, a server not read in full or an empty imported library keeps the stub (EmptyLibraryHold).
     private static bool IsGone(StubPlanInput input, Dictionary<Guid, RemoteServerInfo> servers, StubEntry stub, Dictionary<(Guid ServerId, string LibraryId), int> held)
     {
-        // A damaged index says nothing, and a server missing from it is not proof either.
-        if (input.Snapshot.Health != IndexHealth.Ok)
+        if (EmptyLibraryHold.Of(input.Snapshot, servers, stub.Sources) is not { } libraries)
         {
             return false;
         }
 
-        var emptyLibraries = new List<(Guid ServerId, string LibraryId)>();
-        foreach (var source in stub.Sources)
-        {
-            // A server missing from the configuration can serve nothing: the configured ones decide.
-            if (!servers.TryGetValue(source.ServerId, out var server))
-            {
-                continue;
-            }
-
-            if (!input.Snapshot.IsAuthoritativeFor(source.ServerId))
-            {
-                return false;
-            }
-
-            var library = source.LibraryId;
-            if (library is null || !server.ImportedLibraryIds.Contains(library))
-            {
-                continue;
-            }
-
-            if (!input.Snapshot.Find(source.ServerId)!.Items.Any(item => string.Equals(item.LibraryId, library, StringComparison.Ordinal)))
-            {
-                emptyLibraries.Add((source.ServerId, library));
-            }
-        }
-
-        foreach (var library in emptyLibraries.Distinct())
+        foreach (var library in libraries)
         {
             held[library] = held.GetValueOrDefault(library) + 1;
         }
 
-        return emptyLibraries.Count == 0;
+        return libraries.Count == 0;
     }
 
     private static List<StubSource> SourcesOf(ResolvedContent content, IndexItemLookup catalog)
