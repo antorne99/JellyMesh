@@ -234,6 +234,26 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<RemoteCollectionPage>> GetSharedCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var path = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{ProviderPath}/Collections?parentId={Uri.EscapeDataString(libraryId)}&startIndex={startIndex}&limit={limit}");
+        var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteCollectionPage>(response.Failure);
+        }
+
+        var page = Parse<CollectionsResponse>(response.Body);
+        return page is { Items: not null, TotalRecordCount: not null } && page.Items.All(entry => entry is not null)
+            ? RemoteResult.Success(new RemoteCollectionPage(page.Items, page.TotalRecordCount.Value) { ByteCount = response.Body.Length })
+            : RemoteResult.Fail<RemoteCollectionPage>(RemoteFailure.InvalidResponse);
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -544,6 +564,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     private sealed record UserView(string? Id, string? Name, string? CollectionType);
 
     private sealed record ItemsResponse(IReadOnlyList<RemoteItem>? Items, int? TotalRecordCount, IReadOnlyDictionary<string, RemoteQuality>? Quality);
+
+    private sealed record CollectionsResponse(IReadOnlyList<RemoteCollectionEntry>? Items, int? TotalRecordCount);
 
     private sealed record ChangesResponse(bool Reset, string? Cursor, bool HasMore, IReadOnlyList<RemoteChange>? Changes);
 }

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Xunit;
@@ -156,6 +157,114 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         var result = await ReadCollectionsAsync(server);
 
         Assert.Equal(RemoteFailure.Unreachable, result.Failure);
+    }
+
+    private async Task<RemoteServerInfo> PeerAsync()
+    {
+        _fixture.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
+        var server = await _fixture.AddServerAsync("A", "films");
+        Assert.Equal(RemoteMode.JellyMesh, server.Mode);
+        return server;
+    }
+
+    private void AddShared(string film, string? name, string? tmdb = null, string library = "films")
+        => _fixture.Client.SharedCollections.Add((library, new RemoteCollectionEntry(film, name, tmdb)));
+
+    [Fact]
+    public async Task AJellyMeshServerGivesTheCollectionsOfItsFilmsByTheProviderApi()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", " Saga ", "10");
+        AddShared("m2", "Saga", "1\" tmdb=\"2");
+        _fixture.Client.AddCollection("films", "box", "Stock", "m3");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
+
+        Assert.Equal(new IndexedBoxSet("Saga", "10"), result.Value!["m1"]);
+        Assert.Equal(new IndexedBoxSet("Saga", null), result.Value["m2"]);
+        Assert.Equal(2, result.Value.Count);
+        Assert.Equal(["peer:films@0"], _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AnEntryOfAJellyMeshServerThatIsNotUsableIsLeftOut()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", " ");
+        AddShared("m2", new string('x', 257));
+        AddShared("ghost", "Saga");
+        AddShared(null!, "Saga");
+        AddShared("m3", "Saga");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
+
+        Assert.Equal(["m3"], result.Value!.Keys);
+    }
+
+    [Fact]
+    public async Task TheCollectionsOfAJellyMeshServerAreReadPageByPageInEachLibrary()
+    {
+        var server = await PeerAsync();
+        var films = Enumerable.Range(0, ProviderProtocol.MaxItemsPerPage + 1).Select(index => "m" + index).ToList();
+        foreach (var film in films)
+        {
+            AddShared(film, "Saga");
+        }
+
+        AddShared("s1", "Other", library: "shows");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films", "shows"], films.Append("s1").ToHashSet(StringComparer.Ordinal), CancellationToken.None);
+
+        Assert.Equal(films.Count + 1, result.Value!.Count);
+        Assert.Equal(["peer:films@0", "peer:films@" + ProviderProtocol.MaxItemsPerPage, "peer:shows@0"], _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerThatClaimsTooManyFilmsInCollectionsIsRefused()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.RewriteSharedCollections = page => page with { TotalRecordCount = RemoteCatalogReader.MaxItemsPerQuery + 1 };
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerWhoseCollectionPagesStallIsRefused()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.RewriteSharedCollections = page => page with { Items = [] };
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.CatalogChanged, result.Failure);
+    }
+
+    [Fact]
+    public async Task CollectionAnswersOfAJellyMeshServerCountTowardsTheBytesOfARead()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.RewriteSharedCollections = page => page with { ByteCount = RemoteCatalogReader.MaxBytesPerRead + 1 };
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
+    }
+
+    [Fact]
+    public async Task AFailedCollectionReadOfAJellyMeshServerIsAFailure()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.CollectionFailure = RemoteFailure.ServerError;
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ServerError, result.Failure);
     }
 
     [Fact]

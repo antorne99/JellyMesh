@@ -211,6 +211,21 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
             : RemoteResult.Fail<RemoteItemPage>(CollectionFailure));
     }
 
+    /// <summary>What the ProviderApi of a JellyMesh remote answers on collections, by library.</summary>
+    public List<(string Library, RemoteCollectionEntry Entry)> SharedCollections { get; } = [];
+
+    /// <summary>Rewrites a page of the ProviderApi on collections before it is returned.</summary>
+    public Func<RemoteCollectionPage, RemoteCollectionPage> RewriteSharedCollections { get; set; } = page => page;
+
+    public Task<RemoteResult<RemoteCollectionPage>> GetSharedCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        CollectionReads.Add("peer:" + libraryId + "@" + startIndex);
+        var all = SharedCollections.Where(entry => entry.Library == libraryId).Select(entry => entry.Entry).ToList();
+        return Task.FromResult(CollectionFailure == RemoteFailure.None
+            ? RemoteResult.Success(RewriteSharedCollections(new RemoteCollectionPage(all.Skip(startIndex).Take(limit).ToList(), all.Count)))
+            : RemoteResult.Fail<RemoteCollectionPage>(CollectionFailure));
+    }
+
     public Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken)
     {
         CollectionReads.Add(collectionId + "@" + startIndex);

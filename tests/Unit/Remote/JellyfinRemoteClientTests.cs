@@ -435,6 +435,40 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task TheCollectionsOfAJellyMeshRemoteAreReadByTheProviderApi()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"m1\",\"Name\":\"Saga\",\"TmdbId\":\"10\"}],\"TotalRecordCount\":1}"));
+
+        var result = await ClientFor(handler).GetSharedCollectionsAsync(_endpoint, _session, "lib", 500, 100, CancellationToken.None);
+
+        Assert.Equal(new RemoteCollectionEntry("m1", "Saga", "10"), Assert.Single(result.Value!.Items));
+        Assert.Equal(1, result.Value.TotalRecordCount);
+        Assert.True(result.Value.ByteCount > 0);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/JellyMesh/Provider/Collections", request.Uri.AbsolutePath);
+        foreach (var part in new[] { "parentId=lib", "startIndex=500", "limit=100" })
+        {
+            Assert.Contains(part, request.Uri.Query, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("{\"Items\":null,\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[],\"TotalRecordCount\":null}")]
+    [InlineData("{\"Items\":[null],\"TotalRecordCount\":1}")]
+    [InlineData("not json")]
+    public async Task AMalformedCollectionPageOfAJellyMeshRemoteIsInvalid(string body)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json(body));
+
+        var result = await ClientFor(handler).GetSharedCollectionsAsync(_endpoint, _session, "lib", 0, 100, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Fact]
     public async Task ItemsLooksUpIdsWithoutALibrary()
     {
         var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));

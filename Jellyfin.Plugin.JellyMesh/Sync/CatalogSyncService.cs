@@ -605,11 +605,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             : changed.Select(item => known.TryGetValue(item.ItemId, out var collection) ? item with { Collection = collection } : item).ToList();
     }
 
-    // Only a stock server answers the stock route, and only with the option on. A failed read keeps what was known, so that
-    // the .nfo does not lose its collection for one night.
+    // Only with the option on: a stock server by the stock route, a JellyMesh one by the ProviderApi. A failed read keeps
+    // what was known, so that the .nfo does not lose its collection for one night.
     private async Task<IReadOnlyList<IndexedItem>> WithCollectionsAsync(RemoteServerInfo server, IReadOnlyList<IndexedItem> entries, CancellationToken cancellationToken)
     {
-        if (_store?.Read(config => config.FederateCollections) != true || server.Mode == RemoteMode.JellyMesh)
+        if (_store?.Read(config => config.FederateCollections) != true)
         {
             return entries;
         }

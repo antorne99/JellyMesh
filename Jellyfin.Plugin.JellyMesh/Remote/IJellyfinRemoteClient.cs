@@ -102,6 +102,18 @@ public interface IJellyfinRemoteClient
     Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads one page of the films of a shared library of a JellyMesh remote that are in a collection, by the ProviderApi.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="libraryId">The library.</param>
+    /// <param name="startIndex">The index of the first film.</param>
+    /// <param name="limit">The most films to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page, with the name and TMDb ID of each collection.</returns>
+    Task<RemoteResult<RemoteCollectionPage>> GetSharedCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Downloads an image of an item.
     /// </summary>
     /// <param name="endpoint">The remote.</param>
