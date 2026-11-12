@@ -198,14 +198,10 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
     }
 
-    // Null when the file cannot be read for now: the carries wait for it rather than start again from nothing.
+    // Null when the file cannot be read for now, or is damaged and cannot be set aside: the carries wait for it rather
+    // than start again from nothing.
     private IReadOnlyList<Entry>? Load()
     {
-        if (!File.Exists(_path))
-        {
-            return [];
-        }
-
         try
         {
             using var stream = _openRead(_path);
@@ -221,25 +217,32 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         {
             _logger.LogError("Cannot read the file of the watch state carries done: {Error}. It is set aside", exception.GetType().Name);
         }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return [];
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries wait for it", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries are suspended until it reads", exception.GetType().Name);
             return null;
         }
 
-        KeepDamagedCopy();
-        return [];
+        // Starting from nothing would overwrite the damaged file, so that waits until it is set aside (decision 176).
+        return KeepDamagedCopy() ? [] : null;
     }
 
-    private void KeepDamagedCopy()
+    // Copies the damaged file aside, and tells whether it could.
+    private bool KeepDamagedCopy()
     {
         try
         {
             File.Copy(_path, _path + ".damaged", overwrite: true);
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}. Carries are suspended until it is set aside", exception.GetType().Name);
+            return false;
         }
     }
 

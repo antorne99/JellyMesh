@@ -38,6 +38,11 @@ public sealed class WatchStateCarrierTests : IDisposable
     private readonly Dictionary<Guid, BaseItem> _items = [];
     private readonly HashSet<(Guid User, Guid Item)> _hidden = [];
     private readonly HashSet<Guid> _failingSaves = [];
+    private readonly HashSet<Guid> _cancellingSaves = [];
+    private readonly HashSet<Guid> _failingLookups = [];
+    private readonly CapturingLogger<WatchStateCarrier> _carrierLogger = new();
+    private readonly CancellationTokenSource _cancellation = new();
+    private Guid? _cancelOnSave;
     private readonly Dictionary<(Guid User, Guid Item), UserItemData> _rows = [];
     private readonly List<(Guid User, Guid Item, UserDataSaveReason Reason)> _saves = [];
     private readonly List<StubEntry> _stubs = [];
@@ -55,7 +60,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         _registry = new StubRegistry(Path.Combine(_data, "registry"), _store, new CapturingLogger<StubRegistry>());
         _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
 
-        _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
+        _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _failingLookups.Contains(id) ? throw new IOException("/secret") : _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>()))
             .Returns((Guid id, User user) => _hidden.Contains((user.Id, id)) ? null : _items.GetValueOrDefault(id));
         _everyone = [_mario, _luigi];
@@ -79,9 +84,18 @@ public sealed class WatchStateCarrierTests : IDisposable
                     throw new IOException("disk full");
                 }
 
+                if (_cancellingSaves.Contains(item.Id))
+                {
+                    throw new OperationCanceledException();
+                }
+
                 // Like Jellyfin, the saved row replaces the cached one.
                 _rows[(user.Id, item.Id)] = data;
                 _saves.Add((user.Id, item.Id, reason));
+                if (_cancelOnSave == item.Id)
+                {
+                    _cancellation.Cancel();
+                }
             });
     }
 
@@ -91,6 +105,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     {
         _registry.Dispose();
         _log.Dispose();
+        _cancellation.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);
@@ -592,6 +607,29 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task ARunWhoseCleanUpFailsStillSavesItsRecords()
+    {
+        var (first, firstStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, first).IsFavorite = true;
+        await CarryAsync(Move(first, firstStub, (a, _serverA)));
+        var (second, secondStub) = Old();
+        var b = Movie(_serverA);
+        Row(_mario, second).IsFavorite = true;
+        _failingLookups.Add(first.Id);
+
+        var report = await CarryAsync(Move(second, secondStub, (b, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Contains(_carrierLogger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+        Assert.DoesNotContain(_carrierLogger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.TryFind(_mario.Id, first.Id, out _));
+        Assert.True(_log.TryFind(_mario.Id, second.Id, out _));
+    }
+
+    [Fact]
     public async Task APathThatComesBackCarriesItsStateAgain()
     {
         // A to B, then B to A, then A to B again: the old item of the last move had a record from the first (decision 165).
@@ -693,6 +731,55 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task AFavoriteSavedBeforeTheRunWasCancelledIsNotPutBackByTheNextRun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        Group(a, b);
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 6;
+        _cancellingSaves.Add(b.Id);
+        var move = Move(old, oldStub, (a, _serverA), (b, _serverB));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CarryAsync(move));
+        Assert.True(Row(_mario, a).IsFavorite);
+
+        Row(_mario, a).IsFavorite = false;
+        Row(_mario, a).Rating = null;
+        _cancellingSaves.Clear();
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, b).Played);
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.Null(Row(_mario, a).Rating);
+    }
+
+    [Fact]
+    public async Task ARunCancelledAfterItsLastSaveStillRecordsItsCarries()
+    {
+        // Nothing in the run checks the token after the last row, so only the save of the record could notice it.
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_luigi, old).IsFavorite = true;
+        _cancelOnSave = a.Id;
+
+        var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_luigi, a).IsFavorite);
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.TryFind(_luigi.Id, old.Id, out _));
+    }
+
+    [Fact]
     public async Task AMergeLeavesThePositionAndPutsTheRestOnThePrimary()
     {
         // Two copies of one library become one entity (decision 172): as Q47, but each version keeps its position.
@@ -774,8 +861,8 @@ public sealed class WatchStateCarrierTests : IDisposable
     private async Task<WatchStateCarryReport> CarryAsync(params WatchStateMove[] moves)
     {
         await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList() }, CancellationToken.None);
-        var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, new CapturingLogger<WatchStateCarrier>());
-        return await carrier.CarryAsync(moves, CancellationToken.None);
+        var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, _carrierLogger);
+        return await carrier.CarryAsync(moves, _cancellation.Token);
     }
 
     private async Task RestartAsync()
