@@ -88,7 +88,8 @@ public sealed class LayoutMigration : ILayoutMigration
                 return;
             }
 
-            var catalog = new Catalog(IndexItemLookup.Build(snapshot), _servers.GetServers().Select(server => server.Id).ToHashSet(), state.RemovedServers.ToHashSet());
+            var configured = _servers.GetServers().DistinctBy(server => server.Id).ToDictionary(server => server.Id);
+            var catalog = new Catalog(IndexItemLookup.Build(snapshot), configured, state.RemovedServers.ToHashSet());
             var moves = new List<WatchStateMove>();
             var waiting = 0;
             var blocked = 0;
@@ -179,17 +180,16 @@ public sealed class LayoutMigration : ILayoutMigration
     }
 
     // Gone as the stub planner decides (decision 44): sources only on unconfigured servers go if the admin removed them all,
-    // otherwise each configured server must be read in full and lack the item, since a lost index proves nothing.
+    // otherwise each configured server must be read in full, lack the item and show none of its imported libraries empty.
     private static bool IsGone(IReadOnlyList<StubSource> sources, Catalog catalog)
     {
-        if (sources.Count > 0 && sources.All(source => !catalog.Configured.Contains(source.ServerId)))
+        if (sources.Count > 0 && sources.All(source => !catalog.Configured.ContainsKey(source.ServerId)))
         {
             return sources.All(source => catalog.Removed.Contains(source.ServerId));
         }
 
-        var snapshot = catalog.Items.Snapshot;
-        return snapshot.Health == IndexHealth.Ok && sources.Where(source => catalog.Configured.Contains(source.ServerId)).All(source =>
-            snapshot.IsAuthoritativeFor(source.ServerId) && catalog.Items.Find(source.ServerId, source.ItemId) is null);
+        return EmptyLibraryHold.Of(catalog.Items.Snapshot, catalog.Configured, sources) is { Count: 0 }
+            && sources.Where(source => catalog.Configured.ContainsKey(source.ServerId)).All(source => catalog.Items.Find(source.ServerId, source.ItemId) is null);
     }
 
     private static HashSet<(Guid ServerId, string ItemId)> ItemsOf(IReadOnlyList<StubSource> sources) =>
@@ -373,5 +373,5 @@ public sealed class LayoutMigration : ILayoutMigration
     private sealed record LastRun(int Waiting, int Blocked);
 
     // The index with the configured servers and the ones the admin removed, read once per run.
-    private sealed record Catalog(IndexItemLookup Items, HashSet<Guid> Configured, HashSet<Guid> Removed);
+    private sealed record Catalog(IndexItemLookup Items, IReadOnlyDictionary<Guid, RemoteServerInfo> Configured, HashSet<Guid> Removed);
 }
