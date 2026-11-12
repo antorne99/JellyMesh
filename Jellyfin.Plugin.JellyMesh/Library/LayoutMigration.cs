@@ -72,8 +72,8 @@ public sealed class LayoutMigration : ILayoutMigration
             return;
         }
 
-        // Until every library on an old path holds the new ones, the old layout stays as it is (Q49).
-        if (LibrariesOf(root) is not { } libraries || libraries.Any(library => library.MissingPaths.Count > 0))
+        // Until every library on an old path holds the new ones, and each server folder is in a library, the old layout stays (Q49, Q215).
+        if (LibrariesOf(root) is not { } libraries || !libraries.ServerFoldersLinked || libraries.OnOldPaths.Any(library => library.MissingPaths.Count > 0))
         {
             return;
         }
@@ -133,7 +133,8 @@ public sealed class LayoutMigration : ILayoutMigration
 
         var state = _registry.State;
         var old = state.Stubs.Count(stub => stub.ServerId is null) + state.Series.Count(series => series.ServerId is null);
-        var libraries = LibrariesOf(root) ?? [];
+        var read = LibrariesOf(root);
+        var libraries = read?.OnOldPaths ?? [];
         if (old == 0 && libraries.Count == 0)
         {
             return null;
@@ -141,7 +142,7 @@ public sealed class LayoutMigration : ILayoutMigration
 
         var step = old == 0
             ? LayoutMigrationStep.RemoveOldPaths
-            : libraries.Any(library => library.MissingPaths.Count > 0) ? LayoutMigrationStep.AddPaths : LayoutMigrationStep.Carrying;
+            : read is { ServerFoldersLinked: false } || libraries.Any(library => library.MissingPaths.Count > 0) ? LayoutMigrationStep.AddPaths : LayoutMigrationStep.Carrying;
         return new LayoutMigrationStatus(step, libraries, old) { Waiting = old == 0 ? null : _lastRun?.Waiting };
     }
 
@@ -313,8 +314,9 @@ public sealed class LayoutMigration : ILayoutMigration
         }
     }
 
-    // The libraries on an old path, with the server folders of the same kind they lack; null when they cannot be read.
-    private List<LayoutMigrationLibrary>? LibrariesOf(string root)
+    // The libraries on an old path, with the server folders of the same kind they lack, and whether every server folder is
+    // in some library; null when they cannot be read.
+    private Libraries? LibrariesOf(string root)
     {
         List<VirtualFolderInfo> folders;
         try
@@ -334,6 +336,9 @@ public sealed class LayoutMigration : ILayoutMigration
             (FederatedFolderLayout.SeriesPath(root), server => FederatedFolderLayout.ServerSeriesPath(root, server))
         };
         var libraries = new List<LayoutMigrationLibrary>();
+        var linked = servers
+            .SelectMany(server => kinds.Select(kind => kind.New(server.Id)))
+            .All(path => folders.Any(folder => (folder.Locations ?? []).Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))));
         foreach (var folder in folders)
         {
             var locations = folder.Locations ?? [];
@@ -347,8 +352,10 @@ public sealed class LayoutMigration : ILayoutMigration
             }
         }
 
-        return libraries;
+        return new Libraries(libraries, linked);
     }
+
+    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked);
 
     private sealed record LastRun(int Waiting);
 

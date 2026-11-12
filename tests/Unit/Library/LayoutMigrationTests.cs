@@ -157,10 +157,9 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
-    public async Task OldPathsRemovedBeforeTheNewOnesAreAddedLetTheOldStubsGoWithNothingCarried()
+    public async Task OldPathsRemovedBeforeTheNewOnesAreAddedKeepTheOldStubs()
     {
-        // Pins the behaviour of today: with no library on an old path the gate is open, and an old item gone is closed.
-        var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         _items.Remove(oldItem.Id);
         _items.Remove(a.Id);
@@ -168,8 +167,45 @@ public sealed class LayoutMigrationTests : IDisposable
         var migration = await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
 
+        Assert.NotNull(_registry.Find(old.Id));
+        var status = migration.GetStatus(Root)!;
+        Assert.Equal(LayoutMigrationStep.AddPaths, status.Step);
+        Assert.Empty(status.Libraries);
+        Assert.Equal(1, status.OldTitles);
+    }
+
+    [Fact]
+    public async Task TheOldFoldersWaitForTheSeriesFoldersOfEachServerInSomeLibrary()
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies,
+            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.Equal(LayoutMigrationStep.AddPaths, migration.GetStatus(Root)!.Step);
+
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
+            [FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)]));
+        await migration.RunAsync(CancellationToken.None);
+
         Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
-        Assert.Null(migration.GetStatus(Root));
+    }
+
+    [Fact]
+    public async Task OldPathsRemovedAfterTheNewOnesAreAddedLetAnOldStubWithoutItsItemGo()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _items.Remove(oldItem.Id);
+        _libraries.Add(Library("Nuovi", CollectionTypeOptions.mixed, NewPaths().ToArray()));
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
     }
 
     [Fact]
