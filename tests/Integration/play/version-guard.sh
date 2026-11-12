@@ -39,7 +39,7 @@ up() {
   docker exec "$PREFIX-local" sh -c 'mkdir -p /media/film "/media/privata/JM Privato (2026)" && touch /media/film/.keep'
   docker exec "$PREFIX-local" "$FFMPEG" -hide_banner -loglevel error -y -f lavfi -i testsrc=d=10:s=320x180:r=25 \
     -c:v libx264 -preset ultrafast -pix_fmt yuv420p "/media/privata/JM Privato (2026)/JM Privato (2026).mkv"
-  library local Film movies /media/film /federata/Film
+  library local Film movies /media/film
   library local Privato movies /media/privata
   user local viewer >/dev/null
   user local viewer2 >/dev/null
@@ -53,7 +53,10 @@ up() {
   wait_ready local
   login local
   settings local '.FederatedFolderPath = "/federata"' >/dev/null
-  import_all local "$(add_remote local remote "http://host.docker.internal:$((PORT + 1))" jellymesh)"
+  local id
+  id=$(add_remote local remote "http://host.docker.internal:$((PORT + 1))" jellymesh)
+  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
+  import_all local "$id"
   sync_now local
   scan local
 }
@@ -196,7 +199,7 @@ check "none of them is the first" 0 "$(grep -c -x "$psid" "$flood" || true)"
 check "after them the first is still out of reach of another user" 404 "$(through_private outsider "$psid")"
 
 # D10: the stub is renamed, so that its item is gone, while its play session is open.
-strm=$(docker exec "$PREFIX-local" sh -c "find /federata/Film -name '*.strm' | grep -F \"$TITLE\" | head -1")
+strm=$(docker exec "$PREFIX-local" sh -c "find /federata/*/Film -name '*.strm' | grep -F \"$TITLE\" | head -1")
 folder=$(dirname "$strm")
 keep_job
 docker exec "$PREFIX-local" mv "$folder" "$folder (rinominata)"

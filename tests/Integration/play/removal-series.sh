@@ -25,7 +25,6 @@ user remote jellymesh >/dev/null
 scan remote
 
 start local "$PREFIX-local-media:/media"
-library local Serie tvshows /federata/Serie
 user local alice >/dev/null
 user local bob >/dev/null
 bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
@@ -36,6 +35,7 @@ login alice alice
 login bob bob
 settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
+library local Serie tvshows "$(server_folder "$id")/Serie"
 import_all local "$id"
 sync_now local
 scan local
@@ -85,7 +85,7 @@ series_rows | tee "$WORK/series-before"
 check "both series are federated" 2 "$(wc -l <"$WORK/series-before" | tr -d ' ')"
 check "all five episodes are federated" 5 "$(wc -l <"$WORK/episodes-before" | tr -d ' ')"
 echo "runtime of the episodes in seconds: $(get local '/Items?Recursive=true&IncludeItemTypes=Episode' | jq -c '[.Items[].RunTimeTicks / 10000000 | floor]')"
-docker exec "$PREFIX-local" find /federata/Serie -name '*.nfo' -exec sh -c 'echo "$1: $(grep -o "<uniqueid[^<]*</uniqueid>" "$1" | tr "\n" " ")"' _ {} \;
+docker exec "$PREFIX-local" find "$(server_folder "$id")/Serie" -name '*.nfo' -exec sh -c 'echo "$1: $(grep -o "<uniqueid[^<]*</uniqueid>" "$1" | tr "\n" " ")"' _ {} \;
 
 d3=$(ep_id "JM Serie Divisa S1E3")
 d4=$(ep_id "JM Serie Divisa S1E4")
@@ -120,10 +120,10 @@ echo "--- removal"
 req local DELETE "/JellyMesh/Admin/Servers/$id" >/dev/null
 check "the server is removed" 204 "$(status)"
 for _ in $(seq 1 120); do
-  [ "$(docker exec "$PREFIX-local" sh -c 'find /federata/Serie -name "*.strm" | wc -l')" = 0 ] && break
+  [ "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Serie -name "*.strm" | wc -l')" = 0 ] && break
   sleep 1
 done
-check "its stubs left the federated folder" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata/Serie -name "*.strm" | wc -l')"
+check "its stubs left the federated folder" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Serie -name "*.strm" | wc -l')"
 scan local
 check "no federated episode is left in the library" 0 "$(episodes | wc -l | tr -d ' ')"
 check "no series is left in the library" 0 "$(series_rows | wc -l | tr -d ' ')"
@@ -146,14 +146,20 @@ done
 check "the user data cleanup ran" Completed "$(get local "/ScheduledTasks/$task" | jq -r '.LastExecutionResult.Status // ""')"
 
 echo "--- the server comes back"
+old_folder=$(server_folder "$id")
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
+# The server comes back with a new ID, so in a folder of its own: the admin adds it to the library.
+check "the server comes back in a new folder" 1 "$([ "$(server_folder "$id")" != "$old_folder" ] && echo 1 || echo 0)"
+check "the new folder joins the library" 204 "$(link_folder local Serie "$(server_folder "$id")/Serie")"
 import_all local "$id"
 sync_now local
 scan local
 episodes | tee "$WORK/episodes-after"
 series_rows | tee "$WORK/series-after"
-check "the same episodes come back at the same paths" "$(cut -f1,3 "$WORK/episodes-before")" "$(cut -f1,3 "$WORK/episodes-after")"
-check "the same series come back at the same paths" "$(cut -f1,3 "$WORK/series-before")" "$(cut -f1,3 "$WORK/series-after")"
+# in_folder: the paths with the folder of the server taken off.
+in_folder() { sed -E 's#/federata/[0-9a-f-]{36}/#/federata/<server>/#'; }
+check "the same episodes come back at the same paths in the folder" "$(cut -f1,3 "$WORK/episodes-before" | in_folder)" "$(cut -f1,3 "$WORK/episodes-after" | in_folder)"
+check "the same series come back at the same paths in the folder" "$(cut -f1,3 "$WORK/series-before" | in_folder)" "$(cut -f1,3 "$WORK/series-after" | in_folder)"
 echo "item ids changed: episodes $(cut -f2 "$WORK/episodes-before" | grep -cvxFf <(cut -f2 "$WORK/episodes-after") || true) of 5, series $(cut -f2 "$WORK/series-before" | grep -cvxFf <(cut -f2 "$WORK/series-after") || true) of 2"
 
 state | tee "$WORK/state-after"

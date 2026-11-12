@@ -49,8 +49,11 @@ for path in files:
         if label == "server" and path.endswith(".log"):
             continue
         for value in values:
-            if value.encode() in data:
-                at = data.index(value.encode())
+            at = data.find(value.encode())
+            # The folder of a server is named by its ID: in a federated path it is no secret (spec of the server folders).
+            while label == "server" and at >= 0 and data[max(0, at - 10):at] == b"/federata/":
+                at = data.find(value.encode(), at + 1)
+            if at >= 0:
                 print("HIT", label, value[:16], path.split("/")[-1], data[max(0, at - 60):at + 30])
                 hits += 1
 print(f"scanned {len(files)} files, {total} bytes, hits {hits}")

@@ -16,7 +16,7 @@ scan remote
 
 start local "$PREFIX-media:/media"
 docker exec "$PREFIX-local" sh -c 'mkdir -p /media/film && touch /media/film/.keep'
-library local Film movies /media/film /federata/Film
+library local Film movies /media/film
 user local viewer >/dev/null
 bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
 sleep 3
@@ -24,6 +24,7 @@ wait_ready local
 login local
 settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
+check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
 import_all local "$id"
 sync_now local
 scan local
