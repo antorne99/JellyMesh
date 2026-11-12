@@ -89,5 +89,30 @@ if [ "$nfo_before" = "$(sums "-name '*.nfo'")" ]; then echo "ok   the .nfo of th
   echo "KNOWN the NFO saver rewrote a .nfo of a local copy:"; diff <(echo "$nfo_before") <(sums "-name '*.nfo'") || true; fi
 check "the folder of remote stays" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$A")/Film/.jellymesh"; echo $?)"
 
+echo "--- peer back in the shared libraries Film and Serie, then removed again: a dead path next to live ones"
+B2=$(add_remote local peer "http://host.docker.internal:$(port_of peer)" jellymesh)
+check "peer comes back with its ID" "$B" "$B2"
+import_all local "$B"
+sync_now local
+check "the Film folder of peer is linked to Film" 204 "$(link_folder local Film "$folder_b/Film")"
+check "the Serie folder of peer is linked to Serie" 204 "$(link_folder local Serie "$folder_b/Serie")"
+scan local
+sync_now local
+check "the stubs of peer are back" 1 "$([ -n "$(stub_of "$B" "$RES")" ] && echo 1 || echo 0)"
+req local DELETE "/JellyMesh/Admin/Servers/$B" >/dev/null
+check "peer is removed again" 204 "$(status)"
+for _ in $(seq 1 180); do docker exec "$PREFIX-local" test -e "$folder_b" || break; sleep 1; done
+check "the folder of peer is deleted again" gone "$(docker exec "$PREFIX-local" test -e "$folder_b" && echo kept || echo gone)"
+check "Film keeps the dead path of peer" 1 "$(get local /Library/VirtualFolders | jq --arg p "$folder_b/Film" '[.[] | select(.Name == "Film") | .Locations[] | select(. == $p)] | length')"
+check "a scan ends with the dead path" ended "$(scan local && echo ended || echo stuck)"
+# Jellyfin keeps a Folder row for each location of a library, even a missing one, so only what was inside counts.
+check "no item of peer is left after the scan" 0 "$(sql "select count(*) from BaseItems where Path like '$folder_b/%/%';")"
+ra=$(stub_of "$A" "$RES")
+check "the stub of remote is still in Film" 1 "$(visible "$ra")"
+check "the local copy is still in Film" 1 "$(visible "$(local_of "$SIN")")"
+put_film "locale/film/Elephants Dream (2006)" "Elephants Dream (2006)"
+scan local
+check "a new local film is indexed in Film" 1 "$([ -n "$(local_of "Elephants Dream")" ] && echo 1 || echo 0)"
+
 echo "=== failed: $FAILED"
 exit "$FAILED"
