@@ -12,7 +12,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
 /// <summary>
-/// Merges film titles by hand and undoes it (decision 20), for administrators only.
+/// Merges film or series titles by hand and undoes it (decisions 20 and 51), for administrators only.
 /// </summary>
 [ApiController]
 [Route("JellyMesh/Admin/Merges")]
@@ -94,6 +94,7 @@ public class FederationMergeController : ControllerBase
     {
         ManualMergeOutcome.TooFewTitles => BadRequest(Failure("Select at least two titles of one group.")),
         ManualMergeOutcome.TwoLocalTitles => BadRequest(Failure("Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.")),
+        ManualMergeOutcome.TwoLocalSeries => BadRequest(Failure("Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.")),
         _ => Conflict(Failure("The list changed. Check it again, then merge."))
     };
 

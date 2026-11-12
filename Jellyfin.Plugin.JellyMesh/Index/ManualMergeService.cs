@@ -246,7 +246,12 @@ public sealed class ManualMergeService
             return (ManualMergeOutcome.ListChanged, []);
         }
 
-        return (titles.Count(title => title.HasLocalCopy) > 1 ? ManualMergeOutcome.TwoLocalTitles : ManualMergeOutcome.Merged, titles);
+        if (titles.Count(title => title.HasLocalCopy) > 1)
+        {
+            return (KindOf(titles) == "series" ? ManualMergeOutcome.TwoLocalSeries : ManualMergeOutcome.TwoLocalTitles, titles);
+        }
+
+        return (ManualMergeOutcome.Merged, titles);
     }
 
     // The undo is saved by now. The stubs of the group it dissolves are read before the materializer changes the groups,
