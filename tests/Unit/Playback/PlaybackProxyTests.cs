@@ -144,6 +144,65 @@ public class PlaybackProxyTests
         VerifyMessage(Times.Never());
     }
 
+    [Fact]
+    public async Task After_a_source_fails_the_session_answers_a_bad_gateway_at_once_without_asking_the_remote()
+    {
+        var session = Session(PlaybackStreamKind.Hls);
+        var reads = 0;
+        _fixture.Client.Playlists = _ => ++reads == 1 ? RemoteFailure.ServerError : RemoteFailure.None;
+
+        await _controller.GetMaster(session.Id, CancellationToken.None);
+        var result = await _controller.GetMaster(session.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
+    public async Task A_failed_stream_marks_the_session_and_its_retry_reaches_no_remote()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        StreamsFailWith(RemoteFailure.Unreachable);
+        await _controller.GetStream(session.Id, CancellationToken.None);
+        _fixture.Client.Opened.Clear();
+
+        var result = await _controller.GetStream(session.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+        Assert.True(session.HasFailed);
+    }
+
+    [Theory]
+    [InlineData(RemoteFailure.Busy)]
+    [InlineData(RemoteFailure.StreamLimitReached)]
+    public async Task A_refusal_on_this_side_or_for_the_limit_is_no_failure_of_the_source(RemoteFailure failure)
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        StreamsFailWith(failure);
+        await _controller.GetStream(session.Id, CancellationToken.None);
+        _fixture.Client.Open = (_, _) => Task.FromResult(FakePlaybackClient.Bytes());
+
+        var result = await _controller.GetStream(session.Id, CancellationToken.None);
+
+        Assert.IsType<EmptyResult>(result);
+        Assert.False(session.HasFailed);
+    }
+
+    [Fact]
+    public async Task A_missing_subtitle_is_no_failure_of_the_source()
+    {
+        var session = Session(PlaybackStreamKind.Hls);
+        var url = session.MapRootedUrl("/Videos/remote-item/ms/Subtitles/0/0/Stream.vtt", PlaybackValues.LocalToken)!;
+        var parts = url.Split('?')[0].Split('/');
+        StreamsFailWith(RemoteFailure.ServerError);
+
+        var result = await _controller.GetFile(session.Id, int.Parse(parts[^2], System.Globalization.CultureInfo.InvariantCulture), parts[^1], CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        Assert.False(session.HasFailed);
+    }
+
     private sealed class CompletionFeature : HttpResponseFeature
     {
         private Func<object, Task>? _completed;
