@@ -555,6 +555,29 @@ public sealed class ServerLibraryManagerTests
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
 
+    [Fact]
+    public async Task A_server_removed_twice_deletes_what_both_left()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.RemoveFailure = new IOException("busy");
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+        fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = _serverId, Name = "Casa" });
+        fixture.Libraries.RemoveFailure = null;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+        fixture.Libraries.RemoveFailure = new IOException("busy");
+        await fixture.Manager.Enable(_serverId).Job;
+        Assert.Equal(["Casa - Serie", "Casa - Film", "Casa 1a2b3c4d - Serie"], fixture.Libraries.Folders.Select(folder => folder.Name));
+
+        fixture.RemoveServer();
+        fixture.Libraries.RemoveFailure = null;
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Folders);
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
     private sealed class Fixture
     {
         public Fixture(string root = Root, string serverName = "Casa")

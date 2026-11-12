@@ -191,6 +191,12 @@ public class PluginConfiguration : BasePluginConfiguration
         {
             entry.PreexistingLibraryIds.Add(id);
         }
+
+        // A server removed twice may have found at switch-on the libraries it left the first time: those stay to delete.
+        foreach (var id in entry.PreexistingLibraryIds.Where(id => entry.Libraries.Any(library => string.Equals(library.ItemId, id, StringComparison.OrdinalIgnoreCase))).ToList())
+        {
+            entry.PreexistingLibraryIds.Remove(id);
+        }
     }
 
     /// <summary>
