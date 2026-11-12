@@ -544,4 +544,128 @@ public class VersionGuardTests
 
         Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", film.Id), ("mediaSourceId", N(film.Id)))));
     }
+
+    // S6 and S7 on linked versions: a local play session of another user on stub B, named through either version.
+    private void AnotherUserPlaysTheStub()
+    {
+        Sees(_localItem);
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "play", _stubItem);
+    }
+
+    private void StubGoneMidPlay()
+    {
+        _items.Remove(_stubItem);
+        _library.Setup(library => library.GetItemById<BaseItem>(_stubItem, _user)).Returns((BaseItem?)null);
+    }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream", true)]
+    [InlineData("Videos", "GetVideoStream", false)]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", true)]
+    [InlineData("DynamicHls", "GetHlsVideoSegment", false)]
+    public async Task A_play_session_of_another_user_on_a_linked_stub_is_not_found_through_either_version(string controller, string action, bool throughLocal)
+    {
+        AnotherUserPlaysTheStub();
+        var item = throughLocal ? _localItem : _stubItem;
+        var context = Context(controller, action, ("itemId", item), ("mediaSourceId", N(item)), ("playSessionId", "PLAY"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_play_session_on_a_linked_stub_wants_a_user()
+    {
+        AnotherUserPlaysTheStub();
+        Anonymous();
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task Its_user_names_their_play_session_on_a_linked_stub()
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "play", _stubItem);
+
+        Assert.True(await RunAsync(Guard(), Context("DynamicHls", "GetHlsVideoSegment", ("itemId", _stubItem), ("mediaSourceId", N(_stubItem)), ("playSessionId", "play"))));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_play_session_of_another_user_on_a_linked_stub_stays_guarded_when_the_stub_is_gone(bool throughLocal)
+    {
+        AnotherUserPlaysTheStub();
+        StubGoneMidPlay();
+        var item = throughLocal ? _localItem : LocalFilm().Id;
+        Sees(item);
+        var context = Context("Videos", "GetVideoStream", ("itemId", item), ("mediaSourceId", N(item)), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_play_session_on_a_linked_stub_that_is_gone_still_wants_a_user()
+    {
+        AnotherUserPlaysTheStub();
+        StubGoneMidPlay();
+        Anonymous();
+        var film = LocalFilm();
+        var context = Context("Videos", "GetVideoStream", ("itemId", film.Id), ("mediaSourceId", N(film.Id)), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_play_session_on_a_linked_stub_its_owner_keeps_using_stays_guarded_however_many_they_open()
+    {
+        Sees(_localItem);
+        var owner = Guid.NewGuid();
+        _fixture.Sessions.RecordLocal(owner, "play", _stubItem);
+        for (var index = 0; index <= PlaySessionOwners.MaxPerOwner; index++)
+        {
+            if (index % 25 == 0)
+            {
+                _fixture.Sessions.UseLocal(owner, "play");
+            }
+
+            _fixture.Sessions.RecordLocal(owner, "flood" + index, _stubItem);
+        }
+
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("ReportPlaybackStart")]
+    [InlineData("ReportPlaybackProgress")]
+    [InlineData("ReportPlaybackStopped")]
+    [InlineData("OnPlaybackStopped")]
+    public async Task A_report_of_another_user_on_a_play_session_of_a_linked_stub_is_answered_without_effect(string action)
+    {
+        AnotherUserPlaysTheStub();
+        var context = Context("Playstate", action, ReportOf(action, _localItem, _localItem));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+        Assert.True(_fixture.Sessions.IsLocalOfAnother(_user.Id, "play"));
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_a_play_session_of_another_user_on_a_linked_stub_is_not_found()
+    {
+        AnotherUserPlaysTheStub();
+        using var job = new TranscodingJob(NullLogger<TranscodingJob>.Instance) { PlaySessionId = "play", Path = "/cache/transcodes/0123456789abcdef.m3u8" };
+        _transcodes.Setup(manager => manager.GetTranscodingJob("play")).Returns(job);
+        var context = Context("HlsSegment", "GetHlsVideoSegmentLegacy", ("itemId", N(_localItem)), ("playlistId", "0123456789abcdef"), ("segmentId", "0123456789abcdef0"), ("segmentContainer", "ts"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
 }
