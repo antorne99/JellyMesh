@@ -59,6 +59,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<StubItemUpdater>();
         serviceCollection.AddSingleton<StubRemover>();
         serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
+        serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
+        serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 

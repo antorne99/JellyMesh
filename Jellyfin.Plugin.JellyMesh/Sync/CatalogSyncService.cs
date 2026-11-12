@@ -40,6 +40,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ILogger<CatalogSyncService> _logger;
     private readonly ILibraryMaterializer? _materializer;
     private readonly StubRegistry? _stubs;
+    private readonly IServerLibraryManager? _libraries;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
 
@@ -58,6 +59,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="logger">The logger.</param>
     /// <param name="materializer">What brings the federated folder in step after a sync.</param>
     /// <param name="stubs">The stub registry, which remembers the servers the administrator removed.</param>
+    /// <param name="libraries">The libraries kept for each server, followed after every sync.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -66,7 +68,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         TimeProvider timeProvider,
         ILogger<CatalogSyncService> logger,
         ILibraryMaterializer? materializer = null,
-        StubRegistry? stubs = null)
+        StubRegistry? stubs = null,
+        IServerLibraryManager? libraries = null)
     {
         _registry = registry;
         _reader = reader;
@@ -76,6 +79,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger = logger;
         _materializer = materializer;
         _stubs = stubs;
+        _libraries = libraries;
     }
 
     /// <summary>
@@ -269,6 +273,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -318,6 +323,23 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             // The type only: a message could hold a remote address.
             _logger.LogError("Could not materialize the federated folder: {Error}", exception.GetType().Name);
+        }
+    }
+
+    private async Task FollowServerLibrariesAsync(CancellationToken cancellationToken)
+    {
+        if (_libraries is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _libraries.ReconcileAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Could not follow the libraries of the servers: {Error}", exception.GetType().Name);
         }
     }
 
