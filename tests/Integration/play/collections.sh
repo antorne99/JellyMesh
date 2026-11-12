@@ -70,13 +70,13 @@ remote_films=$(echo "$with" | jq -r .total)
 
 echo "--- the consumer syncs"
 start local "$PREFIX-local-media:/media"
-library local Film movies /federata/Film
 bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
 sleep 3
 wait_ready local
 login local
 settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
+library local Film movies "$(server_folder "$id")/Film"
 import_all local "$id"
 sync_now local
 scan local
@@ -85,7 +85,7 @@ for title in "$FILM_A" "$FILM_B"; do
   check "$title has a stub" true "$([ -n "$(strm_file local "$title")" ] && echo true || echo false)"
   check "$title is in the consumer library" true "$([ -n "$(stub_item local "$title")" ] && echo true || echo false)"
 done
-stubs=$(docker exec "$PREFIX-local" sh -c 'find /federata/Film -name "*.strm" | wc -l' | tr -d ' ')
+stubs=$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Film -name "*.strm" | wc -l' | tr -d ' ')
 echo "stubs: $stubs, films the remote answers uncollapsed: $remote_films"
 check "the consumer has a stub for every film of the remote" true "$([ "$stubs" -ge "$remote_films" ] && echo true || echo false)"
 check "no stub stands for the collection" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata -name "*.strm" | grep -c "JM Saga" || true')"
