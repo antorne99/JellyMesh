@@ -117,7 +117,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         {
             using var stream = File.OpenRead(_path);
             var file = JsonSerializer.Deserialize<HistoryFile>(stream, _options);
-            if (file?.Version == CurrentVersion)
+            if (file?.Version == CurrentVersion && IsWhole(file.Runs))
             {
                 return file.Runs.Take(Capacity).ToList();
             }
@@ -133,6 +133,10 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         KeepDamagedCopy();
         return [];
     }
+
+    // Tells whether no run and no server row is null, which the serializer lets through in lists.
+    private static bool IsWhole(IReadOnlyList<SyncRun?> runs) =>
+        runs.All(run => run is not null && run.Servers is not null && run.Servers.All(server => server is not null));
 
     private void KeepDamagedCopy()
     {

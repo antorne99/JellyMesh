@@ -107,6 +107,8 @@ public sealed class SyncHistoryStoreTests : IDisposable
     [InlineData("{\"Version\":99,\"Runs\":[]}")]
     [InlineData("{\"Version\":1}")]
     [InlineData("{\"Version\":1,\"Runs\":[{\"DurationMilliseconds\":5}]}")]
+    [InlineData("{\"Version\":1,\"Runs\":[null]}")]
+    [InlineData("{\"Version\":1,\"Runs\":[{\"StartedUtc\":\"2026-11-12T03:00:00+00:00\",\"DurationMilliseconds\":5,\"Kind\":\"Incremental\",\"Outcome\":\"Succeeded\",\"Servers\":[null]}]}")]
     public void ABadFileIsSetAside_AndTheHistoryStartsEmpty(string content)
     {
         Directory.CreateDirectory(_folder);
