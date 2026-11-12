@@ -272,7 +272,23 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         {
             State = state;
             ById = state.Stubs.ToFrozenDictionary(stub => stub.Id, StringComparer.Ordinal);
-            ByPath = state.Stubs.ToFrozenDictionary(stub => stub.RelativePath, StringComparer.Ordinal);
+
+            // The old path of a renamed stub finds it too, until its old item is gone; a current path always wins.
+            var byPath = new Dictionary<string, StubEntry>(StringComparer.Ordinal);
+            foreach (var stub in state.Stubs)
+            {
+                byPath.TryAdd(stub.RelativePath, stub);
+            }
+
+            foreach (var rename in state.Renames)
+            {
+                if (ById.TryGetValue(rename.StubId, out var stub))
+                {
+                    byPath.TryAdd(rename.OldPath, stub);
+                }
+            }
+
+            ByPath = byPath.ToFrozenDictionary(StringComparer.Ordinal);
 
             // The first group wins for a member listed twice, which the planner never writes.
             var byStub = new Dictionary<string, VersionGroup>(StringComparer.Ordinal);

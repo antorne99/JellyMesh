@@ -50,6 +50,40 @@ public sealed class StubRegistryTests : IDisposable
     }
 
     [Fact]
+    public async Task TheOldPathOfARenamedStubFindsItUntilTheRenameIsDone()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState
+        {
+            Stubs = [Entry("abc", "S/Film/A/A - Mare.strm")],
+            Renames = [new StubRename("abc", "S/Film/A/A - Casa.strm")]
+        });
+
+        Assert.Equal("abc", registry.FindByPath("/federata/S/Film/A/A - Casa.strm")?.Id);
+        Assert.Equal("abc", registry.FindByPath("/federata/S/Film/A/A - Mare.strm")?.Id);
+
+        using var reloaded = Create();
+        Assert.Equal("abc", reloaded.FindByPath("/federata/S/Film/A/A - Casa.strm")?.Id);
+
+        await SeedAsync(registry, registry.State with { Renames = [] });
+        Assert.Null(registry.FindByPath("/federata/S/Film/A/A - Casa.strm"));
+    }
+
+    [Fact]
+    public async Task ACurrentPathWinsOverTheOldPathOfAnotherStub()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState
+        {
+            Stubs = [Entry("abc", "S/Film/A/A - Mare.strm"), Entry("def", "S/Film/A/A - Casa.strm")],
+            Renames = [new StubRename("abc", "S/Film/A/A - Casa.strm"), new StubRename("gone", "S/Film/B/B - Casa.strm")]
+        });
+
+        Assert.Equal("def", registry.FindByPath("/federata/S/Film/A/A - Casa.strm")?.Id);
+        Assert.Null(registry.FindByPath("/federata/S/Film/B/B - Casa.strm"));
+    }
+
+    [Fact]
     public void ARegistryWrittenBeforeTheLastEpisodeNumberExistedStillLoads()
     {
         Directory.CreateDirectory(_folder);
