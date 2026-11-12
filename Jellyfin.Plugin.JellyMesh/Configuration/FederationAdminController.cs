@@ -96,7 +96,9 @@ public class FederationAdminController : ControllerBase
     public ActionResult<FederationStatus> GetStatus()
     {
         var keyState = _vault.GetKeyState();
-        var servers = _registry.GetServers();
+
+        // A server id saved twice, as by a hand-edited configuration, shows once with its first entry.
+        var servers = _registry.GetServers().DistinctBy(server => server.Id).ToList();
         return new FederationStatus(
             keyState,
             keyState != KeyState.Ok,

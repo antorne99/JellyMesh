@@ -60,6 +60,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly PlaybackRefusal _refusal;
     private readonly ITranscodeManager _transcodes;
     private readonly StreamSlots _peerSlots;
+    private readonly Func<string, IReadOnlyList<string>> _listFolder;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
@@ -79,6 +80,20 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
         StreamSlots peerSlots)
+        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, ListFolder)
+    {
+    }
+
+    // Takes how a folder is listed, so that tests can count the listings.
+    internal StockRouteGuardFilter(
+        StubLookup stubs,
+        IAuthorizationContext authorization,
+        PlaybackCoordinator coordinator,
+        PlaybackSessionStore sessions,
+        PlaybackRefusal refusal,
+        ITranscodeManager transcodes,
+        StreamSlots peerSlots,
+        Func<string, IReadOnlyList<string>> listFolder)
     {
         _stubs = stubs;
         _authorization = authorization;
@@ -87,6 +102,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         _refusal = refusal;
         _transcodes = transcodes;
         _peerSlots = peerSlots;
+        _listFolder = listFolder;
     }
 
     /// <inheritdoc />
@@ -269,46 +285,61 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             (playlistId, segmentId) = (null, name);
         }
 
-        // Nobody is anonymous, so the play sessions of others than nobody are all of them.
+        // Nobody is anonymous, so the play sessions of others than nobody are all of them. Each folder is listed once.
+        var listings = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
         return _sessions.LocalSessionsOfOthers(Guid.Empty)
             .Concat(_peerSlots.SessionsOfOthers(Guid.Empty))
-            .Where(id => _transcodes.GetTranscodingJob(id)?.Path is { } path && IsFileOfJob(path, playlistId, segmentId))
+            .Where(id => _transcodes.GetTranscodingJob(id)?.Path is { } path && IsFileOfJob(path, playlistId, segmentId, listings))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
     // Stock serves the segment file by name, and pings the job of the first file whose path holds the playlist id. The
     // files of a job start with the name of its playlist.
-    private static bool IsFileOfJob(string jobPath, string? playlistId, string? segmentId)
+    private bool IsFileOfJob(string jobPath, string? playlistId, string? segmentId, Dictionary<string, IReadOnlyList<string>> listings)
     {
         var prefix = Path.GetFileNameWithoutExtension(jobPath);
         return (!string.IsNullOrEmpty(prefix) && !string.IsNullOrEmpty(segmentId) && Path.GetFileName(segmentId).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            || (!string.IsNullOrEmpty(playlistId) && FilesOfJob(jobPath, prefix).Any(path => path.Contains(playlistId, StringComparison.OrdinalIgnoreCase)));
+            || (!string.IsNullOrEmpty(playlistId) && FilesOfJob(jobPath, prefix, listings).Any(path => path.Contains(playlistId, StringComparison.OrdinalIgnoreCase)));
     }
 
     // The path of the job and of the files of its folder that start with the name of its playlist, such as its segments.
-    private static IEnumerable<string> FilesOfJob(string jobPath, string prefix)
+    // A folder already in the listings is not listed again.
+    private IEnumerable<string> FilesOfJob(string jobPath, string prefix, Dictionary<string, IReadOnlyList<string>> listings)
     {
         yield return jobPath;
         var folder = Path.GetDirectoryName(jobPath);
-        if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+        if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(folder))
         {
             yield break;
         }
 
-        IEnumerable<string> files;
+        if (!listings.TryGetValue(folder, out var files))
+        {
+            files = _listFolder(folder);
+            listings[folder] = files;
+        }
+
+        foreach (var file in files.Where(file => Path.GetFileName(file).StartsWith(prefix, StringComparison.Ordinal)))
+        {
+            yield return file;
+        }
+    }
+
+    /// <summary>
+    /// Lists the files of a folder, none when it is missing or cannot be read.
+    /// </summary>
+    /// <param name="folder">The folder.</param>
+    /// <returns>The paths of its files.</returns>
+    internal static IReadOnlyList<string> ListFolder(string folder)
+    {
         try
         {
-            files = Directory.EnumerateFiles(folder, prefix + "*").ToList();
+            return Directory.Exists(folder) ? Directory.EnumerateFiles(folder).ToList() : [];
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            yield break;
-        }
-
-        foreach (var file in files)
-        {
-            yield return file;
+            return [];
         }
     }
 

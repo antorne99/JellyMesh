@@ -31,6 +31,7 @@ for who in anon nolib viewer; do
   code "Items/Download" "${A[@]}" "$BASE/Items/$IT/Download"
   code "Items/File" "${A[@]}" "$BASE/Items/$IT/File"
   code "AdditionalParts" "${A[@]}" "$BASE/Videos/$IT/AdditionalParts"
+  code "MediaSegments" "${A[@]}" "$BASE/MediaSegments/$IT"
   code "Play endpoint" "${A[@]}" "$BASE/JellyMesh/Play/$STUB"
 done
 echo "== loopback"

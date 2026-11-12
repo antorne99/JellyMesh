@@ -106,9 +106,7 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         try
         {
             var folders = _libraryManager.GetVirtualFolders()
-                .Where(library => (library.Locations ?? [])
-                    .Any(location => !string.IsNullOrWhiteSpace(location)
-                        && (FederatedFolderLinkChecker.IsAncestorOrSame(location, root) || FederatedFolderLinkChecker.IsAncestorOrSame(root, location))))
+                .Where(library => (library.Locations ?? []).Any(location => Overlaps(library.Name, location, root)))
                 .ToList();
             Dictionary<string, string> pending;
             lock (_lock)
@@ -129,6 +127,25 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         {
             _logger.LogError("Cannot read the libraries to compare them with the last sync: {Error}", exception.GetType().Name);
             return null;
+        }
+    }
+
+    // Tells whether a library location holds the federated folder or sits in it. A location that is no path is skipped.
+    private bool Overlaps(string? library, string? location, string root)
+    {
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            return false;
+        }
+
+        try
+        {
+            return FederatedFolderLinkChecker.IsAncestorOrSame(location, root) || FederatedFolderLinkChecker.IsAncestorOrSame(root, location);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            _logger.LogDebug("Skipping a location of the library {Library} that is not a valid path: {Error}", library, exception.GetType().Name);
+            return false;
         }
     }
 

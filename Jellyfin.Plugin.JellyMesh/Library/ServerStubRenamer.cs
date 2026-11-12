@@ -45,8 +45,8 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     /// <inheritdoc />
     public bool IsPending(Guid serverId)
     {
-        var state = _registry.State;
-        return state.Renames.Any(rename => _registry.Find(rename.StubId) is not { } stub || stub.ServerId == serverId);
+        // An entry whose stub left the registry waits for no scan, and a relabel settles it first.
+        return _registry.State.Renames.Any(rename => _registry.Find(rename.StubId) is { } stub && stub.ServerId == serverId);
     }
 
     /// <inheritdoc />
@@ -69,8 +69,11 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 return 0;
             }
 
+            // The old files of a stub that left go now, so that a file written at their path is not deleted later.
             var stubs = state.Stubs.ToList();
-            var renames = state.Renames.ToList();
+            var renames = state.Renames
+                .Where(rename => rename.RemovedItemId is not null || _registry.Find(rename.StubId) is not null || root.Length == 0 || !TryDeleteOld(root, rename, null))
+                .ToList();
             var written = new List<string>();
             var moved = 0;
             try

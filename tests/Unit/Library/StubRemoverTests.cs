@@ -147,7 +147,7 @@ public sealed class StubRemoverTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_root, FederatedPaths.MovieFolder(server, string.Empty)));
         File.WriteAllText(Path.Combine(_root, FederatedPaths.MovieFolder(server, string.Empty), FederatedPaths.HiddenFileName), string.Empty);
 
-        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server]);
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], _ => false);
 
         Assert.False(Directory.Exists(Path.Combine(_root, FederatedPaths.ServerFolder(server))));
         Assert.Empty(removal.State.Series);
@@ -163,7 +163,7 @@ public sealed class StubRemoverTests : IDisposable
         var stub = Movie("m1", "Film 1") with { ServerId = server, RelativePath = FederatedPaths.MovieStub(server, "Film 1", "A") };
         Write(stub.RelativePath);
 
-        var removal = _remover.RemoveServerFolders(_root, new StubState { Stubs = [stub] }, [server]);
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Stubs = [stub] }, [server], _ => false);
 
         Assert.True(File.Exists(Path.Combine(_root, stub.RelativePath)));
         Assert.Equal(stub, Assert.Single(removal.State.Stubs));
@@ -179,7 +179,7 @@ public sealed class StubRemoverTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_root, FederatedPaths.ServerFolder(removed), "Film"));
         var flat = Movie("m1", "Film 1");
 
-        var removal = _remover.RemoveServerFolders(_root, new StubState { Stubs = [flat], Series = [series] }, [removed]);
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Stubs = [flat], Series = [series] }, [removed], _ => false);
 
         Assert.False(Directory.Exists(Path.Combine(_root, FederatedPaths.ServerFolder(removed))));
         Assert.True(Directory.Exists(Path.Combine(_root, series.RelativePath)));
@@ -194,7 +194,7 @@ public sealed class StubRemoverTests : IDisposable
         var series = ServerSeries(server, "show");
         _library.Setup(library => library.FindByPath(Path.Combine(_root, series.RelativePath), true)).Throws(new IOException("busy"));
 
-        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server]);
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], _ => false);
 
         Assert.True(Directory.Exists(Path.Combine(_root, series.RelativePath)));
         Assert.Equal(series, Assert.Single(removal.State.Series));
@@ -203,9 +203,37 @@ public sealed class StubRemoverTests : IDisposable
     }
 
     [Fact]
+    public void AServerAddedBackWhileItsSeriesGoKeepsItsFolder()
+    {
+        var server = Guid.NewGuid();
+        var series = ServerSeries(server, "show");
+        var addedBack = false;
+        _library.Setup(library => library.FindByPath(Path.Combine(_root, series.RelativePath), true)).Callback(() => addedBack = true).Returns((BaseItem?)null);
+        File.WriteAllText(Path.Combine(_root, FederatedPaths.ServerFolder(server), FederatedPaths.HiddenFileName), string.Empty);
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], id => addedBack && id == server);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, FederatedPaths.ServerFolder(server))));
+        Assert.Equal(0, removal.Removed);
+    }
+
+    [Fact]
+    public void AServerAlreadyBackKeepsItsFolderAndItsSeries()
+    {
+        var server = Guid.NewGuid();
+        var series = ServerSeries(server, "show");
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], id => id == server);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, series.RelativePath)));
+        Assert.Equal(series, Assert.Single(removal.State.Series));
+        Assert.Equal(0, removal.Removed);
+    }
+
+    [Fact]
     public void AFolderAlreadyGoneIsNoWork()
     {
-        var removal = _remover.RemoveServerFolders(_root, StubState.Empty, [Guid.NewGuid()]);
+        var removal = _remover.RemoveServerFolders(_root, StubState.Empty, [Guid.NewGuid()], _ => false);
 
         Assert.Equal(0, removal.Removed);
         Assert.Empty(removal.Failures);

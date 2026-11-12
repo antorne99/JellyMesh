@@ -849,6 +849,23 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task AServerSavedTwiceShowsOnceWithItsFirstName()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var server = await fixture.AddServerAsync();
+        var saved = fixture.Store.Configuration.Servers[0];
+        fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = server.Id, Name = "Copia", Url = saved.Url, EncryptedCredentials = saved.EncryptedCredentials });
+        var checker = new RecordingChecker(FederatedFolderLinkState.Linked);
+
+        var status = ControllerFor(fixture, checker).GetStatus().Value!;
+
+        Assert.Equal(server.Name, Assert.Single(status.Servers).Name);
+        Assert.Equal(server.Name, Assert.Single(status.FederatedFolder.Servers).Name);
+        Assert.Equal([server.Id], checker.Servers);
+    }
+
+    [Fact]
     public async Task WithTheSwitchOffNoLibraryIsUnregistered()
     {
         using var fixture = new RegistryFixture();
