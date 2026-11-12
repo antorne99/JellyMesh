@@ -71,6 +71,16 @@ public sealed class FederatedFolderLinkCheckerTests
     }
 
     [Fact]
+    public void ALocationThatIsNoPathIsSkipped()
+    {
+        var report = Check(Movies("/film\0", _aFilm), Shows("Serie", "\0", _aSerie));
+
+        Assert.Equal(FederatedFolderLinkState.Linked, report.State);
+        Assert.Equal(["Film"], ServerA(report).Movies.Libraries);
+        Assert.Empty(report.Covering);
+    }
+
+    [Fact]
     public void EveryServerHasToBeLinked()
     {
         var report = Check(Folder, [_a, _b], Movies(_aFilm, _bFilm), Shows("Serie", _aSerie));
