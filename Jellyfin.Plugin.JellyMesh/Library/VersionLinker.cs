@@ -76,9 +76,11 @@ public sealed class VersionLinker : IVersionLinker
         {
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
-            var groups = new List<VersionGroup>(state.Groups.Count);
+            var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
             var changed = false;
-            foreach (var group in state.Groups)
+
+            // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
+            foreach (var group in state.Groups.OrderBy(group => group.Id, StringComparer.Ordinal))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var recorded = group.PrimaryStubId;
@@ -93,8 +95,10 @@ public sealed class VersionLinker : IVersionLinker
                 }
 
                 changed |= !string.Equals(recorded, group.PrimaryStubId, StringComparison.Ordinal);
-                groups.Add(group with { PrimaryStubId = recorded });
+                recordedById[group.Id] = recorded;
             }
+
+            var groups = state.Groups.Select(group => group with { PrimaryStubId = recordedById.GetValueOrDefault(group.Id, group.PrimaryStubId) }).ToList();
 
             if (thorough)
             {
@@ -145,9 +149,10 @@ public sealed class VersionLinker : IVersionLinker
             }
         }
 
-        // Only the first local copy found is linked: two local films are never merged (decision 20).
+        // Only the first local copy found is linked: two local films are never merged (decision 20). A film an earlier
+        // group links to stays out, and this group links its stubs among themselves (Q170).
         var locals = new List<Guid>();
-        if (PrimaryLocal(group, run) is { } local && items.TryAdd(local.Id, local))
+        if (PrimaryLocal(group, run) is { } local && run.ClaimedLocals.Add(local.Id) && items.TryAdd(local.Id, local))
         {
             locals.Add(local.Id);
         }
@@ -337,6 +342,9 @@ public sealed class VersionLinker : IVersionLinker
 
         // The primary that each alternate's collection entries move to.
         public Dictionary<Guid, Video> Moves { get; } = [];
+
+        // The local films a group already links to in this run.
+        public HashSet<Guid> ClaimedLocals { get; } = [];
 
         public bool Thorough => thorough;
 

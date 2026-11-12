@@ -192,6 +192,42 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.DoesNotContain(_saves, save => save.Item == local.Id);
     }
 
+    // Q170: two groups whose local copies the admin merged into one film; the first by group ID links to it.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task OnlyTheFirstGroupLinksToAFilmTwoGroupsShare(bool thorough, bool reversed)
+    {
+        var film = Local();
+        var first = Local();
+        var second = Local();
+        first.SetPrimaryVersionId(film.Id);
+        second.SetPrimaryVersionId(film.Id);
+        film.LinkedAlternateVersions = [Link(first.Id), Link(second.Id)];
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        var c = Stub("sc", _serverC, 720);
+        VersionGroup[] groups = [Group("g1", ["sa"], [first.Id]), Group("g2", ["sb", "sc"], [second.Id])];
+        await SaveAsync([a, b, c], reversed ? [.. groups.Reverse()] : groups);
+        var (itemA, itemB, itemC) = (Scanned(a), Scanned(b), Scanned(c));
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+        _saves.Clear();
+        _userData.Invocations.Clear();
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        Assert.Equal(film.Id, itemA.PrimaryVersionId);
+        Assert.Equal(new[] { first.Id, second.Id, itemA.Id }.Order(), LinkedIds(film).Order());
+        Assert.Null(itemB.PrimaryVersionId);
+        Assert.Equal(itemB.Id, itemC.PrimaryVersionId);
+        Assert.Equal([itemC.Id], LinkedIds(itemB));
+        Assert.Equal(film.Id, second.PrimaryVersionId);
+        Assert.Empty(_saves);
+        _userData.Verify(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task AFileVersionOfTheLocalCopyStaysLinked()
     {
