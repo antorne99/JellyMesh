@@ -886,7 +886,7 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_removed_server_never_deletes_a_library_a_configured_server_found_at_switch_on()
+    public async Task A_removed_server_never_deletes_a_library_a_configured_server_found_at_switch_on_and_lists_it_as_released()
     {
         var fixture = new Fixture();
         var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
@@ -901,8 +901,38 @@ public sealed class ServerLibraryManagerTests
 
         await fixture.Manager.DeleteRemovedServerLibraries();
 
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
         Assert.Empty(fixture.Libraries.Removed);
         Assert.Equal(["Altro - Film"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Altro - Film"], held.ReleasedLibraries);
+    }
+
+    [Fact]
+    public async Task A_library_a_removed_server_left_and_a_configured_server_found_at_switch_on_is_released_under_its_new_name()
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Libraries.Add("Altro - Serie", CollectionTypeOptions.tvshows, $"{Root}/{other:D}/Serie");
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Altro - Film"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [
+                new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Vecchio nome", ItemId = fixture.Libraries.IdOf("Altro - Film") },
+                new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Altro - Serie", ItemId = fixture.Libraries.IdOf("Altro - Serie") }
+            ],
+            [],
+            [],
+            false);
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Equal(["Altro - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Altro - Film"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Equal(["Altro - Film"], Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).ReleasedLibraries);
     }
 
     [Fact]

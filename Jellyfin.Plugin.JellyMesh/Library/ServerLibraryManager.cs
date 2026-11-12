@@ -185,6 +185,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             server.ReleasedAutomaticLibraries,
             IdSet(server.PreexistingLibraryIds),
             IdSet(HeldOf(config, serverId)?.Libraries.Select(record => record.ItemId) ?? []),
+            IdSet([]),
             server.FollowedLibraryIds,
             server.FollowSkipped,
             skipped => server.FollowSkipped = skipped,
@@ -192,21 +193,28 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         : null;
 
     // The registry a removed server left. It never sees the libraries of a configured server with the same id, nor those
-    // any configured server found at switch-on (decision 175). One it drops for a new federated folder is released (158).
-    private static Registry? HeldRegistry(PluginConfiguration config, Guid serverId) => HeldOf(config, serverId) is { } held
-        ? new Registry(
+    // any configured server found at switch-on (decision 175), which it releases (177), as one dropped for a new root (158).
+    private static Registry? HeldRegistry(PluginConfiguration config, Guid serverId)
+    {
+        if (HeldOf(config, serverId) is not { } held)
+        {
+            return null;
+        }
+
+        var live = IdSet(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? []);
+        var preexisting = IdSet(config.Servers.SelectMany(server => server.PreexistingLibraryIds));
+        return new Registry(
             serverId,
             held.Libraries,
             held.ReleasedLibraries,
-            IdSet(held.PreexistingLibraryIds
-                .Concat(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? [])
-                .Concat(config.Servers.SelectMany(server => server.PreexistingLibraryIds))),
+            IdSet(held.PreexistingLibraryIds.Concat(live).Concat(preexisting)),
             IdSet([]),
+            IdSet(preexisting.Except(live, StringComparer.OrdinalIgnoreCase)),
             held.FollowedLibraryIds,
             held.FollowSkipped,
             skipped => held.FollowSkipped = skipped,
-            false)
-        : null;
+            false);
+    }
 
     private static string PathOf(ServerLibraryKind kind, string root, Guid serverId) => kind == ServerLibraryKind.Movies
         ? FederatedFolderLayout.ServerMoviesPath(root, serverId)
@@ -683,7 +691,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
                 registry.Libraries.Remove(change.Record);
                 if (registry.Released is { } released
-                    && (registry.ReleasesAll || change.RootChanged)
+                    && (registry.ReleasesAll || change.AlwaysReleased)
                     && !released.Contains(change.ReleasedName, StringComparer.Ordinal))
                 {
                     released.Add(change.ReleasedName);
@@ -710,8 +718,9 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         {
             if (folder is not null && !visible.Contains(folder))
             {
-                // A library the registry never sees is never adopted or deleted: the record is dropped (decision 175).
-                changes.Add(new FollowChange(record, null, record.Name, false));
+                // A library the registry never sees is never adopted or deleted: the record is dropped (decision 175), and
+                // released if a configured server found it at switch-on (177).
+                changes.Add(new FollowChange(record, null, folder.Name, folder.ItemId is { } id && registry.ReleasedWhenHidden.Contains(id)));
             }
             else if (folder is null)
             {
@@ -741,18 +750,20 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         (record.ItemId.Length > 0 ? folders.FirstOrDefault(folder => string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase)) : null)
         ?? folders.FirstOrDefault(folder => string.Equals(folder.Name, record.Name, StringComparison.Ordinal));
 
-    private sealed record FollowChange(AutomaticLibraryConfig Record, VirtualFolderInfo? Found, string ReleasedName, bool RootChanged);
+    // A dropped library is released by a held registry too when it changed root or was hidden by another server.
+    private sealed record FollowChange(AutomaticLibraryConfig Record, VirtualFolderInfo? Found, string ReleasedName, bool AlwaysReleased);
 
     private sealed record DeletedLibrary(Guid ServerId, ServerLibraryKind Kind, string Name);
 
-    // A registry with the ids it never sees (libraries there at switch-on), never adopts, and saw at its last check, and
-    // whether a check was skipped since. A live one releases every library it drops, a held one only for a new root.
+    // A registry with the ids it never sees (libraries there at switch-on), never adopts, releases when hidden, and saw at
+    // its last check, and whether a check was skipped since. A live one releases every library it drops.
     private sealed record Registry(
         Guid ServerId,
         Collection<AutomaticLibraryConfig> Libraries,
         Collection<string>? Released,
         IReadOnlySet<string> Hidden,
         IReadOnlySet<string> NotAdopted,
+        IReadOnlySet<string> ReleasedWhenHidden,
         Collection<string> Followed,
         bool FollowSkipped,
         Action<bool> SetFollowSkipped,
