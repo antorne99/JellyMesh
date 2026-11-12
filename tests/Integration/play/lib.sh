@@ -151,7 +151,7 @@ web() {
   sid=$(curl -fsS "http://127.0.0.1:$PORT/System/Info/Public" | jq -r .Id)
   mkdir -p "$WORK/web"
   cp "$WT/tests/Integration/playback/webplay.py" "$WORK/web/webplay.py"
-  docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -v "$PREFIX-pw:/pw" -e PYTHONPATH=/pw "$PW_IMAGE" \
+  docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -v "$PREFIX-pw:/pw" -e PYTHONPATH=/pw -e DEVICE_ID="$PREFIX-browser" "$PW_IMAGE" \
     bash -c 'test -d /pw/playwright || pip install -q --target /pw --no-warn-script-location playwright==1.48.0 2>/dev/null; exec python3 "$@"' _ \
     /w/webplay.py "http://host.docker.internal:$PORT" "$(cat "$WORK/token-viewer")" "$me" "$sid" "$item" "$scenario" "/w/$cap" "$secs"
 }
