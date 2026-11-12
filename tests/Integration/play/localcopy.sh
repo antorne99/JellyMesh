@@ -10,27 +10,27 @@ TRANSCODE="JM Confronto Codec"  # and has to transcode this one: H.264 and AAC, 
 PRIVATE="JM Confronto Risoluzione"  # this copy is in a library the viewer cannot see
 NOWHERE="Tears of Steel"        # no copy at all
 
-docker start jm-play-remote >/dev/null
+docker start "$PREFIX-remote" >/dev/null
 wait_ready remote
 login local
 viewer_login
 uid=$(user_id local viewer)
 
 # From the top: the copies gone, the stubs back.
-docker exec jm-play-local sh -c 'rm -rf /media/film/JM* /media/privata/JM*'
+docker exec "$PREFIX-local" sh -c 'rm -rf /media/film/JM* /media/privata/JM*'
 scan local
 sync_now local
 scan local
 check "the stubs are back" 1 "$([ -n "$(stub_item local "$DIRECT")" ] && [ -n "$(stub_item local "$PRIVATE")" ] && echo 1 || echo 0)"
 
 nfo() { # nfo <title>: the ID of a title, so that the local copy has the identity of the stub
-  docker exec jm-play-remote sh -c "cat \"/media/film/$1 (2026)/movie.nfo\""
+  docker exec "$PREFIX-remote" sh -c "cat \"/media/film/$1 (2026)/movie.nfo\""
 }
 copy() { # copy <library folder> <title> <extension> <ffmpeg codec arguments>
   local folder="/media/$1/$2 (2026)"
-  docker exec jm-play-local mkdir -p "$folder"
-  nfo "$2" | docker exec -i jm-play-local sh -c "cat > \"$folder/movie.nfo\""
-  docker exec jm-play-local "$FFMPEG" -hide_banner -loglevel error -y -f lavfi -i testsrc=d=30:s=640x360:r=25 -f lavfi -i sine=f=440:d=30 $4 "$folder/$2 (2026).$3"
+  docker exec "$PREFIX-local" mkdir -p "$folder"
+  nfo "$2" | docker exec -i "$PREFIX-local" sh -c "cat > \"$folder/movie.nfo\""
+  docker exec "$PREFIX-local" "$FFMPEG" -hide_banner -loglevel error -y -f lavfi -i testsrc=d=30:s=640x360:r=25 -f lavfi -i sine=f=440:d=30 $4 "$folder/$2 (2026).$3"
 }
 
 copy film "$DIRECT" webm "-c:v libvpx-vp9 -b:v 400k -deadline realtime -cpu-used 8 -c:a libopus -b:a 64k"
@@ -63,13 +63,13 @@ local_direct=$(local_item local "$DIRECT")
 local_transcode=$(local_item local "$TRANSCODE")
 check "the stub and the copy are both in the library" 1 "$([ -n "$stub_direct" ] && [ -n "$local_direct" ] && echo 1 || echo 0)"
 
-docker stop jm-play-remote >/dev/null
+docker stop "$PREFIX-remote" >/dev/null
 
 chosen=$(jq -n '{DeviceProfile: {MaxStreamingBitrate: 120000000, DirectPlayProfiles: [{Type: "Video", Container: "webm", VideoCodec: "vp9", AudioCodec: "opus"}], TranscodingProfiles: [{Type: "Video", Protocol: "hls", Container: "ts", VideoCodec: "h264", AudioCodec: "aac", Context: "Streaming"}]}}')
 check "the API answers with the local file" 200 "$(as_viewer POST "/Items/$stub_direct/PlaybackInfo?userId=$uid" "$chosen")"
 jq -c '.MediaSources[] | {Id, Path, TranscodingUrl: (.TranscodingUrl | sub("ApiKey=[^&]*"; "ApiKey=***")), TranscodingSubProtocol, Container}' "$WORK/viewer-body"
 url=$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/viewer-body")
-check "that URL gives the file, with Range" 206 "$(curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-99' "http://127.0.0.1:18430$url")"
+check "that URL gives the file, with Range" 206 "$(curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-99' "http://127.0.0.1:$PORT$url")"
 check "a GET with no profile is served too" 200 "$(as_viewer GET "/Items/$stub_direct/PlaybackInfo?userId=$uid")"
 jq -c '.MediaSources[] | {Id, Path, TranscodingUrl: (.TranscodingUrl | sub("ApiKey=[^&]*"; "ApiKey=***"))}' "$WORK/viewer-body"
 
@@ -78,14 +78,14 @@ tracks=$(echo "$chosen" | jq -c '.DeviceProfile.DirectPlayProfiles = [] | .Audio
 check "the transcode is offered" 200 "$(as_viewer POST "/Items/$stub_transcode/PlaybackInfo?userId=$uid" "$tracks")"
 master=$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/viewer-body")
 echo "${master%%\?*}: $(echo "$master" | grep -o 'AudioStreamIndex=[0-9]*\|SubtitleStreamIndex=[0-9-]*' | tr '\n' ' ')"
-check "the master playlist opens" 200 "$(curl -s -o "$WORK/master.m3u8" -w '%{http_code}' "http://127.0.0.1:18430$master")"
+check "the master playlist opens" 200 "$(curl -s -o "$WORK/master.m3u8" -w '%{http_code}' "http://127.0.0.1:$PORT$master")"
 variant=$(grep -v '^#' "$WORK/master.m3u8" | head -1)
 folder=${master%%master.m3u8*}
-check "the variant playlist opens" 200 "$(curl -s -o "$WORK/variant.m3u8" -w '%{http_code}' "http://127.0.0.1:18430$folder$variant")"
+check "the variant playlist opens" 200 "$(curl -s -o "$WORK/variant.m3u8" -w '%{http_code}' "http://127.0.0.1:$PORT$folder$variant")"
 segment=$(grep -v '^#' "$WORK/variant.m3u8" | head -1)
-check "and ffmpeg gives a first segment" 200 "$(curl -s -o /dev/null -m 60 -w '%{http_code}' "http://127.0.0.1:18430$folder$segment")"
+check "and ffmpeg gives a first segment" 200 "$(curl -s -o /dev/null -m 60 -w '%{http_code}' "http://127.0.0.1:$PORT$folder$segment")"
 session=$(jq -r .PlaySessionId "$WORK/viewer-body")
-as_viewer DELETE "/Videos/ActiveEncodings?deviceId=jm-play-viewer&playSessionId=$session" >/dev/null
+as_viewer DELETE "/Videos/ActiveEncodings?deviceId=$PREFIX-viewer&playSessionId=$session" >/dev/null
 
 time_of() { grep -a '^PROGRESS' "$WORK/web/$1.out" | sed -E "s/.*'t': ([0-9.]+).*/\1/"; }
 src_of() { grep -a '^PROGRESS' "$WORK/web/$1.out" | sed -E "s/.*'src': '([^']*)'.*/\1/"; }
@@ -109,7 +109,7 @@ play "$stub_transcode" play local-transcode 14
 check "the video really advances" 1 "$(advanced "$(time_of local-transcode)")"
 check "it is a transcode of the local item" 1 "$(grep -a 'REQ GET' "$WORK/web/local-transcode.out" | grep -c -m1 "/videos/$local_transcode/\|/videos/$(echo "$local_transcode" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/')/")"
 sleep 3
-check "the server closed that transcode" 0 "$(docker exec jm-play-local sh -c 'grep -l ffmpeg /proc/[0-9]*/comm 2>/dev/null | wc -l')"
+check "the server closed that transcode" 0 "$(docker exec "$PREFIX-local" sh -c 'grep -l ffmpeg /proc/[0-9]*/comm 2>/dev/null | wc -l')"
 
 echo "--- nothing anywhere"
 play "$stub_nowhere" fail nowhere 12

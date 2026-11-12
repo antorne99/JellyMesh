@@ -24,7 +24,7 @@ list >"$WORK/before.json"
 echo "stubs before: $(jq length "$WORK/before.json")"
 jq -c '[.[] | select(.W or .P > 0)]' "$WORK/before.json"
 
-NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.sh" jm-play-local
+NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
 sleep 3
 wait_ready local
 login local
@@ -38,10 +38,10 @@ echo "after: $new_url"
 check "the file is signed" "1" "$(echo "$new_strm" | grep -c 'sig=')"
 check "the item in the database follows the file, without a scan" "$new_strm" "$new_url"
 check "the unsigned part is the old URL" "$old_strm" "${new_strm%%\?*}"
-check "the .strm holds no remote address" 0 "$(echo "$new_strm" | grep -c 'host.docker.internal\|18431' || true)"
+check "the .strm holds no remote address" 0 "$(echo "$new_strm" | grep -c "host.docker.internal\|$(port_of remote)" || true)"
 
 
-check "every .strm is signed" 0 "$(docker exec jm-play-local sh -c "find /federata/Film -name '*.strm' -exec grep -L 'sig=[0-9a-f]\{64\}$' {} + | wc -l")"
+check "every .strm is signed" 0 "$(docker exec "$PREFIX-local" sh -c "find /federata/Film -name '*.strm' -exec grep -L 'sig=[0-9a-f]\{64\}$' {} + | wc -l")"
 
 list >"$WORK/after.json"
 check "same items, same paths, same watch state" "$(cat "$WORK/before.json")" "$(cat "$WORK/after.json")"
@@ -52,5 +52,5 @@ list >"$WORK/after-scan.json"
 check "a full scan changes nothing" "$(cat "$WORK/before.json")" "$(cat "$WORK/after-scan.json")"
 check "the item keeps the signed URL after the scan" "$new_strm" "$(stub_url local "$tears")"
 
-echo "key: $(docker exec jm-play-local sh -c 'find /config -name strm-signing.key -exec ls -l {} \;')"
+echo "key: $(docker exec "$PREFIX-local" sh -c 'find /config -name strm-signing.key -exec ls -l {} \;')"
 exit $FAILED

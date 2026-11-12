@@ -2,7 +2,7 @@
 """Looks for remote values in what clients, files and logs hold. The secrets come from where they really are: the tokens
 from the database of the remote, the item and server IDs from the stub registry of the consumer.
 
-Usage: leak.py <folder with remote-db/ and federated-stubs.json> <file or folder>...
+Usage: [REMOTE_PORT=<host port of the remote>] leak.py <folder with remote-db/ and federated-stubs.json> <file or folder>...
 """
 import json
 import os
@@ -28,7 +28,8 @@ for stub in stubs["Stubs"]:
         servers.add(source["ServerId"].replace("-", ""))
         servers.add(source["ServerId"])
 
-fixed = ["18431", "host.docker.internal:18431", "/media/film/Tears"]
+port = os.environ.get("REMOTE_PORT", "18431")
+fixed = [port, "host.docker.internal:" + port, "/media/film/Tears"]
 print("secrets:", len(tokens), "tokens,", len(items), "items,", len(servers), "server ids")
 assert tokens and items
 

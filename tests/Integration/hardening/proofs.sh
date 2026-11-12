@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Whether the limits of the hardening leave real playback alone: the proofs of tests/Integration/provider, unchanged, on
-# private servers. They are copied to scratch with their names and ports moved, because they would collide with anything
-# else using them, and a private stock server stands in for the shared stack. Then what those proofs do not cover about a
+# private servers. PREFIX and PORT_A move their names and ports, because they would collide with anything else using
+# them, and a private stock server stands in for the shared stack. Then what those proofs do not cover about a
 # peer. Takes about 15 minutes. Containers and volumes are removed at the end.
 # usage: proofs.sh   (MEDIA points at tests/Integration/media of the main checkout, scratch goes in WORK)
 set -uo pipefail
@@ -17,26 +17,17 @@ export WORK=${WORK:-${TMPDIR:-/tmp}/jm-hard-proofs}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 STOCK=jm-hard-s
 STOCK_PORT=18457
-COPY=$WORK/hard-copy
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshHard", Device="hard", DeviceId="jm-hard-stock", Version="0.1"'
 FAILED=0
 
 rm -rf "$WORK"
-mkdir -p "$COPY"
-cp "$WT"/tests/Integration/provider/* "$COPY"/
-sed -i.bak \
-  -e 's/jm-prov/jm-hard-p/g' \
-  -e 's/1841\[234\]/1845[234]/g' \
-  -e 's/18410/18450/g; s/18411/18451/g; s/18412/18452/g; s/18413/18453/g; s/18414/18454/g' \
-  -e "s/stock 18454 8097/stock 18454 $STOCK_PORT/" \
-  -e 's#provider/gate\.py#hard-copy/gate.py#g' \
-  -e "s#^WT=.*#WT=$WT#" \
-  "$COPY"/*.sh
-rm -f "$COPY"/*.bak
+mkdir -p "$WORK"
+export PREFIX=jm-hard-p PORT_A=18450 STOCK_PORT
+PROOFS=$WT/tests/Integration/provider
 
 cleanup() {
-  ( cd "$COPY" && bash ./down.sh ) >/dev/null 2>&1
+  bash "$PROOFS/down.sh" >/dev/null 2>&1
   docker rm -f "$STOCK" >/dev/null 2>&1
   docker volume rm "$STOCK-config" "$STOCK-cache" >/dev/null 2>&1
 }
@@ -65,7 +56,7 @@ req POST "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibra
 until [ "$(req GET '/Items?Recursive=true&IncludeItemTypes=Movie' | jq -r .TotalRecordCount)" -gt 0 ]; do sleep 2; done
 sleep 20
 
-cd "$COPY" || exit 1
+cd "$PROOFS" || exit 1
 for script in up.sh federate.sh boundaries.sh feed.sh limits.sh network.sh; do
   echo "=== $script"
   bash "./$script" >"$WORK/out-$script" 2>&1

@@ -63,7 +63,7 @@ check "with no other source" 503 "$(cat "$WORK/during-n5")"
 check "the offline message" "$OFFLINE_TEXT" "$message"
 sync_now b
 check "the sync marks it offline" true "$(get b /JellyMesh/Admin/Sync | jq -r --arg i "$server" '.Servers[] | select(.ServerId == $i) | .IsOffline')"
-check "its stubs stay" 1 "$(docker exec jm-prov-b sh -c "find /federata -name '$SOLO*.strm' | wc -l" | tr -d ' ')"
+check "its stubs stay" 1 "$(docker exec "$PREFIX-b" sh -c "find /federata -name '$SOLO*.strm' | wc -l" | tr -d ' ')"
 
 echo "--- back online"
 gate_mode a up
@@ -75,7 +75,7 @@ close_stream n6
 
 echo "--- nothing secret in the logs"
 for s in a b; do
-  check "no address of a remote in the log of $s" 0 "$(docker logs "jm-prov-$s" 2>&1 | grep -c -E 'host\.docker\.internal|:1841[234]')"
+  check "no address of a remote in the log of $s" 0 "$(docker logs "$PREFIX-$s" 2>&1 | grep -c -E "host\.docker\.internal|:($GATE_A|$GATE_B|$GATE_STOCK)")"
 done
 
 exit "$FAILED"
