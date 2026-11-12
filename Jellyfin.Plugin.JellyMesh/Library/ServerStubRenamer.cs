@@ -17,7 +17,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// Moves the stubs of a renamed server to its new label with the mechanism of the migration (Q38): the new files are
 /// written next to the old ones, and once a scan has made the new items the watch state is carried and the old files go.
 /// </summary>
-public sealed class ServerStubRenamer
+public sealed class ServerStubRenamer : IServerStubRenamer
 {
     private readonly StubRegistry _registry;
     private readonly IPluginConfigurationStore _store;
@@ -42,26 +42,14 @@ public sealed class ServerStubRenamer
         _logger = logger;
     }
 
-    /// <summary>
-    /// Tells whether stubs of a server still wait for their old items to go.
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <returns>True while a rename of the server is not done.</returns>
+    /// <inheritdoc />
     public bool IsPending(Guid serverId)
     {
         var state = _registry.State;
         return state.Renames.Any(rename => _registry.Find(rename.StubId) is not { } stub || stub.ServerId == serverId);
     }
 
-    /// <summary>
-    /// Writes the stubs of a server under the label of its new name, and saves their new and old paths with the label
-    /// in one step. A change of case keeps the label (row 84).
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="name">Its new name.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>How many stubs moved.</returns>
-    /// <exception cref="IOException">A file or the registry could not be written; the new files are taken back.</exception>
+    /// <inheritdoc />
     public async Task<int> RelabelAsync(Guid serverId, string name, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
@@ -127,12 +115,7 @@ public sealed class ServerStubRenamer
         }
     }
 
-    /// <summary>
-    /// Carries the watch state of each renamed stub whose new item a scan has made, deletes its old files, and forgets
-    /// the old items once the library no longer has them. Safe to run again: what is left waits for the next scan.
-    /// </summary>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task.</returns>
+    /// <inheritdoc />
     public async Task FinishAsync(CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);

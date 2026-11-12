@@ -30,6 +30,7 @@ public sealed class StubCleanupTaskTests : IDisposable
     private readonly Mock<IProviderManager> _providers = new();
     private readonly Mock<IVersionLinker> _linker = new();
     private readonly Mock<ILayoutMigration> _migration = new();
+    private readonly Mock<IServerStubRenamer> _renames = new();
     private readonly CapturingLogger<StubCleanupTask> _logger = new();
     private readonly List<string> _calls = [];
     private readonly User _anna = new("anna", "auth", "reset");
@@ -62,7 +63,8 @@ public sealed class StubCleanupTaskTests : IDisposable
         _fixture.Remover,
         _logger,
         _linker.Object,
-        _migration.Object);
+        _migration.Object,
+        _renames.Object);
 
     private Task RunAsync() => Task().Run(new Progress<double>(), CancellationToken.None);
 
@@ -279,6 +281,44 @@ public sealed class StubCleanupTaskTests : IDisposable
         await RunAsync();
 
         Assert.Equal(["link", "migration"], seen);
+    }
+
+    [Fact]
+    public async Task BeforeTheLink_TheRenamedStubsFinish_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("link"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _renames
+            .Setup(renames => renames.FinishAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken token) =>
+            {
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add("renames");
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["renames", "link"], seen);
+    }
+
+    [Fact]
+    public async Task AFailedRenameFinish_IsLoggedByItsTypeOnly_AndTheLinkRuns()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        _renames
+            .Setup(renames => renames.FinishAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("/federata/secret"));
+
+        await RunAsync();
+
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        _linker.Verify(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
