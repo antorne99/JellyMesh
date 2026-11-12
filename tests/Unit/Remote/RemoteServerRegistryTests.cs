@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Xunit;
@@ -172,6 +173,58 @@ public class RemoteServerRegistryTests
         Assert.Equal([first.Id, server.Id, last.Id], fixture.Registry.GetServers().Select(item => item.Id));
         fixture.Store.SaveFailure = null;
         Assert.True(fixture.Registry.Remove(server.Id));
+    }
+
+    [Fact]
+    public async Task RemovingAServerHoldsItsAutomaticLibrariesForDeletion()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var record = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "b2" };
+        fixture.Store.Update(config =>
+        {
+            var stored = config.Servers.Single();
+            stored.AutomaticLibraries = true;
+            stored.AutomaticLibraryRegistry.Add(record);
+            stored.PreexistingLibraryIds.Add("c3");
+        });
+
+        Assert.True(fixture.Registry.Remove(server.Id));
+
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Equal(server.Id, held.ServerId);
+        Assert.Equal(("Casa - Serie", "b2"), (Assert.Single(held.Libraries).Name, held.Libraries[0].ItemId));
+        Assert.Equal(["c3"], held.PreexistingLibraryIds);
+    }
+
+    [Fact]
+    public async Task RemovingAServerWithItsSwitchOffHoldsNothing()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+
+        Assert.True(fixture.Registry.Remove(server.Id));
+
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task ARemovalThatCannotBeSavedHoldsNoAutomaticLibrary()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        fixture.Store.Update(config =>
+        {
+            var stored = config.Servers.Single();
+            stored.AutomaticLibraries = true;
+            stored.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film" });
+        });
+        fixture.Store.SaveFailure = new IOException("disk full");
+
+        Assert.Throws<IOException>(() => fixture.Registry.Remove(server.Id));
+
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Single(Assert.Single(fixture.Store.Configuration.Servers).AutomaticLibraryRegistry);
     }
 
     [Fact]

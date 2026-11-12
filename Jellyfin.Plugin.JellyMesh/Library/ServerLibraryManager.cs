@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,6 +33,9 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private readonly Lock _jobsLock = new();
     private readonly Dictionary<Guid, Task> _jobs = [];
     private readonly ConcurrentDictionary<Guid, AutomaticLibrariesError> _errors = new();
+    private Task _cleanup = Task.CompletedTask;
+    private bool _cleaning;
+    private bool _cleanAgain;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ServerLibraryManager"/> class.
@@ -101,37 +105,41 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     /// <inheritdoc />
+    public Task DeleteRemovedServerLibraries()
+    {
+        lock (_jobsLock)
+        {
+            if (_cleaning)
+            {
+                _cleanAgain = true;
+                return _cleanup;
+            }
+
+            _cleaning = true;
+            _cleanup = Task.Run(CleanAsync);
+            return _cleanup;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task ReconcileAsync(CancellationToken cancellationToken)
     {
-        if (!await _gate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        if (await _gate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
-            return;
-        }
-
-        try
-        {
-            var serverIds = _store.Read(config => config.FederatedFolderPath.Length == 0
-                ? []
-                : config.Servers.Where(server => server.AutomaticLibraryRegistry.Count > 0).Select(server => server.Id).ToList());
-            if (serverIds.Count == 0)
+            try
             {
-                return;
+                FollowAll();
             }
-
-            var folders = ReadFolders();
-            if (folders is null)
+            finally
             {
-                return;
-            }
-
-            foreach (var serverId in serverIds)
-            {
-                Follow(serverId, folders);
+                _gate.Release();
             }
         }
-        finally
+
+        // After a failure or a restart, what removed servers left is tried again.
+        if (_store.Read(config => config.RemovedServerLibraries.Count > 0))
         {
-            _gate.Release();
+            _ = DeleteRemovedServerLibraries();
         }
     }
 
@@ -144,6 +152,31 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     private static RemoteServerConfig? Find(PluginConfiguration config, Guid serverId) => config.Servers.FirstOrDefault(server => server.Id == serverId);
+
+    private static RemovedServerLibrariesConfig? HeldOf(PluginConfiguration config, Guid serverId) =>
+        config.RemovedServerLibraries.FirstOrDefault(held => held.ServerId == serverId);
+
+    private static HashSet<string> IdSet(IEnumerable<string> ids) => ids.Where(id => id.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    // The registry of a configured server. It never adopts a library that a removed server with the same id left.
+    private static Registry? LiveRegistry(PluginConfiguration config, Guid serverId) => Find(config, serverId) is { } server
+        ? new Registry(
+            serverId,
+            server.AutomaticLibraryRegistry,
+            server.ReleasedAutomaticLibraries,
+            IdSet(server.PreexistingLibraryIds),
+            IdSet(HeldOf(config, serverId)?.Libraries.Select(record => record.ItemId) ?? []))
+        : null;
+
+    // The registry a removed server left. A configured server with the same id wins: its libraries are never seen here.
+    private static Registry? HeldRegistry(PluginConfiguration config, Guid serverId) => HeldOf(config, serverId) is { } held
+        ? new Registry(
+            serverId,
+            held.Libraries,
+            null,
+            IdSet(held.PreexistingLibraryIds.Concat(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? [])),
+            IdSet([]))
+        : null;
 
     private static string PathOf(ServerLibraryKind kind, string root, Guid serverId) => kind == ServerLibraryKind.Movies
         ? FederatedFolderLayout.ServerMoviesPath(root, serverId)
@@ -249,6 +282,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
 
         Follow(serverId, folders);
+        RecordPreexisting(serverId, folders);
         _materializer.PrepareServerFolders();
         var missing = _store.Read(config => _kinds
             .Where(kind => Find(config, serverId)?.AutomaticLibraryRegistry.All(record => record.Kind != kind) == true)
@@ -305,8 +339,26 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var before = folders.Select(folder => folder.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var made = ReadFolders()?.FirstOrDefault(folder => !before.Contains(folder.Name) && Passes(folder, kind, root, serverId));
         var record = new AutomaticLibraryConfig { Kind = kind, Name = made?.Name ?? name, ItemId = made?.ItemId ?? string.Empty };
-        _store.Update(config => Find(config, serverId)?.AutomaticLibraryRegistry.Add(record));
+        var held = false;
+        _store.Update(config =>
+        {
+            // A server removed meanwhile leaves the library to delete after it, in the same save (decision 140).
+            if (Find(config, serverId) is { } server)
+            {
+                server.AutomaticLibraryRegistry.Add(record);
+            }
+            else
+            {
+                config.HoldAutomaticLibraries(serverId, [record], []);
+                held = true;
+            }
+        });
         _logger.LogInformation("Created the library {Library} for {Server}", record.Name, serverName);
+        if (held)
+        {
+            _ = DeleteRemovedServerLibraries();
+        }
+
         return true;
     }
 
@@ -323,21 +375,98 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
     private async Task DisableAsync(Guid serverId, CancellationToken cancellationToken)
     {
-        while (_store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count > 0))
+        if (!await DeleteAllAsync(config => LiveRegistry(config, serverId), serverId, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        _store.Update(config =>
+        {
+            if (Find(config, serverId) is { } server)
+            {
+                server.AutomaticLibraries = false;
+            }
+        });
+    }
+
+    private async Task CleanAsync()
+    {
+        while (true)
+        {
+            try
+            {
+                var token = _shutdown.Token;
+                await _gate.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    await DeleteHeldAsync(token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // The server is shutting down.
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError("Cannot delete the libraries of a removed server: {Error}", exception.GetType().Name);
+            }
+
+            lock (_jobsLock)
+            {
+                if (!_cleanAgain)
+                {
+                    _cleaning = false;
+                    return;
+                }
+
+                _cleanAgain = false;
+            }
+        }
+    }
+
+    // A removed server whose deletion stops keeps what is left, for the next try.
+    private async Task DeleteHeldAsync(CancellationToken cancellationToken)
+    {
+        var serverIds = _store.Read(config => config.RemovedServerLibraries.Select(held => held.ServerId).ToList());
+        foreach (var serverId in serverIds)
+        {
+            if (!await DeleteAllAsync(config => HeldRegistry(config, serverId), null, cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            _store.Update(config =>
+            {
+                if (HeldOf(config, serverId) is { Libraries.Count: 0 } held)
+                {
+                    config.RemovedServerLibraries.Remove(held);
+                }
+            });
+        }
+    }
+
+    // Deletes the libraries of a registry one at a time, each checked again on a fresh read. False when it had to stop.
+    private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, CancellationToken cancellationToken)
+    {
+        while (_store.Read(config => locate(config)?.Libraries.Count > 0))
         {
             await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
             var folders = ReadFolders();
             var root = _store.Read(config => config.FederatedFolderPath);
             if (folders is null || root.Length == 0)
             {
-                _errors[serverId] = AutomaticLibrariesError.ReadFailed;
-                return;
+                SetError(errorKey, AutomaticLibrariesError.ReadFailed);
+                return false;
             }
 
             // Checked again on a fresh read, so that the name is the current one and a changed library is left alone.
-            Follow(serverId, folders);
-            var next = _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.FirstOrDefault() is { } record
-                ? new AutomaticLibraryStatus(record.Kind, record.Name)
+            Follow(locate, folders);
+            var next = _store.Read(config => locate(config) is { } registry && registry.Libraries.FirstOrDefault() is { } record
+                ? new DeletedLibrary(registry.ServerId, record.Kind, record.Name)
                 : null);
             if (next is null)
             {
@@ -351,29 +480,55 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 _logger.LogError("Cannot delete the library {Library}: {Error}", next.Name, exception.GetType().Name);
-                _errors[serverId] = AutomaticLibrariesError.RemoveFailed;
-                return;
+                SetError(errorKey, AutomaticLibrariesError.RemoveFailed);
+                return false;
             }
 
+            // The server may have been removed meanwhile, so its record may now be among those it left.
             _store.Update(config =>
             {
-                var registry = Find(config, serverId)?.AutomaticLibraryRegistry;
-                if (registry?.FirstOrDefault(record => record.Kind == next.Kind) is { } record)
+                foreach (var registry in new[] { LiveRegistry(config, next.ServerId), HeldRegistry(config, next.ServerId) })
                 {
-                    registry.Remove(record);
+                    if (registry?.Libraries.FirstOrDefault(record => record.Kind == next.Kind && string.Equals(record.Name, next.Name, StringComparison.Ordinal)) is { } record)
+                    {
+                        registry.Libraries.Remove(record);
+                    }
                 }
             });
             _logger.LogInformation("Deleted the library {Library}", next.Name);
         }
 
-        _store.Update(config =>
-        {
-            if (Find(config, serverId) is { } server)
-            {
-                server.AutomaticLibraries = false;
-            }
-        });
+        return true;
     }
+
+    private void SetError(Guid? serverId, AutomaticLibrariesError error)
+    {
+        if (serverId is { } key)
+        {
+            _errors[key] = error;
+        }
+    }
+
+    // Called after the follow, so that a library of the registry renamed in the dashboard is not recorded as the admin's.
+    private void RecordPreexisting(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders) => _store.Update(config =>
+    {
+        if (Find(config, serverId) is not { } server || LiveRegistry(config, serverId) is not { } registry)
+        {
+            return;
+        }
+
+        var visible = registry.Visible(folders);
+        var owned = registry.Libraries.Select(record => FindRecorded(record, visible)).OfType<VirtualFolderInfo>().ToList();
+        var preexisting = folders
+            .Where(folder => !owned.Contains(folder) && !string.IsNullOrEmpty(folder.ItemId))
+            .Select(folder => folder.ItemId!)
+            .ToList();
+        server.PreexistingLibraryIds.Clear();
+        foreach (var id in preexisting)
+        {
+            server.PreexistingLibraryIds.Add(id);
+        }
+    });
 
     private List<VirtualFolderInfo>? ReadFolders()
     {
@@ -388,11 +543,35 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
     }
 
-    // Follows a rename where path and type hold, and drops from the registry a library whose path or type changed.
-    private void Follow(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders)
+    private void FollowAll()
     {
-        var plan = _store.Read(config => Find(config, serverId) is { } server && config.FederatedFolderPath.Length > 0
-            ? PlanFollow(server, config.FederatedFolderPath, folders)
+        var serverIds = _store.Read(config => config.FederatedFolderPath.Length == 0
+            ? []
+            : config.Servers.Where(server => server.AutomaticLibraryRegistry.Count > 0).Select(server => server.Id).ToList());
+        if (serverIds.Count == 0)
+        {
+            return;
+        }
+
+        var folders = ReadFolders();
+        if (folders is null)
+        {
+            return;
+        }
+
+        foreach (var serverId in serverIds)
+        {
+            Follow(serverId, folders);
+        }
+    }
+
+    private void Follow(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders) => Follow(config => LiveRegistry(config, serverId), folders);
+
+    // Follows a rename where path and type hold, and drops from the registry a library whose path or type changed.
+    private void Follow(Func<PluginConfiguration, Registry?> locate, IReadOnlyList<VirtualFolderInfo> folders)
+    {
+        var plan = _store.Read(config => locate(config) is { } registry && config.FederatedFolderPath.Length > 0
+            ? PlanFollow(registry, config.FederatedFolderPath, folders)
             : []);
         if (plan.Count == 0)
         {
@@ -401,30 +580,29 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
         _store.Update(config =>
         {
-            if (Find(config, serverId) is not { } server)
+            if (locate(config) is not { } registry)
             {
                 return;
             }
 
             foreach (var change in plan)
             {
-                var record = server.AutomaticLibraryRegistry.FirstOrDefault(entry => entry.Kind == change.Kind);
-                if (record is null)
+                if (!registry.Libraries.Contains(change.Record))
                 {
                     continue;
                 }
 
                 if (change.Found is { } found)
                 {
-                    record.Name = found.Name;
-                    record.ItemId = found.ItemId ?? string.Empty;
+                    change.Record.Name = found.Name;
+                    change.Record.ItemId = found.ItemId ?? string.Empty;
                     continue;
                 }
 
-                server.AutomaticLibraryRegistry.Remove(record);
-                if (!server.ReleasedAutomaticLibraries.Contains(change.ReleasedName, StringComparer.Ordinal))
+                registry.Libraries.Remove(change.Record);
+                if (registry.Released is { } released && !released.Contains(change.ReleasedName, StringComparer.Ordinal))
                 {
-                    server.ReleasedAutomaticLibraries.Add(change.ReleasedName);
+                    released.Add(change.ReleasedName);
                 }
             }
         });
@@ -435,10 +613,11 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
     }
 
-    private static List<FollowChange> PlanFollow(RemoteServerConfig server, string root, IReadOnlyList<VirtualFolderInfo> folders)
+    private static List<FollowChange> PlanFollow(Registry registry, string root, IReadOnlyList<VirtualFolderInfo> folders)
     {
         // A library still known by id or name is the one in the registry, whatever its path now.
-        var known = server.AutomaticLibraryRegistry
+        folders = registry.Visible(folders);
+        var known = registry.Libraries
             .Select(record => (Record: record, Folder: FindRecorded(record, folders)))
             .ToList();
         var claimed = known.Where(pair => pair.Folder is not null).Select(pair => pair.Folder!).ToList();
@@ -448,18 +627,20 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             if (folder is null)
             {
                 // Gone by id and name: renamed if exactly one other library holds the same folder with the same type.
-                var candidates = folders.Where(other => !claimed.Contains(other) && Passes(other, record.Kind, root, server.Id)).ToList();
+                var candidates = folders
+                    .Where(other => !claimed.Contains(other) && registry.MayAdopt(other) && Passes(other, record.Kind, root, registry.ServerId))
+                    .ToList();
                 changes.Add(candidates.Count == 1
-                    ? new FollowChange(record.Kind, candidates[0], record.Name)
-                    : new FollowChange(record.Kind, null, record.Name));
+                    ? new FollowChange(record, candidates[0], record.Name)
+                    : new FollowChange(record, null, record.Name));
             }
-            else if (!Passes(folder, record.Kind, root, server.Id))
+            else if (!Passes(folder, record.Kind, root, registry.ServerId))
             {
-                changes.Add(new FollowChange(record.Kind, null, folder.Name));
+                changes.Add(new FollowChange(record, null, folder.Name));
             }
             else if (!string.Equals(folder.Name, record.Name, StringComparison.Ordinal) || !string.Equals(folder.ItemId ?? string.Empty, record.ItemId, StringComparison.Ordinal))
             {
-                changes.Add(new FollowChange(record.Kind, folder, record.Name));
+                changes.Add(new FollowChange(record, folder, record.Name));
             }
         }
 
@@ -471,5 +652,21 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         (record.ItemId.Length > 0 ? folders.FirstOrDefault(folder => string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase)) : null)
         ?? folders.FirstOrDefault(folder => string.Equals(folder.Name, record.Name, StringComparison.Ordinal));
 
-    private sealed record FollowChange(ServerLibraryKind Kind, VirtualFolderInfo? Found, string ReleasedName);
+    private sealed record FollowChange(AutomaticLibraryConfig Record, VirtualFolderInfo? Found, string ReleasedName);
+
+    private sealed record DeletedLibrary(Guid ServerId, ServerLibraryKind Kind, string Name);
+
+    // A registry with the ids it never sees, such as the libraries there at switch-on, and those it sees but never adopts.
+    private sealed record Registry(
+        Guid ServerId,
+        Collection<AutomaticLibraryConfig> Libraries,
+        Collection<string>? Released,
+        IReadOnlySet<string> Hidden,
+        IReadOnlySet<string> NotAdopted)
+    {
+        public List<VirtualFolderInfo> Visible(IReadOnlyList<VirtualFolderInfo> folders) =>
+            folders.Where(folder => folder.ItemId is null || !Hidden.Contains(folder.ItemId)).ToList();
+
+        public bool MayAdopt(VirtualFolderInfo folder) => folder.ItemId is null || !NotAdopted.Contains(folder.ItemId);
+    }
 }

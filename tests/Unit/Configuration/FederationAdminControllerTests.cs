@@ -247,6 +247,47 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task Removing_a_server_deletes_its_automatic_libraries_with_no_confirmation()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var record = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "a1" };
+        fixture.Store.Update(config =>
+        {
+            var stored = config.Servers.Single();
+            stored.AutomaticLibraries = true;
+            stored.AutomaticLibraryRegistry.Add(record);
+        });
+        var libraries = new Mock<IServerLibraryManager>();
+        var heldAtStart = 0;
+        libraries.Setup(manager => manager.DeleteRemovedServerLibraries())
+            .Callback(() => heldAtStart = fixture.Store.Configuration.RemovedServerLibraries.Sum(entry => entry.Libraries.Count))
+            .Returns(Task.CompletedTask);
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, libraries: libraries.Object);
+
+        var result = await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(1, heldAtStart);
+        libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Once);
+        libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_removal_that_fails_deletes_no_automatic_library()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var libraries = new Mock<IServerLibraryManager>();
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, libraries: libraries.Object);
+        fixture.Store.SaveFailure = new IOException("disk full");
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Never);
+    }
+
+    [Fact]
     public async Task A_removal_that_fails_keeps_the_manual_merges()
     {
         using var fixture = new RegistryFixture();
@@ -314,7 +355,12 @@ public class FederationAdminControllerTests
     private static ManualMerge Merge(params MergedCopy[] copies)
         => new() { Id = Guid.NewGuid(), CreatedUtc = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), Copies = copies };
 
-    private static FederationAdminController CreateController(RegistryFixture fixture, ICatalogSyncService sync, IManualMergeStore? merges = null, ILogger<FederationAdminController>? logger = null) => new(
+    private static FederationAdminController CreateController(
+        RegistryFixture fixture,
+        ICatalogSyncService sync,
+        IManualMergeStore? merges = null,
+        ILogger<FederationAdminController>? logger = null,
+        IServerLibraryManager? libraries = null) => new(
         fixture.Registry,
         fixture.Vault,
         fixture.Store,
@@ -323,7 +369,7 @@ public class FederationAdminControllerTests
         new FixedFederatedRootSource(null),
         sync,
         merges ?? new InMemoryMergeStore(),
-        Mock.Of<IServerLibraryManager>(),
+        libraries ?? Mock.Of<IServerLibraryManager>(),
         logger ?? new CapturingLogger<FederationAdminController>());
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
