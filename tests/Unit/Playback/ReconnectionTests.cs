@@ -1,0 +1,133 @@
+using System;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Remote;
+using MediaBrowser.Model.MediaInfo;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
+
+// A source that drops during playback goes last for that user and title, and a title that keeps failing is refused (row 57).
+public class ReconnectionTests
+{
+    private static readonly Guid _user = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid _otherUser = Guid.Parse("33333333-3333-3333-3333-333333333333");
+    private static readonly Guid _serverA = Guid.Parse("a0000000-0000-0000-0000-000000000000");
+    private static readonly Guid _serverB = Guid.Parse("b0000000-0000-0000-0000-000000000000");
+
+    private readonly CoordinatorFixture _fixture = new();
+    private readonly StubEntry _a = ServerStub("a", _serverA, "a1", "a2");
+    private readonly StubEntry _b = ServerStub("b", _serverB, "b1");
+    private readonly StubEntry _single = ServerStub("a", _serverA, "a1");
+
+    private static StubEntry ServerStub(string id, Guid server, params string[] items) => new()
+    {
+        Id = id,
+        ServerId = server,
+        Kind = StubKind.Movie,
+        RelativePath = server.ToString("D") + "/Film/x/x - " + id + ".strm",
+        Sources = items.Select(item => new StubSource(server, item, item + "-ms")).ToList(),
+        IdentityKey = "key"
+    };
+
+    private static Guid ItemOf(StubEntry stub) => Guid.Parse("70000000-0000-0000-0000-0000000000" + (stub.Id == "a" ? "0a" : "0b"));
+
+    private static PlaybackIdentity IdentityOf(Guid user, StubEntry stub) => new(user, "device", ItemOf(stub), stub.Id);
+
+    private async Task<PlaybackOutcome> OpenAsync(StubEntry stub, Guid user, params StubEntry[] fallbacks)
+    {
+        _fixture.Client.Requests.Clear();
+        return await _fixture.Coordinator.OpenAsync(
+            new PlaybackOpenRequest
+            {
+                Identity = IdentityOf(user, stub),
+                Stub = stub,
+                Fallbacks = fallbacks.Select(fallback => new PlaybackCandidate(ItemOf(fallback), fallback)).ToList(),
+                LocalToken = PlaybackValues.LocalToken
+            },
+            CancellationToken.None);
+    }
+
+    // Plays the title, then the session that served drops.
+    private async Task<PlaybackSession> PlayAndDropAsync(StubEntry stub, Guid user, params StubEntry[] fallbacks)
+    {
+        var outcome = await OpenAsync(stub, user, fallbacks);
+        var session = _fixture.Sessions.Find(outcome.Response!.PlaySessionId)!;
+        _fixture.Coordinator.ReportFailure(session);
+        return session;
+    }
+
+    [Fact]
+    public async Task The_next_open_tries_another_source_of_the_stub_before_the_one_that_dropped()
+    {
+        await PlayAndDropAsync(_a, _user);
+
+        await OpenAsync(_a, _user);
+
+        Assert.Equal("a2", Assert.Single(_fixture.Sessions.All).Source.ItemId);
+        Assert.Equal(["a2"], _fixture.Client.Requests.Select(request => request.ItemId));
+    }
+
+    [Fact]
+    public async Task The_next_open_tries_another_version_before_the_one_that_dropped()
+    {
+        await PlayAndDropAsync(_single, _user, _b);
+
+        var outcome = await OpenAsync(_single, _user, _b);
+
+        Assert.Equal(IdentityOf(_user, _b), outcome.Served);
+        Assert.Equal(["b1"], _fixture.Client.Requests.Select(request => request.ItemId));
+    }
+
+    [Fact]
+    public async Task The_source_that_dropped_still_serves_when_nothing_else_can()
+    {
+        await PlayAndDropAsync(_single, _user, _b);
+        _fixture.Registry.Offline.Add(_serverB);
+
+        var outcome = await OpenAsync(_single, _user, _b);
+
+        Assert.Equal(IdentityOf(_user, _single), outcome.Served);
+        Assert.Equal("a1", Assert.Single(_fixture.Sessions.All).Source.ItemId);
+    }
+
+    [Fact]
+    public async Task The_source_that_dropped_gets_its_place_back_after_five_minutes()
+    {
+        await PlayAndDropAsync(_single, _user, _b);
+
+        _fixture.Clock.Advance(TimeSpan.FromMinutes(5));
+        var outcome = await OpenAsync(_single, _user, _b);
+
+        Assert.Equal(IdentityOf(_user, _single), outcome.Served);
+        Assert.Equal(["a1"], _fixture.Client.Requests.Select(request => request.ItemId));
+    }
+
+    [Fact]
+    public async Task A_drop_for_one_user_leaves_the_order_of_another_user()
+    {
+        await PlayAndDropAsync(_single, _user, _b);
+
+        var outcome = await OpenAsync(_single, _otherUser, _b);
+
+        Assert.Equal(IdentityOf(_otherUser, _single), outcome.Served);
+    }
+
+    [Fact]
+    public async Task The_file_no_longer_opens_first_the_source_that_dropped()
+    {
+        _fixture.Client.Answer = (request, _) => Task.FromResult(request.ItemId == "a1"
+            ? RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError)
+            : FakePlaybackClient.Hls(request));
+        await PlayAndDropAsync(_a, _user);
+        _fixture.Client.Opened.Clear();
+
+        using var content = await _fixture.Coordinator.OpenFileAsync(_a, HttpMethod.Get, null, CancellationToken.None);
+
+        Assert.Contains("/Videos/a1/stream?static=true", _fixture.Client.Opened.Last(), StringComparison.Ordinal);
+    }
+}
