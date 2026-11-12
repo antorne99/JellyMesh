@@ -1100,6 +1100,102 @@ public sealed class ServerLibraryManagerTests
         Assert.Empty(server.PreexistingLibraryIds);
     }
 
+    [Fact]
+    public async Task A_renamed_server_renames_its_libraries_and_keeps_them_in_the_registry()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Scans.Steps.Clear();
+        fixture.Server.Name = "Mare";
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal([("Casa - Film", "Mare - Film"), ("Casa - Serie", "Mare - Serie")], fixture.Renamer.Calls);
+        Assert.Equal(
+            [("Mare - Film", fixture.Libraries.IdOf("Mare - Film")), ("Mare - Serie", fixture.Libraries.IdOf("Mare - Serie"))],
+            fixture.Server.AutomaticLibraryRegistry.Select(record => (record.Name, record.ItemId)));
+        Assert.Equal(["wait"], fixture.Scans.Steps);
+    }
+
+    [Fact]
+    public async Task A_rename_takes_the_guid_digits_when_the_new_name_is_taken_but_not_for_its_own_old_name()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Add("Mare - Film", CollectionTypeOptions.movies, "/media/mare");
+        fixture.Server.Name = "Mare";
+
+        await fixture.Manager.RenameAsync(_serverId, CancellationToken.None);
+
+        Assert.Equal([("Casa - Film", "Mare 1a2b3c4d - Film"), ("Casa - Serie", "Mare - Serie")], fixture.Renamer.Calls);
+    }
+
+    [Fact]
+    public async Task A_library_that_already_has_the_name_is_not_renamed()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Scans.Steps.Clear();
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Empty(fixture.Renamer.Calls);
+    }
+
+    [Fact]
+    public async Task A_library_whose_path_the_admin_changed_is_not_renamed()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Find("Casa - Film").Locations = ["/media/altro"];
+        fixture.Server.Name = "Mare";
+
+        await fixture.Manager.RenameAsync(_serverId, CancellationToken.None);
+
+        Assert.Equal([("Casa - Serie", "Mare - Serie")], fixture.Renamer.Calls);
+        Assert.Equal(["Mare - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+    }
+
+    [Fact]
+    public async Task Both_names_taken_leave_the_library_as_it_is_and_the_page_is_told()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Add("Mare - Film", CollectionTypeOptions.movies, "/media/a");
+        fixture.Libraries.Add("Mare 1a2b3c4d - Film", CollectionTypeOptions.movies, "/media/b");
+        fixture.Server.Name = "Mare";
+
+        Assert.False(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal(["Casa - Film", "Mare - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(AutomaticLibrariesError.NameTaken, fixture.Manager.GetState(_serverId).Error);
+    }
+
+    [Fact]
+    public async Task A_failed_rename_is_told_and_the_registry_keeps_the_old_names()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Scans.Steps.Clear();
+        fixture.Renamer.Failure = new IOException("busy");
+        fixture.Server.Name = "Mare";
+
+        Assert.False(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(AutomaticLibrariesError.RenameFailed, fixture.Manager.GetState(_serverId).Error);
+    }
+
+    [Fact]
+    public async Task A_server_without_automatic_libraries_has_nothing_to_rename()
+    {
+        var fixture = new Fixture();
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+        Assert.Empty(fixture.Renamer.Calls);
+        Assert.Empty(fixture.Scans.Steps);
+    }
+
     private sealed class Fixture
     {
         public Fixture(string root = Root, string serverName = "Casa")
@@ -1128,7 +1224,13 @@ public sealed class ServerLibraryManagerTests
 
         public ServerLibraryManager Manager { get; }
 
-        public ServerLibraryManager NewManager() => new(Store, Libraries.Object, FileSystem, Scans, Materializer.Object, new CapturingLogger<ServerLibraryManager>());
+        public FakeRenamer Renamer { get; } = new();
+
+        public ServerLibraryManager NewManager()
+        {
+            Renamer.Libraries = Libraries;
+            return new(Store, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, new CapturingLogger<ServerLibraryManager>());
+        }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.
         public void RemoveServer() => Store.Update(config =>
@@ -1235,6 +1337,34 @@ public sealed class ServerLibraryManagerTests
             Locations = folder.Locations.ToArray(),
             ItemId = folder.ItemId
         };
+    }
+
+    internal sealed class FakeRenamer : ILibraryRenamer
+    {
+        public FakeLibraries? Libraries { get; set; }
+
+        public List<(string Name, string NewName)> Calls { get; } = [];
+
+        public Exception? Failure { get; set; }
+
+        public bool Refuses { get; set; }
+
+        public Task<Guid?> RenameAsync(string name, Guid? itemId, Jellyfin.Data.Enums.CollectionType? type, string newName, CancellationToken cancellationToken)
+        {
+            Calls.Add((name, newName));
+            if (Failure is not null)
+            {
+                throw Failure;
+            }
+
+            if (Refuses)
+            {
+                return Task.FromResult<Guid?>(null);
+            }
+
+            Libraries!.RenameFromDashboard(name, newName);
+            return Task.FromResult<Guid?>(Guid.Parse(Libraries.IdOf(newName)));
+        }
     }
 
     internal sealed class RecordingScans : ILibraryScans

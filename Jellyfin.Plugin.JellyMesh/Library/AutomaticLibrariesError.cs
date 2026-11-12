@@ -20,6 +20,9 @@ public enum AutomaticLibrariesError
     /// <summary>The list of libraries or the federated folder could not be read.</summary>
     ReadFailed,
 
+    /// <summary>The server could not rename a library.</summary>
+    RenameFailed,
+
     /// <summary>Something else failed, such as saving the configuration.</summary>
     Failed
 }
