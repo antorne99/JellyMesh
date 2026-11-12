@@ -690,7 +690,8 @@ public class VersionGuardTests
         _transcodes.Setup(manager => manager.GetTranscodingJob("play")).Returns(job);
         var context = Context("HlsSegment", "GetHlsVideoSegmentLegacy", ("itemId", N(_localItem)), ("playlistId", "0123456789abcdef"), ("segmentId", "0123456789abcdef0"), ("segmentContainer", "ts"));
 
-        Assert.False(await RunAsync(Guard(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+        Assert.True(await RunAsync(Guard(), context));
+        Assert.Null(context.Result);
+        Assert.StartsWith(StockRouteGuardFilter.MissingFilePrefix, Assert.IsType<string>(context.ActionArguments["playlistId"]), StringComparison.Ordinal);
     }
 }

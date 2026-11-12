@@ -2,6 +2,8 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
@@ -25,6 +27,7 @@ public class PlaybackProxyTests
 
     private readonly CoordinatorFixture _fixture = new();
     private readonly Mock<ILibraryManager> _library = new();
+    private readonly Mock<IStubRegistry> _stubs = new();
     private readonly Mock<IAuthorizationContext> _authorization = new();
     private readonly Mock<ISessionManager> _sessionManager = new();
     private readonly User _user = new("viewer", "auth", "reset");
@@ -41,7 +44,7 @@ public class PlaybackProxyTests
         _controller = new PlaybackProxyController(
             _fixture.Sessions,
             _fixture.Coordinator,
-            _library.Object,
+            new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
             _authorization.Object,
             _fixture.Clock,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance))
@@ -142,6 +145,59 @@ public class PlaybackProxyTests
 
         Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
         VerifyMessage(Times.Never());
+    }
+
+    // Row 229: the title of the session is a stub whose path left every library after the session opened.
+    private void StubLeftEveryLibrary()
+    {
+        _library.Setup(library => library.GetItemById(_item)).Returns(new Movie { Id = _item, ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") });
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns(PlaybackValues.Stub(PlaybackValues.Source()));
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+    }
+
+    [Fact]
+    public async Task A_session_whose_stub_left_every_library_stops_streaming_to_its_owner()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        StubLeftEveryLibrary();
+
+        Assert.IsType<NotFoundResult>(await _controller.GetStream(session.Id, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_session_whose_stub_left_every_library_serves_its_owner_no_playlist()
+    {
+        var session = Session(PlaybackStreamKind.Hls);
+        StubLeftEveryLibrary();
+
+        Assert.IsType<NotFoundResult>(await _controller.GetMaster(session.Id, CancellationToken.None));
+        Assert.IsType<NotFoundResult>(await _controller.GetFile(session.Id, 0, "main.m3u8", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_session_whose_stub_left_every_library_keeps_playing_for_an_admin()
+    {
+        _user.Permissions.Add(new Permission(PermissionKind.IsAdministrator, true));
+        var session = Session(PlaybackStreamKind.Direct);
+        StubLeftEveryLibrary();
+        StreamsFailWith(RemoteFailure.Unreachable);
+
+        var result = await _controller.GetStream(session.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_session_whose_stub_is_in_a_library_streams_to_its_owner()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        StubLeftEveryLibrary();
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
+        StreamsFailWith(RemoteFailure.Unreachable);
+
+        var result = await _controller.GetStream(session.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
     }
 
     private sealed class CompletionFeature : HttpResponseFeature

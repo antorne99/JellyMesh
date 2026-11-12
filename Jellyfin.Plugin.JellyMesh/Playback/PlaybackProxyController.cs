@@ -4,8 +4,6 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Remote;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -15,8 +13,8 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
 /// What clients play: playlists, segments, subtitles and streams of a session. Each request is checked again against the
-/// user and the library of the title, and a remote failure ends in a bare status: remote bodies never pass. A refusal for
-/// the stream limit also tells the device why.
+/// user and the library of the title, which a user who is not an admin must find in a library (D17), and a remote failure
+/// ends in a bare status: remote bodies never pass. A refusal for the stream limit also tells the device why.
 /// </summary>
 [ApiController]
 [Route(PlaybackUrls.SessionRoute + "/{sessionId}")]
@@ -29,7 +27,7 @@ public class PlaybackProxyController : ControllerBase
 
     private readonly PlaybackSessionStore _sessions;
     private readonly PlaybackCoordinator _coordinator;
-    private readonly ILibraryManager _libraryManager;
+    private readonly StubLookup _stubs;
     private readonly IAuthorizationContext _authorization;
     private readonly TimeProvider _clock;
     private readonly PlaybackRefusal _refusal;
@@ -39,21 +37,21 @@ public class PlaybackProxyController : ControllerBase
     /// </summary>
     /// <param name="sessions">The sessions.</param>
     /// <param name="coordinator">The coordinator.</param>
-    /// <param name="libraryManager">The library manager.</param>
+    /// <param name="stubs">The stubs, for what a user sees.</param>
     /// <param name="authorization">The authorization context.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="refusal">The refusal of a playback.</param>
     public PlaybackProxyController(
         PlaybackSessionStore sessions,
         PlaybackCoordinator coordinator,
-        ILibraryManager libraryManager,
+        StubLookup stubs,
         IAuthorizationContext authorization,
         TimeProvider clock,
         PlaybackRefusal refusal)
     {
         _sessions = sessions;
         _coordinator = coordinator;
-        _libraryManager = libraryManager;
+        _stubs = stubs;
         _authorization = authorization;
         _clock = clock;
         _refusal = refusal;
@@ -174,7 +172,7 @@ public class PlaybackProxyController : ControllerBase
             || string.IsNullOrEmpty(authorization.Token)
             || _sessions.Find(sessionId) is not { } session
             || session.Identity.UserId != user.Id
-            || _libraryManager.GetItemById<BaseItem>(session.Identity.ItemId, user) is null)
+            || !_stubs.Sees(user, session.Identity.ItemId))
         {
             return new SessionAccess(null, string.Empty);
         }
