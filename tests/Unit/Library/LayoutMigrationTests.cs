@@ -157,6 +157,22 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task OldPathsRemovedBeforeTheNewOnesAreAddedLetTheOldStubsGoWithNothingCarried()
+    {
+        // Pins the behaviour of today: with no library on an old path the gate is open, and an old item gone is closed.
+        var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        _items.Remove(oldItem.Id);
+        _items.Remove(a.Id);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+        Assert.Null(migration.GetStatus(Root));
+    }
+
+    [Fact]
     public async Task ALibraryOnTheOldSeriesPathNeedsOnlyTheSeriesPathsOfEachServer()
     {
         OldFilm("Dune", (_serverA, "a1"));
