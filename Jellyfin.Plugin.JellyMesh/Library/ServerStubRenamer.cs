@@ -24,6 +24,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     private readonly ILibraryManager _library;
     private readonly IWatchStateCarrier _carrier;
     private readonly ILogger<ServerStubRenamer> _logger;
+    private readonly Action<string> _delete;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ServerStubRenamer"/> class.
@@ -34,12 +35,19 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     /// <param name="carrier">The watch state carrier.</param>
     /// <param name="logger">The logger.</param>
     public ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, ILogger<ServerStubRenamer> logger)
+        : this(registry, store, library, carrier, logger, File.Delete)
+    {
+    }
+
+    // Takes how an old file is deleted, so that tests can make it fail.
+    internal ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, ILogger<ServerStubRenamer> logger, Action<string> delete)
     {
         _registry = registry;
         _store = store;
         _library = library;
         _carrier = carrier;
         _logger = logger;
+        _delete = delete;
     }
 
     /// <inheritdoc />
@@ -69,10 +77,14 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 return 0;
             }
 
-            // The old files of a stub that left go now, so that a file written at their path is not deleted later.
             var stubs = state.Stubs.ToList();
+            var paths = stubs.Select(stub => stub.ServerId == serverId ? NewPath(stub.RelativePath, old, label) : null).ToList();
+            var live = stubs.Select(stub => stub.RelativePath).Concat(paths.OfType<string>()).ToHashSet(StringComparer.Ordinal);
+
+            // The old files of a stub that left go now, so that a file written at their path is not deleted later.
             var renames = state.Renames
-                .Where(rename => rename.RemovedItemId is not null || _registry.Find(rename.StubId) is not null || root.Length == 0 || !TryDeleteOld(root, rename, null))
+                .Where(rename => !IsTaken(rename, live)
+                    && (rename.RemovedItemId is not null || _registry.Find(rename.StubId) is not null || root.Length == 0 || !TryDeleteOld(root, rename, null)))
                 .ToList();
             var written = new List<string>();
             var moved = 0;
@@ -81,7 +93,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 for (var index = 0; index < stubs.Count; index++)
                 {
                     var stub = stubs[index];
-                    if (stub.ServerId != serverId || NewPath(stub.RelativePath, old, label) is not { } path)
+                    if (paths[index] is not { } path)
                     {
                         continue;
                     }
@@ -134,8 +146,15 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             var next = new Dictionary<StubRename, StubRename?>();
             var moves = new List<(StubRename Rename, StubEntry Stub, WatchStateMove Move)>();
             var forget = new List<Guid>();
+            var live = state.Stubs.Select(stub => stub.RelativePath).ToHashSet(StringComparer.Ordinal);
             foreach (var rename in state.Renames)
             {
+                if (IsTaken(rename, live))
+                {
+                    next[rename] = null;
+                    continue;
+                }
+
                 var stub = _registry.Find(rename.StubId);
                 if (rename.RemovedItemId is { } removed)
                 {
@@ -206,6 +225,9 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             _registry.Exit();
         }
     }
+
+    // An entry whose stub left, at a path a live stub has or takes: its files and item ID are that stub's now.
+    private bool IsTaken(StubRename rename, HashSet<string> live) => _registry.Find(rename.StubId) is null && live.Contains(rename.OldPath);
 
     // As the migration: done for every user, or left only for users who see no version (row 166).
     private static bool IsDone(WatchStateMoveOutcome outcome) =>
@@ -294,7 +316,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         {
             foreach (var file in FilesOf(FederatedPaths.Resolve(root, rename.OldPath), stub?.Kind == StubKind.Movie))
             {
-                File.Delete(file);
+                _delete(file);
             }
 
             return true;

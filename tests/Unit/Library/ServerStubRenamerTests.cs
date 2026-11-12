@@ -31,6 +31,7 @@ public sealed class ServerStubRenamerTests : IDisposable
     private readonly List<IReadOnlyCollection<Guid>> _forgets = [];
     private readonly ServerStubRenamer _renamer;
     private Func<WatchStateMove, WatchStateMoveStatus> _status = _ => WatchStateMoveStatus.Carried;
+    private bool _deletesFail;
 
     public ServerStubRenamerTests()
     {
@@ -54,7 +55,7 @@ public sealed class ServerStubRenamerTests : IDisposable
                 _forgets.Add(ids);
                 return ids.ToList();
             });
-        _renamer = new ServerStubRenamer(_registry, _store, _library.Object, _carrier.Object, new CapturingLogger<ServerStubRenamer>());
+        _renamer = new ServerStubRenamer(_registry, _store, _library.Object, _carrier.Object, new CapturingLogger<ServerStubRenamer>(), Delete);
     }
 
     private string Root => _store.Configuration.FederatedFolderPath;
@@ -291,6 +292,88 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Equal([new StubRename("g", FilmPath("Mare"))], _registry.State.Renames);
     }
 
+    [Fact]
+    public async Task ARenameBackAfterTheOldFilesOfAStubThatLeftCouldNotGoKeepsTheNewFile()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [Film("g", FilmPath("Mare"))] });
+        Write(FilmPath("Mare"), "url-g");
+        _deletesFail = true;
+
+        await _renamer.RelabelAsync(_server, "Casa", CancellationToken.None);
+        _deletesFail = false;
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal("url-g", Read(FilmPath("Casa")));
+        Assert.Equal([new StubRename("g", FilmPath("Mare"))], _registry.State.Renames);
+    }
+
+    [Fact]
+    public async Task ARenameBackWithNoFolderOverTheOldFileOfAStubThatLeftKeepsTheFileWrittenLater()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [Film("g", FilmPath("Mare"))] });
+        var root = Root;
+        _store.Configuration.FederatedFolderPath = string.Empty;
+
+        await _renamer.RelabelAsync(_server, "Casa", CancellationToken.None);
+        _store.Configuration.FederatedFolderPath = root;
+        Write(FilmPath("Casa"), "url-g");
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal(FilmPath("Casa"), _registry.State.Stubs.Single().RelativePath);
+        Assert.Equal("url-g", Read(FilmPath("Casa")));
+        Assert.Empty(_registry.State.Renames);
+    }
+
+    [Fact]
+    public async Task ARenameBackOverTheRemovedItemOfAStubThatLeftForgetsNothing()
+    {
+        await RenamedFilmAsync();
+        var old = Scanned(FilmPath("Casa"), new Movie());
+        Scanned(FilmPath("Mare"), new Movie());
+        await _renamer.FinishAsync(CancellationToken.None);
+        await SaveAsync(_registry.State with { Stubs = [Film("g", FilmPath("Mare"))] });
+        Write(FilmPath("Mare"), "url-g");
+
+        await _renamer.RelabelAsync(_server, "Casa", CancellationToken.None);
+        Assert.DoesNotContain(_registry.State.Renames, rename => rename.StubId == "f");
+
+        _items.Remove(old.Id);
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Empty(_forgets);
+        Assert.Equal("url-g", Read(FilmPath("Casa")));
+    }
+
+    [Fact]
+    public async Task AnEntryOfAStubThatLeftAtThePathOfALiveStubIsDroppedWithItsFilesKept()
+    {
+        await SeedAsync(Film("g", FilmPath("Casa")));
+        Write(FilmPath("Casa"), "url-g");
+        await SaveAsync(_registry.State with { Renames = [new StubRename("f", FilmPath("Casa"))] });
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal("url-g", Read(FilmPath("Casa")));
+        Assert.Empty(_registry.State.Renames);
+    }
+
+    [Fact]
+    public async Task AnEntryOfAStubThatLeftAtThePathOfALiveStubForgetsNotItsRemovedItem()
+    {
+        await SeedAsync(Film("g", FilmPath("Casa")));
+        Write(FilmPath("Casa"), "url-g");
+        var removed = IdOf(Full(FilmPath("Casa")), typeof(Movie));
+        await SaveAsync(_registry.State with { Renames = [new StubRename("f", FilmPath("Casa")) { RemovedItemId = removed, Forgets = true }] });
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Empty(_forgets);
+        Assert.Equal("url-g", Read(FilmPath("Casa")));
+        Assert.Empty(_registry.State.Renames);
+    }
+
     private async Task SaveAsync(StubState state)
     {
         await _registry.EnterAsync(CancellationToken.None);
@@ -362,4 +445,14 @@ public sealed class ServerStubRenamerTests : IDisposable
     }
 
     private string Read(string relative) => File.ReadAllText(Full(relative));
+
+    private void Delete(string path)
+    {
+        if (_deletesFail)
+        {
+            throw new IOException("busy");
+        }
+
+        File.Delete(path);
+    }
 }
