@@ -166,6 +166,7 @@ public sealed class WatchStateCarrierTests
         var move = Move(old, [_serverA, _serverB], (a, _serverA), (b, _serverB));
 
         _carrier.Carry([move], CancellationToken.None);
+        Assert.NotEmpty(_saves);
         _saves.Clear();
         var report = _carrier.Carry([move], CancellationToken.None);
 

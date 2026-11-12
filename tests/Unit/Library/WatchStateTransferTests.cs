@@ -211,4 +211,25 @@ public class WatchStateTransferTests
 
         Assert.Throws<ArgumentException>(() => WatchStateTransfer.Carry(Data(), null, [], [a, b]));
     }
+
+    [Fact]
+    public void ARunCutShortAfterThePositionIsFinishedByTheNext()
+    {
+        var old = Data(played: true, lastPlayed: _newer, position: 0, playCount: 2);
+        old.IsFavorite = true;
+        old.Rating = 7;
+        var local = new WatchStateVersion(null, true, Data());
+        var a = new WatchStateVersion(_serverA, false, Data(played: true, lastPlayed: _newer));
+        var b = new WatchStateVersion(_serverB, false, Data());
+
+        var changed = WatchStateTransfer.Carry(old, _serverA, [_serverA, _serverB], [local, a, b]);
+
+        Assert.Equal(2, local.Data.PlayCount);
+        Assert.True(local.Data.IsFavorite);
+        Assert.Equal(7, local.Data.Rating);
+        Assert.All([local, a, b], version => Assert.True(version.Data.Played));
+        Assert.Equal(_newer, a.Data.LastPlayedDate);
+        Assert.Equal(0, a.Data.PlayCount);
+        Assert.DoesNotContain(a.Data, changed);
+    }
 }
