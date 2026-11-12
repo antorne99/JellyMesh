@@ -143,6 +143,39 @@ public class PluginConfigurationTests
         Assert.True(PlaybackTimeouts.Idle.TotalSeconds <= PluginConfiguration.MaxPlaybackIdleSeconds);
     }
 
+    [Fact]
+    public void TakingBackHeldLibrariesKeepsAnEntryOnlyWhileItListsReleasedOnes()
+    {
+        var config = new PluginConfiguration();
+        var kept = Guid.NewGuid();
+        var dropped = Guid.NewGuid();
+        var library = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "a1" };
+        config.HoldAutomaticLibraries(kept, [library], [], []);
+        config.RemovedServerLibraries[0].ReleasedLibraries.Add("Casa - Serie");
+        config.HoldAutomaticLibraries(dropped, [library], [], []);
+
+        config.ReleaseHeldAutomaticLibraries(kept, [library]);
+        config.ReleaseHeldAutomaticLibraries(dropped, [library]);
+
+        var held = Assert.Single(config.RemovedServerLibraries);
+        Assert.Equal(kept, held.ServerId);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Casa - Serie"], held.ReleasedLibraries);
+    }
+
+    [Fact]
+    public void TheServerRemovalDialogSaysItsAutomaticLibrariesAreDeletedToo()
+    {
+        var page = ConfigPage();
+        var start = page.IndexOf("button(t('Remove'), function () {", StringComparison.Ordinal);
+        var end = page.IndexOf("act(api('DELETE', 'Servers/'", start, StringComparison.Ordinal);
+        var dialog = page[start..end];
+
+        Assert.Contains("ownState(server)", dialog, StringComparison.Ordinal);
+        Assert.Contains("t('Its automatic libraries are deleted too: {names}.', { names: escapeHtml(", dialog, StringComparison.Ordinal);
+        Assert.Contains("t('Its automatic libraries are deleted too.')", dialog, StringComparison.Ordinal);
+    }
+
     private static string ConfigPage()
     {
         using var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.JellyMesh.Configuration.configPage.html")!;

@@ -283,6 +283,55 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_the_admin_made_on_the_server_folder_after_switch_on_is_never_taken_for_a_renamed_one()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_library_the_admin_made_on_the_server_folder_is_never_taken_for_a_renamed_one_of_a_removed_server()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_library_renamed_in_the_dashboard_is_still_followed_after_quiet_checks()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Film di casa", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Empty(fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
     public async Task Switching_on_again_still_follows_a_library_of_the_registry_renamed_in_the_dashboard()
     {
         var fixture = new Fixture();
@@ -556,6 +605,44 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_new_federated_folder_lists_as_released_the_libraries_a_removed_server_left()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.RemoveFailure = new IOException("busy");
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+        fixture.Libraries.RemoveFailure = null;
+
+        fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+        await fixture.Manager.DeleteRemovedServerLibraries();
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], held.ReleasedLibraries);
+    }
+
+    [Fact]
+    public async Task A_server_removed_after_a_new_federated_folder_lists_as_released_the_libraries_it_left()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], held.ReleasedLibraries);
+    }
+
+    [Fact]
     public async Task A_server_removed_twice_deletes_what_both_left()
     {
         var fixture = new Fixture();
@@ -576,6 +663,93 @@ public sealed class ServerLibraryManagerTests
 
         Assert.Empty(fixture.Libraries.Folders);
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task A_server_removed_and_added_back_while_its_switch_on_waits_for_the_scans_gets_nothing_from_that_job()
+    {
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, "/media/film");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var on = fixture.Manager.Enable(_serverId);
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        fixture.RemoveServer();
+        var back = fixture.AddServerBack("Nuovo");
+        release.SetResult();
+        await on.Job.WaitAsync(TimeSpan.FromSeconds(10));
+        await fixture.Manager.DeleteRemovedServerLibraries().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(fixture.Libraries.Created);
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        AssertUntouched(back);
+        Assert.Equal(AutomaticLibrariesError.None, fixture.Manager.GetState(_serverId).Error);
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task A_server_removed_and_added_back_while_its_library_is_being_created_leaves_that_library_to_delete()
+    {
+        var fixture = new Fixture();
+        RemoteServerConfig? back = null;
+        fixture.Libraries.OnCreate = () =>
+        {
+            if (back is null)
+            {
+                fixture.RemoveServer();
+                back = fixture.AddServerBack("Nuovo");
+            }
+        };
+
+        await fixture.Manager.Enable(_serverId).Job.WaitAsync(TimeSpan.FromSeconds(10));
+        await fixture.Manager.DeleteRemovedServerLibraries().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Created.Select(call => call.Name));
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Empty(fixture.Libraries.Folders);
+        AssertUntouched(back!);
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task A_server_removed_and_added_back_before_its_switch_on_starts_gets_nothing_from_that_job()
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            [],
+            []);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var cleanup = fixture.Manager.DeleteRemovedServerLibraries();
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var on = fixture.Manager.Enable(_serverId);
+
+        fixture.RemoveServer();
+        var back = fixture.AddServerBack("Nuovo");
+        release.SetResult();
+        await on.Job.WaitAsync(TimeSpan.FromSeconds(10));
+        await cleanup.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AutomaticLibrariesOutcome.Started, on.Outcome);
+        Assert.Empty(fixture.Libraries.Created);
+        Assert.Equal(["Altro - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+        AssertUntouched(back);
+    }
+
+    // A server added back is a new one: a job started for the one removed writes nothing in it.
+    private static void AssertUntouched(RemoteServerConfig server)
+    {
+        Assert.False(server.AutomaticLibraries);
+        Assert.Empty(server.AutomaticLibraryRegistry);
+        Assert.Empty(server.ReleasedAutomaticLibraries);
+        Assert.Empty(server.PreexistingLibraryIds);
     }
 
     private sealed class Fixture
@@ -613,8 +787,16 @@ public sealed class ServerLibraryManagerTests
         {
             var server = config.Servers.Single(candidate => candidate.Id == _serverId);
             config.Servers.Remove(server);
-            config.HoldAutomaticLibraries(server.Id, server.AutomaticLibraryRegistry, server.PreexistingLibraryIds);
+            config.HoldAutomaticLibraries(server.Id, server.AutomaticLibraryRegistry, server.PreexistingLibraryIds, server.FollowedLibraryIds);
         });
+
+        // Like the registry for a remote that comes back: a new server with the same id.
+        public RemoteServerConfig AddServerBack(string name)
+        {
+            var server = new RemoteServerConfig { Id = _serverId, Name = name };
+            Store.Update(config => config.Servers.Add(server));
+            return server;
+        }
     }
 
     internal sealed record CreateCall(string Name, CollectionTypeOptions? Type, LibraryOptions Options, bool Refresh);

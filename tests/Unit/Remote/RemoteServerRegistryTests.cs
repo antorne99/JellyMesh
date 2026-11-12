@@ -187,6 +187,7 @@ public class RemoteServerRegistryTests
             stored.AutomaticLibraries = true;
             stored.AutomaticLibraryRegistry.Add(record);
             stored.PreexistingLibraryIds.Add("c3");
+            stored.FollowedLibraryIds.Add("d4");
         });
 
         Assert.True(fixture.Registry.Remove(server.Id));
@@ -195,6 +196,7 @@ public class RemoteServerRegistryTests
         Assert.Equal(server.Id, held.ServerId);
         Assert.Equal(("Casa - Serie", "b2"), (Assert.Single(held.Libraries).Name, held.Libraries[0].ItemId));
         Assert.Equal(["c3"], held.PreexistingLibraryIds);
+        Assert.Equal(["d4"], held.FollowedLibraryIds);
     }
 
     [Fact]
