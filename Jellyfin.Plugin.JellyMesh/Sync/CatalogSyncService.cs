@@ -109,8 +109,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <inheritdoc />
     public async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)
     {
+        await ReportUnreadablePasswordsAsync().ConfigureAwait(false);
         var claim = TryClaim();
-        await ReportUnreadablePasswordsAsync(claim).ConfigureAwait(false);
         if (claim == SyncStartResult.Started)
         {
             // The nightly reconciliation also checks every stub's item: the safety net for an item left on an old URL.
@@ -123,8 +123,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <inheritdoc />
     public async Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken)
     {
+        await ReportUnreadablePasswordsAsync().ConfigureAwait(false);
         var claim = TryClaim();
-        await ReportUnreadablePasswordsAsync(claim).ConfigureAwait(false);
         if (claim == SyncStartResult.Started)
         {
             await SyncAllAsync(SyncChangesAsync, false, cancellationToken).ConfigureAwait(false);
@@ -482,10 +482,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
     }
 
-    // A scheduled sync that finds a stored password no longer decrypting writes it once (49). A missing key is not that.
-    private async Task ReportUnreadablePasswordsAsync(SyncStartResult claim)
+    // A scheduled sync, before it claims the run, writes once each stored password that no longer decrypts (49). A missing
+    // key is not that.
+    private async Task ReportUnreadablePasswordsAsync()
     {
-        if (_activity is null || claim == SyncStartResult.AlreadyRunning || _vault.GetKeyState() == KeyState.Missing)
+        if (_activity is null || _vault.GetKeyState() == KeyState.Missing)
         {
             return;
         }
