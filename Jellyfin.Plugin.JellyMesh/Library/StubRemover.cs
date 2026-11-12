@@ -143,17 +143,19 @@ public sealed class StubRemover
     /// <param name="root">The federated folder.</param>
     /// <param name="state">The registry.</param>
     /// <param name="servers">The removed servers.</param>
+    /// <param name="isConfigured">Tells whether a server is configured right now; one added back keeps its folder.</param>
     /// <returns>The registry without their series, with how many folders went and what failed.</returns>
-    public StubRemoval RemoveServerFolders(string root, StubState state, IReadOnlyCollection<Guid> servers)
+    public StubRemoval RemoveServerFolders(string root, StubState state, IReadOnlyCollection<Guid> servers, Func<Guid, bool> isConfigured)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(servers);
+        ArgumentNullException.ThrowIfNull(isConfigured);
 
         var failures = new List<Exception>();
         var removed = 0;
         foreach (var serverId in servers.Distinct())
         {
-            if (state.Stubs.Any(stub => stub.ServerId == serverId))
+            if (isConfigured(serverId) || state.Stubs.Any(stub => stub.ServerId == serverId))
             {
                 continue;
             }
@@ -170,8 +172,9 @@ public sealed class StubRemover
                 }
             }
 
+            // Asked again right before the delete: the series may have taken long enough for the server to come back.
             var folder = FederatedPaths.ServerFolder(serverId);
-            if (Directory.Exists(FederatedPaths.Resolve(root, folder)) && Try(failures, () => DeleteFolder(root, folder)))
+            if (!isConfigured(serverId) && Directory.Exists(FederatedPaths.Resolve(root, folder)) && Try(failures, () => DeleteFolder(root, folder)))
             {
                 removed++;
             }
