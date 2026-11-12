@@ -8,7 +8,12 @@ public static class ProviderProtocol
     /// <summary>
     /// The protocol version answered on the capability endpoint.
     /// </summary>
-    public const int Version = 1;
+    public const int Version = 2;
+
+    /// <summary>
+    /// The first protocol version whose provider serves the collections route (decision 230). Older peers answer 404.
+    /// </summary>
+    public const int CollectionsVersion = 2;
 
     /// <summary>
     /// The route of the ProviderApi.

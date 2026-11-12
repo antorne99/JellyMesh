@@ -407,6 +407,15 @@ public class ProviderControllerTests
     }
 
     [Fact]
+    public async Task Capabilities_advertise_the_version_that_serves_collections()
+    {
+        var result = await _capabilities.GetCapabilities();
+
+        Assert.Equal(2, result.Value!.ProtocolVersion);
+        Assert.True(result.Value.ProtocolVersion >= ProviderProtocol.CollectionsVersion);
+    }
+
+    [Fact]
     public async Task Capabilities_answer_anyone_else_like_a_stock_server()
     {
         NotAPeer();

@@ -170,7 +170,10 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
         if (ViaProvider(server))
         {
-            return await ReadSharedCollectionsAsync(server, libraryIds, filmIds, cancellationToken).ConfigureAwait(false);
+            // An older peer has no collections route, so it is read as with the option off (decision 230).
+            return server.ProtocolVersion >= ProviderProtocol.CollectionsVersion
+                ? await ReadSharedCollectionsAsync(server, libraryIds, filmIds, cancellationToken).ConfigureAwait(false)
+                : RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal));
         }
 
         var budget = new ReadBudget();
