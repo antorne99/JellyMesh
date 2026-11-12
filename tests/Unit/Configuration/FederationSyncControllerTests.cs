@@ -23,7 +23,7 @@ public sealed class FederationSyncControllerTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private FederationSyncController Controller() => new(_fixture.Sync, Mock.Of<IFederationResolver>());
+    private FederationSyncController Controller(ISyncHistory? history = null) => new(_fixture.Sync, Mock.Of<IFederationResolver>(), history ?? Mock.Of<ISyncHistory>());
 
     [Fact]
     public void EveryEndpointRequiresAnAdministrator()
@@ -55,5 +55,20 @@ public sealed class FederationSyncControllerTests : IDisposable
         var result = Assert.IsType<ConflictObjectResult>(Controller().StartSync().Result);
 
         Assert.Equal(RemoteFailure.Suspended, ((FailureResponse)result.Value!).Failure);
+    }
+
+    [Fact]
+    public void TheHistoryIsGivenNewestFirst_WithItsDamage()
+    {
+        var newer = new SyncRun(SyncFixture.Start.AddMinutes(15), 10, SyncRunKind.Incremental, SyncRunOutcome.Succeeded, []);
+        var older = new SyncRun(SyncFixture.Start, 20, SyncRunKind.Reconciliation, SyncRunOutcome.Failed, []);
+        var history = new Mock<ISyncHistory>();
+        history.SetupGet(item => item.Runs).Returns([newer, older]);
+        history.SetupGet(item => item.IsDamaged).Returns(true);
+
+        var view = Controller(history.Object).GetHistory().Value!;
+
+        Assert.Equal([newer, older], view.Runs);
+        Assert.True(view.IsDamaged);
     }
 }
