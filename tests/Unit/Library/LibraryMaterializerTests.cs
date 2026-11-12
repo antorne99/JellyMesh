@@ -942,6 +942,30 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFailureInFollowingTheServerLibrariesMarksTheCheckAsSkipped()
+    {
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.ReconcileAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk"));
+        using var sync = SyncWith(Mock.Of<ILibraryMaterializer>(), libraries.Object);
+
+        await sync.RunAsync(CancellationToken.None);
+
+        libraries.Verify(item => item.MarkFollowSkipped(), Times.Once);
+    }
+
+    [Fact]
+    public async Task ALibraryCheckCancelledBeforeItRunsIsMarkedAsSkipped()
+    {
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.ReconcileAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new OperationCanceledException());
+        using var sync = SyncWith(Mock.Of<ILibraryMaterializer>(), libraries.Object);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sync.RunAsync(CancellationToken.None));
+
+        libraries.Verify(item => item.MarkFollowSkipped(), Times.Once);
+    }
+
+    [Fact]
     public async Task ASyncSuspendedOnTheCredentialKeyMarksTheLibraryCheckAsSkipped()
     {
         var libraries = new Mock<IServerLibraryManager>();
