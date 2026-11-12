@@ -137,8 +137,8 @@ check "and the first segment" 200 "$(as viewer "/videos/$stub/$segment")"
 job=$(comm -13 <(echo "$jobs_before") <(files | cut -c1-32 | sort -u) | head -1)
 check "its transcode job writes its segments" 32 "${#job}"
 
-# Row 212, the playlist route: the playlist of the job, by its name, whatever item the route names. On 12.4 ffmpeg keeps
-# the playlist of an HLS job off the disk, so a file at the path of the job stands in for it.
+# Row 212, the playlist route: the playlist of the job, by its name, whatever item the route names. On 12.4 no playlist
+# of the HLS job was seen on the disk while it ran, so a file at the path of the job stands in for it.
 docker exec "$PREFIX-local" sh -c "printf '#EXTM3U\n' >$TRANSCODES/$job.m3u8"
 playlist="/Videos/$private/hls/$job/stream.m3u8"
 check "anonymous cannot read the playlist of the job" 401 "$(as anonymous "$playlist")"
@@ -196,6 +196,17 @@ if [ -n "$two_in_job" ] && [ -n "$two_nowhere" ]; then
 fi
 check "a whole playlist id of the job answers as one of no file" "$(shape outsider "/Videos/$private/hls/$two_nowhere/none.ts")" \
   "$(shape outsider "/Videos/$private/hls/$job/none.ts")"
+# Stock matches the playlist id against the segment names too, so an id that runs past the end of the job name into
+# the name of a segment would tell the last digit of the job. Stock tells it of a file of no recorded job.
+plant jmtail7.ts
+tail_nowhere=""
+for c in a b c d e f; do
+  [ -z "$tail_nowhere" ] && ! grep -qi -- "${c}0.ts" <<<"$paths" && tail_nowhere=${c}0.ts
+done
+check "stock tells an id that runs into a segment name of no recorded job" 0 \
+  "$([ "$(shape outsider "/Videos/$private/hls/l7.ts/none.ts")" = "$none_segment" ] && echo 1 || echo 0)"
+check "an id that runs into a segment name of the job answers as one of no file" "$(shape outsider "/Videos/$private/hls/$tail_nowhere/none.ts")" \
+  "$(shape outsider "/Videos/$private/hls/${job: -1}0.ts/none.ts")"
 check "and so does a segment of the job" "$none_segment" "$(shape outsider "/Videos/$private/hls/$job/${job}0.ts")"
 check "its owner reads that segment" 200 "$(as viewer "/Videos/$stub/hls/$job/${job}0.ts")"
 
