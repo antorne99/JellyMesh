@@ -157,7 +157,7 @@ public sealed class WatchStateCarrierTests : IDisposable
             var row = Row(user, old);
             row.Played = true;
             row.PlayCount = 2;
-            row.PlaybackPositionTicks = 0;
+            row.PlaybackPositionTicks = 450;
             row.LastPlayedDate = _newer;
             row.IsFavorite = true;
             row.Rating = 8;
@@ -177,6 +177,9 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.True(Row(_luigi, b).IsFavorite);
         Assert.Equal(8, Row(_luigi, b).Rating);
         Assert.Equal(2, Row(_luigi, b).PlayCount);
+        Assert.Equal(450, Row(_mario, a).PlaybackPositionTicks);
+        Assert.Equal(450, Row(_luigi, b).PlaybackPositionTicks);
+        Assert.Equal(0, Row(_luigi, a).PlaybackPositionTicks);
         Assert.True(Row(_luigi, a).Played);
         Assert.True(Row(_luigi, b).Played);
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
@@ -390,6 +393,40 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task ASeriesFavoriteTakenOffIsNotPutBack()
+    {
+        var (old, oldStub) = OldSeries();
+        var a = Series(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        var move = WatchStateMove.OfSeries(oldStub, old.Id, [new WatchStateTarget(a.Id, _serverA)]);
+        await CarryAsync(move);
+        Assert.True(Row(_mario, a).IsFavorite);
+
+        Row(_mario, a).IsFavorite = false;
+        _saves.Clear();
+        await RestartAsync();
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.False(Row(_mario, a).IsFavorite);
+    }
+
+    [Fact]
+    public async Task ASeriesMoveToALocalSeriesIsRefused()
+    {
+        var (old, oldStub) = OldSeries();
+        var a = Series(_serverA);
+        var local = Add(new Series { Path = "/media/serie/local" });
+        Row(_mario, old).IsFavorite = true;
+
+        var report = await CarryAsync(WatchStateMove.OfSeries(oldStub, old.Id, [new WatchStateTarget(a.Id, _serverA), new WatchStateTarget(local.Id, null)]));
+
+        Assert.Equal(WatchStateMoveStatus.Refused, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+    }
+
+    [Fact]
     public async Task ASecondRunSavesNothing()
     {
         var (old, oldStub) = Old();
@@ -513,10 +550,24 @@ public sealed class WatchStateCarrierTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(_data, "log"), "in the way");
         _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
 
-        var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        var move = Move(old, oldStub, (a, _serverA));
+
+        var report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
+        Assert.Equal([new WatchStateUserSkip(_mario.Id, WatchStateUserSkipReason.NotRecorded)], report.Moves.Single().SkippedUsers);
         Assert.Equal((0, 1), (report.Carried, report.Skipped));
+
+        // The record kept in memory does not make the next run look done while it is still not on disk.
+        report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
+
+        File.Delete(Path.Combine(_data, "log"));
+        report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(File.Exists(Path.Combine(_data, "log", WatchStateCarryLog.FileName)));
     }
 
     [Fact]

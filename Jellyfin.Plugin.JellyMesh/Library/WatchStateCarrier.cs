@@ -103,11 +103,18 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             throw;
         }
 
+        // A move done may rest on a record from an earlier run that is still not on disk, so none counts as done.
         if (!await _log.SaveAsync(cancellationToken).ConfigureAwait(false))
         {
-            foreach (var (index, users) in recorded)
+            for (var index = 0; index < outcomes.Count; index++)
             {
                 var outcome = outcomes[index];
+                if (outcome.Status is not (WatchStateMoveStatus.Carried or WatchStateMoveStatus.UsersLeft))
+                {
+                    continue;
+                }
+
+                var users = recorded.GetValueOrDefault(index) ?? [];
                 var skipped = outcome.SkippedUsers.Concat(users.Select(user => new WatchStateUserSkip(user, WatchStateUserSkipReason.NotRecorded)));
                 outcomes[index] = outcome with { Status = WatchStateMoveStatus.Failed, SkippedUsers = skipped.ToList() };
             }
@@ -154,13 +161,13 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                     return (null, WatchStateMoveStatus.Refused);
                 }
 
-                group = run.State.Groups.FirstOrDefault(entry => entry.StubIds.Contains(stub.Id, StringComparer.Ordinal))?.Id;
+                group = run.GroupOfStub.GetValueOrDefault(stub.Id);
             }
             else
             {
                 // The local copy is a version only as the primary of its group (Q43, decision 148).
                 group = FederatedPaths.RelativeTo(run.Root, video.Path ?? string.Empty) is null
-                    ? run.State.Groups.FirstOrDefault(entry => entry.LocalItemIds.Contains(video.Id))?.Id
+                    ? run.GroupOfLocal.GetValueOrDefault(video.Id)
                     : null;
                 if (group is null)
                 {
@@ -401,6 +408,23 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         return true;
     }
 
-    // What a run reads once.
-    private sealed record Run(string Root, StubState State, List<User> Users);
+    // What a run reads once, with the group of each stub and local copy.
+    private sealed class Run(string root, StubState state, List<User> users)
+    {
+        public string Root { get; } = root;
+
+        public StubState State { get; } = state;
+
+        public List<User> Users { get; } = users;
+
+        public Dictionary<string, string> GroupOfStub { get; } = state.Groups
+            .SelectMany(group => group.StubIds.Select(stubId => (StubId: stubId, group.Id)))
+            .DistinctBy(entry => entry.StubId, StringComparer.Ordinal)
+            .ToDictionary(entry => entry.StubId, entry => entry.Id, StringComparer.Ordinal);
+
+        public Dictionary<Guid, string> GroupOfLocal { get; } = state.Groups
+            .SelectMany(group => group.LocalItemIds.Select(itemId => (ItemId: itemId, group.Id)))
+            .DistinctBy(entry => entry.ItemId)
+            .ToDictionary(entry => entry.ItemId, entry => entry.Id);
+    }
 }
