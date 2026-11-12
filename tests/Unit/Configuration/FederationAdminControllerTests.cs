@@ -383,6 +383,31 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task AnAddedServerGetsItsFoldersAtOnce()
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        var controller = CreateController(fixture, sync.Object);
+
+        var added = await controller.AddServer(_request, CancellationToken.None);
+
+        Assert.NotNull(added.Value);
+        sync.Verify(service => service.PrepareServerFolders(), Times.Once);
+    }
+
+    [Fact]
+    public async Task AServerThatCannotBeAddedGetsNoFolders()
+    {
+        using var fixture = new RegistryFixture(new StubHandler(_ => throw new HttpRequestException("Connection refused")));
+        var sync = new Mock<ICatalogSyncService>();
+        var controller = CreateController(fixture, sync.Object);
+
+        await controller.AddServer(_request, CancellationToken.None);
+
+        sync.Verify(service => service.PrepareServerFolders(), Times.Never);
+    }
+
+    [Fact]
     public async Task FailuresExposeNoAddressOrSecret()
     {
         var handler = new StubHandler(_ => throw new HttpRequestException("Connection refused (" + TestValues.Host + ":8096)"));

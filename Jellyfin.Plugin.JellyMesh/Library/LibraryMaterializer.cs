@@ -116,6 +116,37 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
+    /// <inheritdoc />
+    public void PrepareServerFolders()
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (root.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            WriteServerFolders(root, _servers.GetServers());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Cannot write the folders of the servers in the federated folder: {Error}", ex.Message);
+        }
+    }
+
+    // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty.
+    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers)
+    {
+        WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
+        WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
+        foreach (var server in servers)
+        {
+            WriteHiddenFile(root, FederatedPaths.MovieFolder(server.Id, string.Empty));
+            WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(server.Id, string.Empty));
+        }
+    }
+
     private static string ExtensionOf(string contentType) => contentType.ToUpperInvariant() switch
     {
         "IMAGE/PNG" => ".png",
@@ -195,14 +226,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var view = _resolver.Resolve(snapshot, servers);
         var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null));
 
-        // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty.
-        WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
-        WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
-        foreach (var server in servers)
-        {
-            WriteHiddenFile(root, FederatedPaths.MovieFolder(server.Id, string.Empty));
-            WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(server.Id, string.Empty));
-        }
+        WriteServerFolders(root, servers);
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 

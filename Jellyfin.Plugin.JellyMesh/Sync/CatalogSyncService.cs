@@ -147,6 +147,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
+    public void PrepareServerFolders() => _materializer?.PrepareServerFolders();
+
+    /// <inheritdoc />
     public SyncStatus GetStatus()
     {
         var snapshot = _index.Snapshot;

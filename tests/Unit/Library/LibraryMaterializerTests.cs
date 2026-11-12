@@ -83,6 +83,47 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task TheFoldersOfAServerCanBeWrittenBeforeAnySync()
+    {
+        var a = await _fixture.Sync.AddServerAsync("A");
+
+        _fixture.Materializer.PrepareServerFolders();
+
+        Assert.Equal(
+            new[]
+            {
+                StubFixture.In(a, "Film", ".jellymesh"),
+                StubFixture.In(a, "Serie", ".jellymesh"),
+                Path.Combine("Film", ".jellymesh"),
+                Path.Combine("Serie", ".jellymesh")
+            }.Order(StringComparer.Ordinal),
+            _fixture.Files);
+    }
+
+    [Fact]
+    public async Task WithoutAFederatedFolderNoServerFolderIsWritten()
+    {
+        await _fixture.Sync.AddServerAsync("A");
+        _fixture.Sync.Store.Configuration.FederatedFolderPath = string.Empty;
+
+        _fixture.Materializer.PrepareServerFolders();
+
+        Assert.Empty(_fixture.Files);
+    }
+
+    [Fact]
+    public async Task AFederatedFolderThatCannotBeWrittenIsLoggedAndNotThrown()
+    {
+        await _fixture.Sync.AddServerAsync("A");
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Root)!);
+        await File.WriteAllTextAsync(_fixture.Root, "a file where the folder should be");
+
+        _fixture.Materializer.PrepareServerFolders();
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _fixture.Logger.Levels);
+    }
+
+    [Fact]
     public async Task AServerRemovedWhileARunPlansLeavesThatRunWhole()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());

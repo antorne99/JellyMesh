@@ -59,6 +59,12 @@ public interface ICatalogSyncService
     void StartRemovalCleanup();
 
     /// <summary>
+    /// Writes the folders of every configured server in the federated folder, so that a library can point at them before
+    /// any sync (spec "cartelle per server" §3.1). An error is logged, not thrown.
+    /// </summary>
+    void PrepareServerFolders();
+
+    /// <summary>
     /// Gets the state of the sync.
     /// </summary>
     /// <returns>The state.</returns>
