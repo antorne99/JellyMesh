@@ -36,6 +36,14 @@ public sealed class LibraryMaterializerTests : IDisposable
         Overview = "Plot"
     };
 
+    private static Dictionary<string, string> AllArt(string prefix) => new()
+    {
+        ["Primary"] = prefix + "p",
+        ["Logo"] = prefix + "l",
+        ["Banner"] = prefix + "b",
+        ["Thumb"] = prefix + "t"
+    };
+
     [Fact]
     public async Task AFilmBecomesStrmNfoAndImages()
     {
@@ -62,6 +70,61 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(PlaybackRoutes.StrmUrl(8096, null, stub.Id, _fixture.Signer.Sign(stub.Id)), StubFixture.Text(_fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm")));
         Assert.Contains("<lockdata>true</lockdata>", StubFixture.Text(_fixture.Path_(a, "Film", "Film (2020)", "movie.nfo")), StringComparison.Ordinal);
         _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
+    }
+
+    [Fact]
+    public async Task AFilmGetsItsLogoBannerAndThumbUnderTheNamesJellyfinReads()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(
+            ["banner.jpg", "fanart.jpg", "landscape.jpg", "logo.jpg", "poster.jpg"],
+            _fixture.Files.Where(file => file.EndsWith(".jpg", StringComparison.Ordinal)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Contains("m/Logo/0", _fixture.Sync.Client.ImageReads);
+        Assert.Contains("m/Banner/0", _fixture.Sync.Client.ImageReads);
+        Assert.Contains("m/Thumb/0", _fixture.Sync.Client.ImageReads);
+        Assert.True(File.Exists(_fixture.Path_(a, "Film", "Film (2020)", "landscape.jpg")));
+    }
+
+    [Fact]
+    public async Task ASeriesGetsItsLogoBannerAndThumbAndAnEpisodeKeepsOneImage()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { ImageTags = AllArt("e") });
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(
+            [
+                StubFixture.In(a, "Serie", "Show (2020)", "Season 01", "Show S01E02 - A-thumb.jpg"),
+                StubFixture.In(a, "Serie", "Show (2020)", "banner.jpg"),
+                StubFixture.In(a, "Serie", "Show (2020)", "landscape.jpg"),
+                StubFixture.In(a, "Serie", "Show (2020)", "logo.jpg"),
+                StubFixture.In(a, "Serie", "Show (2020)", "poster.jpg")
+            ],
+            _fixture.Files.Where(file => file.EndsWith(".jpg", StringComparison.Ordinal)));
+        Assert.Equal(["e/Primary/0"], _fixture.Sync.Client.ImageReads.Where(read => read.StartsWith("e/", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ANewLogoReachesAnIndexedFilm()
+    {
+        var film = FilmWithArt();
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
+        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p1", ["Logo"] = "l1" } };
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(_fixture.Path_(a, "Film", "Film (2020)", "logo.jpg"), item.GetImagePath(ImageType.Logo, 0));
     }
 
     [Fact]

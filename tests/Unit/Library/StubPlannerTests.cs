@@ -687,6 +687,24 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void AStubSeriesWithALocalOneTakesNoLogoBannerOrThumbFromTheRemote()
+    {
+        var local = new LocalSeries("Local", 2019, null, new Dictionary<string, string>(), "/media/poster.jpg", null);
+        var art = new Dictionary<string, string> { ["Primary"] = "p", ["Logo"] = "l", ["Banner"] = "b", ["Thumb"] = "t" };
+
+        var withLocal = Plan(
+            [Episode("w", 1, 4, Source(_serverA, "e"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s") with { ImageTags = art }, EpisodeItem("e", "s", 1, 4))],
+            localSeries: _ => local);
+        var alone = Plan(
+            [Episode("w", 1, 4, Source(_serverA, "e"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s") with { ImageTags = art }, EpisodeItem("e", "s", 1, 4))]);
+
+        Assert.Equal([ImageType.Primary], Assert.Single(withLocal.Series).Images.Select(image => image.Type));
+        Assert.Equal([ImageType.Primary, ImageType.Logo, ImageType.Banner, ImageType.Thumb], Assert.Single(alone.Series).Images.Select(image => image.Type));
+    }
+
+    [Fact]
     public void ALocalSeriesWithoutKeyIdsLeavesOnlyItsNameAsTheKey()
     {
         var local = new LocalSeries("Serie Senza ID", 2026, null, new Dictionary<string, string>(), null, null);

@@ -23,6 +23,16 @@ public static class StubPlanner
 {
     private static readonly string[] _seriesKeyProviders = ["Custom", "Tvdb", "Imdb"];
 
+    // The images of a film or a series, under the names Jellyfin reads in a title folder. An episode keeps one (decision 50).
+    private static readonly (ImageType Type, string Stem)[] _titleImages =
+    [
+        (ImageType.Primary, "poster"),
+        (ImageType.Backdrop, "fanart"),
+        (ImageType.Logo, "logo"),
+        (ImageType.Banner, "banner"),
+        (ImageType.Thumb, "landscape")
+    ];
+
     /// <summary>
     /// Makes the plan.
     /// </summary>
@@ -487,8 +497,11 @@ public static class StubPlanner
         var nfo = NfoDocument.Movie(metadata);
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();
-        AddRemote(images, winner, content.Winner!.ServerId, ImageType.Primary, Path.Combine(folder, "poster"));
-        AddRemote(images, winner, content.Winner.ServerId, ImageType.Backdrop, Path.Combine(folder, "fanart"));
+        foreach (var (type, stem) in _titleImages)
+        {
+            AddRemote(images, winner, content.Winner!.ServerId, type, Path.Combine(folder, stem));
+        }
+
         return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
     }
 
@@ -639,6 +652,13 @@ public static class StubPlanner
 
         Add(ImageType.Primary, "poster", local?.PosterPath);
         Add(ImageType.Backdrop, "fanart", local?.BackdropPath);
+
+        // A series merged with a local one shows its images (decision 3), so these come only without one.
+        foreach (var (type, stem) in local is null ? _titleImages.Skip(2) : [])
+        {
+            Add(type, stem, null);
+        }
+
         return tag.ToString();
     }
 
