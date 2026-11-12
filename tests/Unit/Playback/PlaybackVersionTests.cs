@@ -505,6 +505,19 @@ public class PlaybackVersionTests
     }
 
     [Fact]
+    public async Task A_stub_whose_server_fails_does_not_fall_back_to_a_local_copy_in_no_library()
+    {
+        _fixture.Registry.Offline.Add(_serverA);
+        InNoLibrary(_localItem);
+        var context = Context(_bItem, ("mediaSourceId", N(_aItem)));
+
+        var (passed, _) = await RunAsync(context, StockSource(_localItem));
+
+        Assert.False(passed);
+        Assert.NotEqual(_localItem, context.ActionArguments["itemId"]);
+    }
+
+    [Fact]
     public async Task Without_a_version_the_choice_reads_no_library()
     {
         Hidden(_localItem);

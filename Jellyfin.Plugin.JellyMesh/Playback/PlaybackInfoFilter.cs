@@ -238,7 +238,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
     private async Task RefuseOrPlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, User user)
     {
-        if (_localCopies.Find(request.Stub, user) is not { } local)
+        // A local copy in no library is not one to fall back on for a non-admin (D17).
+        if (_localCopies.Find(request.Stub, user) is not { } local || !_stubs.Sees(user, local.Id))
         {
             context.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.TextOf(outcome));
             return;
