@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Manual merges on the per-server layout (decision 20, Q23): copies of one server keep one stub, which takes the state of
-# the other; copies of different servers and a local copy become versions of one group, linked at once; an undo
-# dissolves the group. Also a new stub linked right after the scan that makes its item (Q145). Needs up.sh. Run once.
+# the other; copies of different servers and a local copy become versions of one group, linked at once, and the titles
+# that join in one library give their state to the primary, position aside (decision 172); an undo dissolves the group. Also a new stub linked right after the scan that makes its item (Q145). Needs up.sh. Run once.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 login local
@@ -25,7 +25,6 @@ uno=$(film_of remote "JM Catena Uno"); tre=$(film_of remote "JM Catena Tre"); du
 check "three stubs, none linked" "3 ::" "$(strm_count 'JM Catena') $(primary_of "$uno")$(primary_of "$due"):$(alternates_of "$uno")$(alternates_of "$due"):"
 post local "/UserPlayedItems/$(dashed "$tre")?userId=$uid" >/dev/null
 post local "/UserFavoriteItems/$(dashed "$tre")?userId=$uid" >/dev/null
-post local "/UserFavoriteItems/$(dashed "$due")?userId=$uid" >/dev/null
 check "one title cannot be merged" 400 "$(post local /JellyMesh/Admin/Merges '{"WorkKeys":["only one"]}' >/dev/null; status)"
 check "the merge is accepted" 204 "$(merge local '^JM Catena')"
 check "the copies of two servers are linked at once, the best as primary" "$due:$uno" "$(group "$uno")"
@@ -35,8 +34,8 @@ check "the stub of the lowest key stayed, as the same item" "$uno" "$(film_of re
 check "the merged stub is gone" "" "$(film_of remote "JM Catena Tre")"
 check "the stub that stayed has the state of the merged one (decision 2)" '{"Played":true,"PlayCount":1,"Favorite":true}' "$(state "$uno")"
 check "the group is still the two versions" "$due:$uno" "$(group "$uno")"
-# Both server folders are in one library, so Q23 asks for a transfer here; what moves besides played is still open.
-check "today the version of peer keeps its own favorite, and nothing moves to it" true "$(state "$due" | jq .Favorite)"
+# Both server folders are in one library, so the titles that joined give their state to the primary (decision 172).
+check "the primary takes favorite and play count of the titles that joined" '{"Played":true,"PlayCount":1,"Favorite":true}' "$(state "$due")"
 check "played is one for the title (Q42)" true "$(state "$due" | jq .Played)"
 check "one row for the client" 1 "$(rows 'JM Catena')"
 check "the decision is manual" Manual "$(get local /JellyMesh/Admin/Index/Decisions | jq -r '[.Contents[] | select(.Identity.Key | contains("999100001")) | .Identity.Match] | first')"
@@ -144,7 +143,7 @@ applied local
 check "the page left three stubs" 3 "$(strm_count 'JM Catena')"
 check "the survivor still has its state" '{"Played":true,"PlayCount":1,"Favorite":true}' "$(state "$uno")"
 
-echo "--- a local copy: the stub stays, the local copy is the primary, and only played is aligned (Q18 b, Q43, D4)"
+echo "--- a local copy: the stub stays, the local copy is the primary and takes the state but the position (Q18 b, Q43, D4, decision 172)"
 # A copy on remote and a local one, with no IDs and plots that disagree: a case for the admin, not a match.
 add_clip remote "$MEDIA/remoto-standard/film/Sonda Senza ID (2026)/Sonda Senza ID (2026).mkv" "JM Sonda Locale (2026)" "JM Sonda Locale" "" "" "Un pianista insegue un sogno tra le colline."
 scan remote
@@ -173,8 +172,9 @@ applied local
 check "the decision is local and manual" 1 "$(get local /JellyMesh/Admin/Index/Decisions | jq '[.Contents[] | select(.Identity.Match == "Manual" and .IsLocal)] | length')"
 check "the stub stays" 1 "$(strm_count 'JM Sonda Locale')"
 check "one row for the client" 1 "$(rows 'JM Sonda Locale')"
-check "played is aligned on the local copy; today nothing else moves, pending Q23 for one library" '{"Played":true,"Favorite":false}' "$(state "$local_id" | jq -c '{Played, Favorite}')"
+check "played, play count and favorite go to the local copy" '{"Played":true,"PlayCount":1,"Favorite":true}' "$(state "$local_id")"
 check "the stub keeps its position" 300000000 "$(get local "/Users/$uid/Items/$(dashed "$strm")" | jq .UserData.PlaybackPositionTicks)"
+check "and the local copy takes none" 0 "$(get local "/Users/$uid/Items/$(dashed "$local_id")" | jq .UserData.PlaybackPositionTicks)"
 check "the local files did not change" "$sum" "$(docker exec "$PREFIX-local" sh -c "cd '$LOCAL_DIR' && ls -la --time-style=full-iso . && sha256sum *")"
 check "the undo is accepted" 204 "$(undo local '^JM Sonda Locale$')"
 applied local
