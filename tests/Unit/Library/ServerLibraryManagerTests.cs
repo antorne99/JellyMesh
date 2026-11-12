@@ -924,6 +924,23 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_with_an_empty_id_is_never_taken_for_a_renamed_one_at_the_switch_off()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.Find("Mine").ItemId = string.Empty;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
     public async Task A_check_while_a_library_has_no_id_is_skipped_and_logs_only_a_count()
     {
         var fixture = new Fixture();
