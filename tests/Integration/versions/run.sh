@@ -41,7 +41,12 @@ check "one film row for the title" 1 "$(get local "/Items?userId=$uid&Recursive=
 check "it offers both versions" 2 "$(get local "/Items/$(dashed "$res_b")?userId=$uid" | jq '.MediaSources | length')"
 check "the collection moved to the primary" "$res_b" "$(children_of 'JM Raccolta')"
 check "the playlist kept the stub that was added" "$cod_a" "$(children_of 'JM Scaletta')"
-check "the playlist entry still answers PlaybackInfo" 200 "$(post local "/Items/$(dashed "$cod_a")/PlaybackInfo?userId=$uid" >/dev/null; status)"
+info=$(post local "/Items/$(dashed "$cod_a")/PlaybackInfo?userId=$uid" "$DIRECT")
+check "the playlist entry answers PlaybackInfo" 200 "$(status)"
+check "with a source and no error" "true null" "$(echo "$info" | jq -r '"\(.MediaSources | length > 0) \(.ErrorCode)"')"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: $AUTH, Token=\"$(token_of local)\"" -H "Range: bytes=0-1023" \
+  "http://127.0.0.1:$PORT/Videos/$(dashed "$cod_a")/stream?static=true&mediaSourceId=$(echo "$info" | jq -r '.MediaSources[0].Id')")
+check "the playlist entry streams" 206 "$code"
 nfo_sums >"$WORK/nfo-after"
 check "no .nfo was written or changed" "" "$(diff "$WORK/nfo-before" "$WORK/nfo-after" || true)"
 
@@ -93,6 +98,7 @@ nfo_sums >"$WORK/nfo-before"
 sync_now local
 check "the local copy is the primary" "$sin_l" "$(primary_of "$sin_b")"
 check "the stub is now played" true "$(get local "/Users/$uid/Items/$(dashed "$sin_b")" | jq .UserData.Played)"
+check "in every row of its own" 1 "$(sql "select min(Played) from UserData where lower(replace(ItemId, '-', '')) = '$sin_b' and lower(replace(UserId, '-', '')) = '$uid';")"
 check "its position stayed" 300000000 "$(get local "/Users/$uid/Items/$(dashed "$sin_b")" | jq .UserData.PlaybackPositionTicks)"
 nfo_sums >"$WORK/nfo-after"
 check "the movie.nfo of the local copy is untouched" "" "$(diff "$WORK/nfo-before" "$WORK/nfo-after" || true)"

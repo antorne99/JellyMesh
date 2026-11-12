@@ -41,4 +41,4 @@ nfo_sums() { docker exec "$PREFIX-local" sh -c "find /media /federata -name '*.n
 stub_of() { vid "$(server_folder "$1")/Film/$2"; }
 dashed() { local id=$1; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
 
-sync_scan_sync() { sync_now local; scan local; sync_now local; }
+DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'
