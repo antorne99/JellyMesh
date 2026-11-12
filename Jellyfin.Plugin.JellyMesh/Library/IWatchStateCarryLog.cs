@@ -34,7 +34,7 @@ public interface IWatchStateCarryLog
     void Record(Guid userId, Guid fromItemId, DateTime? lastPlayedDate);
 
     /// <summary>
-    /// Forgets in memory the carries that match; <see cref="SaveAsync"/> keeps that (decision 165).
+    /// Forgets in memory the carries that match; <see cref="SaveAsync"/> keeps that (decisions 165, 179).
     /// </summary>
     /// <param name="match">Tells, from the user and the old item, whether a carry goes.</param>
     /// <returns>The number of carries forgotten.</returns>
