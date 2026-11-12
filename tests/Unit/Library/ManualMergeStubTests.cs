@@ -141,6 +141,97 @@ public sealed class ManualMergeStubTests : IDisposable
     }
 
     [Fact]
+    public async Task MergedSeriesAcrossServers_KeepTheirFolders_AndGroupOnlyTheEpisodesOfOneInterval()
+    {
+        await SeriesAsync();
+
+        Assert.Equal(ManualMergeOutcome.Merged, await MergeSeriesAsync());
+
+        var state = _fixture.Registry.State;
+        Assert.Equal(2, state.Series.Count);
+        Assert.Equal(["a1", "a2", "b1", "b3"], state.Stubs.SelectMany(stub => stub.Sources).Select(source => source.ItemId).Order(StringComparer.Ordinal));
+        Assert.All(state.Stubs, stub => Assert.Equal(state.Series.Single(series => series.ServerId == stub.ServerId).Id, stub.SeriesStubId));
+        var group = Assert.Single(state.Groups);
+        Assert.Equal(["a1", "b1"], group.StubIds.Select(id => state.Stubs.Single(stub => stub.Id == id).Sources[0].ItemId).Order(StringComparer.Ordinal));
+        Assert.Single(state.Series.Select(series => series.WorkKey).Distinct());
+    }
+
+    [Fact]
+    public async Task MergedSeriesOnOneServer_KeepOneStubPerEpisode_InTheFolderItWasCreatedIn()
+    {
+        await SeriesAsync(oneServer: true);
+        var before = _fixture.Registry.State.Stubs.ToDictionary(stub => stub.Sources[0].ItemId, stub => stub.SeriesStubId);
+        ScanEpisodes();
+
+        Assert.Equal(ManualMergeOutcome.Merged, await MergeSeriesAsync());
+        await ScanAsync();
+
+        var state = _fixture.Registry.State;
+        Assert.Equal(3, state.Stubs.Count);
+        var both = state.Stubs.Single(stub => stub.Sources.Count == 2);
+        Assert.Equal(["a1", "b1"], both.Sources.Select(source => source.ItemId).Order(StringComparer.Ordinal));
+        Assert.Equal(before[both.Sources.Single(source => before[source.ItemId] == both.SeriesStubId).ItemId], both.SeriesStubId);
+        Assert.Equal(before["b3"], state.Stubs.Single(stub => stub.Sources[0].ItemId == "b3").SeriesStubId);
+        Assert.Empty(state.Groups);
+    }
+
+    [Fact]
+    public async Task AnUndoOfMergedSeries_GivesEachSeriesItsEpisodesBack()
+    {
+        await SeriesAsync(oneServer: true);
+        var before = _fixture.Registry.State.Stubs.Select(stub => (stub.Sources[0].ItemId, stub.SeriesStubId)).Order().ToList();
+        ScanEpisodes();
+        await MergeSeriesAsync();
+        await ScanAsync();
+        Assert.Equal(3, _fixture.Registry.State.Stubs.Count);
+
+        Assert.True(await _service.UndoAsync(Assert.Single(_fixture.Merges.Merges).Id, CancellationToken.None));
+        await ScanAsync();
+
+        Assert.Equal(before, _fixture.Registry.State.Stubs.Select(stub => (stub.Sources[0].ItemId, stub.SeriesStubId)).Order().ToList());
+    }
+
+    // Two series of the same title with different IDs: Uno (a1, a2) and Due (b1, b3), on two servers or in two libraries.
+    private async Task SeriesAsync(bool oneServer = false)
+    {
+        RemoteItem Show(string id, string tmdb) => TestItems.Series(id) with { ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = tmdb } };
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-b", "Shows B", "tvshows"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, Show("sa", "1"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("a1", "sa", 1, 1), TestItems.Episode("a2", "sa", 1, 2));
+        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Series, Show("sb", "2"));
+        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Episode, TestItems.Episode("b1", "sb", 1, 1) with { MediaSources = [TestItems.Source("b1", 1080, 9_000_000)] }, TestItems.Episode("b3", "sb", 1, 3));
+        if (oneServer)
+        {
+            await _fixture.Sync.AddServerAsync("A", "shows", "shows-b");
+        }
+        else
+        {
+            await _fixture.Sync.AddServerAsync("A", "shows");
+            await _fixture.Sync.AddServerAsync("B", "shows-b");
+        }
+
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(4, _fixture.Registry.State.Stubs.Count);
+        Assert.Equal(2, _fixture.Registry.State.Series.Count);
+    }
+
+    // Gives each episode stub the item a library scan would make.
+    private void ScanEpisodes()
+    {
+        foreach (var stub in _fixture.Registry.State.Stubs)
+        {
+            var item = new MediaBrowser.Controller.Entities.TV.Episode { Id = Guid.NewGuid(), Path = _fixture.Path_(stub.RelativePath) };
+            _fixture.Library.Setup(library => library.FindByPath(item.Path, false)).Returns(item);
+        }
+    }
+
+    private Task<ManualMergeOutcome> MergeSeriesAsync()
+    {
+        var keys = Assert.Single(_service.GetList().SeriesCases).Titles.Select(title => title.WorkKey).ToList();
+        return _service.MergeAsync(keys, CancellationToken.None);
+    }
+
+    [Fact]
     public async Task AMergeAcrossServers_KeepsTheStubOfEach_InOneGroup()
     {
         await ChainAsync();
