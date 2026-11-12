@@ -693,8 +693,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
     private static List<FollowChange> PlanFollow(Registry registry, string root, IReadOnlyList<VirtualFolderInfo> folders)
     {
-        // A library still known by id or name is the one in the registry, whatever its path now.
-        folders = registry.Visible(folders);
+        // A library still known by id or name is the one in the registry, whatever its path now, hidden ones included.
+        var visible = registry.Visible(folders);
         var known = registry.Libraries
             .Select(record => (Record: record, Folder: FindRecorded(record, folders)))
             .ToList();
@@ -702,10 +702,15 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var changes = new List<FollowChange>();
         foreach (var (record, folder) in known)
         {
-            if (folder is null)
+            if (folder is not null && !visible.Contains(folder))
+            {
+                // A library the registry never sees is never adopted or deleted: the record is dropped (decision 175).
+                changes.Add(new FollowChange(record, null, record.Name, false));
+            }
+            else if (folder is null)
             {
                 // Gone by id and name: renamed if exactly one other library holds the same folder with the same type.
-                var candidates = folders
+                var candidates = visible
                     .Where(other => !claimed.Contains(other) && registry.MayAdopt(other) && Passes(other, record.Kind, root, registry.ServerId))
                     .ToList();
                 changes.Add(candidates.Count == 1

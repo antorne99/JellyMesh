@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
@@ -34,6 +35,9 @@ public sealed class StubLookup
     /// The field of the legacy <c>params</c> query string that stock reads as the live stream, over <c>liveStreamId</c>.
     /// </summary>
     public const int LegacyLiveStreamField = 22;
+
+    // How many levels above the item the version guard climbs: a file version, its owner, then that film's primary.
+    private const int MaxClimb = 4;
 
     private static readonly string[] _namingArguments = ["itemId", "routeItemId", "videoId", "mediaSourceId", "routeMediaSourceId"];
 
@@ -181,7 +185,8 @@ public sealed class StubLookup
             : null;
     }
 
-    // Looks at the item, its primary or owner, and the alternates of both; a link only between local films stays stock.
+    // Climbs from the item through primaries and owners, as the linker does, and looks at each and their alternates.
+    // A link only between local films stays stock.
     private bool IsLinkedToStub(Guid itemId)
     {
         if (_libraryManager.GetItemById(itemId) is not Video video)
@@ -189,18 +194,31 @@ public sealed class StubLookup
             return false;
         }
 
-        var above = video.PrimaryVersionId ?? (video.OwnerId.Equals(Guid.Empty) ? null : video.OwnerId);
-        if (above is null && video.LinkedAlternateVersions.Length == 0)
+        if (NonEmpty(video.PrimaryVersionId) is null && NonEmpty(video.OwnerId) is null && video.LinkedAlternateVersions.Length == 0)
         {
             return false;
         }
 
         var members = new Dictionary<Guid, Video> { [itemId] = video };
-        AddAlternates(members, video);
-        if (above is { } primaryId && primaryId != itemId && _libraryManager.GetItemById(primaryId) is Video primary)
+        var climbed = new HashSet<Guid>();
+        var level = new List<Video> { video };
+        for (var depth = 0; depth <= MaxClimb && level.Count > 0; depth++)
         {
-            members[primaryId] = primary;
-            AddAlternates(members, primary);
+            var next = new List<Video>();
+            foreach (var node in level.Where(node => climbed.Add(node.Id)))
+            {
+                members[node.Id] = node;
+                AddAlternates(members, node);
+                foreach (var aboveId in new[] { NonEmpty(node.PrimaryVersionId), NonEmpty(node.OwnerId) }.OfType<Guid>())
+                {
+                    if (!climbed.Contains(aboveId) && (members.GetValueOrDefault(aboveId) ?? _libraryManager.GetItemById(aboveId) as Video) is { } above)
+                    {
+                        next.Add(above);
+                    }
+                }
+            }
+
+            level = next;
         }
 
         if (members.Count < 2)
@@ -224,12 +242,14 @@ public sealed class StubLookup
     {
         foreach (var child in video.LinkedAlternateVersions)
         {
-            if (child.ItemId is { } id && !members.ContainsKey(id) && _libraryManager.GetItemById(id) is Video alternate)
+            if (child.ItemId is { } id && !id.Equals(Guid.Empty) && !members.ContainsKey(id) && _libraryManager.GetItemById(id) is Video alternate)
             {
                 members[id] = alternate;
             }
         }
     }
+
+    private static Guid? NonEmpty(Guid? id) => id is { } value && !value.Equals(Guid.Empty) ? value : null;
 
     // Adds an item named as a Guid or as text, as stock binds a version.
     private static void Add(HashSet<Guid> ids, object? value)
