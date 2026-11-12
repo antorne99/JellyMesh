@@ -870,6 +870,48 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task After_a_check_that_never_started_the_next_one_takes_no_library_for_a_renamed_one()
+    {
+        var fixture = await AdminLibraryAfterAQuietCheck();
+
+        fixture.Manager.MarkFollowSkipped();
+
+        await AssertMineIsNotAdopted(fixture);
+    }
+
+    [Fact]
+    public async Task After_a_check_that_never_started_a_removed_server_takes_no_library_for_a_renamed_one()
+    {
+        var fixture = await AdminLibraryAfterAQuietCheck();
+        fixture.RemoveServer();
+
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+        await fixture.NewManager().DeleteRemovedServerLibraries();
+
+        Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_check_that_never_started_marks_every_server_and_removed_server_once()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        fixture.Store.Update(config => config.Servers.Add(other));
+        var saves = fixture.Store.Saves;
+
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Manager.MarkFollowSkipped();
+
+        Assert.True(other.FollowSkipped);
+        Assert.True(Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).FollowSkipped);
+        Assert.Equal(saves + 1, fixture.Store.Saves);
+    }
+
+    [Fact]
     public async Task A_library_with_an_empty_id_is_never_taken_for_a_renamed_one()
     {
         var fixture = new Fixture();

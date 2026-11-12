@@ -152,6 +152,11 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void MarkFollowSkipped() => MarkSkipped(config => config.Servers
+        .Select(server => LiveRegistry(config, server.Id))
+        .Concat(config.RemovedServerLibraries.Select(held => HeldRegistry(config, held.ServerId))));
+
+    /// <inheritdoc />
     public void Dispose()
     {
         _shutdown.Cancel();

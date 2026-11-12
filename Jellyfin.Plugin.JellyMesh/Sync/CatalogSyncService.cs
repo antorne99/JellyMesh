@@ -232,6 +232,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     {
         if (_vault.GetKeyState() != KeyState.Ok)
         {
+            MarkLibraryFollowSkipped();
             return SyncStartResult.Suspended;
         }
 
@@ -277,6 +278,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, bool verifyEveryStub, CancellationToken cancellationToken)
     {
+        var followed = false;
         try
         {
             _runFailures.Clear();
@@ -288,6 +290,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            followed = true;
             await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
             if (servers.Count > 0)
             {
@@ -296,6 +299,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         finally
         {
+            if (!followed)
+            {
+                MarkLibraryFollowSkipped();
+            }
+
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
             Interlocked.Exchange(ref _busy, 0);
         }
@@ -374,6 +382,19 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Could not follow the libraries of the servers: {Error}", exception.GetType().Name);
+        }
+    }
+
+    // A sync that never reaches the library check counts as a skipped one (decisions 173, 185).
+    private void MarkLibraryFollowSkipped()
+    {
+        try
+        {
+            _libraries?.MarkFollowSkipped();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError("Could not mark the check of the server libraries as skipped: {Error}", exception.GetType().Name);
         }
     }
 

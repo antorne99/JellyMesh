@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -891,6 +892,54 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.False(sync.GetStatus().IsRunning);
         Assert.DoesNotContain(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
         Assert.Contains(_fixture.Sync.Logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ASyncSuspendedOnTheCredentialKeyMarksTheLibraryCheckAsSkipped()
+    {
+        var libraries = new Mock<IServerLibraryManager>();
+        using var sync = SyncWith(Mock.Of<ILibraryMaterializer>(), libraries.Object);
+        _fixture.Sync.KeySource.Key = null;
+
+        Assert.Equal(SyncStartResult.Suspended, await sync.RunIncrementalAsync(CancellationToken.None));
+        Assert.Equal(SyncStartResult.Suspended, sync.TryStart());
+
+        libraries.Verify(item => item.MarkFollowSkipped(), Times.Exactly(2));
+        libraries.Verify(item => item.ReconcileAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ASyncStoppedBeforeTheLibraryCheckMarksItAsSkipped()
+    {
+        var index = new Mock<IFederationIndex>();
+        index.Setup(item => item.DropServersAsync(It.IsAny<IReadOnlySet<Guid>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk"));
+        var libraries = new Mock<IServerLibraryManager>();
+        using var sync = new CatalogSyncService(
+            _fixture.Sync.Registry,
+            _fixture.Sync.Reader,
+            index.Object,
+            _fixture.Sync.Vault,
+            _fixture.Sync.Clock,
+            _fixture.Sync.Logger,
+            Mock.Of<ILibraryMaterializer>(),
+            libraries: libraries.Object);
+
+        await Assert.ThrowsAsync<IOException>(() => sync.RunAsync(CancellationToken.None));
+
+        libraries.Verify(item => item.MarkFollowSkipped(), Times.Once);
+        libraries.Verify(item => item.ReconcileAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ASyncThatReachesTheLibraryCheckDoesNotMarkItAsSkipped()
+    {
+        var libraries = new Mock<IServerLibraryManager>();
+        using var sync = SyncWith(Mock.Of<ILibraryMaterializer>(), libraries.Object);
+
+        await sync.RunAsync(CancellationToken.None);
+
+        libraries.Verify(item => item.ReconcileAsync(It.IsAny<CancellationToken>()), Times.Once);
+        libraries.Verify(item => item.MarkFollowSkipped(), Times.Never);
     }
 
     private CatalogSyncService SyncWith(ILibraryMaterializer materializer, IServerLibraryManager libraries) => new(
