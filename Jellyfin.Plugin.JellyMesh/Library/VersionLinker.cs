@@ -406,21 +406,7 @@ public sealed class VersionLinker : IVersionLinker
         public string Best(IReadOnlyList<string> stubIds, StubRegistry registry)
         {
             _lookup ??= IndexItemLookup.Build(index.Snapshot);
-            var byStub = new List<(string StubId, RemoteSource Source)>();
-            foreach (var stubId in stubIds)
-            {
-                var source = registry.Find(stubId)?.Sources[0];
-                var version = source is null
-                    ? null
-                    : _lookup.Find(source.ServerId, source.ItemId)?.Versions.FirstOrDefault(v => string.Equals(v.MediaSourceId, source.MediaSourceId, StringComparison.Ordinal));
-                var quality = version is null ? new SourceQuality(null, false, null, null) { IsRangeKnown = false } : CatalogItemMapper.QualityOf(version);
-
-                // The stub ID stands for the item, so that two stubs never count as one source.
-                byStub.Add((stubId, new RemoteSource(source?.ServerId.ToString("N") ?? string.Empty, stubId, source?.MediaSourceId ?? string.Empty, quality)));
-            }
-
-            var best = QualityRanking.Rank(byStub.Select(entry => entry.Source))[0];
-            return byStub.First(entry => entry.Source == best).StubId;
+            return StubRanking.Best(stubIds, registry.Find, _lookup);
         }
 
         public IReadOnlyList<BoxSet> Collections()

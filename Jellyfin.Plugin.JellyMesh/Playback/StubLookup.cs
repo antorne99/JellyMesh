@@ -185,21 +185,25 @@ public sealed class StubLookup
             : null;
     }
 
-    // Climbs from the item through primaries and owners, as the linker does, and looks at each and their alternates.
-    // A link only between local films stays stock.
-    private bool IsLinkedToStub(Guid itemId)
+    /// <summary>
+    /// Finds the items Jellyfin links with an item as versions: it climbs through primaries and owners, as the linker does,
+    /// and takes each one and their alternates.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>The linked items with the item itself, empty when it is not a video.</returns>
+    public IReadOnlyDictionary<Guid, Video> LinkedVersionsOf(Guid itemId)
     {
         if (_libraryManager.GetItemById(itemId) is not Video video)
         {
-            return false;
-        }
-
-        if (NonEmpty(video.PrimaryVersionId) is null && NonEmpty(video.OwnerId) is null && video.LinkedAlternateVersions.Length == 0)
-        {
-            return false;
+            return new Dictionary<Guid, Video>();
         }
 
         var members = new Dictionary<Guid, Video> { [itemId] = video };
+        if (NonEmpty(video.PrimaryVersionId) is null && NonEmpty(video.OwnerId) is null && video.LinkedAlternateVersions.Length == 0)
+        {
+            return members;
+        }
+
         var climbed = new HashSet<Guid>();
         var level = new List<Video> { video };
         for (var depth = 0; depth <= MaxClimb && level.Count > 0; depth++)
@@ -221,6 +225,13 @@ public sealed class StubLookup
             level = next;
         }
 
+        return members;
+    }
+
+    // A link only between local films stays stock.
+    private bool IsLinkedToStub(Guid itemId)
+    {
+        var members = LinkedVersionsOf(itemId);
         if (members.Count < 2)
         {
             return false;
