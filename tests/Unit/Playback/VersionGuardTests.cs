@@ -419,6 +419,30 @@ public class VersionGuardTests
         Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
     }
 
+    // Q169: a file version of a film that is itself an alternate of the Q162 primary holding the stubs, two levels up.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_file_version_of_an_alternate_of_the_primary_with_the_stubs_named_alone_wants_a_user(bool alsoPrimaryVersion)
+    {
+        Linked(null);
+        Anonymous();
+        var primary = LocalFilm();
+        var owner = LocalFilm();
+        var file = LocalFilm();
+        Merged(primary, owner, _stub);
+        file.OwnerId = owner.Id;
+        if (alsoPrimaryVersion)
+        {
+            file.SetPrimaryVersionId(owner.Id);
+        }
+
+        var context = Context("Videos", "GetVideoStream", ("itemId", file.Id), ("mediaSourceId", N(file.Id)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(context));
+    }
+
     [Fact]
     public void An_empty_primary_or_link_id_is_never_looked_up()
     {
