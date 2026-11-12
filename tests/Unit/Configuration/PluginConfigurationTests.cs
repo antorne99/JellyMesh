@@ -216,6 +216,72 @@ public class PluginConfigurationTests
         }
     }
 
+    // Decision 51: series cases and series merges have a section of their own, apart from the films.
+    [Fact]
+    public void SeriesToMergeHaveTheirOwnSection()
+    {
+        var page = ConfigPage();
+        var section = Slice(page, "<h3 class=\"sectionTitle\">Duplicate series</h3>", "<h3 class=\"sectionTitle\">Sync history</h3>");
+        var render = Slice(page, "function renderMerges(list)", "function formatDuration(milliseconds)");
+
+        Assert.Contains("id=\"jmSeriesCases\"", section, StringComparison.Ordinal);
+        Assert.Contains("<h3 class=\"sectionTitle\">Merged series</h3>", section, StringComparison.Ordinal);
+        Assert.Contains("id=\"jmSeriesMerges\"", section, StringComparison.Ordinal);
+        Assert.Contains("renderCases(el('#jmMergeCases'), list.Cases, mergeKinds.films)", render, StringComparison.Ordinal);
+        Assert.Contains("renderCases(el('#jmSeriesCases'), list.SeriesCases, mergeKinds.series)", render, StringComparison.Ordinal);
+    }
+
+    // The merges come in one list, so each goes to the section of its kind, as the server names it.
+    [Fact]
+    public void EachMergeIsShownWithItsKind()
+    {
+        var render = Slice(ConfigPage(), "function renderMerges(list)", "function formatDuration(milliseconds)");
+
+        Assert.Contains("return copy.Copy.Kind !== 'Movie';", render, StringComparison.Ordinal);
+        Assert.Contains("renderMergeList(el('#jmMerges'), films, mergeKinds.films)", render, StringComparison.Ordinal);
+        Assert.Contains("renderMergeList(el('#jmSeriesMerges'), series, mergeKinds.series)", render, StringComparison.Ordinal);
+    }
+
+    // A series is compared by what it holds, since its quality is decided per episode.
+    [Fact]
+    public void SeriesAreComparedByEpisodesSeasonsAndIds()
+    {
+        var page = ConfigPage();
+        var kinds = Slice(page, "var mergeKinds = {", "};");
+        var values = Slice(page, "function compareValues(title, rows)", "function compareNotes(");
+        var ids = Slice(page, "function idsOf(copy)", "function resolutionOf(");
+
+        Assert.Contains("var seriesCompareRows = ['Server', 'Episodes', 'Seasons', 'IDs'];", page, StringComparison.Ordinal);
+        Assert.Contains("rows: seriesCompareRows", kinds, StringComparison.Ordinal);
+        Assert.Contains("copy.EpisodeCount", values, StringComparison.Ordinal);
+        Assert.Contains("copy.SeasonCount", values, StringComparison.Ordinal);
+        Assert.Contains("'TVDB ' + copy.Copy.Tvdb", ids, StringComparison.Ordinal);
+    }
+
+    // Every text a series case shows speaks of series, never of films.
+    [Fact]
+    public void TheSeriesWordsDoNotSpeakOfFilms()
+    {
+        var kinds = Slice(ConfigPage(), "var mergeKinds = {", "};");
+        var series = kinds[kinds.IndexOf("series: {", StringComparison.Ordinal)..];
+
+        Assert.DoesNotContain("film", series, StringComparison.OrdinalIgnoreCase);
+        foreach (var word in new[] { "reasons:", "twoLocal:", "merged:", "undone:", "unused:", "forecast:", "empty:" })
+        {
+            Assert.Contains(word, series, StringComparison.Ordinal);
+        }
+    }
+
+    // Titles and names come from remote servers, so the merge views build their nodes with textContent.
+    [Fact]
+    public void TheMergeViewsWriteNoMarkup()
+    {
+        var views = Slice(ConfigPage(), "var mergeDetails = 0;", "function formatDuration(milliseconds)");
+
+        Assert.DoesNotContain("innerHTML", views, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertAdjacentHTML", views, StringComparison.Ordinal);
+    }
+
     private static string Slice(string page, string start, string end)
     {
         var from = page.IndexOf(start, StringComparison.Ordinal);
