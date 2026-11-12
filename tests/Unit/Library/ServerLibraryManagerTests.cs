@@ -808,6 +808,18 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task After_a_switch_on_stopped_on_an_unreadable_library_list_the_next_check_takes_no_library_for_a_renamed_one()
+    {
+        var fixture = await AdminLibraryAfterAQuietCheck();
+        fixture.Libraries.ReadFailure = new IOException("unreadable");
+        await fixture.Manager.Enable(_serverId).Job;
+        Assert.Equal(AutomaticLibrariesError.ReadFailed, fixture.Manager.GetState(_serverId).Error);
+        fixture.Libraries.ReadFailure = null;
+
+        await AssertMineIsNotAdopted(fixture);
+    }
+
+    [Fact]
     public async Task After_the_check_that_only_records_the_libraries_a_rename_is_followed_again()
     {
         var fixture = new Fixture();
