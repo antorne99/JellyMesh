@@ -189,7 +189,7 @@ public sealed class StubLookup
             return false;
         }
 
-        var above = video.PrimaryVersionId ?? (video.OwnerId.Equals(Guid.Empty) ? null : video.OwnerId);
+        var above = NonEmpty(video.PrimaryVersionId) ?? NonEmpty(video.OwnerId);
         if (above is null && video.LinkedAlternateVersions.Length == 0)
         {
             return false;
@@ -224,12 +224,14 @@ public sealed class StubLookup
     {
         foreach (var child in video.LinkedAlternateVersions)
         {
-            if (child.ItemId is { } id && !members.ContainsKey(id) && _libraryManager.GetItemById(id) is Video alternate)
+            if (child.ItemId is { } id && !id.Equals(Guid.Empty) && !members.ContainsKey(id) && _libraryManager.GetItemById(id) is Video alternate)
             {
                 members[id] = alternate;
             }
         }
     }
+
+    private static Guid? NonEmpty(Guid? id) => id is { } value && !value.Equals(Guid.Empty) ? value : null;
 
     // Adds an item named as a Guid or as text, as stock binds a version.
     private static void Add(HashSet<Guid> ids, object? value)

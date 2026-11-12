@@ -420,6 +420,17 @@ public class VersionGuardTests
     }
 
     [Fact]
+    public void An_empty_primary_or_link_id_is_never_looked_up()
+    {
+        Linked(null);
+        _local.SetPrimaryVersionId(Guid.Empty);
+        _local.LinkedAlternateVersions = [Link(Guid.Empty)];
+
+        Assert.False(new StubLookup(_library.Object, _stubs.Object, _store).HasVersions(_localItem));
+        _library.Verify(library => library.GetItemById(Guid.Empty), Times.Never);
+    }
+
+    [Fact]
     public async Task A_merge_of_the_admin_between_local_films_stays_stock()
     {
         Linked(null);
