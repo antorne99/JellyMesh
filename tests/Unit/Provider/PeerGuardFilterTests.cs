@@ -930,6 +930,7 @@ public class PeerGuardFilterTests
     [Theory]
     [InlineData("Image", "GetItemImage", null)]
     [InlineData("Subtitle", "GetSubtitle", null)]
+    [InlineData("MediaSegments", "GetItemSegments", null)]
     [InlineData("MediaInfo", "GetPostedPlaybackInfo", null)]
     [InlineData("Videos", "GetVideoStream", null)]
     [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", "?PlaySessionId=play")]
@@ -944,6 +945,7 @@ public class PeerGuardFilterTests
     [Theory]
     [InlineData("Image", "GetItemImage", null)]
     [InlineData("Subtitle", "GetSubtitle", null)]
+    [InlineData("MediaSegments", "GetItemSegments", null)]
     [InlineData("MediaInfo", "GetPostedPlaybackInfo", null)]
     [InlineData("Videos", "GetVideoStream", null)]
     [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", "?PlaySessionId=play")]
@@ -968,6 +970,14 @@ public class PeerGuardFilterTests
     public async Task A_shared_item_is_served()
     {
         var (_, ran) = await RunAsync(ProviderFixture.Stock("Image", "GetItemImage"), "GET", ProviderFixture.SharedItem);
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task The_media_segments_of_a_shared_item_are_served()
+    {
+        var (_, ran) = await RunAsync(ProviderFixture.Stock("MediaSegments", "GetItemSegments"), "GET", ProviderFixture.SharedItem);
 
         Assert.True(ran);
     }

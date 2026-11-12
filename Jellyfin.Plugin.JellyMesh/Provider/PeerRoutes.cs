@@ -40,6 +40,7 @@ public static class PeerRoutes
             (_, "StopEncodingProcess") when HttpMethods.IsDelete(method) => PeerRouteKind.StopEncoding,
             ("DynamicHls", _) when reads => PeerRouteKind.Stream,
             ("Image" or "Subtitle", _) when reads => PeerRouteKind.Item,
+            ("MediaSegments", "GetItemSegments") when reads => PeerRouteKind.Item,
             _ => PeerRouteKind.Closed
         };
     }

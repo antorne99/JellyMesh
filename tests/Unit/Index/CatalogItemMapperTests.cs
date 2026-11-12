@@ -153,6 +153,19 @@ public class CatalogItemMapperTests
         Assert.Equal(new SourceQuality(null, false, null, null) { IsRangeKnown = false }, CatalogItemMapper.ToCatalogItems(Catalog(indexed))[0].Versions[0].Quality);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void WhetherAVersionHasSegmentsIsKept(bool? hasSegments)
+    {
+        var movie = TestItems.Movie("m") with { MediaSources = [TestItems.Source("a", 1080, 1000) with { HasSegments = hasSegments }] };
+
+        var indexed = Map(movie, RemoteItemType.Movie);
+
+        Assert.Equal(hasSegments, indexed.Versions[0].HasSegments);
+    }
+
     [Fact]
     public void AllProviderIdsAreKeptAndEmptyOnesDropped()
     {

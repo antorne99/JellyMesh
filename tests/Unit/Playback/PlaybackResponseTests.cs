@@ -82,6 +82,19 @@ public class PlaybackResponseTests
         Assert.Equal([0, 1], source.MediaStreams.Select(stream => stream.Index));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Whether_the_source_has_segments_is_copied(bool hasSegments)
+    {
+        var remote = PlaybackValues.HlsAnswer("ms");
+        remote.HasSegments = hasSegments;
+
+        var source = PlaybackResponseBuilder.Build(remote, PlaybackValues.Session(), PlaybackValues.LocalToken)!;
+
+        Assert.Equal(hasSegments, source.HasSegments);
+    }
+
     [Fact]
     public void An_absolute_delivery_url_refuses_the_source()
     {
