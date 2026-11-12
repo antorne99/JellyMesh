@@ -257,12 +257,13 @@ MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] bash
 
 ### `merge/`
 
-Proves decision 20 on private containers named `jm-merge-*`, on ports 18441-18443:
+Proves manual merges on the per-server layout (decision 20, Q23), on two stock remotes and a consumer whose Film library holds both server folders. Copies of one server keep one stub, which takes the state of the other; copies of two servers and a local copy become versions, linked as soon as the merge is saved; a new stub is linked by the scan that makes its item (Q145). The containers are `$PREFIX-local`, `$PREFIX-remote` and `$PREFIX-peer` (default `jm-merge`, on `PORT` and the next two, default 18441). Checks marked `PENDING (row 144)` wait for the thorough detach that dissolves a group after an undo.
 
 ```sh
+export MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-merge] [PORT=18441]
 bash merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
-bash merge/run.sh                 # list, merge, restart, sync, a copy that changes or goes, undo, the page, a local copy
-bash merge/down.sh                # removes containers, volumes, network and scratch files
+bash merge/run.sh                 # list, merge, restart, sync, a new stub, undo, the page, a local copy
+bash merge/down.sh                # removes containers, volumes and scratch files
 ```
 
 ### `ui/`
