@@ -1,4 +1,5 @@
 using System;
+using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -24,6 +25,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<IPluginConfigurationStore, PluginConfigurationStore>();
+        serviceCollection.AddSingleton<IActivityWriter, JellyfinActivityWriter>();
         serviceCollection.AddSingleton<ISecretKeySource>(provider => new FileSecretKeySource(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<FileSecretKeySource>>()));

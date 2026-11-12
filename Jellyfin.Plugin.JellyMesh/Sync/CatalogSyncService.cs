@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -40,8 +41,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ILogger<CatalogSyncService> _logger;
     private readonly ILibraryMaterializer? _materializer;
     private readonly StubRegistry? _stubs;
+    private readonly IActivityWriter? _activity;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
+    private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
+    private readonly UnreadablePasswords _unreadablePasswords = new();
 
     private TimeSpan _serverReadLimit = MaxServerRead;
     private int _busy;
@@ -58,6 +62,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="logger">The logger.</param>
     /// <param name="materializer">What brings the federated folder in step after a sync.</param>
     /// <param name="stubs">The stub registry, which remembers the servers the administrator removed.</param>
+    /// <param name="activity">Where completed and failed syncs are written.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -66,7 +71,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         TimeProvider timeProvider,
         ILogger<CatalogSyncService> logger,
         ILibraryMaterializer? materializer = null,
-        StubRegistry? stubs = null)
+        StubRegistry? stubs = null,
+        IActivityWriter? activity = null)
     {
         _registry = registry;
         _reader = reader;
@@ -76,6 +82,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger = logger;
         _materializer = materializer;
         _stubs = stubs;
+        _activity = activity;
     }
 
     /// <summary>
@@ -102,6 +109,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <inheritdoc />
     public async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)
     {
+        await ReportUnreadablePasswordsAsync().ConfigureAwait(false);
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
@@ -115,6 +123,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <inheritdoc />
     public async Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken)
     {
+        await ReportUnreadablePasswordsAsync().ConfigureAwait(false);
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
@@ -262,13 +271,16 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     {
         try
         {
-            foreach (var server in _registry.GetServers())
+            _runFailures.Clear();
+            var servers = _registry.GetServers();
+            foreach (var server in servers)
             {
                 await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
             }
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            await WriteActivityAsync(ActivityEntries.SyncCompleted(servers.Count, _runFailures.Values.ToList())).ConfigureAwait(false);
         }
         finally
         {
@@ -457,11 +469,35 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             : RemoteResult.Fail<DateTimeOffset>(clock.Failure);
     }
 
+    // A server already marked failed in the index, also before a restart, is not written to the activity log again.
     private async Task MarkFailedAsync(RemoteServerInfo server, RemoteFailure failure, CancellationToken cancellationToken)
     {
         _logger.LogWarning("Could not read the catalog of remote server {ServerName}: {Failure}. Its entries are kept", server.Name, failure);
+        var wasFailing = _index.Snapshot.Find(server.Id) is { State: ServerSyncState.Stale, LastFailure: not null };
+        _runFailures[server.Id] = KeyValuePair.Create(server.Name, failure);
         TrackSave(await _index.MarkServerFailedAsync(server.Id, failure, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false));
+        if (!wasFailing)
+        {
+            await WriteActivityAsync(ActivityEntries.SyncFailed(server.Name, failure)).ConfigureAwait(false);
+        }
     }
+
+    // A scheduled sync, before it claims the run, writes once each stored password that no longer decrypts (49). A missing
+    // key is not that.
+    private async Task ReportUnreadablePasswordsAsync()
+    {
+        if (_activity is null || _vault.GetKeyState() == KeyState.Missing)
+        {
+            return;
+        }
+
+        foreach (var server in _unreadablePasswords.Update(_registry.GetServers()))
+        {
+            await WriteActivityAsync(ActivityEntries.PasswordUnreadable(server.Name)).ConfigureAwait(false);
+        }
+    }
+
+    private Task WriteActivityAsync(ActivityEntry entry) => _activity?.WriteAsync(entry) ?? Task.CompletedTask;
 
     private void TrackSave(bool saved)
     {

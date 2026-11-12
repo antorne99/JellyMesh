@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Extensions.Logging;
@@ -21,6 +22,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private readonly ICredentialVault _vault;
     private readonly IJellyfinRemoteClient _client;
     private readonly ILogger<RemoteServerRegistry> _logger;
+    private readonly IActivityWriter? _activity;
     private readonly ConcurrentDictionary<Guid, ServerRuntime> _runtimes = new();
 
     /// <summary>
@@ -30,16 +32,19 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     /// <param name="vault">The credential vault.</param>
     /// <param name="client">The remote client.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="activity">Where a server going offline or answering again is written.</param>
     public RemoteServerRegistry(
         IPluginConfigurationStore store,
         ICredentialVault vault,
         IJellyfinRemoteClient client,
-        ILogger<RemoteServerRegistry> logger)
+        ILogger<RemoteServerRegistry> logger,
+        IActivityWriter? activity = null)
     {
         _store = store;
         _vault = vault;
         _client = client;
         _logger = logger;
+        _activity = activity;
     }
 
     /// <inheritdoc />
@@ -147,7 +152,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var runtime = RuntimeOf(serverId);
         runtime.Session = login.Value;
-        runtime.Record(RemoteFailure.None);
+        await RecordAsync(runtime, server.Name, RemoteFailure.None).ConfigureAwait(false);
 
         if (recognizedAs is null)
         {
@@ -227,7 +232,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var runtime = RuntimeOf(serverId);
         runtime.Session = login.Value;
-        runtime.Record(RemoteFailure.None);
+        await RecordAsync(runtime, stored.Name, RemoteFailure.None).ConfigureAwait(false);
         _logger.LogInformation("Updated the credentials of remote server {ServerName}", stored.Name);
         return RemoteResult.Success(_store.Read(config => ToInfo(config.Servers.First(server => server.Id == serverId))));
     }
@@ -390,7 +395,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             result = await CallOnceAsync(server, endpoint, runtime, result.Session, call, cancellationToken).ConfigureAwait(false);
         }
 
-        runtime.Record(result.Attempt.Failure);
+        await RecordAsync(runtime, server.Name, result.Attempt.Failure).ConfigureAwait(false);
         if (!result.Attempt.IsSuccess)
         {
             _logger.LogWarning("Call to remote server {ServerName} failed: {Failure}", server.Name, result.Attempt.Failure);
@@ -621,6 +626,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
+    // Records the outcome of a call, and writes to the activity log when the server goes offline or answers again (49).
+    private async Task RecordAsync(ServerRuntime runtime, string serverName, RemoteFailure failure)
+    {
+        var reachable = runtime.Record(failure);
+        if (reachable is null || _activity is null)
+        {
+            return;
+        }
+
+        await _activity.WriteAsync(reachable.Value ? ActivityEntries.ServerReachable(serverName) : ActivityEntries.ServerOffline(serverName, failure)).ConfigureAwait(false);
+    }
+
     private RemoteServerInfo ToInfo(RemoteServerConfig server)
     {
         _runtimes.TryGetValue(server.Id, out var runtime);
@@ -650,6 +667,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     private sealed class ServerRuntime : IDisposable
     {
+        private readonly Lock _gate = new();
+        private bool? _reachable;
+
         public SemaphoreSlim LoginGate { get; } = new(1, 1);
 
         public RemoteSession? Session { get; set; }
@@ -658,12 +678,38 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         public DateTimeOffset? LastCheckedUtc { get; private set; }
 
-        public void Record(RemoteFailure failure)
+        // Records an outcome. Returns whether the server is now reachable when that changed, null otherwise; an answer
+        // first seen since start is no change, as nothing was known before.
+        public bool? Record(RemoteFailure failure)
         {
-            LastFailure = failure;
-            LastCheckedUtc = DateTimeOffset.UtcNow;
+            lock (_gate)
+            {
+                LastFailure = failure;
+                LastCheckedUtc = DateTimeOffset.UtcNow;
+
+                var reachable = ReachabilityOf(failure);
+                if (reachable is null || reachable == _reachable)
+                {
+                    return null;
+                }
+
+                var known = _reachable is not null;
+                _reachable = reachable;
+                return known || !reachable.Value ? reachable : null;
+            }
         }
 
         public void Dispose() => LoginGate.Dispose();
+
+        // Offline when nothing answered, reachable when the remote answered. An error status, which a gateway in front of
+        // it can send, or a call never sent says nothing about it.
+        private static bool? ReachabilityOf(RemoteFailure failure) => failure switch
+        {
+            RemoteFailure.Unreachable or RemoteFailure.Timeout => false,
+            RemoteFailure.Suspended or RemoteFailure.UnknownServer or RemoteFailure.InvalidServer or RemoteFailure.Busy
+                or RemoteFailure.ServerError or RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped
+                or RemoteFailure.ForgetFailed => null,
+            _ => true
+        };
     }
 }
