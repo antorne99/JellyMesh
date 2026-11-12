@@ -141,7 +141,7 @@ public sealed class VersionLinker : IVersionLinker
 
         // Only the first local copy found is linked: two local films are never merged (decision 20).
         var locals = new List<Guid>();
-        if (group.LocalItemIds.Select(FindLocal).OfType<Video>().FirstOrDefault() is { } local && items.TryAdd(local.Id, local))
+        if (PrimaryLocal(group, run) is { } local && items.TryAdd(local.Id, local))
         {
             locals.Add(local.Id);
         }
@@ -153,27 +153,7 @@ public sealed class VersionLinker : IVersionLinker
 
         var primary = VersionLinkPlanner.ChoosePrimary(locals, stubs, group.PrimaryStubId, candidates => run.Best(candidates, _registry));
         var alternates = items.Keys.Where(id => id != primary.ItemId).ToList();
-
-        var known = new Dictionary<Guid, Video>(items);
-        foreach (var id in items.Values.SelectMany(video => StateOf(video).LinkedIds.Append(video.PrimaryVersionId ?? Guid.Empty)))
-        {
-            // A version of a local film belongs to its owner: it is never detached.
-            if (id != Guid.Empty && !known.ContainsKey(id) && _library.GetItemById(id) is Video { OwnerId: var owner } other && owner.Equals(Guid.Empty))
-            {
-                known[id] = other;
-            }
-        }
-
-        var plan = VersionLinkPlanner.Plan(primary.ItemId, alternates, known.Values.Select(StateOf).ToList());
-        if (plan.Joined.Count > 0)
-        {
-            AlignPlayed(items.Values.ToList(), cancellationToken);
-        }
-
-        foreach (var update in plan.Updates)
-        {
-            await SaveLinksAsync(known[update.ItemId], update, cancellationToken).ConfigureAwait(false);
-        }
+        var plan = await ApplyAsync(primary.ItemId, alternates, items, run, cancellationToken).ConfigureAwait(false);
 
         var moved = plan.Joined.Where(id => id != primary.ItemId).ToList();
         if (moved.Count > 0)
@@ -182,6 +162,34 @@ public sealed class VersionLinker : IVersionLinker
         }
 
         return primary.PrimaryStubId;
+    }
+
+    // Plans the links of some members against what Jellyfin has, aligns played if one joins, and saves the plan.
+    private async Task<VersionLinkPlan> ApplyAsync(Guid primary, IReadOnlyList<Guid> alternates, IReadOnlyDictionary<Guid, Video> members, Run run, CancellationToken cancellationToken)
+    {
+        var resolved = new Dictionary<Guid, Video>(members);
+        foreach (var id in members.Values.SelectMany(video => StateOf(video).LinkedIds.Append(video.PrimaryVersionId ?? Guid.Empty)))
+        {
+            if (id != Guid.Empty && !resolved.ContainsKey(id) && _library.GetItemById(id) is Video other)
+            {
+                resolved[id] = other;
+            }
+        }
+
+        // A version of a local film belongs to its owner: it is never saved.
+        var known = resolved.Values.Where(video => members.ContainsKey(video.Id) || video.OwnerId.Equals(Guid.Empty)).ToDictionary(video => video.Id);
+        var plan = VersionLinkPlanner.Plan(primary, alternates, known.Values.Select(StateOf).ToList(), id => resolved.TryGetValue(id, out var video) && !run.IsStub(video));
+        if (plan.Joined.Count > 0)
+        {
+            AlignPlayed(members.Values.ToList(), cancellationToken);
+        }
+
+        foreach (var update in plan.Updates)
+        {
+            await SaveLinksAsync(known[update.ItemId], update, cancellationToken).ConfigureAwait(false);
+        }
+
+        return plan;
     }
 
     // The cached item is put back if the save fails, or the next run would find it linked already.
@@ -201,6 +209,20 @@ public sealed class VersionLinker : IVersionLinker
             video.SetPrimaryVersionId(primary);
             throw;
         }
+    }
+
+    // The first local copy found, or the film the administrator merged it into as a version (§10 row 148).
+    private Video? PrimaryLocal(VersionGroup group, Run run)
+    {
+        var local = group.LocalItemIds.Select(FindLocal).OfType<Video>().FirstOrDefault();
+        var seen = new HashSet<Guid>();
+        while (local is { PrimaryVersionId: { } above } && seen.Add(local.Id)
+            && _library.GetItemById(above) is Video { OwnerId: var owner } film && owner.Equals(Guid.Empty) && !run.IsStub(film))
+        {
+            local = film;
+        }
+
+        return local;
     }
 
     // A file-based alternate of a local film stands for its owner, which Jellyfin shows.
@@ -263,6 +285,8 @@ public sealed class VersionLinker : IVersionLinker
     {
         private IndexItemLookup? _lookup;
         private List<BoxSet>? _collections;
+
+        public bool IsStub(BaseItem item) => item.Path is { } path && FederatedPaths.RelativeTo(root, path) is not null;
 
         public Video? FindStub(StubEntry stub)
         {

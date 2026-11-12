@@ -151,6 +151,65 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal([second.Id], ((Folder)collection).LinkedChildren.Select(child => child.ItemId!.Value));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFilmTheAdminMergedWithTheLocalCopyStaysLinked(bool thorough)
+    {
+        var local = Local();
+        var other = Local();
+        other.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(other.Id)];
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        var itemA = Scanned(a);
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        Assert.Equal(local.Id, itemA.PrimaryVersionId);
+        Assert.Equal(new[] { itemA.Id, other.Id }.Order(), LinkedIds(local).Order());
+        Assert.Equal(local.Id, other.PrimaryVersionId);
+        Assert.DoesNotContain(_saves, save => save.Item == other.Id);
+    }
+
+    [Fact]
+    public async Task TheStubsFollowTheFilmTheLocalCopyWasMergedInto()
+    {
+        var local = Local();
+        var other = Local();
+        local.SetPrimaryVersionId(other.Id);
+        other.LinkedAlternateVersions = [Link(local.Id)];
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        var itemA = Scanned(a);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Equal(other.Id, itemA.PrimaryVersionId);
+        Assert.Equal(new[] { itemA.Id, local.Id }.Order(), LinkedIds(other).Order());
+        Assert.Equal(other.Id, local.PrimaryVersionId);
+        Assert.DoesNotContain(_saves, save => save.Item == local.Id);
+    }
+
+    [Fact]
+    public async Task AFileVersionOfTheLocalCopyStaysLinked()
+    {
+        var local = Local();
+        var version = Add(new Movie { Path = "/media/films/x - 720p.mkv", OwnerId = local.Id }, Guid.NewGuid());
+        version.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(version.Id)];
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        var itemA = Scanned(a);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Equal(new[] { itemA.Id, version.Id }.Order(), LinkedIds(local).Order());
+        Assert.Equal(local.Id, version.PrimaryVersionId);
+        Assert.DoesNotContain(_saves, save => save.Item == version.Id);
+    }
+
     [Fact]
     public async Task NoMetadataSaverRunsOnTheLocalCopy()
     {
