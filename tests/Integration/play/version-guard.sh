@@ -2,7 +2,8 @@
 # Task 862: a stock route that names a stub by videoId or as the version it picks, also in the legacy params, wants a
 # local user who can see that stub, as itemId does. Without it, anyone could ask for an attachment of a stub, which
 # makes stock refresh the stub. Then the reuse of a local play session over a real socket (D10, D11): the remote user
-# cannot transcode, so the stub plays through a local transcode with a stock play session.
+# cannot transcode, so the stub plays through a local transcode with a stock play session. Then integration test 4 of
+# the per-server spec (Q54, D8): a local copy in Privato linked as a version of the stub of its title in Film.
 # Builds its own pair with the plugin of this checkout: PREFIX and PORT keep it off the jm-play-* pair.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-play-guard] [PORT=18436] [UP=0] [DOWN=0] version-guard.sh
 set -euo pipefail
@@ -21,6 +22,7 @@ down() {
 
 FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg
 TITLE="Tears of Steel"
+LINKED="JM Audio e Sottotitoli (2026)"
 
 up() {
   down
@@ -39,14 +41,21 @@ up() {
   docker exec "$PREFIX-local" sh -c 'mkdir -p /media/film "/media/privata/JM Privato (2026)" && touch /media/film/.keep'
   docker exec "$PREFIX-local" "$FFMPEG" -hide_banner -loglevel error -y -f lavfi -i testsrc=d=10:s=320x180:r=25 \
     -c:v libx264 -preset ultrafast -pix_fmt yuv420p "/media/privata/JM Privato (2026)/JM Privato (2026).mkv"
+  # A local copy of a remote title, with its ids, so that it becomes the primary version of the stub.
+  docker exec "$PREFIX-local" mkdir -p "/media/privata/$LINKED"
+  docker cp "$MEDIA/remoto-standard/film/$LINKED/movie.nfo" "$PREFIX-local:/media/privata/$LINKED/movie.nfo"
+  docker exec "$PREFIX-local" "$FFMPEG" -hide_banner -loglevel error -y -f lavfi -i testsrc=d=10:s=320x180:r=25 \
+    -c:v libx264 -preset ultrafast -pix_fmt yuv420p "/media/privata/$LINKED/$LINKED.mkv"
   library local Film movies /media/film
   library local Privato movies /media/privata
   user local viewer >/dev/null
   user local viewer2 >/dev/null
   user local outsider >/dev/null
+  user local both >/dev/null
   only viewer Film
   only viewer2 Film
   only outsider Privato
+  only both Film Privato
 
   bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
   sleep 3
@@ -59,13 +68,22 @@ up() {
   import_all local "$id"
   sync_now local
   scan local
+  # The link sometimes needs more than one sync after the scan, so sync until the local copy has two versions.
+  local i both_id
+  both_id=$(user_id local both)
+  for i in $(seq 1 10); do
+    sync_now local
+    [ "$(get local "/Items/$(local_item local "$LINKED")?userId=$both_id" | jq '.MediaSources | length')" = 2 ] && break
+    sleep 5
+  done
 }
 
-only() { # only <user> <library>: the user sees that library alone
-  local lib uid policy
-  lib=$(get local /Library/VirtualFolders | jq -r --arg n "$2" '.[] | select(.Name == $n) | .ItemId')
-  uid=$(user_id local "$1")
-  policy=$(get local "/Users/$uid" | jq -c --arg f "$lib" '.Policy | .EnableAllFolders = false | .EnabledFolders = [$f]')
+only() { # only <user> <library>...: the user sees those libraries alone
+  local user=$1 libs uid policy
+  shift
+  libs=$(get local /Library/VirtualFolders | jq -c --args '[.[] | select(.Name | IN($ARGS.positional[])) | .ItemId]' "$@")
+  uid=$(user_id local "$user")
+  policy=$(get local "/Users/$uid" | jq -c --argjson f "$libs" '.Policy | .EnableAllFolders = false | .EnabledFolders = $f')
   post local "/Users/$uid/Policy" "$policy" >/dev/null
 }
 
@@ -135,6 +153,65 @@ check "an anonymous stream of a stub is refused" 401 "$(as anonymous "$stream" -
 check "a stream of a stub the user cannot see is not found" 404 "$(as outsider "$stream" -H 'Range: bytes=0-99')"
 check "a stream of a stub the user sees is served" 206 "$(as viewer "$stream" -H 'Range: bytes=0-99')"
 check "a stream of a local film with its own version goes to stock" 206 "$(as outsider "/Videos/$private/stream?static=true&mediaSourceId=$private_n" -H 'Range: bytes=0-99')"
+
+# Integration test 4 of the per-server spec (Q54): the local copy in Privato is the primary version of the stub B of
+# the same title in Film. Viewer sees only B, outsider only the local copy, both sees the two.
+linked=$(local_item local "$LINKED")
+linked_n=${linked//-/}
+b_n=$(get local "/Items/$linked?userId=$(user_id local both)" | jq -r --arg l "$linked_n" '[.MediaSources[].Id | select(. != $l)][0] // ""')
+check "the local copy and the stub of its title are linked versions" 2 \
+  "$(get local "/Items/$linked?userId=$(user_id local both)" | jq '.MediaSources | length')"
+check "the other version is the stub" 1 "$(get local "/Items/$b_n" | jq -r '.Path // ""' | grep -c '^/federata/.*\.strm$' || true)"
+check "viewer sees only the stub among the versions" "$b_n" \
+  "$(get local "/Items/$b_n?userId=$(user_id local viewer)" | jq -r '[.MediaSources[].Id] | join(",")')"
+
+hidden() { # hidden <what> <path>: 404 for viewer, who sees the stub and not the local copy, 401 for anonymous
+  check "$1 is not found for viewer" 404 "$(as viewer "$2" -H 'Range: bytes=0-99')"
+  check "$1 is refused to anonymous" 401 "$(as anonymous "$2" -H 'Range: bytes=0-99')"
+}
+hidden "a stream of the stub with the local version" "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n"
+hidden "a master playlist of the stub with the local version" "/Videos/$b_n/master.m3u8?mediaSourceId=$linked_n&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts&DeviceId=jm-play-viewer"
+hidden "a segment of the stub with the local version" "/videos/$b_n/hls1/main/0.ts?mediaSourceId=$linked_n&playSessionId=f09&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts&runtimeTicks=0&actualSegmentLengthTicks=30000000"
+hidden "a subtitle of the stub with the local version" "/Videos/$b_n/$linked_n/Subtitles/0/Stream.srt"
+hidden "an attachment of the stub with the local version" "/Videos/$b_n/$linked_n/Attachments/0"
+hidden "a trickplay playlist of the stub with the local version" "/Videos/$b_n/Trickplay/320/tiles.m3u8?mediaSourceId=$linked_n"
+hidden "a stream of the stub with the local version in the legacy params" "/Videos/$b_n/stream?static=true&mediaSourceId=$b_n&params=;;$linked_n"
+hidden "a stream of the local copy alone" "/Videos/$linked_n/stream?static=true&mediaSourceId=$linked_n"
+hidden "a stream of the local copy with the stub as its version" "/Videos/$linked_n/stream?static=true&mediaSourceId=$b_n"
+check "a stream of the stub with its own version is served to viewer" 206 \
+  "$(as viewer "/Videos/$b_n/stream?static=true&mediaSourceId=$b_n" -H 'Range: bytes=0-99')"
+check "a stream of the stub with the local version is served to both" 206 \
+  "$(as both "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n" -H 'Range: bytes=0-99')"
+check "a stream of the local copy is served to outsider" 206 \
+  "$(as outsider "/Videos/$linked_n/stream?static=true&mediaSourceId=$linked_n" -H 'Range: bytes=0-99')"
+check "a stream of the local copy with the stub as its version is not found for outsider" 404 \
+  "$(as outsider "/Videos/$linked_n/stream?static=true&mediaSourceId=$b_n" -H 'Range: bytes=0-99')"
+
+# D8: a Playstate report that names the hidden local version gets 204 and writes nothing. Stock writes the watch state
+# of a report on the version its MediaSourceId names, so the user data of the local copy is the sign.
+watched() { # watched <user>: 1 if a user data row of the local copy has a position or played, read from the database
+  local copy f uid
+  uid=$(user_id local "$1")
+  copy=$(mktemp -d)
+  for f in jellyfin.db jellyfin.db-wal jellyfin.db-shm; do docker cp "$PREFIX-local:/config/data/$f" "$copy/$f" >/dev/null 2>&1 || true; done
+  sqlite3 "$copy/jellyfin.db" "select count(*) > 0 from UserData where lower(replace(ItemId, '-', '')) = '$linked_n'
+    and lower(replace(UserId, '-', '')) = '${uid//-/}' and (PlaybackPositionTicks > 0 or Played = 1);"
+  rm -rf "$copy"
+}
+on_version() { # on_version <user> <path>: a Playstate report on the stub that names the local copy as its version
+  as "$1" "$2" -X POST -H 'Content-Type: application/json' \
+    -d "{\"ItemId\":\"$b_n\",\"MediaSourceId\":\"$linked_n\",\"PositionTicks\":50000000}"
+}
+check "viewer's start report on the hidden local version is a 204" 204 "$(on_version viewer /Sessions/Playing)"
+check "and their progress report" 204 "$(on_version viewer /Sessions/Playing/Progress)"
+check "and their stop report" 204 "$(on_version viewer /Sessions/Playing/Stopped)"
+check "and the legacy progress report" 204 "$(as viewer "/PlayingItems/$b_n/Progress?mediaSourceId=$linked_n&positionTicks=50000000" -X POST)"
+check "and the legacy stop report" 204 "$(as viewer "/PlayingItems/$b_n?mediaSourceId=$linked_n&positionTicks=50000000" -X DELETE)"
+check "and none of them reached stock" "" "$(get local /Sessions | jq -r '[.[] | select(.UserName == "viewer") | .NowPlayingItem.Id // empty] | join(",")')"
+check "nor wrote the watch state of the local copy" 0 "$(watched viewer)"
+check "the same reports of both, who sees the local copy, are served" "204 204 204" \
+  "$(on_version both /Sessions/Playing) $(on_version both /Sessions/Playing/Progress) $(on_version both /Sessions/Playing/Stopped)"
+check "and write the watch state of the local copy" 1 "$(watched both)"
 
 # Integration test 5: the play session of a local transcode of the stub, used by another user over a real socket.
 open_local() { # open_local <user>: opens the stub through the local transcode, prints its play session

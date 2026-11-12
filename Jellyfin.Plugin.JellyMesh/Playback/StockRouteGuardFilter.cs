@@ -22,7 +22,7 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// stop from <c>DELETE /Videos/ActiveEncodings</c>, which is how jellyfin-web ends a transcode. Stock stops a play session
 /// for anyone who names it, so a stub played on this server is kept out of the reach of other users here. So are the
 /// play sessions a peer opened here and their devices, since stock stops every job of a device for a segment with no play
-/// session.
+/// session. For a title with linked versions, every item a request names must be visible to its user.
 /// </summary>
 public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
@@ -99,6 +99,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
             }
+        }
+
+        if (await VersionRefusalAsync(context, controller, action).ConfigureAwait(false) is { } hidden)
+        {
+            context.Result = hidden;
+            return;
         }
 
         if (IsStop(controller, action))
@@ -209,6 +215,40 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return _peerSlots.IsOfAnother(user.Id, playSessionId) ? new StatusCodeResult(StatusCodes.Status404NotFound) : null;
     }
 
+    // Q54: when an item the action names has linked versions, its user must see every item it names. A Playstate report
+    // gets 204 without effect, as for the play session of another user (D8). Null when the action goes on.
+    private async Task<IActionResult?> VersionRefusalAsync(ActionExecutingContext context, string controller, string action)
+    {
+        var report = IsVersionReport(controller, action);
+        if (!report && !IsMedia(controller, action))
+        {
+            return null;
+        }
+
+        var named = StubLookup.NamedItemIdsOf(context).ToList();
+        if (!report && _sessions.LocalItemOf(PlaySessionOf(context)) is { } played)
+        {
+            named.Add(played);
+        }
+
+        if (!named.Exists(_stubs.HasVersions))
+        {
+            return null;
+        }
+
+        if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is not { } user)
+        {
+            return new StatusCodeResult(StatusCodes.Status401Unauthorized);
+        }
+
+        if (named.TrueForAll(id => _libraryManager.GetItemById<BaseItem>(id, user) is not null))
+        {
+            return null;
+        }
+
+        return report ? new NoContentResult() : new StatusCodeResult(StatusCodes.Status404NotFound);
+    }
+
     // Tells whether one of the play sessions has a live stock job without a device.
     private bool HasJobWithoutDevice(IEnumerable<string> playSessionIds)
     {
@@ -267,6 +307,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return controller == "Playstate"
             && action is "ReportPlaybackStart" or "OnPlaybackStart" or "OnPlaybackStartLegacy"
                 or "ReportPlaybackProgress" or "OnPlaybackProgress" or "OnPlaybackProgressLegacy" or "PingPlaybackSession";
+    }
+
+    // A Playstate start, progress or stop, which can name a version; a ping names none.
+    private static bool IsVersionReport(string controller, string action)
+    {
+        return controller == "Playstate" && (IsStop(controller, action) || (IsReport(controller, action) && action != "PingPlaybackSession"));
     }
 
     private static string? DeviceOf(ActionExecutingContext context)

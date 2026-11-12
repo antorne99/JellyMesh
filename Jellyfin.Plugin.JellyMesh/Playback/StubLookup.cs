@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 
@@ -34,6 +35,8 @@ public sealed class StubLookup
     public const int LegacyLiveStreamField = 22;
 
     private static readonly string[] _namingArguments = ["itemId", "routeItemId", "videoId", "mediaSourceId", "routeMediaSourceId"];
+
+    private static readonly string[] _reportArguments = ["playbackStartInfo", "playbackProgressInfo", "playbackStopInfo"];
 
     private readonly ILibraryManager _libraryManager;
     private readonly IStubRegistry _stubs;
@@ -70,7 +73,7 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Finds every item a stock action names, as its entity or as the version it picks.
+    /// Finds every item a stock action names, as its entity or as the version it picks, also in a Playstate report.
     /// </summary>
     /// <param name="context">The action.</param>
     /// <returns>The item identifiers, without repeats.</returns>
@@ -81,17 +84,26 @@ public sealed class StubLookup
         var ids = new HashSet<Guid>();
         foreach (var name in _namingArguments)
         {
-            if (context.ActionArguments.TryGetValue(name, out var value)
-                && (value is Guid id || (value is string text && Guid.TryParse(text, out id)))
-                && !id.Equals(Guid.Empty))
+            if (context.ActionArguments.TryGetValue(name, out var value))
             {
-                ids.Add(id);
+                Add(ids, value);
             }
         }
 
-        if (Guid.TryParse(LegacyParamOf(context, LegacyMediaSourceField), out var version) && !version.Equals(Guid.Empty))
+        Add(ids, LegacyParamOf(context, LegacyMediaSourceField));
+        foreach (var name in _reportArguments)
         {
-            ids.Add(version);
+            context.ActionArguments.TryGetValue(name, out var value);
+            if (value is PlaybackStopInfo stop)
+            {
+                Add(ids, stop.ItemId);
+                Add(ids, stop.MediaSourceId);
+            }
+            else if (value is PlaybackProgressInfo progress)
+            {
+                Add(ids, progress.ItemId);
+                Add(ids, progress.MediaSourceId);
+            }
         }
 
         return ids;
@@ -142,6 +154,18 @@ public sealed class StubLookup
     }
 
     /// <summary>
+    /// Tells whether an item has linked versions, as the version groups of the registry have it: a stub or a local copy in
+    /// a group with another member.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a member of such a group.</returns>
+    public bool HasVersions(Guid itemId)
+    {
+        var group = Find(itemId) is { } stub ? _stubs.FindGroup(stub.Id) : _stubs.FindGroupOfLocal(itemId);
+        return group is not null && group.StubIds.Count + group.LocalItemIds.Count > 1;
+    }
+
+    /// <summary>
     /// Finds the stub of an item.
     /// </summary>
     /// <param name="itemId">The item.</param>
@@ -151,5 +175,14 @@ public sealed class StubLookup
         return _libraryManager.GetItemById(itemId) is Video video && PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId)
             ? _stubs.Find(stubId)
             : null;
+    }
+
+    // Adds an item named as a Guid or as text, as stock binds a version.
+    private static void Add(HashSet<Guid> ids, object? value)
+    {
+        if ((value is Guid id || (value is string text && Guid.TryParse(text, out id))) && !id.Equals(Guid.Empty))
+        {
+            ids.Add(id);
+        }
     }
 }

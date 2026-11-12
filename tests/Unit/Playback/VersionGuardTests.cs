@@ -1,0 +1,290 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Provider;
+using Jellyfin.Plugin.JellyMesh.Security;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
+using MediaBrowser.Controller.Net;
+using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Session;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
+
+// Filtro sulle richieste (Q54, D8): a local copy linked to stub B as a version of one title.
+public class VersionGuardTests
+{
+    private static readonly Guid _stubItem = Guid.Parse("55555555-5555-5555-5555-555555555555");
+    private static readonly Guid _localItem = Guid.Parse("66666666-6666-6666-6666-666666666666");
+
+    private readonly CoordinatorFixture _fixture = new();
+    private readonly Mock<ILibraryManager> _library = new();
+    private readonly Mock<IStubRegistry> _stubs = new();
+    private readonly Mock<IAuthorizationContext> _authorization = new();
+    private readonly Mock<ITranscodeManager> _transcodes = new();
+    private readonly User _user = new("viewer", "auth", "reset");
+    private readonly StreamSlots _peerSlots = new(TimeProvider.System, new InMemoryConfigurationStore());
+
+    public VersionGuardTests()
+    {
+        var stub = PlaybackValues.Stub(PlaybackValues.Source()) with { Id = "b" };
+        _library.Setup(library => library.GetItemById(_stubItem)).Returns(new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "b", "signature") });
+        _library.Setup(library => library.GetItemById(_localItem)).Returns(new Movie());
+        _stubs.Setup(stubs => stubs.Find("b")).Returns(stub);
+        Linked(new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["b"], LocalItemIds = [_localItem] });
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .ReturnsAsync(new AuthorizationInfo { User = _user, Token = PlaybackValues.LocalToken, DeviceId = "device" });
+        Sees(_stubItem);
+    }
+
+    private static string N(Guid id) => id.ToString("N");
+
+    private void Linked(VersionGroup? group)
+    {
+        _stubs.Setup(stubs => stubs.FindGroup("b")).Returns(group);
+        _stubs.Setup(stubs => stubs.FindGroupOfLocal(_localItem)).Returns(group);
+    }
+
+    private void Sees(Guid item)
+    {
+        _library.Setup(library => library.GetItemById<BaseItem>(item, _user)).Returns(new Movie());
+    }
+
+    private void Anonymous()
+    {
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>())).ReturnsAsync(new AuthorizationInfo());
+    }
+
+    private StockRouteGuardFilter Guard()
+    {
+        return new StockRouteGuardFilter(
+            new StubLookup(_library.Object, _stubs.Object),
+            _library.Object,
+            _authorization.Object,
+            _fixture.Coordinator,
+            _fixture.Sessions,
+            new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
+            _transcodes.Object,
+            _peerSlots);
+    }
+
+    private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
+    {
+        var descriptor = new ControllerActionDescriptor { ControllerName = controller, ActionName = action };
+        var values = new Dictionary<string, object?>();
+        foreach (var (key, value) in arguments)
+        {
+            values[key] = value;
+        }
+
+        return new ActionExecutingContext(new ActionContext(new DefaultHttpContext(), new RouteData(), descriptor), [], values!, new object());
+    }
+
+    private static async Task<bool> RunAsync(IAsyncActionFilter filter, ActionExecutingContext context)
+    {
+        var passed = false;
+        await filter.OnActionExecutionAsync(context, () =>
+        {
+            passed = true;
+            return Task.FromResult(new ActionExecutedContext(context, [], new object()));
+        });
+        return passed;
+    }
+
+    private static int? StatusOf(ActionExecutingContext context) => (context.Result as StatusCodeResult)?.StatusCode;
+
+    // Every route that names the stub as its entity and the local copy as its version, as stock binds them.
+    public static TheoryData<string, string, string, string, bool> RoutesThatNameAVersion => new()
+    {
+        { "Videos", "GetVideoStream", "itemId", "mediaSourceId", true },
+        { "Videos", "HeadVideoStream", "itemId", "mediaSourceId", true },
+        { "DynamicHls", "GetMasterHlsVideoPlaylist", "itemId", "mediaSourceId", true },
+        { "DynamicHls", "GetVariantHlsVideoPlaylist", "itemId", "mediaSourceId", true },
+        { "DynamicHls", "GetHlsVideoSegment", "itemId", "mediaSourceId", true },
+        { "Subtitle", "GetSubtitle", "routeItemId", "routeMediaSourceId", true },
+        { "Subtitle", "GetSubtitlePlaylist", "itemId", "mediaSourceId", true },
+        { "VideoAttachments", "GetAttachment", "videoId", "mediaSourceId", true },
+        { "Trickplay", "GetTrickplayHlsPlaylist", "itemId", "mediaSourceId", false },
+        { "Trickplay", "GetTrickplayTileImage", "itemId", "mediaSourceId", false }
+    };
+
+    [Theory]
+    [MemberData(nameof(RoutesThatNameAVersion))]
+    public async Task A_local_version_the_user_cannot_see_is_not_found_through_a_stub_they_see(string controller, string action, string item, string version, bool asText)
+    {
+        var context = Context(controller, action, (item, _stubItem), (version, asText ? N(_localItem) : _localItem), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [MemberData(nameof(RoutesThatNameAVersion))]
+    public async Task A_stub_they_see_as_the_version_of_a_local_copy_they_cannot_see_is_not_found(string controller, string action, string item, string version, bool asText)
+    {
+        var context = Context(controller, action, (item, _localItem), (version, asText ? N(_stubItem) : _stubItem), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [MemberData(nameof(RoutesThatNameAVersion))]
+    public async Task A_user_who_sees_both_versions_goes_to_stock(string controller, string action, string item, string version, bool asText)
+    {
+        Sees(_localItem);
+
+        Assert.True(await RunAsync(Guard(), Context(controller, action, (item, _stubItem), (version, asText ? N(_localItem) : _localItem), ("playSessionId", "play"))));
+    }
+
+    [Fact]
+    public async Task A_hidden_local_version_in_the_legacy_params_is_not_found()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(_stubItem)), ("params", ";;" + N(_localItem)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_linked_local_copy_named_alone_wants_a_user_who_sees_it()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_linked_local_copy_named_alone_serves_a_user_who_sees_it()
+    {
+        Sees(_localItem);
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)))));
+    }
+
+    [Fact]
+    public async Task A_linked_local_copy_is_refused_without_a_user()
+    {
+        Anonymous();
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_recorded_play_session_names_its_stub_beside_a_linked_local_copy()
+    {
+        Sees(_localItem);
+        _library.Setup(library => library.GetItemById<BaseItem>(_stubItem, _user)).Returns((BaseItem?)null);
+        _fixture.Sessions.RecordLocal(_user.Id, "play", _stubItem);
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_title_with_no_linked_versions_is_untouched()
+    {
+        Linked(null);
+        Anonymous();
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)))));
+    }
+
+    [Fact]
+    public async Task A_group_with_one_member_has_no_linked_versions()
+    {
+        Linked(new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["b"] });
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(_localItem)))));
+    }
+
+    [Fact]
+    public async Task A_versioned_title_still_checks_an_unrelated_id_it_names()
+    {
+        var other = Guid.NewGuid();
+        var context = Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(other)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    public static TheoryData<string> ReportsThatNameAVersion => new()
+    {
+        "ReportPlaybackStart",
+        "ReportPlaybackProgress",
+        "ReportPlaybackStopped",
+        "OnPlaybackStart",
+        "OnPlaybackProgress",
+        "OnPlaybackStopped",
+        "OnPlaybackStartLegacy",
+        "OnPlaybackProgressLegacy",
+        "OnPlaybackStoppedLegacy"
+    };
+
+    // The arguments of a Playstate action as stock binds them: a body for the Report actions, the route and query otherwise.
+    private static (string Key, object? Value)[] ReportOf(string action, Guid item, Guid version) => action switch
+    {
+        "ReportPlaybackStart" => [("playbackStartInfo", new PlaybackStartInfo { ItemId = item, MediaSourceId = N(version), PlaySessionId = "play" })],
+        "ReportPlaybackProgress" => [("playbackProgressInfo", new PlaybackProgressInfo { ItemId = item, MediaSourceId = N(version), PlaySessionId = "play" })],
+        "ReportPlaybackStopped" => [("playbackStopInfo", new PlaybackStopInfo { ItemId = item, MediaSourceId = N(version), PlaySessionId = "play" })],
+        _ => [("itemId", item), ("mediaSourceId", N(version)), ("playSessionId", "play")]
+    };
+
+    [Theory]
+    [MemberData(nameof(ReportsThatNameAVersion))]
+    public async Task A_playstate_report_on_a_hidden_version_is_answered_without_effect(string action)
+    {
+        _fixture.Sessions.RecordLocal(_user.Id, "play", _stubItem);
+        var context = Context("Playstate", action, ReportOf(action, _stubItem, _localItem));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+        Assert.Equal(_stubItem, _fixture.Sessions.LocalItemOf("play"));
+    }
+
+    [Theory]
+    [MemberData(nameof(ReportsThatNameAVersion))]
+    public async Task A_playstate_report_on_a_version_the_user_sees_reaches_stock(string action)
+    {
+        Sees(_localItem);
+
+        Assert.True(await RunAsync(Guard(), Context("Playstate", action, ReportOf(action, _stubItem, _localItem))));
+    }
+
+    [Theory]
+    [MemberData(nameof(ReportsThatNameAVersion))]
+    public async Task A_playstate_report_whose_item_is_a_hidden_version_is_answered_without_effect(string action)
+    {
+        var context = Context("Playstate", action, ReportOf(action, _localItem, _stubItem));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task A_playstate_report_on_a_title_with_no_linked_versions_reaches_stock()
+    {
+        Linked(null);
+        var report = new PlaybackProgressInfo { ItemId = _stubItem, MediaSourceId = N(_localItem) };
+
+        Assert.True(await RunAsync(Guard(), Context("Playstate", "ReportPlaybackProgress", ("playbackProgressInfo", report))));
+    }
+}

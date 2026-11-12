@@ -57,6 +57,12 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     public StubEntry? Find(string stubId) => _lookup.ById.TryGetValue(stubId, out var stub) ? stub : null;
 
     /// <inheritdoc />
+    public VersionGroup? FindGroup(string stubId) => _lookup.GroupsByStub.TryGetValue(stubId, out var group) ? group : null;
+
+    /// <inheritdoc />
+    public VersionGroup? FindGroupOfLocal(Guid itemId) => _lookup.GroupsByLocal.TryGetValue(itemId, out var group) ? group : null;
+
+    /// <inheritdoc />
     public StubEntry? FindByPath(string? path)
     {
         if (string.IsNullOrEmpty(path))
@@ -248,6 +254,25 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             State = state;
             ById = state.Stubs.ToFrozenDictionary(stub => stub.Id, StringComparer.Ordinal);
             ByPath = state.Stubs.ToFrozenDictionary(stub => stub.RelativePath, StringComparer.Ordinal);
+
+            // The first group wins for a member listed twice, which the planner never writes.
+            var byStub = new Dictionary<string, VersionGroup>(StringComparer.Ordinal);
+            var byLocal = new Dictionary<Guid, VersionGroup>();
+            foreach (var group in state.Groups)
+            {
+                foreach (var stubId in group.StubIds)
+                {
+                    byStub.TryAdd(stubId, group);
+                }
+
+                foreach (var itemId in group.LocalItemIds)
+                {
+                    byLocal.TryAdd(itemId, group);
+                }
+            }
+
+            GroupsByStub = byStub.ToFrozenDictionary(StringComparer.Ordinal);
+            GroupsByLocal = byLocal.ToFrozenDictionary();
         }
 
         public StubState State { get; }
@@ -255,5 +280,9 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         public FrozenDictionary<string, StubEntry> ById { get; }
 
         public FrozenDictionary<string, StubEntry> ByPath { get; }
+
+        public FrozenDictionary<string, VersionGroup> GroupsByStub { get; }
+
+        public FrozenDictionary<Guid, VersionGroup> GroupsByLocal { get; }
     }
 }
