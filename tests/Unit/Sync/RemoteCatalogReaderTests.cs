@@ -103,6 +103,20 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task NoMoreCollectionsAreReadOnceEveryFilmOfTheCatalogHasOne()
+    {
+        _fixture.Client.AddCollection("films", "a", "Saga A", "m1");
+        _fixture.Client.AddCollection("films", "b", "Saga B", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server, "m1");
+
+        Assert.Equal("Saga A", result.Value!["m1"].Name);
+        Assert.Contains("a@0", _fixture.Client.CollectionReads);
+        Assert.DoesNotContain("b@0", _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
     public async Task CollectionsAndTheirFilmsAreReadPageByPage()
     {
         for (var index = 0; index < RemoteCatalogReader.PageSize + 1; index++)
