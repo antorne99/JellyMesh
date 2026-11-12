@@ -172,6 +172,40 @@ public sealed class WatchStateCarryLogTests : IDisposable
         Assert.False(reloaded.TryFind(_otherUser, _item, out _));
     }
 
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public async Task AFileThatCannotBeCheckedForNowSuspendsTheLogRatherThanStartFromNothing(Type error)
+    {
+        // Seen from outside, an error that hides the file looks like no file at all.
+        var failing = true;
+        using var log = new WatchStateCarryLog(
+            _folder,
+            new CapturingLogger<WatchStateCarryLog>(),
+            path => failing ? throw (Exception)Activator.CreateInstance(error, "denied")! : File.OpenRead(path));
+
+        Assert.False(log.EnsureLoaded());
+        log.Record(_user, _item, _date);
+        Assert.False(await log.SaveAsync(CancellationToken.None));
+        Assert.False(File.Exists(FilePath));
+
+        failing = false;
+
+        Assert.True(log.EnsureLoaded());
+        Assert.False(log.TryFind(_user, _item, out _));
+    }
+
+    [Theory]
+    [InlineData(typeof(FileNotFoundException))]
+    [InlineData(typeof(DirectoryNotFoundException))]
+    public void AMissingFileStartsAnEmptyLog(Type error)
+    {
+        using var log = new WatchStateCarryLog(_folder, new CapturingLogger<WatchStateCarryLog>(), _ => throw (Exception)Activator.CreateInstance(error)!);
+
+        Assert.True(log.EnsureLoaded());
+        Assert.False(log.TryFind(_user, _item, out _));
+    }
+
     [Fact]
     public async Task NoTemporaryFileStays()
     {

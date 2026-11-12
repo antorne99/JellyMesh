@@ -201,11 +201,6 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     // Null when the file cannot be read for now: the carries wait for it rather than start again from nothing.
     private IReadOnlyList<Entry>? Load()
     {
-        if (!File.Exists(_path))
-        {
-            return [];
-        }
-
         try
         {
             using var stream = _openRead(_path);
@@ -220,6 +215,10 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
             _logger.LogError("Cannot read the file of the watch state carries done: {Error}. It is set aside", exception.GetType().Name);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return [];
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
