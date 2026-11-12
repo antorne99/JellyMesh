@@ -236,6 +236,20 @@ public class ServerStubPlannerTests
     }
 
     [Fact]
+    public void AnEmptyLibraryInAFullReadHoldsTheStubOfItsServer()
+    {
+        var first = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))]);
+        var onA = On(first, _serverA).Entry;
+
+        var second = Plan([], [Catalog(_serverA, SeriesItem("s"))], first.State);
+
+        Assert.Empty(second.Removals);
+        Assert.Contains(second.State.Stubs, stub => stub.Id == onA.Id);
+        var held = Assert.Single(second.Held);
+        Assert.Equal((_serverA, "Casa", Library, 1), (held.ServerId, held.ServerName, held.LibraryId, held.Stubs));
+    }
+
+    [Fact]
     public void CopiesMergedByHandOnOneServerBecomeVersionsOfOneStub()
     {
         var catalogs = new[] { Catalog(_serverA, Film("m"), Film("n", "Altro")) };
