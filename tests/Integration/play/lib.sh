@@ -77,6 +77,7 @@ library() { # library <server> <name> <type> <path>...
   local s=$1 name=$2 type=$3 query="" p
   shift 3
   for p in "$@"; do query="$query&paths=$p"; done
+  name=$(jq -rn --arg v "$name" '$v | @uri')
   post "$s" "/Library/VirtualFolders?name=$name&collectionType=$type&refreshLibrary=false$query" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
 }
 
