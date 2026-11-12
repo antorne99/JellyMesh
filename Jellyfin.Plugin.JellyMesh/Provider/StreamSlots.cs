@@ -168,7 +168,12 @@ public sealed class StreamSlots
             var key = playSessionId ?? Guid.NewGuid().ToString("N");
             if (slots.TryGetValue(key, out var slot))
             {
-                // A stream back while its transcode waits to be closed keeps both.
+                // A stream back while its transcode waits to be closed keeps both, if the open slots leave it room.
+                if (slot.Closing && slots.Values.Count(other => !other.Closing) >= limit)
+                {
+                    return null;
+                }
+
                 slot.InFlight++;
                 slot.Closing = false;
             }

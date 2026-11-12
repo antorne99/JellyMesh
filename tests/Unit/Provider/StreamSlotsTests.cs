@@ -601,6 +601,36 @@ public class StreamSlotsTests
     }
 
     [Fact]
+    public void A_stream_being_closed_does_not_come_back_above_a_lowered_limit()
+    {
+        Hold("old", 2);
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Hold("new", 2);
+        _slots.CutToLimit(_peer, 1);
+
+        var back = _slots.TryEnter(_peer, 1, "old");
+
+        Assert.Null(back);
+        Assert.Equal(["old"], _slots.TakeClosing());
+        _slots.Closed("old");
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_stream_being_closed_comes_back_while_it_fits_the_limit()
+    {
+        Hold("old", 2);
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Hold("new", 2);
+        _slots.CutToLimit(_peer, 2);
+
+        using var back = _slots.TryEnter(_peer, 2, "old");
+
+        Assert.NotNull(back);
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
     public void Revoking_does_not_free_a_slot_being_closed()
     {
         Paused("lost", _lost);
