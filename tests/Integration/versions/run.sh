@@ -18,10 +18,14 @@ cod_a=$(stub_of "$A" "$COD"); lone=$(stub_of "$A" "$LONE")
 check "the stubs are in the library" 1 "$([ -n "$res_a" ] && [ -n "$res_b" ] && [ -n "$cod_a" ] && [ -n "$lone" ] && echo 1 || echo 0)"
 
 echo "--- before the link: a collection and a playlist on the copies of remote"
-post local "/Collections?name=JM%20Raccolta&ids=$(dashed "$res_a")" >/dev/null
+raccolta=$(post local "/Collections?name=JM%20Raccolta" | jq -r .Id)
 post local /Playlists "$(jq -n --arg u "$uid" --arg i "$(dashed "$cod_a")" '{Name: "JM Scaletta", Ids: [$i], UserId: $u, MediaType: "Video"}')" >/dev/null
-# Jellyfin adds the items of a new collection after it answers.
-for i in $(seq 1 30); do [ -n "$(children_of 'JM Raccolta')" ] && break; sleep 1; done
+# 12.4 can lose the items of a new collection to a race on its collection.xml, so they go in afterwards, until they stay.
+for i in $(seq 1 30); do
+  [ -n "$(children_of 'JM Raccolta')" ] && break
+  post local "/Collections/$raccolta/Items?ids=$(dashed "$res_a")" >/dev/null
+  sleep 1
+done
 check "the collection holds the 720p stub" "$res_a" "$(children_of 'JM Raccolta')"
 check "the playlist holds the H.264 stub" "$cod_a" "$(children_of 'JM Scaletta')"
 nfo_sums >"$WORK/nfo-before"
