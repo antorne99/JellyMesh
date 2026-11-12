@@ -697,6 +697,66 @@ public class PeerGuardFilterTests
     }
 
     [Fact]
+    public async Task The_next_stream_starts_only_after_a_revoked_transcode_closed()
+    {
+        _fixture.Own("lost");
+        _fixture.Own("next");
+        await StreamAsync("lost");
+        _fixture.Slots.Revoke(_fixture.Peer.Id, _ => false);
+
+        var (_, ran) = await StreamAsync("next", during: () => VerifyClosed("lost", Times.Once()));
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task A_revoked_stream_back_while_its_transcode_is_being_closed_gets_the_refusal_of_the_limit()
+    {
+        _fixture.Connect(2);
+        _fixture.Own("play");
+        await StreamAsync();
+        var killing = new TaskCompletionSource();
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "play", It.IsAny<Func<string, bool>>())).Returns(killing.Task);
+        _fixture.Slots.Revoke(_fixture.Peer.Id, _ => false);
+        var timer = _fixture.Closer.CloseAbandonedAsync();
+
+        var (context, ran) = await StreamAsync();
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(context));
+        Assert.Equal(ProviderProtocol.StreamLimitRefusal, context.HttpContext.Response.Headers[ProviderProtocol.RefusalHeader].ToString());
+        Assert.Equal(1, Slots);
+
+        killing.SetResult();
+        await timer;
+        Assert.Equal(0, Slots);
+    }
+
+    [Fact]
+    public async Task A_stream_cut_by_a_lower_limit_is_refused_while_its_transcode_is_being_closed()
+    {
+        _fixture.Connect(2);
+        _fixture.Own("oldest");
+        _fixture.Own("newest");
+        await StreamAsync("oldest");
+        await StreamAsync("newest");
+        var killing = new TaskCompletionSource();
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "newest", It.IsAny<Func<string, bool>>())).Returns(killing.Task);
+        _fixture.Slots.CutToLimit(_fixture.Peer.Id, 1);
+        var timer = _fixture.Closer.CloseAbandonedAsync();
+
+        var (context, ran) = await StreamAsync("newest");
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(context));
+        Assert.Equal(2, Slots);
+
+        killing.SetResult();
+        await timer;
+        Assert.Equal(1, Slots);
+    }
+
+    [Fact]
     public async Task A_stream_of_an_item_still_shared_is_not_cut()
     {
         _fixture.Own("play");

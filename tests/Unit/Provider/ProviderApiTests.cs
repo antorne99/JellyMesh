@@ -676,7 +676,7 @@ public class PeerAdminControllerTests
     }
 
     [Fact]
-    public void Dropping_a_library_no_longer_offered_frees_the_slots_on_it_even_when_it_is_sent_again()
+    public async Task Dropping_a_library_no_longer_offered_frees_the_slots_on_it_even_when_it_is_sent_again()
     {
         _controller.SetPeer(_fixture.Peer.Id, Request());
         _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play", ProviderFixture.SharedItem)!.Dispose();
@@ -684,6 +684,8 @@ public class PeerAdminControllerTests
 
         _controller.SetPeer(_fixture.Peer.Id, Request());
 
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
@@ -740,7 +742,7 @@ public class PeerAdminControllerTests
     }
 
     [Fact]
-    public void A_lower_limit_ends_what_no_longer_fits_and_keeps_the_rest_counted()
+    public async Task A_lower_limit_ends_what_no_longer_fits_and_keeps_the_rest_counted()
     {
         _controller.SetPeer(_fixture.Peer.Id, Request(3));
         var cut = new List<string>();
@@ -751,8 +753,11 @@ public class PeerAdminControllerTests
         _controller.SetPeer(_fixture.Peer.Id, Request(1));
 
         Assert.Equal(["middle", "newest"], cut.Order(StringComparer.Ordinal));
+        Assert.Equal(3, _fixture.Slots.Count(_fixture.Peer.Id));
+        await _fixture.Closer.CloseAbandonedAsync();
+        VerifyClosed("middle");
+        VerifyClosed("newest");
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
-        Assert.Equal(["middle", "newest"], _fixture.Slots.TakeClosing().Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -771,7 +776,7 @@ public class PeerAdminControllerTests
     }
 
     [Fact]
-    public void A_save_that_lowers_the_limit_and_takes_a_library_away_counts_what_was_lost_first()
+    public async Task A_save_that_lowers_the_limit_and_takes_a_library_away_counts_what_was_lost_first()
     {
         TwoLibraries();
         _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(Both().SharedLibraryIds, 3));
@@ -783,11 +788,13 @@ public class PeerAdminControllerTests
         _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(OnlyPrivate().SharedLibraryIds, 1));
 
         Assert.Equal(["lost", "newer"], cut.Order(StringComparer.Ordinal));
+        Assert.Equal(3, _fixture.Slots.Count(_fixture.Peer.Id));
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]
-    public void A_save_that_takes_a_library_away_can_leave_nothing_more_to_cut_for_the_lower_limit()
+    public async Task A_save_that_takes_a_library_away_can_leave_nothing_more_to_cut_for_the_lower_limit()
     {
         TwoLibraries();
         _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(Both().SharedLibraryIds, 3));
@@ -798,22 +805,27 @@ public class PeerAdminControllerTests
         _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest(OnlyPrivate().SharedLibraryIds, 1));
 
         Assert.Equal(["lost"], cut);
+        Assert.Equal(2, _fixture.Slots.Count(_fixture.Peer.Id));
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]
-    public void Taking_a_library_away_frees_the_slots_on_it()
+    public async Task Taking_a_library_away_frees_the_slots_on_it_once_their_transcodes_are_closed()
     {
         _controller.SetPeer(_fixture.Peer.Id, Request());
         _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "play", ProviderFixture.SharedItem)!.Dispose();
 
         _controller.SetPeer(_fixture.Peer.Id, new SetPeerRequest([], 2));
 
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+        await _fixture.Closer.CloseAbandonedAsync();
+        VerifyClosed("play");
         Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
     }
 
     [Fact]
-    public void Taking_a_library_away_leaves_the_slot_of_what_is_still_shared_counted()
+    public async Task Taking_a_library_away_leaves_the_slot_of_what_is_still_shared_counted()
     {
         TwoLibraries();
         _controller.SetPeer(_fixture.Peer.Id, Both());
@@ -821,6 +833,7 @@ public class PeerAdminControllerTests
         using var kept = _fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "kept", ProviderFixture.PrivateItem);
 
         _controller.SetPeer(_fixture.Peer.Id, OnlyPrivate());
+        await _fixture.Closer.CloseAbandonedAsync();
 
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
         Assert.NotNull(_fixture.Slots.TryEnter(_fixture.Peer.Id, 2, "another", ProviderFixture.PrivateItem));
@@ -861,6 +874,11 @@ public class PeerAdminControllerTests
         _controller.SetPeer(_fixture.Peer.Id, Request());
 
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    private void VerifyClosed(string playSession)
+    {
+        _fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), playSession, It.IsAny<Func<string, bool>>()), Times.Once);
     }
 
     private void TwoLibraries()
