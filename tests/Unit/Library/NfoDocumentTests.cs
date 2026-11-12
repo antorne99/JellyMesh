@@ -117,6 +117,54 @@ public class NfoDocumentTests
         Assert.Equal(["title", "uniqueid", "year"], names);
     }
 
+    [Fact]
+    public void AFilmWithoutACollectionIsWrittenAsBefore()
+    {
+        const string Expected = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
+            + "<movie>\n"
+            + "  <title>Title</title>\n"
+            + "  <year>2020</year>\n"
+            + "  <uniqueid type=\"imdb\">tt1</uniqueid>\n"
+            + "  <uniqueid type=\"tmdb\">1</uniqueid>\n"
+            + "</movie>";
+
+        Assert.Equal(Expected, NfoDocument.Movie(Thin()).ReplaceLineEndings("\n"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AFilmInACollectionHasASetWithItsName(bool isProtected)
+    {
+        var metadata = StubMetadata.From(_item, isProtected) with { CollectionName = "Saga <Uno> & \"Due\"\u0001", TmdbCollectionId = "1241" };
+
+        var root = XDocument.Parse(NfoDocument.Movie(metadata)).Root!;
+
+        var set = Assert.Single(root.Elements("set"));
+        Assert.Equal("1241", set.Attribute("tmdbcolid")?.Value);
+        Assert.Equal("Saga <Uno> & \"Due\"", set.Element("name")?.Value);
+        Assert.Equal(isProtected ? "lockdata" : "set", root.Elements().Last().Name.LocalName);
+    }
+
+    [Fact]
+    public void ACollectionWithoutTmdbIdHasNoAttribute()
+    {
+        var root = XDocument.Parse(NfoDocument.Movie(Protected() with { CollectionName = "Saga" })).Root!;
+
+        var set = Assert.Single(root.Elements("set"));
+        Assert.Empty(set.Attributes());
+        Assert.Equal("Saga", set.Element("name")?.Value);
+    }
+
+    [Fact]
+    public void OnlyFilmsHaveASet()
+    {
+        var metadata = Protected() with { CollectionName = "Saga", SeasonNumber = 1, EpisodeNumber = 2 };
+
+        Assert.Null(XDocument.Parse(NfoDocument.Episode(metadata)).Root!.Element("set"));
+        Assert.Null(XDocument.Parse(NfoDocument.Series(metadata)).Root!.Element("set"));
+    }
+
     [Theory]
     [InlineData("movie")]
     [InlineData("episode")]

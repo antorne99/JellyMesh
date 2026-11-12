@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -64,6 +65,12 @@ public sealed class StubItemUpdater
             item.CriticRating = metadata.CriticRating;
             item.PremiereDate = metadata.PremiereDate?.UtcDateTime;
             item.EndDate = metadata.EndDate?.UtcDateTime;
+        }
+
+        // Unprotected films keep a collection the admin may have set; protected ones follow the remote.
+        if (item is Movie movie && (metadata.CollectionName is not null || (metadata.WritesCollections && metadata.IsProtected)))
+        {
+            movie.CollectionName = metadata.CollectionName;
         }
 
         // Not MetadataEdit: on that reason Jellyfin rewrites any .nfo it finds, in its own format, inside the federated

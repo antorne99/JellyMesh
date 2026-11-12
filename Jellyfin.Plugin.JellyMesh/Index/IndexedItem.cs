@@ -122,4 +122,10 @@ public sealed record IndexedItem
 
     /// <summary>Gets the playable versions of a film or an episode.</summary>
     public IReadOnlyList<IndexedVersion> Versions { get; init; } = [];
+
+    /// <summary>
+    /// Gets the collection of a film, read only by a complete read of a stock server with collections turned on
+    /// (decision 52). A read of changes keeps the one already known.
+    /// </summary>
+    public IndexedBoxSet? Collection { get; init; }
 }

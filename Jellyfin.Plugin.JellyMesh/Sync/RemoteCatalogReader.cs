@@ -39,6 +39,11 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     /// </summary>
     public const int MaxFeedPages = 1000;
 
+    /// <summary>
+    /// Most collections read from one server, so that a remote cannot keep this server calling it for days.
+    /// </summary>
+    public const int MaxCollections = 10_000;
+
     private const int MaxReadAttempts = 3;
     private const string MoviesCollection = "movies";
 
@@ -149,6 +154,59 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return server.ImportedLibraryIds.Count == 0
             ? Task.FromResult(RemoteResult.Success<DateTimeOffset?>(null))
             : _registry.RunWithSessionAsync(server.Id, _client.GetServerTimeAsync, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server, IReadOnlyCollection<string> libraryIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+        ArgumentNullException.ThrowIfNull(libraryIds);
+
+        var budget = new ReadBudget();
+        var collections = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
+        foreach (var library in libraryIds)
+        {
+            var read = await ReadBriefAsync(server, (endpoint, session, start, limit, token) => _client.GetCollectionsAsync(endpoint, session, library, start, limit, token), MaxCollections, budget, cancellationToken).ConfigureAwait(false);
+            if (!read.IsSuccess)
+            {
+                return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(read.Failure);
+            }
+
+            foreach (var collection in read.Value!.Where(collection => !string.IsNullOrWhiteSpace(collection.Name)))
+            {
+                collections.TryAdd(collection.Id, new IndexedBoxSet(collection.Name!, TmdbIdOf(collection)));
+            }
+
+            if (collections.Count > MaxCollections)
+            {
+                return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(RemoteFailure.InvalidResponse);
+            }
+        }
+
+        // A film in several collections keeps the first by name, so that the choice does not depend on the order of a read.
+        var films = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
+        foreach (var (id, collection) in collections.OrderBy(entry => entry.Value.Name, StringComparer.Ordinal).ThenBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            var read = await ReadBriefAsync(server, (endpoint, session, start, limit, token) => _client.GetCollectionFilmsAsync(endpoint, session, id, start, limit, token), MaxItemsPerQuery, budget, cancellationToken).ConfigureAwait(false);
+            if (!read.IsSuccess)
+            {
+                return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(read.Failure);
+            }
+
+            foreach (var film in read.Value!)
+            {
+                films.TryAdd(film.Id, collection);
+            }
+        }
+
+        return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
+    }
+
+    // Digits only: it goes into an attribute of the .nfo.
+    private static string? TmdbIdOf(RemoteItem collection)
+    {
+        var id = collection.ProviderIds?.FirstOrDefault(entry => string.Equals(entry.Key, "Tmdb", StringComparison.OrdinalIgnoreCase)).Value;
+        return id is { Length: > 0 and <= 12 } && id.All(char.IsAsciiDigit) ? id : null;
     }
 
     private static void Add(Dictionary<string, IndexedItem> entries, IEnumerable<RemoteItem> items, RemoteItemType type, string libraryId, DateTimeOffset seenUtc)
@@ -408,6 +466,53 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return items.Count == total
             ? RemoteResult.Success<IReadOnlyCollection<RemoteItem>>(items.Values)
             : RemoteResult.Fail<IReadOnlyCollection<RemoteItem>>(RemoteFailure.CatalogChanged);
+    }
+
+    // Every page of a light read, which needs no retry: what changes in between comes up in the next one.
+    private async Task<RemoteResult<IReadOnlyList<RemoteItem>>> ReadBriefAsync(
+        RemoteServerInfo server,
+        Func<RemoteEndpoint, RemoteSession, int, int, CancellationToken, Task<RemoteResult<RemoteItemPage>>> readPage,
+        int maxItems,
+        ReadBudget budget,
+        CancellationToken cancellationToken)
+    {
+        var items = new List<RemoteItem>();
+        var start = 0;
+        int total;
+        do
+        {
+            var from = start;
+            var page = await _registry.RunWithSessionAsync(
+                server.Id,
+                (endpoint, session, token) => readPage(endpoint, session, from, PageSize, token),
+                cancellationToken).ConfigureAwait(false);
+            if (!page.IsSuccess)
+            {
+                return RemoteResult.Fail<IReadOnlyList<RemoteItem>>(page.Failure);
+            }
+
+            if (!budget.TrySpend(page.Value!.ByteCount))
+            {
+                return RemoteResult.Fail<IReadOnlyList<RemoteItem>>(RemoteFailure.ResponseTooLarge);
+            }
+
+            total = page.Value.TotalRecordCount;
+            if (total > maxItems)
+            {
+                return RemoteResult.Fail<IReadOnlyList<RemoteItem>>(RemoteFailure.InvalidResponse);
+            }
+
+            if (page.Value.Items.Count == 0 && start < total)
+            {
+                return RemoteResult.Fail<IReadOnlyList<RemoteItem>>(RemoteFailure.CatalogChanged);
+            }
+
+            items.AddRange(page.Value.Items);
+            start += page.Value.Items.Count;
+        }
+        while (start < total);
+
+        return RemoteResult.Success<IReadOnlyList<RemoteItem>>(items);
     }
 
     private sealed class ReadBudget

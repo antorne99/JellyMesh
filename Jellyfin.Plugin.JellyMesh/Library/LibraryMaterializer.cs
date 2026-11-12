@@ -95,7 +95,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <inheritdoc />
     public async Task<MaterializationReport> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
-        var (root, isProtected) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection));
+        var (root, isProtected, writesCollections) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection, config.FederateCollections));
         if (root.Length == 0)
         {
             var report = new MaterializationReport(_timeProvider.GetUtcNow(), false, 0, 0, 0, 0, 0, []);
@@ -106,7 +106,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var report = await RunAsync(root, isProtected, verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            var report = await RunAsync(root, isProtected, writesCollections, verifyEveryStub, cancellationToken).ConfigureAwait(false);
             _lastReport = report;
             return report;
         }
@@ -218,13 +218,13 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return string.Equals(stub.UrlTag, urlTag, StringComparison.Ordinal) && stub.StrmWrittenUtc == File.GetLastWriteTimeUtc(strm);
     }
 
-    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool verifyEveryStub, CancellationToken cancellationToken)
+    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool writesCollections, bool verifyEveryStub, CancellationToken cancellationToken)
     {
         // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
-        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null));
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null) { WritesCollections = writesCollections });
 
         WriteServerFolders(root, servers);
 

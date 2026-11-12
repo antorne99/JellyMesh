@@ -27,7 +27,7 @@ internal sealed class SyncFixture : IDisposable
         File = new IndexFile(_folder, new CapturingLogger<IndexFile>());
         Index = new FederationIndex(File, new CapturingLogger<FederationIndex>());
         Stubs = new StubRegistry(stubFolder ?? System.IO.Path.Combine(_folder, "plugin"), Store, new CapturingLogger<StubRegistry>());
-        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs);
+        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs, store: Store);
     }
 
     public string Folder => _folder;

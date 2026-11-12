@@ -69,6 +69,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool MetadataProtection { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the collection of a film on a stock remote is written to its <c>.nfo</c>, so
+    /// that Jellyfin can group federated films when a library adds them to collections automatically (decision 52).
+    /// </summary>
+    public bool FederateCollections { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether a stream slot that expires without a lost connection closes its transcode.
     /// When off that is left to the timer of stock. A lost connection closes the transcode either way.
     /// </summary>

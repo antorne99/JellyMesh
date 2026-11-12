@@ -37,6 +37,7 @@ public static class NfoDocument
     public static string Movie(StubMetadata metadata) => Write("movie", metadata, static (writer, value) =>
     {
         WriteOptional(writer, "premiered", FormatDate(value.PremiereDate));
+        WriteSet(writer, value);
         if (value.IsProtected)
         {
             writer.WriteElementString("lockdata", "true");
@@ -137,6 +138,24 @@ public static class NfoDocument
             WriteOptional(writer, "type", person.Type);
             writer.WriteEndElement();
         }
+    }
+
+    // Jellyfin joins films to a collection by this exact name, and only when the admin turns it on (decision 52).
+    private static void WriteSet(XmlWriter writer, StubMetadata metadata)
+    {
+        if (string.IsNullOrEmpty(metadata.CollectionName))
+        {
+            return;
+        }
+
+        writer.WriteStartElement("set");
+        if (!string.IsNullOrEmpty(metadata.TmdbCollectionId))
+        {
+            writer.WriteAttributeString("tmdbcolid", Clean(metadata.TmdbCollectionId));
+        }
+
+        WriteOptional(writer, "name", metadata.CollectionName);
+        writer.WriteEndElement();
     }
 
     private static void WriteEach(XmlWriter writer, string element, IEnumerable<string> values)

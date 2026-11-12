@@ -221,6 +221,19 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     /// <inheritdoc />
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        // With BoxSet as the only type, stock turns the library into "has a film in it" (checked on 12.4).
+        return ReadBriefPageAsync(endpoint, session, libraryId, "includeItemTypes=BoxSet&fields=ProviderIds", startIndex, limit, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        return ReadBriefPageAsync(endpoint, session, collectionId, "includeItemTypes=Movie&collapseBoxSetItems=false&excludeLocationTypes=Virtual", startIndex, limit, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -246,6 +259,26 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         return response.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true && response.Body.Length > 0
             ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType))
             : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
+    }
+
+    // A page of names and IDs, in a fixed order, without the heavy fields of the catalog.
+    private async Task<RemoteResult<RemoteItemPage>> ReadBriefPageAsync(RemoteEndpoint endpoint, RemoteSession session, string parentId, string filter, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var path = string.Create(
+            CultureInfo.InvariantCulture,
+            $"/Items?userId={Uri.EscapeDataString(session.UserId)}&parentId={Uri.EscapeDataString(parentId)}&recursive=true&{filter}&sortBy=SortName&sortOrder=Ascending&enableUserData=false&enableImages=false&startIndex={startIndex}&limit={limit}");
+        var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteItemPage>(response.Failure);
+        }
+
+        var page = Parse<ItemsResponse>(response.Body);
+        return page is { Items: not null, TotalRecordCount: not null } && page.Items.All(RemoteAnswers.IsWellFormed)
+            ? RemoteResult.Success(new RemoteItemPage(page.Items, page.TotalRecordCount.Value) { ByteCount = response.Body.Length })
+            : RemoteResult.Fail<RemoteItemPage>(RemoteFailure.InvalidResponse);
     }
 
     private static IReadOnlyList<RemoteItem> WithQuality(IReadOnlyList<RemoteItem> items, IReadOnlyDictionary<string, RemoteQuality>? quality)

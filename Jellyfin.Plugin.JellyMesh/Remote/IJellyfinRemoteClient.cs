@@ -77,6 +77,31 @@ public interface IJellyfinRemoteClient
     Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads one page of the collections (BoxSets) that hold a film of a library, by stock <c>/Items</c>. The user sees
+    /// them only if the remote admin lets it see the Collections library.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="libraryId">The library.</param>
+    /// <param name="startIndex">The index of the first collection.</param>
+    /// <param name="limit">The most collections to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page, with names and provider IDs only.</returns>
+    Task<RemoteResult<RemoteItemPage>> GetCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads one page of the films of a collection, by stock <c>/Items</c>.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="collectionId">The collection.</param>
+    /// <param name="startIndex">The index of the first film.</param>
+    /// <param name="limit">The most films to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page, with IDs only.</returns>
+    Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Downloads an image of an item.
     /// </summary>
     /// <param name="endpoint">The remote.</param>

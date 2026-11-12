@@ -22,4 +22,8 @@ public sealed record StubPlanInput(
     IReadOnlyList<RemoteServerInfo> Servers,
     bool IsProtected,
     Func<string, string> StrmUrl,
-    Func<string, LocalSeries?> LocalSeriesOf);
+    Func<string, LocalSeries?> LocalSeriesOf)
+{
+    /// <summary>Gets a value indicating whether films carry the collection of their remote.</summary>
+    public bool WritesCollections { get; init; }
+}

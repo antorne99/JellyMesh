@@ -384,6 +384,45 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task CollectionsAreTheBoxSetsWithAFilmInALibrary()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"box\",\"Name\":\"Saga\",\"ProviderIds\":{\"Tmdb\":\"10\"}}],\"TotalRecordCount\":1}"));
+
+        var result = await ClientFor(handler).GetCollectionsAsync(_endpoint, _session, "lib", 200, 100, CancellationToken.None);
+
+        var box = Assert.Single(result.Value!.Items);
+        Assert.Equal("Saga", box.Name);
+        Assert.Equal("10", box.ProviderIds!["Tmdb"]);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items", request.Uri.AbsolutePath);
+        var query = request.Uri.Query;
+        foreach (var part in new[] { "userId=abc", "parentId=lib", "includeItemTypes=BoxSet", "recursive=true", "fields=ProviderIds", "enableUserData=false", "startIndex=200", "limit=100" })
+        {
+            Assert.Contains(part, query, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("MediaSources", query, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheFilmsOfACollectionAreReadByIdOnly()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"m1\"}],\"TotalRecordCount\":1}"));
+
+        var result = await ClientFor(handler).GetCollectionFilmsAsync(_endpoint, _session, "box", 0, 100, CancellationToken.None);
+
+        Assert.Equal("m1", Assert.Single(result.Value!.Items).Id);
+        var query = Assert.Single(handler.Requests).Uri.Query;
+        foreach (var part in new[] { "userId=abc", "parentId=box", "includeItemTypes=Movie", "recursive=true", "collapseBoxSetItems=false", "enableUserData=false", "startIndex=0", "limit=100" })
+        {
+            Assert.Contains(part, query, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("MediaSources", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ItemsLooksUpIdsWithoutALibrary()
     {
         var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
