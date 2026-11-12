@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -231,6 +232,26 @@ public sealed class SyncHistoryRecordingTests : IDisposable
         Assert.Single(_fixture.Index.Snapshot.Find(server.Id)!.Items);
         Assert.Contains(_fixture.Logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
         Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheSavedHistoryHoldsNoAddressNoTokenAndNoLogin()
+    {
+        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
+        await _fixture.AddServerAsync("Friend", "films");
+        await _fixture.AddServerAsync("Other", "films");
+        Remote.BeforeClock = (read, _) => read == 2 ? throw new HttpRequestException(TestValues.Url) : Task.CompletedTask;
+        using var store = new SyncHistoryStore(_fixture.Folder, new CapturingLogger<SyncHistoryStore>());
+        using var sync = NewSync(store);
+
+        await sync.RunAsync(CancellationToken.None);
+
+        var content = await File.ReadAllTextAsync(Path.Combine(_fixture.Folder, SyncHistoryStore.FileName));
+        Assert.Contains("InvalidResponse", content, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Host, content, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Token, content, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Password, content, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Username, content, StringComparison.Ordinal);
     }
 
     [Fact]
