@@ -57,7 +57,8 @@ public static class DedupEngine
 
     // Issues that share a title become one case, or a title would show twice and could be merged two ways. A case needs a
     // title with no local copy: two local films or series cannot become one, because a local item is never touched. An
-    // episode whose series is not known names no copy, so its work is in no case unless another copy names it.
+    // episode whose series is not known names no copy, so its work is in no case unless another copy names it. A work with
+    // a local film awaiting its refresh waits outside the cases (decision 214).
     private static List<MergeCase> MergeCases(List<CatalogItem> local, List<CatalogItem> remote, WorkResolver works)
     {
         var films = local.Select(item => new WorkCopy(item, true))
@@ -66,16 +67,25 @@ public static class DedupEngine
             .Select(copy => (Copy: copy, works.Find(copy.Item)?.Key))
             .Where(film => film.Key is not null)
             .ToLookup(film => film.Key!, film => film.Copy, StringComparer.Ordinal);
+        var waiting = films
+            .Where(work => work.Any(copy => copy.IsLocal && copy.Item.AwaitsRefresh))
+            .Select(work => work.Key)
+            .ToHashSet(StringComparer.Ordinal);
 
         var cases = new List<(DedupIssueKind Kind, SortedSet<string> Keys)>();
-        foreach (var issue in works.Issues.Where(issue => issue.WorkKeys.Count > 1 && issue.WorkKeys.All(films.Contains)))
+        foreach (var (issueKind, keys) in works.Issues.Select(issue => (issue.Kind, Keys: issue.WorkKeys.Where(key => !waiting.Contains(key)).ToList())))
         {
-            var overlapping = cases.Where(entry => entry.Keys.Overlaps(issue.WorkKeys)).ToList();
+            if (keys.Count <= 1 || !keys.TrueForAll(films.Contains))
+            {
+                continue;
+            }
+
+            var overlapping = cases.Where(entry => entry.Keys.Overlaps(keys)).ToList();
             cases.RemoveAll(overlapping.Contains);
 
             // Issues are sorted by kind, so the earliest kind of the case is the one already there.
-            var kind = overlapping.Count > 0 ? overlapping.Min(entry => entry.Kind) : issue.Kind;
-            cases.Add((kind, new SortedSet<string>(overlapping.SelectMany(entry => entry.Keys).Concat(issue.WorkKeys), StringComparer.Ordinal)));
+            var kind = overlapping.Count > 0 ? overlapping.Min(entry => entry.Kind) : issueKind;
+            cases.Add((kind, new SortedSet<string>(overlapping.SelectMany(entry => entry.Keys).Concat(keys), StringComparer.Ordinal)));
         }
 
         return cases

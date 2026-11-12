@@ -111,7 +111,8 @@ public sealed class FederationResolver : IFederationResolver
                 .ToList(),
             ManualMerges = result.Merges
                 .Select(merge => new ManualMergeView(merge.Merge.Id, merge.Merge.CreatedUtc, merge.IsInEffect, merge.Copies.Select(ToMergedCopyView).ToList()))
-                .ToList()
+                .ToList(),
+            LocalItemsAwaitingRefresh = local.Where(item => item.AwaitsRefresh).Select(item => ToLocalId(item.ItemId)).Where(id => id != Guid.Empty).ToList()
         };
     }
 
