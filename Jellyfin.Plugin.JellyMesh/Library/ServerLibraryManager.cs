@@ -560,6 +560,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     // Called after the follow, so that a library of the registry renamed in the dashboard is not recorded as the admin's.
+    // A library of any registry, live or held, is never recorded (decision 184).
     private void RecordPreexisting(Guid serverId, RemoteServerConfig owner, IReadOnlyList<VirtualFolderInfo> folders) => _store.Update(config =>
     {
         if (Owned(config, owner) is not { } server || LiveRegistry(config, serverId) is not { } registry)
@@ -568,7 +569,12 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
 
         var visible = registry.Visible(folders);
-        var owned = registry.Libraries.Select(record => FindRecorded(record, visible)).OfType<VirtualFolderInfo>().ToList();
+        var others = config.Servers.Where(other => !ReferenceEquals(other, server)).SelectMany(other => other.AutomaticLibraryRegistry)
+            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries));
+        var owned = registry.Libraries.Select(record => FindRecorded(record, visible))
+            .Concat(others.Select(record => FindRecorded(record, folders)))
+            .OfType<VirtualFolderInfo>()
+            .ToList();
         var preexisting = folders
             .Where(folder => !owned.Contains(folder) && !string.IsNullOrEmpty(folder.ItemId))
             .Select(folder => folder.ItemId!)
