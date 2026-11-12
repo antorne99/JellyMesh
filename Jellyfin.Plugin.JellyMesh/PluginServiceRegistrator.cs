@@ -74,6 +74,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<SyncHistoryStore>>()));
         serviceCollection.AddSingleton<ILayoutMigration, LayoutMigration>();
+        serviceCollection.AddSingleton<ILibraryChangeTracker, LibraryChangeTracker>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 

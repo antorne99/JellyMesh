@@ -26,4 +26,9 @@ public sealed record FederationStatus(
     /// Gets a value indicating whether <c>JELLYMESH_SECRET_KEY</c> is still set. It is no longer used, so it can be removed.
     /// </summary>
     public bool LegacyKeySet { get; init; }
+
+    /// <summary>
+    /// Gets the libraries of removed servers that the plugin left to the admin when the federated folder changed.
+    /// </summary>
+    public IReadOnlyList<string> ReleasedLibraries { get; init; } = [];
 }

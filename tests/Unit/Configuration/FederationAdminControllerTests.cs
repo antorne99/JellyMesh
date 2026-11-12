@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -36,7 +37,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, ILibraryChangeTracker? changes = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -48,7 +49,8 @@ public class FederationAdminControllerTests
             new InMemoryMergeStore(),
             libraries ?? Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>(),
-            migration);
+            migration,
+            changes);
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -736,18 +738,68 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public void TheFolderShowsItsPathsAndTheCheckerDecidesTheLink()
+    public async Task TheFolderShowsThePathsOfEachServerAndTheCheckerDecidesTheLink()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var server = await fixture.AddServerAsync();
+        var checker = new RecordingChecker(FederatedFolderLinkState.NotLinked);
 
-        var folder = ControllerFor(fixture, new RecordingChecker(FederatedFolderLinkState.NotLinked)).GetStatus().Value!.FederatedFolder;
+        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
 
-        Assert.Equal("/federata/Film", folder.MoviesPath);
-        Assert.Equal("/federata/Serie", folder.SeriesPath);
+        Assert.Equal([server.Id], checker.Servers);
+        var shown = Assert.Single(folder.Servers);
+        Assert.Equal(server.Id, shown.Id);
+        Assert.Equal("Friend", shown.Name);
+        Assert.Equal($"/federata/{server.Id:D}/Film", shown.MoviesPath);
+        Assert.Equal($"/federata/{server.Id:D}/Serie", shown.SeriesPath);
+        Assert.Equal(["Film"], shown.Movies.Libraries);
+        Assert.Equal(["Serie"], shown.SeriesGroupingOff);
+        Assert.Equal(["Serie"], shown.SeriesLibraries);
         Assert.Equal(FederatedFolderLinkState.NotLinked, folder.Link);
-        Assert.Equal(["Film"], folder.Movies.Libraries);
-        Assert.Equal(["Serie"], folder.SeriesGroupingOff);
+        Assert.Equal(["Tutto"], folder.Covering);
+        Assert.True(folder.SeriesSplit);
+    }
+
+    [Fact]
+    public async Task ALibraryOnTheFoldersOfAServerOutsideItsAutomaticOnesIsUnregistered()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var server = await fixture.AddServerAsync();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.GetState(server.Id))
+            .Returns(new AutomaticLibrariesState(true, false, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None));
+        var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Friend - Film", "Mia"] };
+
+        var folder = ControllerFor(fixture, checker, libraries: libraries.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Equal(["Mia"], Assert.Single(folder.Servers).Unregistered);
+    }
+
+    [Fact]
+    public async Task WithTheSwitchOffNoLibraryIsUnregistered()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        await fixture.AddServerAsync();
+        var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Mia"] };
+
+        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+
+        Assert.Empty(Assert.Single(folder.Servers).Unregistered);
+    }
+
+    [Fact]
+    public void TheLibrariesLeftByRemovedServersAreListed()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Vecchio - Film" } });
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Altro - Serie" } });
+
+        var status = ControllerFor(fixture).GetStatus().Value!;
+
+        Assert.Equal(["Vecchio - Film", "Altro - Serie"], status.ReleasedLibraries);
     }
 
     [Fact]
@@ -762,6 +814,32 @@ public class FederationAdminControllerTests
         var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
 
         Assert.Same(status, folder.Migration);
+    }
+
+    [Fact]
+    public void TheFolderSaysWhichLibrariesChangedOnItSinceTheSync()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var changes = new Mock<ILibraryChangeTracker>();
+        var found = new LibraryChanges(["Tutto"], ["Film"]);
+        changes.Setup(tracker => tracker.Compare()).Returns(found);
+
+        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Same(found, folder.Changes);
+        changes.Verify(tracker => tracker.Record(), Times.Never);
+    }
+
+    [Fact]
+    public void WithNoFolderThereAreNoChanges()
+    {
+        using var fixture = new RegistryFixture();
+        var changes = new Mock<ILibraryChangeTracker>(MockBehavior.Strict);
+
+        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Equal(LibraryChanges.None, folder.Changes);
     }
 
     [Fact]
@@ -784,16 +862,32 @@ public class FederationAdminControllerTests
 
         public bool Called { get; private set; }
 
-        public FederatedFolderLinkReport Check(string federatedFolderPath)
+        public IReadOnlyList<Guid> Servers { get; private set; } = [];
+
+        public IReadOnlyList<string> OnlyOnItsFolders { get; init; } = [];
+
+        public FederatedFolderLinkReport Check(string federatedFolderPath, IReadOnlyList<Guid> serverIds)
         {
             Called = true;
-            var link = _state switch
+            Servers = serverIds;
+            if (_state == FederatedFolderLinkState.NotChecked)
             {
-                FederatedFolderLinkState.Linked => FederatedPathLink.Linked,
-                FederatedFolderLinkState.NotLinked => FederatedPathLink.NotLinked,
-                _ => FederatedPathLink.NotChecked
-            };
-            return new FederatedFolderLinkReport(new(link, ["Film"]), new(link, []), ["Serie"]);
+                return FederatedFolderLinkReport.NotChecked;
+            }
+
+            var link = _state == FederatedFolderLinkState.Linked ? FederatedPathLink.Linked : FederatedPathLink.NotLinked;
+            var servers = serverIds
+                .Select(id => new ServerFolderLink(
+                    id,
+                    FederatedFolderLayout.ServerMoviesPath(federatedFolderPath, id),
+                    FederatedFolderLayout.ServerSeriesPath(federatedFolderPath, id),
+                    new(link, ["Film"]),
+                    new(link, []),
+                    ["Serie"],
+                    ["Serie"],
+                    OnlyOnItsFolders))
+                .ToList();
+            return new FederatedFolderLinkReport(servers, ["Tutto"], true);
         }
     }
 }

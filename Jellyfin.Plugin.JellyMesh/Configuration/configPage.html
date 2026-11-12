@@ -660,6 +660,27 @@
                 font-weight: bold;
             }
 
+            .jmServerFolder {
+                margin-top: 1em;
+            }
+
+            .jmServerFolderName {
+                color: var(--jm-text);
+                font-weight: 600;
+            }
+
+            .jmOwnNotes p {
+                margin: 0.5em 0 0;
+            }
+
+            .jmOwnNotes .jmActions {
+                margin-top: 0.75em;
+            }
+
+            .jmReleasedLibraries {
+                margin-top: 1em;
+            }
+
             .jmCopyField {
                 position: fixed;
                 top: 0;
@@ -1269,6 +1290,7 @@
                     <h3 class="sectionTitle">Remote servers</h3>
                     <div id="jmServersSyncFailure" hidden class="jmAlert"></div>
                     <div id="jmServers" class="jmRowList"></div>
+                    <div id="jmReleasedLibraries" class="jmAlert jmReleasedLibraries" hidden></div>
                     <details id="jmAddServerPart" class="jmDisclosure">
                         <summary>
                             <h3 class="sectionTitle">Add a server</h3>
@@ -1505,8 +1527,7 @@
                     "Active. {problems}.": "Attivo. {problems}.",
                     "Add a remote server": "Aggiungi un server remoto",
                     "Add a server": "Aggiungi un server",
-                    "Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.": "Aggiungili a mano nel Pannello di controllo > Librerie, uno a una libreria di film e uno a una libreria di serie. JellyMesh non modifica mai le librerie.",
-                    "Add these paths by hand in Dashboard > Libraries.": "Aggiungi questi percorsi a mano nel Pannello di controllo > Librerie.",
+                    "Add the Film folder of each server to a film library and its Serie folder to a series library in Dashboard > Libraries, or turn on the automatic libraries of the server on the Servers tab.": "Aggiungi la cartella Film di ogni server a una libreria di film e la sua cartella Serie a una libreria di serie nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server nella scheda Server.",
                     "Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Librerie nella sua scheda per riprovare.",
                     "Added {server}. Choose its libraries.": "{server} è stato aggiunto. Scegli le sue librerie.",
                     "Added {server}. Open Libraries on its card to choose what to import.": "{server} è stato aggiunto. Apri Librerie nella sua scheda per scegliere cosa importare.",
@@ -1519,7 +1540,6 @@
                     "Best version first.": "Prima la versione migliore.",
                     "Best version: {quality}": "Versione migliore: {quality}",
                     "Bitrate": "Bitrate",
-                    "Both paths are linked.": "Entrambi i percorsi sono collegati.",
                     "Cancelled": "Annullata",
                     "Catalog": "Catalogo",
                     "Check that the URL leads to a Jellyfin server, then test the connection.": "Controlla che l'URL porti a un server Jellyfin, poi prova la connessione.",
@@ -1542,7 +1562,7 @@
                     "Connected.": "Connesso.",
                     "Copied {value}.": "Copiato {value}.",
                     "Copy": "Copia",
-                    "Copy {library} path": "Copia il percorso di {library}",
+                    "Copy the {library} path of {server}": "Copia il percorso {library} di {server}",
                     "Copy: {label}": "Copia: {label}",
                     "Could not read {what}. {next} Reason: {reason}": "Impossibile leggere {what}. {next} Motivo: {reason}",
                     "Could not tell which copy would play. {reason}": "Impossibile dire quale copia verrebbe riprodotta. {reason}",
@@ -1560,6 +1580,8 @@
                     "Duplicate series": "Serie duplicate",
                     "Duplicates to review": "Duplicati da rivedere",
                     "Duration": "Durata",
+                    "Each server gets a Film and a Serie folder here. Add a server to see them.": "Qui ogni server ha una cartella Film e una Serie. Aggiungi un server per vederle.",
+                    "Each server has a Film and a Serie folder. Add them by hand in Dashboard > Libraries, the Film folder to a film library and the Serie folder to a series library, or turn on the automatic libraries of the server.": "Ogni server ha una cartella Film e una Serie. Aggiungile a mano nel Pannello di controllo > Librerie, la cartella Film a una libreria di film e la cartella Serie a una libreria di serie, oppure attiva le librerie automatiche del server.",
                     "Enter a name, a user and an http or https URL with no credentials, query or fragment.": "Inserisci un nome, un utente e un URL http o https senza credenziali, query o frammento.",
                     "Enter a time as hours and minutes.": "Inserisci un orario in ore e minuti.",
                     "Enter a whole number from {min} to {max}.": "Inserisci un numero intero da {min} a {max}.",
@@ -1586,15 +1608,18 @@
                     "If merged, each episode plays from its best copy, and a local copy always wins. The others stay as backups.": "Se le unisci, ogni episodio viene riprodotto dalla sua copia migliore, e una copia locale vince sempre. Le altre restano come riserve.",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
                     "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
+                    "In no library yet": "Ancora in nessuna libreria",
                     "In total: {created} created, {updated} updated, {removed} removed.": "In totale: {created} creati, {updated} aggiornati, {removed} rimossi.",
                     "Incremental": "Incrementale",
-                    "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
+                    "It reads the catalogs and fills the Film and Serie folders of each server. It also runs by itself on a timer.": "Legge i cataloghi e riempie le cartelle Film e Serie di ogni server. Parte anche da sola a intervalli regolari.",
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
                     "Its automatic libraries are deleted too: {names}.": "Vengono eliminate anche le sue librerie automatiche: {names}.",
                     "Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai film uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
                     "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: ogni episodio viene riprodotto dalla sua copia migliore, le altre restano come riserve, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
+                    "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
+                    "JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.": "JellyMesh non gestisce più queste librerie, perché ne sono cambiati il percorso o il tipo, sono state eliminate o è cambiata la cartella federata: {libraries}. Quelle ancora presenti sono tue, da tenere o eliminare.",
                     "JellyMesh server": "server JellyMesh",
                     "Keep paused sessions (hours)": "Mantieni le sessioni in pausa (ore)",
                     "Last check": "Ultimo controllo",
@@ -1604,11 +1629,12 @@
                     "Last sync: {date}.": "Ultima sincronizzazione: {date}.",
                     "Length": "Durata",
                     "Libraries": "Librerie",
+                    "Libraries changed on the federated folder since the last sync, which links the versions again.": "Dall'ultima sincronizzazione sono cambiate librerie sulla cartella federata; la prossima collega di nuovo le versioni.",
                     "Libraries no longer offered are no longer shared with this server.": "Le librerie non più offerte non sono più condivise con questo server.",
                     "Libraries saved for {server}. The next sync reads them.": "Librerie salvate per {server}. La prossima sincronizzazione le legge.",
                     "Libraries to import": "Librerie da importare",
                     "Libraries to import from {server}": "Librerie da importare da {server}",
-                    "Link the two paths": "Collega i due percorsi",
+                    "Link the folders of each server": "Collega le cartelle di ogni server",
                     "Linked": "Collegata",
                     "Locks federated items, so metadata fetchers and \"Replace all metadata\" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.": "Blocca gli elementi federati, così i recuperi di metadati e \"Sostituisci tutti i metadati\" non li toccano. Se disattivata, i recuperi completano i metadati e i titoli senza ID provider possono essere abbinati al film sbagliato.",
                     "Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.": "Accedi con un utente dedicato non amministratore di quel server, al suo indirizzo tailnet. Subito dopo compaiono le sue librerie.",
@@ -1636,6 +1662,7 @@
                     "No remote servers yet.": "Ancora nessun server remoto.",
                     "No remote servers.": "Nessun server remoto.",
                     "No server was left to forget.": "Non restava nessun server da dimenticare.",
+                    "No server yet": "Ancora nessun server",
                     "No sync has run yet.": "Nessuna sincronizzazione eseguita finora.",
                     "None": "Nessuno",
                     "None yet": "Ancora nessuno",
@@ -1669,6 +1696,7 @@
                     "Reading...": "Lettura...",
                     "Recognized as “{server}”: it takes back its folder and its label.": "Riconosciuto come «{server}»: riprende la sua cartella e la sua etichetta.",
                     "Reconciliation": "Riconciliazione",
+                    "Recreate missing libraries": "Ricrea le librerie mancanti",
                     "Reload the page before saving.": "Ricarica la pagina prima di salvare.",
                     "Remember the transcoding rights of a remote (minutes)": "Ricorda i diritti di transcodifica di un remoto (minuti)",
                     "Remote servers": "Server remoti",
@@ -1704,6 +1732,8 @@
                     "Setup": "Configurazione",
                     "Shared libraries": "Librerie condivise",
                     "Sharing": "Condivisione",
+                    "Since the last sync, these libraries came over the federated folder: {libraries}. The next sync links their versions again.": "Dall'ultima sincronizzazione queste librerie sono arrivate sulla cartella federata: {libraries}. La prossima sincronizzazione ne collega di nuovo le versioni.",
+                    "Since the last sync, these libraries left the federated folder: {libraries}. The next sync links the versions again.": "Dall'ultima sincronizzazione queste librerie hanno lasciato la cartella federata: {libraries}. La prossima sincronizzazione collega di nuovo le versioni.",
                     "Started": "Inizio",
                     "Status": "Stato",
                     "Status unknown.": "Stato sconosciuto.",
@@ -1722,10 +1752,12 @@
                     "The federation index could not be saved.": "Non è stato possibile salvare l'indice della federazione.",
                     "The file of the sync history could not be read, so earlier syncs are not shown. A copy of the file is kept next to it.": "Non è stato possibile leggere il file dello storico delle sincronizzazioni, quindi le sincronizzazioni precedenti non sono mostrate. Una copia del file è conservata accanto.",
                     "The files in the federated folder stay, and nothing changes on {server}.": "I file nella cartella federata restano e su {server} non cambia nulla.",
+                    "The folders of every server are linked.": "Le cartelle di ogni server sono collegate.",
                     "The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder, then the totals of the whole folder.": "Le ultime 50 sincronizzazioni e le ultime 7 riconciliazioni, dalla più recente. Per ogni server: gli elementi del catalogo letti, e i titoli creati, aggiornati e rimossi nella sua cartella, poi i totali di tutta la cartella.",
                     "The libraries of this server are being updated. Try again when it is done.": "Le librerie di questo server sono in aggiornamento. Riprova quando ha finito.",
                     "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
                     "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
+                    "The Serie folders of the servers are in different libraries, so a series on more than one server stays split.": "Le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa.",
                     "The server refused to create a library.": "Il server ha rifiutato di creare una libreria.",
                     "The server refused to delete a library. Try again.": "Il server ha rifiutato di eliminare una libreria. Riprova.",
                     "The stored logins do not decrypt with the key file: it was lost or replaced. Enter the password of each marked server again.": "Gli accessi salvati non si decifrano con il file della chiave: è stato perso o sostituito. Inserisci di nuovo la password di ogni server segnato.",
@@ -1746,8 +1778,15 @@
                     "Enter the user JellyMesh logs in with.": "Inserisci l'utente con cui JellyMesh accede.",
                     "Titles not written or removed: {count}.": "Titoli non scritti o non rimossi: {count}.",
                     "Type": "Tipo",
+                    "Users with access to only some libraries do not see these until you enable them for those users in Dashboard > Users.": "Gli utenti con accesso solo ad alcune librerie non le vedono finché non le abiliti per loro nel Pannello di controllo > Utenti.",
+                    "Warning: the Serie folders of the servers are in different libraries, so a series on more than one server stays split: {servers}. Put them in the same libraries to merge them.": "Attenzione: le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa: {servers}. Mettile nelle stesse librerie per unirle.",
+                    "Warning: {libraries} holds the whole federated folder or the folder of a server, so the versions of a title come apart and the libraries of the servers empty. Remove that path from it and add only the Film and Serie folders.": "Attenzione: {libraries} contiene tutta la cartella federata o la cartella di un server, quindi le versioni di un titolo si separano e le librerie dei server si svuotano. Togli quel percorso e aggiungi solo le cartelle Film e Serie.",
+                    "Warning: {libraries} is also on the folders of {server}, beside its automatic libraries, so its titles show twice. Delete it in Dashboard > Libraries if you do not need it.": "Attenzione: anche {libraries} è sulle cartelle di {server}, accanto alle sue librerie automatiche, quindi i suoi titoli compaiono due volte. Eliminala nel Pannello di controllo > Librerie se non ti serve.",
                     "{hours} h {minutes} min": "{hours} h {minutes} min",
+                    "{libraries} holds the whole federated folder, so the versions of a title come apart.": "{libraries} contiene tutta la cartella federata, quindi le versioni di un titolo si separano.",
+                    "{libraries} shows the titles of a server a second time.": "{libraries} mostra una seconda volta i titoli di un server.",
                     "{minutes} min {seconds} s": "{minutes} min {seconds} s",
+                    "{problems} Fix this by hand in Dashboard > Libraries, or turn on the automatic libraries of the server.": "{problems} Sistemalo a mano nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server.",
                     "{seconds} s": "{seconds} s",
                     "{server}: login saved.": "{server}: accesso salvato.",
                     "JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.": "JELLYMESH_SECRET_KEY non si usa più: ora la chiave è un file nella cartella dati del plugin. Puoi togliere la variabile dall'ambiente di Jellyfin.",
@@ -1898,7 +1937,6 @@
                     "{online} of {total} online": "{online} di {total} online",
                     "{path} is in the field. Save the settings to use it.": "{path} è nel campo. Salva le impostazioni per usarlo.",
                     "{place}, not in the catalog now": "{place}, ora non è nel catalogo",
-                    "{problems} Fix this by hand in Dashboard > Libraries.": "{problems} Sistemalo a mano nel Pannello di controllo > Librerie.",
                     "{servers}, suspended": "{servers}, sospesi",
                     "{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.": "{server} e il suo accesso salvato escono subito da JellyMesh. Su quel server l'accesso non viene revocato: il suo dispositivo JellyMesh resta in elenco.",
                     "{server} is offline. Titles found only there do not play until it answers.": "{server} è offline. I titoli presenti solo lì non si riproducono finché non risponde.",
@@ -2699,6 +2737,9 @@
                     ownSwitch.className = 'checkboxList';
                     var ownBox = addCheckbox(ownSwitch, server.Id, t('Create a Film and a Serie library for this server'));
                     body.appendChild(ownSwitch);
+                    var ownNotes = create('div');
+                    ownNotes.className = 'jmOwnNotes';
+                    body.appendChild(ownNotes);
                     var ownPending = false;
                     var ownErrors = {
                         NameTaken: t('A library name was taken, so a library was not created.'),
@@ -2747,6 +2788,9 @@
                         }).join(', ');
                         var ownError = ownErrors[ownCurrent.Error] || '';
                         setText(own, ownCurrent.Busy ? t('Being updated') : ((ownNames || t('None')) + (ownError ? ' ' + ownError : '')));
+                        renderOwnNotes(ownNotes, ownCurrent, ownPending, function () {
+                            switchOwn(true, false);
+                        });
                     };
                     row.jmUpdate(server, report);
 
@@ -2872,6 +2916,31 @@
                     return row;
                 }
 
+                // Shows the notes under the switch of the automatic libraries, and rebuilds them only when they change.
+                function renderOwnNotes(container, own, pending, recreate) {
+                    var missing = own.Enabled && !own.Busy && !pending && own.Libraries.length < 2;
+                    var key = JSON.stringify([own.Enabled, own.Released, missing]);
+                    if (container.jmKey === key) {
+                        return;
+                    }
+
+                    container.jmKey = key;
+                    container.textContent = '';
+                    if (own.Enabled) {
+                        container.appendChild(create('p', t('Users with access to only some libraries do not see these until you enable them for those users in Dashboard > Users.')));
+                    }
+
+                    if (own.Released.length > 0) {
+                        container.appendChild(create('p', t('JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.', { libraries: own.Released.join(', ') })));
+                    }
+
+                    if (missing) {
+                        var actions = actionRow();
+                        actions.appendChild(button(t('Recreate missing libraries'), recreate));
+                        container.appendChild(actions);
+                    }
+                }
+
                 // Copies a text through a selected field, and returns whether it worked.
                 function copySelected(text) {
                     var active = document.activeElement;
@@ -2932,10 +3001,6 @@
                     return row;
                 }
 
-                function renderPath(library, path) {
-                    return renderCopyRow(library, path, t('Copy {library} path', { library: library }));
-                }
-
                 function renderCommand(command) {
                     return renderCopyRow(command.label, command.value, t('Copy: {label}', { label: command.label }));
                 }
@@ -2953,38 +3018,103 @@
                     el('#jmFolderFromEnvironment').hidden = !fromEnvironment;
                     var notes = el('#jmFolderNotes');
                     notes.textContent = '';
-                    updateRows(el('#jmFolderPaths'), folder.Path ? [
-                        { key: 'film' + folder.MoviesPath, build: renderPath, args: [t('Film library'), folder.MoviesPath] },
-                        { key: 'series' + folder.SeriesPath, build: renderPath, args: [t('Series library'), folder.SeriesPath] }
-                    ] : []);
+                    var checked = folder.Link !== 'NotChecked';
+                    var servers = folder.Path ? folder.Servers : [];
+                    updateRows(el('#jmFolderPaths'), servers.map(function (server) {
+                        return { key: JSON.stringify(server) + checked, build: renderServerFolder, args: [server, checked] };
+                    }));
                     if (!folder.Path) {
                         el('#jmFolderHint').textContent = t('Choose a folder to see the paths to link.');
                         return;
                     }
 
-                    el('#jmFolderHint').textContent = t('Add these paths by hand in Dashboard > Libraries.');
-                    if (folder.Link === 'NotChecked') {
+                    if (servers.length === 0) {
+                        el('#jmFolderHint').textContent = t('Each server gets a Film and a Serie folder here. Add a server to see them.');
+                        return;
+                    }
+
+                    el('#jmFolderHint').textContent = t('Each server has a Film and a Serie folder. Add them by hand in Dashboard > Libraries, the Film folder to a film library and the Serie folder to a series library, or turn on the automatic libraries of the server.');
+                    if (!checked) {
                         notes.appendChild(create('div', t('The libraries could not be read to check these paths.')));
                         return;
                     }
 
                     if (folder.Link === 'Linked') {
-                        notes.appendChild(create('div', t('Both paths are linked.')));
+                        notes.appendChild(create('div', t('The folders of every server are linked.')));
                     }
 
-                    var warnings = [
-                        pathWarning(folder.MoviesPath, t('film'), folder.Movies),
-                        pathWarning(folder.SeriesPath, t('series'), folder.Series)
-                    ];
-                    if (folder.SeriesGroupingOff.length > 0) {
-                        warnings.push(t('Warning: "Automatically merge series that are spread across multiple folders" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.', { libraries: folder.SeriesGroupingOff.join(', ') }));
-                    }
-
-                    warnings.filter(Boolean).forEach(function (text) {
-                        var warning = create('div', text);
-                        warning.className = 'jmFolderWarning';
-                        notes.appendChild(warning);
+                    folderWarnings(folder).forEach(function (text) {
+                        notes.appendChild(folderWarning(text));
                     });
+                }
+
+                // Builds the block of a server in the folder section, with its two paths and what is wrong with them.
+                function renderServerFolder(server, checked) {
+                    var block = create('div');
+                    block.className = 'jmServerFolder';
+                    var name = create('div', server.Name);
+                    name.className = 'jmServerFolderName';
+                    block.appendChild(name);
+                    [[t('Film library'), server.MoviesPath], [t('Series library'), server.SeriesPath]].forEach(function (path) {
+                        block.appendChild(renderCopyRow(path[0], path[1], t('Copy the {library} path of {server}', { library: path[0], server: server.Name })));
+                    });
+                    if (checked) {
+                        serverFolderWarnings(server).forEach(function (text) {
+                            block.appendChild(folderWarning(text));
+                        });
+                    }
+
+                    return block;
+                }
+
+                function folderWarning(text) {
+                    var warning = create('div', text);
+                    warning.className = 'jmFolderWarning';
+                    return warning;
+                }
+
+                // Says what is wrong with the two folders of a server.
+                function serverFolderWarnings(server) {
+                    var warnings = [
+                        pathWarning(server.MoviesPath, t('film'), server.Movies),
+                        pathWarning(server.SeriesPath, t('series'), server.Series)
+                    ];
+                    if (server.SeriesGroupingOff.length > 0) {
+                        warnings.push(t('Warning: "Automatically merge series that are spread across multiple folders" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.', { libraries: server.SeriesGroupingOff.join(', ') }));
+                    }
+
+                    if (server.Unregistered.length > 0) {
+                        warnings.push(t('Warning: {libraries} is also on the folders of {server}, beside its automatic libraries, so its titles show twice. Delete it in Dashboard > Libraries if you do not need it.', { libraries: server.Unregistered.join(', '), server: server.Name }));
+                    }
+
+                    return warnings.filter(Boolean);
+                }
+
+                // Says what is wrong with the libraries over the federated folder as a whole.
+                function folderWarnings(folder) {
+                    var warnings = [];
+                    if (folder.Covering.length > 0) {
+                        warnings.push(t('Warning: {libraries} holds the whole federated folder or the folder of a server, so the versions of a title come apart and the libraries of the servers empty. Remove that path from it and add only the Film and Serie folders.', { libraries: folder.Covering.join(', ') }));
+                    }
+
+                    if (folder.SeriesSplit) {
+                        var sets = folder.Servers.filter(function (server) {
+                            return server.SeriesLibraries.length > 0;
+                        }).map(function (server) {
+                            return server.Name + ' (' + server.SeriesLibraries.join(', ') + ')';
+                        });
+                        warnings.push(t('Warning: the Serie folders of the servers are in different libraries, so a series on more than one server stays split: {servers}. Put them in the same libraries to merge them.', { servers: sets.join('; ') }));
+                    }
+
+                    if (folder.Changes.Added.length > 0) {
+                        warnings.push(t('Since the last sync, these libraries came over the federated folder: {libraries}. The next sync links their versions again.', { libraries: folder.Changes.Added.join(', ') }));
+                    }
+
+                    if (folder.Changes.Removed.length > 0) {
+                        warnings.push(t('Since the last sync, these libraries left the federated folder: {libraries}. The next sync links the versions again.', { libraries: folder.Changes.Removed.join(', ') }));
+                    }
+
+                    return warnings;
                 }
 
                 function pathWarning(path, kind, status) {
@@ -3012,6 +3142,16 @@
                     updateSyncButton();
                     showServers();
                     renderFolder(status.FederatedFolder);
+                    renderReleasedLibraries(status.ReleasedLibraries || []);
+                }
+
+                // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed.
+                function renderReleasedLibraries(names) {
+                    var notice = el('#jmReleasedLibraries');
+                    setText(notice, names.length > 0
+                        ? t('JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.', { libraries: names.join(', ') })
+                        : '');
+                    notice.hidden = names.length === 0;
                 }
 
                 function statusFailed(reason) {
@@ -4300,17 +4440,57 @@
                     var folder = status && status.FederatedFolder;
                     if (folder && folder.Path && folder.Link === 'NotChecked') {
                         notes.push({ key: 'unchecked', text: t('The libraries could not be read to check the paths.'), tab: 'settings' });
-                    } else if (folder && folder.Path && folder.Link === 'NotLinked') {
-                        var problems = [pathProblem(folder.Movies, t('film')), pathProblem(folder.Series, t('series'))].filter(Boolean);
-                        notes.push({ key: 'link', text: t('{problems} Fix this by hand in Dashboard > Libraries.', { problems: problems.join(' ') }), tab: 'settings' });
+                    } else if (folder && folder.Path && folder.Link === 'NotLinked' && folder.Servers.length > 0) {
+                        var problems = folder.Servers.map(function (server) {
+                            var found = [pathProblem(server.Movies, t('film')), pathProblem(server.Series, t('series'))].filter(Boolean);
+                            return found.length > 0 ? server.Name + ': ' + found.join(' ') : '';
+                        }).filter(Boolean);
+                        notes.push({ key: 'link', text: t('{problems} Fix this by hand in Dashboard > Libraries, or turn on the automatic libraries of the server.', { problems: problems.join(' ') }), tab: 'settings' });
                     }
 
-                    if (folder && folder.SeriesGroupingOff.length > 0) {
-                        notes.push({ key: 'grouping', text: t('A series in two folders stays split in {libraries}.', { libraries: folder.SeriesGroupingOff.join(', ') }), tab: 'settings' });
+                    if (folder && folder.Path && folder.Link !== 'NotChecked') {
+                        folderOverviewNotes(folder).forEach(function (note) {
+                            notes.push(note);
+                        });
                     }
 
                     if (settingsSection.failure) {
                         notes.push({ key: 'failed', text: t('The settings could not be read. Reload the page before saving.'), tab: 'settings' });
+                    }
+
+                    return notes;
+                }
+
+                // Gives the overview notes about the libraries over the folders of the servers.
+                function folderOverviewNotes(folder) {
+                    var notes = [];
+                    var collect = function (name) {
+                        return folder.Servers.reduce(function (all, server) {
+                            return all.concat(server[name].filter(function (library) {
+                                return all.indexOf(library) < 0;
+                            }));
+                        }, []);
+                    };
+                    var groupingOff = collect('SeriesGroupingOff');
+                    if (groupingOff.length > 0) {
+                        notes.push({ key: 'grouping', text: t('A series in two folders stays split in {libraries}.', { libraries: groupingOff.join(', ') }), tab: 'settings' });
+                    }
+
+                    var unregistered = collect('Unregistered');
+                    if (unregistered.length > 0) {
+                        notes.push({ key: 'unregistered', text: t('{libraries} shows the titles of a server a second time.', { libraries: unregistered.join(', ') }), tab: 'settings' });
+                    }
+
+                    if (folder.Covering.length > 0) {
+                        notes.push({ key: 'covering', text: t('{libraries} holds the whole federated folder, so the versions of a title come apart.', { libraries: folder.Covering.join(', ') }), tab: 'settings' });
+                    }
+
+                    if (folder.SeriesSplit) {
+                        notes.push({ key: 'split', text: t('The Serie folders of the servers are in different libraries, so a series on more than one server stays split.'), tab: 'settings' });
+                    }
+
+                    if (folder.Changes.Added.length > 0 || folder.Changes.Removed.length > 0) {
+                        notes.push({ key: 'changes', text: t('Libraries changed on the federated folder since the last sync, which links the versions again.'), tab: 'settings', calm: true });
                     }
 
                     return notes;
@@ -4325,6 +4505,10 @@
                             var folder = data.FederatedFolder;
                             if (!folder.Path) {
                                 return t('Not chosen');
+                            }
+
+                            if (folder.Servers.length === 0 && folder.Link !== 'NotChecked') {
+                                return t('No server yet');
                             }
 
                             return { Linked: t('Linked'), NotLinked: t('Not linked') }[folder.Link] || t('Not checked');
@@ -4449,13 +4633,13 @@
                         key: 'sync',
                         name: t('Run the first sync'),
                         state: firstSync,
-                        text: status.Suspended && firstSync !== 'done' ? t('It waits until the stored logins can be used.') : t('It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.'),
+                        text: status.Suspended && firstSync !== 'done' ? t('It waits until the stored logins can be used.') : t('It reads the catalogs and fills the Film and Serie folders of each server. It also runs by itself on a timer.'),
                         tab: 'catalog'
                     }, {
                         key: 'link',
-                        name: t('Link the two paths'),
+                        name: t('Link the folders of each server'),
                         state: linkState(folder),
-                        text: t('Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.'),
+                        text: t('Add the Film folder of each server to a film library and its Serie folder to a series library in Dashboard > Libraries, or turn on the automatic libraries of the server on the Servers tab.'),
                         tab: 'settings'
                     }].filter(Boolean);
                 }
@@ -4928,7 +5112,12 @@
                     banner.classList.toggle('jmToneQuiet', migration.Step === 'Carrying');
                     page.querySelector('#jmMigrationTitle').textContent = step.title;
                     page.querySelector('#jmMigrationText').textContent = step.text;
-                    renderLibraries(migration.Libraries || [], function (library) {
+                    var libraries = (migration.Libraries || []).slice();
+                    if (migration.Step === 'AddPaths' && (migration.UnlinkedFolders || []).length > 0) {
+                        libraries.push({ Name: t('In no library yet'), MissingPaths: migration.UnlinkedFolders });
+                    }
+
+                    renderLibraries(libraries, function (library) {
                         if (migration.Step === 'AddPaths') {
                             return library.MissingPaths || [];
                         }

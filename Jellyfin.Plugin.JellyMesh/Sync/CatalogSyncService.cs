@@ -48,6 +48,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ISyncHistory? _history;
     private readonly IPluginConfigurationStore? _store;
     private readonly ILayoutMigration? _migration;
+    private readonly ILibraryChangeTracker? _changes;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
@@ -75,6 +76,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="history">Where each run is recorded.</param>
     /// <param name="store">The configuration, which says whether collections are read.</param>
     /// <param name="migration">The migration from the flat layout, which also runs after each sync (Q222).</param>
+    /// <param name="changes">What remembers the libraries on the federated folder at each sync, for the page (Q53).</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -89,7 +91,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         IVersionLinker? linker = null,
         ISyncHistory? history = null,
         IPluginConfigurationStore? store = null,
-        ILayoutMigration? migration = null)
+        ILayoutMigration? migration = null,
+        ILibraryChangeTracker? changes = null)
     {
         _registry = registry;
         _reader = reader;
@@ -105,6 +108,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _history = history;
         _store = store;
         _migration = migration;
+        _changes = changes;
     }
 
     /// <summary>
@@ -313,6 +317,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             }
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
+
+            // The link below takes in what changed until now, so the page warns only about later changes.
+            _changes?.Record();
             materialized = await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
             await MigrateAsync(cancellationToken).ConfigureAwait(false);
             followed = await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);

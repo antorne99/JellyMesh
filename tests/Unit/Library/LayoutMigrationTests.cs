@@ -157,6 +157,7 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.Equal("Film", library.Name);
         Assert.Equal([OldFilms], library.OldPaths);
         Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], library.MissingPaths);
+        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
@@ -175,6 +176,7 @@ public sealed class LayoutMigrationTests : IDisposable
         var status = migration.GetStatus(Root)!;
         Assert.Equal(LayoutMigrationStep.AddPaths, status.Step);
         Assert.Empty(status.Libraries);
+        Assert.Equal(NewPaths(), status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
@@ -191,6 +193,7 @@ public sealed class LayoutMigrationTests : IDisposable
 
         Assert.NotNull(_registry.Find(old.Id));
         Assert.Equal(LayoutMigrationStep.AddPaths, migration.GetStatus(Root)!.Step);
+        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
 
         _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
             [FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)]));

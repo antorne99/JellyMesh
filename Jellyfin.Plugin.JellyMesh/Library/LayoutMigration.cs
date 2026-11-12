@@ -151,7 +151,12 @@ public sealed class LayoutMigration : ILayoutMigration
         var step = old == 0
             ? LayoutMigrationStep.RemoveOldPaths
             : read is { ServerFoldersLinked: false } || libraries.Any(library => library.MissingPaths.Count > 0) ? LayoutMigrationStep.AddPaths : LayoutMigrationStep.Carrying;
-        return new LayoutMigrationStatus(step, libraries, old) { Waiting = old == 0 ? null : _lastRun?.Waiting, Blocked = old == 0 ? null : _lastRun?.Blocked };
+        return new LayoutMigrationStatus(step, libraries, old)
+        {
+            Waiting = old == 0 ? null : _lastRun?.Waiting,
+            Blocked = old == 0 ? null : _lastRun?.Blocked,
+            UnlinkedFolders = read?.Unlinked ?? []
+        };
     }
 
     private static bool HasOldTitles(StubState state) =>
@@ -327,8 +332,8 @@ public sealed class LayoutMigration : ILayoutMigration
         }
     }
 
-    // The libraries on an old path, with the server folders of the same kind they lack, and whether every server folder is
-    // in some library; null when they cannot be read.
+    // The libraries on an old path, with the server folders of the same kind they lack, whether every server folder is in
+    // some library, and the ones that are in none; null when they cannot be read.
     private Libraries? LibrariesOf(string root)
     {
         List<VirtualFolderInfo> folders;
@@ -349,9 +354,10 @@ public sealed class LayoutMigration : ILayoutMigration
             (FederatedFolderLayout.SeriesPath(root), server => FederatedFolderLayout.ServerSeriesPath(root, server))
         };
         var libraries = new List<LayoutMigrationLibrary>();
-        var linked = servers
+        var unlinked = servers
             .SelectMany(server => kinds.Select(kind => kind.New(server.Id)))
-            .All(path => folders.Any(folder => (folder.Locations ?? []).Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))));
+            .Where(path => !folders.Any(folder => (folder.Locations ?? []).Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))))
+            .ToList();
         foreach (var folder in folders)
         {
             var locations = folder.Locations ?? [];
@@ -365,10 +371,12 @@ public sealed class LayoutMigration : ILayoutMigration
             }
         }
 
-        return new Libraries(libraries, linked);
+        var listed = libraries.SelectMany(library => library.MissingPaths).ToHashSet(StringComparer.Ordinal);
+        return new Libraries(libraries, unlinked.Count == 0, unlinked.Where(path => !listed.Contains(path)).ToList());
     }
 
-    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked);
+    // Unlinked: the server folders in no library, less those listed as missing from a library on an old path.
+    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked, List<string> Unlinked);
 
     private sealed record LastRun(int Waiting, int Blocked);
 
