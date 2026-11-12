@@ -660,6 +660,39 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task AFavoriteSavedBeforeAnotherRowFailedIsNotPutBackByTheNextRun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        Group(a, b);
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 6;
+        _failingSaves.Add(b.Id);
+        var move = Move(old, oldStub, (a, _serverA), (b, _serverB));
+
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.UsersLeft, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+
+        Row(_mario, a).IsFavorite = false;
+        Row(_mario, a).Rating = null;
+        _failingSaves.Clear();
+        await RestartAsync();
+        report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, b).Played);
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.Null(Row(_mario, a).Rating);
+    }
+
+    [Fact]
     public void TheServersOfAMoveFollowTheSourcesOfTheOldStubBestFirst()
     {
         var stub = new StubEntry
