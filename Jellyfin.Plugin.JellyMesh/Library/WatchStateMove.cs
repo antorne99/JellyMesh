@@ -36,7 +36,8 @@ public sealed record WatchStateMove
 
     /// <summary>
     /// Gets a value indicating whether the old item is removed right after the carry, as a server rename (F14) and the
-    /// automatic migration (F16) do. Once carried for every user, its carry records go (decision 179).
+    /// automatic migration (F16) do. Once carried for every user and removed, the caller forgets its carry records (decisions
+    /// 179, 187).
     /// </summary>
     public bool RemovesOldItem { get; private init; }
 
@@ -54,7 +55,7 @@ public sealed record WatchStateMove
     /// <param name="targets">The new versions of the title, and the stubs of different ranges (D3).</param>
     /// <param name="removesOldItem">
     /// Whether the old stub is removed right after: true for a server rename (F14) and the automatic migration (F16),
-    /// false for the manual migration, which leaves the old stubs playable (F15, D12). See decision 179.
+    /// false for the manual migration, which leaves the old stubs playable (F15, D12). See decisions 179 and 187.
     /// </param>
     /// <returns>The move.</returns>
     public static WatchStateMove Of(StubEntry from, Guid fromItemId, IReadOnlyList<WatchStateTarget> targets, bool removesOldItem = false)
@@ -77,7 +78,7 @@ public sealed record WatchStateMove
     /// <summary>
     /// Makes the move of a film stub whose title a manual merge joined with another of the same library: favorite, rating
     /// and play count go to the primary, played to every version, and the position stays (decision 172). The stub may stay
-    /// as a version, so the move never says it is removed and its carry records stay (decisions 155, 179).
+    /// as a version, so the move never says it is removed and its carry records stay (decisions 155, 179, 187).
     /// </summary>
     /// <param name="from">The stub of the title that joined, which may stay as a version.</param>
     /// <param name="fromItemId">The Jellyfin item of that stub.</param>
@@ -94,7 +95,7 @@ public sealed record WatchStateMove
     /// <param name="targets">The new series stubs.</param>
     /// <param name="removesOldItem">
     /// Whether the old series stub is removed right after: true for a server rename (F14) and the automatic migration
-    /// (F16), false for the manual migration (F15, D12). See decision 179.
+    /// (F16), false for the manual migration (F15, D12). See decisions 179 and 187.
     /// </param>
     /// <returns>The move.</returns>
     public static WatchStateMove OfSeries(SeriesStub from, Guid fromItemId, IReadOnlyList<WatchStateTarget> targets, bool removesOldItem = false)
