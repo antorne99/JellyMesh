@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/antorne99/JellyMesh/main/assets/jellymesh.png",
     "versions": [
       {
+        "version": "0.4.3.0",
+        "changelog": "- A request for a video segment that names no play session can no longer stop another user's transcode on this server: it is refused only when it names the device of another user's play session, or when it names no device while another user has a transcode without one. Playlists are not affected.\n- Servers that play titles you share through JellyMesh can no longer reach each other's play sessions, including through the legacy params or a query with different letter case.\n- Servers you share with can no longer open live TV through a shared title: their stream and PlaybackInfo requests that name a live stream are refused.\n- Users of this server can no longer stop, restart or keep alive a stream that another JellyMesh server plays from it.\n\nNot verified: that the end of an idle stream slot, rather than Jellyfin itself, closes a quiet transcode of another server, with the setting on or off; a music client that sends no device.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/antorne99/JellyMesh/releases/download/v0.4.3.0/jellymesh_0.4.3.0.zip",
+        "checksum": "4c27374064ed06792554b2addd177227",
+        "timestamp": "2026-11-12T10:13:53Z"
+      },
+      {
         "version": "0.4.2.0",
         "changelog": "- The plugin records which server last served each federated title to each user, ready for the per-server folders of 0.5.\n- Another user can no longer stop, restart or keep alive a federated title you play through this server's own transcode by naming its play session, even during a long pause or after the title is renamed or removed.\n- Start, progress and ping reports of another user on that play session are answered without effect.\n- Another user can no longer stop that transcode with a request that names your device and no play session.\n- Each user keeps at most 256 of these play sessions; beyond that the least recently used one leaves first.\n\nNot verified: a long pause on a real client, and the record of the last server across a plugin upgrade.",
         "targetAbi": "12.0.0.0",
