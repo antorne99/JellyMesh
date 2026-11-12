@@ -294,8 +294,9 @@ public sealed class LayoutMigration : ILayoutMigration
 
         foreach (var group in groups.Where(group => group.LocalItemIds.Count > 0))
         {
-            // A local copy is a version only as the primary of its group (Q43, decision 148).
-            var local = group.LocalItemIds.FirstOrDefault(primaries.Contains);
+            // The local version is the primary of the group: a local copy, or the film the admin merged it into (Q43, Q220).
+            var head = LocalVersionHead.Of(group.LocalItemIds, _library, item => FederatedPaths.IsInside(root, item.Path));
+            var local = group.LocalItemIds.Append(head?.Id ?? Guid.Empty).FirstOrDefault(primaries.Contains);
             if (local == Guid.Empty || _library.GetItemById(local) is not Video)
             {
                 return null;

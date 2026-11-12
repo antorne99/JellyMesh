@@ -503,6 +503,28 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task APrimaryTheAdminChoseForTheLocalCopyTakesTheFavoriteOfTheOldStub()
+    {
+        var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        var local = Add(new Movie { Path = "/media/film/Dune.mkv" });
+        var chosen = Add(new Movie { Path = "/media/film/Dune Extended.mkv" });
+        Group(local, a);
+
+        // The admin merged the local copy into another film, and the linker put the stub under that film (row 162).
+        local.SetPrimaryVersionId(chosen.Id);
+        a.SetPrimaryVersionId(chosen.Id);
+        chosen.LinkedAlternateVersions = new[] { local, a }.Select(version => new LinkedChild { ItemId = version.Id, Type = LinkedChildType.LinkedAlternateVersion }).ToArray();
+        AllPathsLinked();
+        Row(_mario, oldItem).IsFavorite = true;
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.True(Row(_mario, chosen).IsFavorite);
+        Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+    }
+
+    [Fact]
     public async Task AGroupWithALocalCopyNotLinkedYetKeepsTheOldStub()
     {
         var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
