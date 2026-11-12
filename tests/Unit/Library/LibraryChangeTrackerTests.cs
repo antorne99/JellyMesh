@@ -16,13 +16,14 @@ public sealed class LibraryChangeTrackerTests
     private readonly InMemoryConfigurationStore _store = new();
     private readonly List<VirtualFolderInfo> _libraries = [];
     private readonly Mock<ILibraryManager> _manager = new(MockBehavior.Strict);
+    private readonly CapturingLogger<LibraryChangeTracker> _logger = new();
     private readonly LibraryChangeTracker _tracker;
 
     public LibraryChangeTrackerTests()
     {
         _store.Configuration.FederatedFolderPath = "/federata";
         _manager.Setup(manager => manager.GetVirtualFolders()).Returns(() => new List<VirtualFolderInfo>(_libraries));
-        _tracker = new LibraryChangeTracker(_manager.Object, _store, new CapturingLogger<LibraryChangeTracker>());
+        _tracker = new LibraryChangeTracker(_manager.Object, _store, _logger);
     }
 
     private static VirtualFolderInfo Library(string id, string name, params string[] locations) => new()
@@ -40,6 +41,22 @@ public sealed class LibraryChangeTrackerTests
         _tracker.Record();
 
         Assert.Equal(LibraryChanges.None, _tracker.Compare());
+    }
+
+    [Fact]
+    public void ALocationThatIsNoPathIsSkippedAndTheOthersStillCount()
+    {
+        _libraries.Add(Library("1", "Rotta", "/federata/a\0b", "/federata/a/Film"));
+        _libraries.Add(Library("2", "Solo rotta", "/federata/b\0c"));
+        _tracker.Record();
+        _libraries.Add(Library("3", "Nuova", "/federata/b/Film"));
+
+        var changes = _tracker.Compare();
+
+        Assert.Equal(["Nuova"], changes.Added);
+        Assert.Empty(changes.Removed);
+        Assert.NotEmpty(_logger.Lines);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("/federata/", StringComparison.Ordinal));
     }
 
     [Fact]
