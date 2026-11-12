@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Segments;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
@@ -33,6 +34,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     private readonly PlaybackRefusal _refusal;
     private readonly LocalCopyLookup _localCopies;
     private readonly PlaybackVersions _versions;
+    private readonly SegmentOffer _segments;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackInfoFilter"/> class.
@@ -43,13 +45,15 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     /// <param name="refusal">The refusal.</param>
     /// <param name="localCopies">The lookup of local copies.</param>
     /// <param name="versions">The versions of a title.</param>
+    /// <param name="segments">Whether a playback offers the segments of its item.</param>
     public PlaybackInfoFilter(
         StubLookup stubs,
         IAuthorizationContext authorization,
         PlaybackCoordinator coordinator,
         PlaybackRefusal refusal,
         LocalCopyLookup localCopies,
-        PlaybackVersions versions)
+        PlaybackVersions versions,
+        SegmentOffer segments)
     {
         _stubs = stubs;
         _authorization = authorization;
@@ -57,6 +61,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         _refusal = refusal;
         _localCopies = localCopies;
         _versions = versions;
+        _segments = segments;
     }
 
     /// <summary>
@@ -161,6 +166,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         switch (outcome.Kind)
         {
             case PlaybackOutcomeKind.Remote:
+                _segments.OfferOnRemote(outcome.Response!, outcome.Served);
                 context.Result = new OkObjectResult(outcome.Response);
                 break;
             case PlaybackOutcomeKind.LocalTranscode when request.DeviceProfile is not null:
@@ -315,6 +321,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             }
 
             HideFile(source);
+            source.HasSegments &= _segments.Offers(request.Identity.ItemId, outcome.FileSource);
             source.TranscodingUrl = PlaybackUrls.WithoutClientRetry(source.TranscodingUrl);
             foreach (var stream in source.MediaStreams ?? [])
             {

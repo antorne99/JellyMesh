@@ -37,6 +37,7 @@ public static class PlaybackServices
         services.AddSingleton<StockRouteGuardFilter>();
         services.AddSingleton<StubSegments>();
         services.AddSingleton<IMediaSegmentProvider, StubSegmentProvider>();
+        services.AddSingleton<SegmentOffer>();
         services.AddHostedService<PlaybackSweeper>();
 
         services.Configure<MvcOptions>(options =>

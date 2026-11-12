@@ -11,11 +11,14 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Segments;
+using Jellyfin.Plugin.JellyMesh.Tests.Segments;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
+using MediaBrowser.Controller.MediaSegments;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
@@ -89,8 +92,18 @@ public class PlaybackFiltersTests
             _fixture.Coordinator,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
-            new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store));
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
+            new SegmentOffer(new Mock<IMediaSegmentManager>().Object, Segments(lookup, store), lookup, _fixture.Sessions));
     }
+
+    private StubSegments Segments(StubLookup lookup, InMemoryConfigurationStore store) => new(
+        lookup,
+        new Mock<IFederationIndex>().Object,
+        _fixture.Registry,
+        new StubSegmentsTests.FakeSegmentClient(),
+        store,
+        TimeProvider.System,
+        NullLogger<StubSegments>.Instance);
 
     private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null)
     {

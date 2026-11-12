@@ -79,6 +79,13 @@ public sealed class StubSegments
     public SegmentOrigin? OriginOf(Guid itemId) => _origins.GetValueOrDefault(itemId);
 
     /// <summary>
+    /// Remembers where the segments of an item came from.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <param name="origin">The origin.</param>
+    internal void Remember(Guid itemId, SegmentOrigin origin) => _origins[itemId] = origin;
+
+    /// <summary>
     /// Forgets the origin of the segments of an item.
     /// </summary>
     /// <param name="itemId">The item.</param>
@@ -134,7 +141,7 @@ public sealed class StubSegments
             return [];
         }
 
-        _origins[request.ItemId] = new SegmentOrigin(best, version?.RunTimeTicks);
+        Remember(request.ItemId, new SegmentOrigin(best, version?.RunTimeTicks));
         return segments
             .Select(segment => new MediaSegmentDto
             {
