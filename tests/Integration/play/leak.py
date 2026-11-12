@@ -50,8 +50,8 @@ for path in files:
             continue
         for value in values:
             at = data.find(value.encode())
-            # The folder of a server is named by its ID: in a path it is no secret (spec of the server folders).
-            while label == "server" and at >= 0 and data[at - 1:at] == b"/":
+            # The folder of a server is named by its ID: in a federated path it is no secret (spec of the server folders).
+            while label == "server" and at >= 0 and data[max(0, at - 10):at] == b"/federata/":
                 at = data.find(value.encode(), at + 1)
             if at >= 0:
                 print("HIT", label, value[:16], path.split("/")[-1], data[max(0, at - 60):at + 30])
