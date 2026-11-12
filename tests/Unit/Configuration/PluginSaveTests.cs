@@ -106,6 +106,36 @@ public sealed class PluginSaveTests : IDisposable
     }
 
     [Fact]
+    public void TheXmlRoundTripsTheServerIdsAndTheRemovedServers()
+    {
+        var formerId = Guid.NewGuid();
+        _plugin.ChangeConfiguration(config =>
+        {
+            config.Servers.Single().JellyfinServerId = "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b";
+            config.FormerServers.Add(new FormerServerConfig { Id = formerId, JellyfinServerId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9", Name = "Old" });
+        });
+
+        var loaded = (PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!;
+
+        Assert.Equal("8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b", Assert.Single(loaded.Servers).JellyfinServerId);
+        var former = Assert.Single(loaded.FormerServers);
+        Assert.Equal((formerId, "1a2b3c4d5e6f40718293a4b5c6d7e8f9", "Old"), (former.Id, former.JellyfinServerId, former.Name));
+    }
+
+    [Fact]
+    public void AStockSaveKeepsTheRemovedServersAndShowsThemNot()
+    {
+        _plugin.ChangeConfiguration(config => config.FormerServers.Add(new FormerServerConfig { Id = Guid.NewGuid(), JellyfinServerId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9", Name = "Old" }));
+        var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
+        var incoming = JsonSerializer.Deserialize<PluginConfiguration>(json, JsonDefaults.Options)!;
+
+        _plugin.UpdateConfiguration(incoming);
+
+        Assert.DoesNotContain("1a2b3c4d5e6f40718293a4b5c6d7e8f9", json, StringComparison.Ordinal);
+        Assert.Equal("Old", Assert.Single(_plugin.Configuration.FormerServers).Name);
+    }
+
+    [Fact]
     public void ARoundTripThroughTheBrowserKeepsTheServers()
     {
         var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);

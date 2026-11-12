@@ -12,4 +12,10 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 /// </summary>
 /// <param name="Failure">The failure.</param>
 /// <param name="Message">The text to show.</param>
-public sealed record FailureResponse(RemoteFailure Failure, string Message);
+public sealed record FailureResponse(RemoteFailure Failure, string Message)
+{
+    /// <summary>
+    /// Gets the name of the configured server a refused add matches, if any.
+    /// </summary>
+    public string? ServerName { get; init; }
+}

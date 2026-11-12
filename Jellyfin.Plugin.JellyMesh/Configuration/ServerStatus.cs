@@ -32,4 +32,9 @@ public sealed record ServerStatus(
     /// Gets a value indicating whether the stored password no longer decrypts and must be entered again.
     /// </summary>
     public bool NeedsPassword { get; init; }
+
+    /// <summary>
+    /// Gets the former name of a removed server that an add recognized by its Server Id and gave its identity back.
+    /// </summary>
+    public string? RecognizedAs { get; init; }
 }

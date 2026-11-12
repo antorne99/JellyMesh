@@ -1205,9 +1205,9 @@ def confirms(s, width):
     status = lambda: u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]["Servers"]
     peers = lambda: u.api("fresh", "GET", "/JellyMesh/Admin/Peers")[1]
     merges = lambda: u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
-    stock = next(server for server in status() if server["Name"] == "stock")
+    # A server is added once (decision 120), so the remote to remove is one fresh does not have yet.
     added = u.api("fresh", "POST", "/JellyMesh/Admin/Servers", {
-        "Name": HOSTILE, "Url": stock["Url"], "Username": "jellymesh", "Password": "jellymesh-test"})
+        "Name": HOSTILE, "Url": u.targets()["first"]["base"], "Username": "jellymesh", "Password": "jellymesh-test"})
     check(name + " has a remote to remove", added[0] == 200, added)
     friend = next(user for user in u.api("fresh", "GET", "/Users")[1] if user["Name"] == "friend")
     library = u.api("fresh", "GET", "/JellyMesh/Admin/Peers/Options")[1]["Libraries"][0]["Id"]

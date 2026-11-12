@@ -15,6 +15,11 @@ public class RemoteServerConfig
     public Guid Id { get; set; }
 
     /// <summary>
+    /// Gets or sets the Server Id the remote gives itself at login, as 32 lowercase digits, empty while not known.
+    /// </summary>
+    public string JellyfinServerId { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets the display name.
     /// </summary>
     public string Name { get; set; } = string.Empty;

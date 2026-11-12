@@ -106,5 +106,10 @@ public enum RemoteFailure
     /// <summary>
     /// Forgetting the servers missing from the settings could not be saved. Their titles stay.
     /// </summary>
-    ForgetFailed
+    ForgetFailed,
+
+    /// <summary>
+    /// The remote gave the Server Id of a server already configured here, so adding it again would show every title twice.
+    /// </summary>
+    AlreadyConfigured
 }

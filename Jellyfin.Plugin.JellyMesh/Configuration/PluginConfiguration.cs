@@ -107,13 +107,20 @@ public class PluginConfiguration : BasePluginConfiguration
     public Collection<RemoteServerConfig> Servers { get; } = [];
 
     /// <summary>
+    /// Gets the servers removed from the page whose Server Id was known, so that one added again gets its identifier back
+    /// (decision 116). Never sent to the browser through this object.
+    /// </summary>
+    [JsonIgnore]
+    public Collection<FormerServerConfig> FormerServers { get; } = [];
+
+    /// <summary>
     /// Gets the JellyMesh servers connected to this one. Never sent to the browser through this object.
     /// </summary>
     [JsonIgnore]
     public Collection<ProviderPeerConfig> Peers { get; } = [];
 
     /// <summary>
-    /// Replaces <see cref="Servers"/> and <see cref="Peers"/> with those of <paramref name="current"/>. The stock save
+    /// Replaces <see cref="Servers"/>, <see cref="FormerServers"/> and <see cref="Peers"/> with those of <paramref name="current"/>. The stock save
     /// endpoint deserializes JSON that never holds them, so they would otherwise be erased.
     /// </summary>
     /// <param name="current">The configuration in force.</param>
@@ -129,6 +136,12 @@ public class PluginConfiguration : BasePluginConfiguration
         foreach (var server in current.Servers)
         {
             Servers.Add(server);
+        }
+
+        FormerServers.Clear();
+        foreach (var former in current.FormerServers)
+        {
+            FormerServers.Add(former);
         }
 
         Peers.Clear();
