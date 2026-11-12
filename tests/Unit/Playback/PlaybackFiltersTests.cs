@@ -1277,6 +1277,14 @@ public class PlaybackFiltersTests
     // D9: the legacy segment route serves any file of the transcode folder by name, whatever item its route names.
     private const string JobHash = "0123456789abcdef0123456789abcdef";
 
+    // A refused file reaches stock under a name that is no file, so that stock answers as for any missing one.
+    private static void AssertReadsAsMissing(ActionExecutingContext context, bool passed, string argument)
+    {
+        Assert.True(passed);
+        Assert.Null(context.Result);
+        Assert.StartsWith(StockRouteGuardFilter.MissingFilePrefix, Assert.IsType<string>(context.ActionArguments[argument]), StringComparison.Ordinal);
+    }
+
     private TranscodingJob JobOf(string playSessionId)
     {
         var job = new TranscodingJob(NullLogger<TranscodingJob>.Instance) { PlaySessionId = playSessionId, Path = "/cache/transcodes/" + JobHash + ".m3u8" };
@@ -1308,8 +1316,7 @@ public class PlaybackFiltersTests
         _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
         var context = LegacySegment(LocalItem(), playlistId, segmentId);
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1320,8 +1327,7 @@ public class PlaybackFiltersTests
         StubGone();
         var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1331,8 +1337,7 @@ public class PlaybackFiltersTests
         PeerPlays(Guid.NewGuid());
         var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1352,8 +1357,7 @@ public class PlaybackFiltersTests
         _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
         var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1361,8 +1365,33 @@ public class PlaybackFiltersTests
     {
         var context = LegacySegment(_itemId, "other", "other0");
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    // A playlist id that only part of the path of the job holds is refused as one that matches nothing, so growing it one
+    // digit at a time tells nothing of the name of the job.
+    [Theory]
+    [InlineData("01")]
+    [InlineData("cdef0123")]
+    [InlineData("/cache/transcodes/0")]
+    public async Task A_short_playlist_id_of_the_job_of_another_user_reads_as_one_of_no_file(string playlistId)
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), playlistId, "none");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_short_playlist_id_of_no_job_goes_to_stock_untouched()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), "9f", "none");
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+        Assert.Equal("9f", context.ActionArguments["playlistId"]);
     }
 
     [Fact]
@@ -1410,8 +1439,7 @@ public class PlaybackFiltersTests
         _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
         var context = LegacyAudio(LocalItem(), segmentId, extension);
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "segmentId");
     }
 
     [Fact]
@@ -1421,8 +1449,7 @@ public class PlaybackFiltersTests
         PeerPlays(Guid.NewGuid());
         var context = LegacyAudio(LocalItem(), JobHash);
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "segmentId");
     }
 
     [Fact]
@@ -1440,8 +1467,7 @@ public class PlaybackFiltersTests
     {
         var context = LegacyAudio(_itemId, "other");
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "segmentId");
     }
 
     [Theory]
@@ -1465,8 +1491,7 @@ public class PlaybackFiltersTests
         _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
         var context = LegacyPlaylist(LocalItem(), playlistId);
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1477,8 +1502,7 @@ public class PlaybackFiltersTests
         StubGone();
         var context = LegacyPlaylist(LocalItem(), JobHash);
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1488,8 +1512,7 @@ public class PlaybackFiltersTests
         PeerPlays(Guid.NewGuid());
         var context = LegacyPlaylist(LocalItem(), JobHash);
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1521,8 +1544,7 @@ public class PlaybackFiltersTests
         _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
         var context = LegacyPlaylist(LocalItem(), JobHash);
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     [Fact]
@@ -1530,8 +1552,7 @@ public class PlaybackFiltersTests
     {
         var context = LegacyPlaylist(_itemId, "other");
 
-        Assert.False(await RunAsync(GuardFilter(), context));
-        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
     }
 
     // Stock reads the playlist by its own name, so a name that only holds the one of a job reads no file of it.

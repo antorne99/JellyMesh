@@ -36,6 +36,11 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     private const string LegacyPlaylistAction = "GetHlsPlaylistLegacy";
 
+    /// <summary>
+    /// The start of the name a refused legacy request reaches stock with, which no file of the transcode folder has.
+    /// </summary>
+    internal const string MissingFilePrefix = "jellymesh-missing-";
+
     private static readonly HashSet<string> _mediaControllers = new(StringComparer.Ordinal)
     {
         "Videos",
@@ -115,7 +120,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var named = IsMedia(controller, action) ? MediaPlaySessionsOf(context, controller, action) : [];
         if (await VersionRefusalAsync(context, controller, action, named).ConfigureAwait(false) is { } hidden)
         {
-            context.Result = hidden;
+            await RefuseAsync(context, next, hidden, controller, action).ConfigureAwait(false);
             return;
         }
 
@@ -159,7 +164,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
         else if (IsMedia(controller, action) && await PeerSessionRefusalAsync(context, named).ConfigureAwait(false) is { } refusal)
         {
-            context.Result = refusal;
+            await RefuseAsync(context, next, refusal, controller, action).ConfigureAwait(false);
             return;
         }
         else if (IsMedia(controller, action)
@@ -176,7 +181,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
             if (stubs.Keys.Any(id => !_stubs.Sees(user, id)) || named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)))
             {
-                context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
+                await RefuseAsync(context, next, new StatusCodeResult(StatusCodes.Status404NotFound), controller, action).ConfigureAwait(false);
                 return;
             }
 
@@ -204,6 +209,20 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         await next().ConfigureAwait(false);
+    }
+
+    // Answers a refusal. A legacy file route that is not found reaches stock with a name no file has, so that it answers
+    // with its own body for a missing file and a refused name tells no more than a name of nothing (rows 23 and 78).
+    private static async Task RefuseAsync(ActionExecutingContext context, ActionExecutionDelegate next, IActionResult refusal, string controller, string action)
+    {
+        if (refusal is StatusCodeResult { StatusCode: StatusCodes.Status404NotFound } && IsLegacyFile(controller, action))
+        {
+            context.ActionArguments[action == LegacyAudioAction ? "segmentId" : "playlistId"] = MissingFilePrefix + Guid.NewGuid().ToString("N");
+            await next().ConfigureAwait(false);
+            return;
+        }
+
+        context.Result = refusal;
     }
 
     // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.
