@@ -386,6 +386,25 @@ public class PlaybackVersionTests
         Assert.Equal("item-b", RemoteItemAsked());
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_file_version_of_the_local_copy_is_a_version_of_the_title(bool fromLocal)
+    {
+        // 12.4 keeps the other files of a local film as local alternates: linked up to the film, not down from it.
+        var file = Item(new Movie { Path = "/media/film/film - 720p.mkv", OwnerId = _localItem }, _otherItem);
+        file.SetPrimaryVersionId(_localItem);
+        Sees(_otherItem);
+        var context = Context(fromLocal ? _localItem : _aItem, ("mediaSourceId", N(_otherItem)));
+
+        var (passed, response) = await RunAsync(context, StockSource(_otherItem));
+
+        Assert.True(passed);
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Equal(N(_otherItem), context.ActionArguments["mediaSourceId"]);
+        Assert.Equal(N(_otherItem), Assert.Single(response!.MediaSources).Id);
+    }
+
     [Fact]
     public async Task The_local_copy_named_under_a_stub_is_left_to_stock()
     {

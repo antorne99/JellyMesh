@@ -122,4 +122,19 @@ as_user tutti POST /Sessions/Playing/Stopped "$(jq -c '.PositionTicks = 31000000
 check "the local copy played under a stub keeps its own position" 310000000 "$(position tutti "$loc")"
 check "and the stub keeps none" 0 "$(position tutti "$sa")"
 
+echo "--- test 3: the other file of a local film with a stub"
+MULTI="JM Versioni Multiple"
+put_film "remoto-standard/film/$MULTI (2026)" "$MULTI (2026)"
+scan local
+sync_now local
+m1=$(vid "/media/film/$MULTI (2026)/$MULTI (2026) - 1080p"); m2=$(vid "/media/film/$MULTI (2026)/$MULTI (2026) - 720p")
+ms=$(stub_of "$A" "$MULTI")
+check "the stub is linked to the local film" "$m1" "$(primary_of "$ms")"
+r=$(as_user tutti POST "/Items/$(dashed "$m1")/PlaybackInfo" "$(body_with "$m2")")
+check "the second file named under the first" "200 $m2" "$(status) $(ids_of <<<"$r")"
+r=$(as_user tutti POST "/Items/$(dashed "$ms")/PlaybackInfo?mediaSourceId=$m2" "$DIRECT")
+check "the second file named under the stub" "200 $m2" "$(status) $(ids_of <<<"$r")"
+r=$(as_user tutti POST "/Items/$(dashed "$m2")/PlaybackInfo?mediaSourceId=$ms" "$DIRECT")
+check "the stub named under the second file" "200 $ms" "$(status) $(ids_of <<<"$r")"
+
 exit "$FAILED"

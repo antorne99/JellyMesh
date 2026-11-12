@@ -42,7 +42,7 @@ public sealed class PlaybackVersions
 
     /// <summary>
     /// Tells whether an item is a version of the title of another: the same item, a member of the same group of the
-    /// registry, or an item Jellyfin links with it.
+    /// registry, or an item Jellyfin links with it, directly or through a shared primary.
     /// </summary>
     /// <param name="itemId">The item of the route.</param>
     /// <param name="versionId">The version the client names.</param>
@@ -59,7 +59,9 @@ public sealed class PlaybackVersions
             return true;
         }
 
-        return _stubs.LinkedVersionsOf(itemId).ContainsKey(versionId);
+        // The other files of a local film link up to it and not down from it, so the two climbs must meet.
+        var linked = _stubs.LinkedVersionsOf(itemId);
+        return linked.ContainsKey(versionId) || _stubs.LinkedVersionsOf(versionId).Keys.Any(linked.ContainsKey);
     }
 
     /// <summary>
