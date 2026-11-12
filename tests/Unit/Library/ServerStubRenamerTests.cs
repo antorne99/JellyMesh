@@ -374,6 +374,20 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    [Fact]
+    public async Task AnEntryOfAStubThatLeftAtThePathOfAStubThatMovesKeepsItsFilesToCopy()
+    {
+        await SeedAsync(Film("g", FilmPath("Casa")));
+        Write(FilmPath("Casa"), "url-g");
+        await SaveAsync(_registry.State with { Renames = [new StubRename("f", FilmPath("Casa"))] });
+
+        await _renamer.RelabelAsync(_server, "Mare", CancellationToken.None);
+
+        Assert.Equal("url-g", Read(FilmPath("Mare")));
+        Assert.Equal("url-g", Read(FilmPath("Casa")));
+        Assert.Equal([new StubRename("g", FilmPath("Casa"))], _registry.State.Renames);
+    }
+
     private async Task SaveAsync(StubState state)
     {
         await _registry.EnterAsync(CancellationToken.None);
