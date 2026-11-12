@@ -387,6 +387,25 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task AnOldEpisodeOfAnImportedLibraryReadEmptyKeepsItsOldSeries()
+    {
+        _imported.Add("lib");
+        var (show, showItem) = OldShow("Lost", (_serverA, "s1"));
+        var (episode, episodeItem) = OldEpisode(show, (_serverA, "e1"));
+        _stubs[_stubs.IndexOf(episode)] = episode with { Sources = [Source((_serverA, "e1")) with { LibraryId = "lib" }] };
+        _indexed.Clear();
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(episode.Id));
+        Assert.Contains(_registry.State.Series, series => series.Id == show.Id);
+        Assert.True(_items.ContainsKey(episodeItem.Id) && _items.ContainsKey(showItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+    }
+
+    [Fact]
     public async Task ATitleGoneFromAnImportedLibraryWithOtherItemsIsGone()
     {
         _imported.Add("lib");
