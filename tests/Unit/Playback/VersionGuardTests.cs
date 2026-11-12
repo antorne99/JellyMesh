@@ -573,6 +573,31 @@ public class VersionGuardTests
         Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_play_session_of_another_user_that_serves_the_local_copy_is_not_found_through_either_version(bool throughLocal)
+    {
+        Sees(_localItem);
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "play", _localItem);
+        var item = throughLocal ? _localItem : _stubItem;
+        var context = Context("Videos", "GetVideoStream", ("itemId", item), ("mediaSourceId", N(item)), ("playSessionId", "PLAY"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_play_session_that_serves_the_local_copy_wants_a_user()
+    {
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "play", _localItem);
+        Anonymous();
+        var context = Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(_stubItem)), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(context));
+    }
+
     [Fact]
     public async Task A_play_session_on_a_linked_stub_wants_a_user()
     {
