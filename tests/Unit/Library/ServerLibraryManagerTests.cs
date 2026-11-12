@@ -1088,6 +1088,28 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_held_library_the_server_added_back_found_at_switch_on_and_the_admin_renamed_is_never_deleted_next_to_its_new_library()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Add("Vecchia", CollectionTypeOptions.movies, _movies);
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Vecchia"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            _serverId,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Vecchia", ItemId = fixture.Libraries.IdOf("Vecchia") }],
+            [],
+            [fixture.Libraries.IdOf("Vecchia")],
+            false);
+        fixture.Libraries.RenameFromDashboard("Vecchia", "Film mio");
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Casa - Film", "Casa - Serie", "Film mio"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
     public async Task A_removed_server_never_takes_for_a_renamed_one_a_library_a_configured_server_found_at_switch_on()
     {
         var fixture = new Fixture();
