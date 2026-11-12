@@ -43,10 +43,12 @@ echo "--- stubs never reach a peer, by any route"
 check "PlaybackInfo of a stub" 404 "$(as_peer a "$token" POST "/Items/$stub/PlaybackInfo")"
 check "stream of a stub" 404 "$(as_peer a "$token" GET "/Videos/$stub/stream?static=true")"
 check "image of a stub" 404 "$(as_peer a "$token" GET "/Items/$stub/Images/Primary/0")"
+check "segments of a stub" 404 "$(as_peer a "$token" GET "/MediaSegments/$stub")"
 as_peer a "$token" GET "/JellyMesh/Provider/Items?ids=$stub&includeItemTypes=Movie" >/dev/null
 check "lookup of a stub" 0 "$(jq '.Items | length' "$WORK/body")"
 check "a real item stays reachable" 200 "$(as_peer a "$token" POST "/Items/$real/PlaybackInfo")"
 as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$WORK/body")" >/dev/null
+check "segments of a real item stay reachable" 200 "$(as_peer a "$token" GET "/MediaSegments/$real")"
 
 echo "--- no cycles"
 # By ID, because a stub and a real copy can share a title. Series rows go one by one: a list collapses a split series.
@@ -103,6 +105,7 @@ check "libraries offered" "$film" "$(jq -r '[.Items[].Id] | join(",")' "$WORK/bo
 check "asking for the library that is not shared" 404 "$(as_peer a "$token" GET "/JellyMesh/Provider/Items?parentId=$serie&includeItemTypes=Episode")"
 check "PlaybackInfo outside the share" 404 "$(as_peer a "$token" POST "/Items/$episode/PlaybackInfo")"
 check "stream outside the share" 404 "$(as_peer a "$token" GET "/Videos/$episode/stream?static=true")"
+check "segments outside the share" 404 "$(as_peer a "$token" GET "/MediaSegments/$episode")"
 as_peer a "$token" GET "/JellyMesh/Provider/Items?ids=$episode&includeItemTypes=Episode" >/dev/null
 check "lookup outside the share" 0 "$(jq '.Items | length' "$WORK/body")"
 
