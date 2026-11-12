@@ -1,6 +1,7 @@
 """Reads and saves the settings on the real configuration page, as an administrator would.
 
 Usage: configpage.py <base> <token> <user id> <server id> <capture prefix>
+Prints FIELDS with the settings and FOLDER with the folder of each server as the page shows it.
 """
 import json
 import sys
@@ -29,6 +30,10 @@ with sync_playwright() as p:
           return [id, {value: e.value, min: e.min, max: e.max}]; }))""", FIELDS)
 
     print("FIELDS", json.dumps(read()), flush=True)
+
+    # The folder section: the hint, then the name, the two paths and the warnings of each server.
+    print("FOLDER", json.dumps(page.evaluate("""() => ({hint: document.querySelector('#jmFolderHint').innerText,
+      servers: [...document.querySelectorAll('#jmFolderPaths .jmServerFolder')].map(b => b.innerText)})""")), flush=True)
     page.screenshot(path=CAP + ".png", full_page=True)
 
     # A value below the minimum: the browser itself stops the form.
