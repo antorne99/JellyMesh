@@ -41,9 +41,9 @@ public sealed class JellyfinActivityWriter : IActivityWriter
         {
             await _manager.CreateAsync(log).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception)
         {
-            // The type only: a message could hold a path or an address.
+            // Also a cancellation: no token is passed, so it is not the caller's. The type only: a message could hold an address.
             _logger.LogWarning("Cannot write {Type} to the activity log: {Error}", entry.Type, exception.GetType().Name);
         }
     }

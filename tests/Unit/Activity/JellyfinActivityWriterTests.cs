@@ -35,6 +35,16 @@ public class JellyfinActivityWriterTests
     }
 
     [Fact]
+    public async Task A_cancelled_write_is_never_thrown()
+    {
+        var manager = new Mock<IActivityManager>();
+        manager.Setup(m => m.CreateAsync(It.IsAny<ActivityLog>())).ThrowsAsync(new OperationCanceledException());
+        var writer = new JellyfinActivityWriter(manager.Object, new CapturingLogger<JellyfinActivityWriter>());
+
+        await writer.WriteAsync(new ActivityEntry("name", "type", LogLevel.Information));
+    }
+
+    [Fact]
     public async Task A_failing_activity_log_is_logged_with_the_type_only_and_never_thrown()
     {
         var manager = new Mock<IActivityManager>();
