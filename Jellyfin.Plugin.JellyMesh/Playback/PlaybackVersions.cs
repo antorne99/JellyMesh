@@ -66,7 +66,7 @@ public sealed class PlaybackVersions
 
     /// <summary>
     /// Picks the version that starts under a stub when the client names none: the local copy if the user sees it, otherwise
-    /// the best stub the user sees, by §4.3.
+    /// the best stub the user sees, by §4.3. A version in no library counts as unseen, unless the user is an admin (D17).
     /// </summary>
     /// <param name="itemId">The item of the route, a stub the user sees.</param>
     /// <param name="stub">Its stub.</param>
@@ -89,7 +89,7 @@ public sealed class PlaybackVersions
             .Concat(linked.Values.Where(video => !FederatedPaths.IsInside(root, video.Path) && !PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _)).Select(video => video.Id));
         foreach (var local in locals.Distinct())
         {
-            if (_libraryManager.GetItemById<BaseItem>(local, user) is Video)
+            if (_libraryManager.GetItemById<BaseItem>(local, user) is Video && _stubs.Sees(user, local))
             {
                 return local;
             }
@@ -103,7 +103,7 @@ public sealed class PlaybackVersions
                 && !items.ContainsKey(stubId)
                 && (group is null || group.StubIds.Contains(stubId, StringComparer.Ordinal))
                 && _registry.Find(stubId) is not null
-                && _libraryManager.GetItemById<BaseItem>(video.Id, user) is not null)
+                && _stubs.Sees(user, video.Id))
             {
                 items[stubId] = video.Id;
             }

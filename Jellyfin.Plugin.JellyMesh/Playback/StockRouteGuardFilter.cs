@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -22,11 +23,14 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// stop from <c>DELETE /Videos/ActiveEncodings</c>, which is how jellyfin-web ends a transcode. Stock stops a play session
 /// for anyone who names it, so a stub played on this server is kept out of the reach of other users here. So are the
 /// play sessions a peer opened here and their devices, since stock stops every job of a device for a segment with no play
-/// session. For a title with linked versions, every item a request names must be visible to its user.
+/// session. For a title with linked versions, every item a request names must be visible to its user. The legacy segment
+/// route serves any file of the transcode folder by name to anyone, so it wants a user and names the job its files belong to.
 /// </summary>
 public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
     private const string StopEncodingAction = "StopEncodingProcess";
+
+    private const string LegacySegmentAction = "GetHlsVideoSegmentLegacy";
 
     private static readonly HashSet<string> _mediaControllers = new(StringComparer.Ordinal)
     {
@@ -40,7 +44,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     };
 
     private readonly StubLookup _stubs;
-    private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
     private readonly PlaybackSessionStore _sessions;
@@ -52,7 +55,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
     /// </summary>
     /// <param name="stubs">The stubs.</param>
-    /// <param name="libraryManager">The library manager.</param>
     /// <param name="authorization">The authorization context.</param>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="sessions">The sessions.</param>
@@ -61,7 +63,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
     public StockRouteGuardFilter(
         StubLookup stubs,
-        ILibraryManager libraryManager,
         IAuthorizationContext authorization,
         PlaybackCoordinator coordinator,
         PlaybackSessionStore sessions,
@@ -70,7 +71,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         StreamSlots peerSlots)
     {
         _stubs = stubs;
-        _libraryManager = libraryManager;
         _authorization = authorization;
         _coordinator = coordinator;
         _sessions = sessions;
@@ -101,7 +101,15 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
         }
 
-        if (await VersionRefusalAsync(context, controller, action).ConfigureAwait(false) is { } hidden)
+        if (IsLegacySegment(controller, action) && (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is null)
+        {
+            // D9: stock ignores the item of the route, so naming one proves nothing.
+            context.Result = new StatusCodeResult(StatusCodes.Status401Unauthorized);
+            return;
+        }
+
+        var named = IsMedia(controller, action) ? MediaPlaySessionsOf(context, controller, action) : [];
+        if (await VersionRefusalAsync(context, controller, action, named).ConfigureAwait(false) is { } hidden)
         {
             context.Result = hidden;
             return;
@@ -145,13 +153,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 _sessions.UseLocal(reporter.Id, PlaySessionOf(context));
             }
         }
-        else if (IsMedia(controller, action) && await PeerSessionRefusalAsync(context).ConfigureAwait(false) is { } refusal)
+        else if (IsMedia(controller, action) && await PeerSessionRefusalAsync(context, named).ConfigureAwait(false) is { } refusal)
         {
             context.Result = refusal;
             return;
         }
         else if (IsMedia(controller, action)
-            && StubsOf(context, out var recorded) is var stubs
+            && StubsOf(context, named, out var recorded) is var stubs
             && (stubs.Count > 0 || recorded))
         {
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
@@ -162,13 +170,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
 
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
-            if (stubs.Any(named => _libraryManager.GetItemById<BaseItem>(named.Key, user) is null) || _sessions.IsLocalOfAnother(user.Id, PlaySessionOf(context)))
+            if (stubs.Keys.Any(id => !_stubs.Sees(user, id)) || named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
             }
 
-            _sessions.UseLocal(user.Id, PlaySessionOf(context));
+            foreach (var playSessionId in named)
+            {
+                _sessions.UseLocal(user.Id, playSessionId);
+            }
+
             var executed = await next().ConfigureAwait(false);
 
             // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
@@ -198,10 +210,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     // Refuses a stream that names the play session of a peer, as one that names the local play session of another user.
     // Null when the peer itself names it, or when no peer recorded it.
-    private async Task<IActionResult?> PeerSessionRefusalAsync(ActionExecutingContext context)
+    private async Task<IActionResult?> PeerSessionRefusalAsync(ActionExecutingContext context, IReadOnlyList<string> named)
     {
-        var playSessionId = PlaySessionOf(context);
-        if (!_peerSlots.IsOfAnother(Guid.Empty, playSessionId))
+        var ofPeers = named.Where(id => _peerSlots.IsOfAnother(Guid.Empty, id)).ToList();
+        if (ofPeers.Count == 0)
         {
             return null;
         }
@@ -212,12 +224,41 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return new StatusCodeResult(StatusCodes.Status401Unauthorized);
         }
 
-        return _peerSlots.IsOfAnother(user.Id, playSessionId) ? new StatusCodeResult(StatusCodes.Status404NotFound) : null;
+        return ofPeers.Exists(id => _peerSlots.IsOfAnother(user.Id, id)) ? new StatusCodeResult(StatusCodes.Status404NotFound) : null;
+    }
+
+    // The play sessions a media request names: its own, or for a legacy segment, which names none, every recorded play
+    // session whose transcode job its files belong to.
+    private IReadOnlyList<string> MediaPlaySessionsOf(ActionExecutingContext context, string controller, string action)
+    {
+        if (!IsLegacySegment(controller, action))
+        {
+            return PlaySessionOf(context) is { } playSessionId ? [playSessionId] : [];
+        }
+
+        var playlistId = context.ActionArguments.TryGetValue("playlistId", out var playlist) ? playlist as string : null;
+        var segmentId = context.ActionArguments.TryGetValue("segmentId", out var segment) ? segment as string : null;
+
+        // Nobody is anonymous, so the play sessions of others than nobody are all of them.
+        return _sessions.LocalSessionsOfOthers(Guid.Empty)
+            .Concat(_peerSlots.SessionsOfOthers(Guid.Empty))
+            .Where(id => _transcodes.GetTranscodingJob(id)?.Path is { } path && IsFileOfJob(path, playlistId, segmentId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    // Stock serves the segment file by name, and pings the job of the first file whose path holds the playlist id. The
+    // files of a job start with the name of its playlist.
+    private static bool IsFileOfJob(string jobPath, string? playlistId, string? segmentId)
+    {
+        var prefix = Path.GetFileNameWithoutExtension(jobPath);
+        return (!string.IsNullOrEmpty(prefix) && !string.IsNullOrEmpty(segmentId) && Path.GetFileName(segmentId).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            || (!string.IsNullOrEmpty(playlistId) && jobPath.Contains(playlistId, StringComparison.OrdinalIgnoreCase));
     }
 
     // Q54: when an item the action names has linked versions, its user must see every item it names. A Playstate report
     // gets 204 without effect, as for the play session of another user (D8). Null when the action goes on.
-    private async Task<IActionResult?> VersionRefusalAsync(ActionExecutingContext context, string controller, string action)
+    private async Task<IActionResult?> VersionRefusalAsync(ActionExecutingContext context, string controller, string action, IReadOnlyList<string> sessions)
     {
         var report = IsVersionReport(controller, action);
         if (!report && !IsMedia(controller, action))
@@ -226,9 +267,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         var named = StubLookup.NamedItemIdsOf(context).ToList();
-        if (!report && _sessions.LocalItemOf(PlaySessionOf(context)) is { } played)
+        if (!report)
         {
-            named.Add(played);
+            named.AddRange(sessions.Select(_sessions.LocalItemOf).OfType<Guid>());
         }
 
         if (!named.Exists(_stubs.HasVersions))
@@ -241,7 +282,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return new StatusCodeResult(StatusCodes.Status401Unauthorized);
         }
 
-        if (named.TrueForAll(id => _libraryManager.GetItemById<BaseItem>(id, user) is not null))
+        if (named.TrueForAll(id => _stubs.Sees(user, id)))
         {
             return null;
         }
@@ -257,16 +298,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
     // play session counts even when its stub no longer resolves.
-    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, out bool recorded)
+    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, IReadOnlyList<string> sessions, out bool recorded)
     {
         var stubs = new Dictionary<Guid, StubEntry>();
         var named = StubLookup.NamedItemIdsOf(context).ToList();
-        var played = _sessions.LocalItemOf(PlaySessionOf(context));
-        recorded = played is not null;
-        if (played is { } item)
-        {
-            named.Add(item);
-        }
+        var played = sessions.Select(_sessions.LocalItemOf).OfType<Guid>().ToList();
+        recorded = played.Count > 0;
+        named.AddRange(played);
 
         foreach (var id in named)
         {
@@ -281,7 +319,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     private static bool IsMedia(string controller, string action)
     {
-        return _mediaControllers.Contains(controller) || IsFileAction(controller, action);
+        return _mediaControllers.Contains(controller) || IsFileAction(controller, action) || IsLegacySegment(controller, action);
+    }
+
+    // The anonymous legacy segment route; the other actions of its controller stop jobs or want a user already.
+    private static bool IsLegacySegment(string controller, string action)
+    {
+        return controller == "HlsSegment" && action == LegacySegmentAction;
     }
 
     private static bool IsFileAction(string controller, string action)
