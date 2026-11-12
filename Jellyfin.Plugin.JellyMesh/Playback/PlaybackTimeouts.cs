@@ -59,6 +59,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan FileRefusalMemory = TimeSpan.FromSeconds(15);
 
     /// <summary>
+    /// How long a source that stopped serving a user during playback goes after the others for that user and title, and how
+    /// long its failure counts towards <see cref="PlaybackLimits.Reconnections"/> (row 57).
+    /// </summary>
+    public static readonly TimeSpan FailedSourceMemory = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// Default time without requests after which a session is forgotten. Until then a paused player can resume with its
     /// URLs: the remote restarts ffmpeg at the requested segment.
     /// </summary>

@@ -43,6 +43,12 @@ public static class PlaybackLimits
     public const int FileShapesPerSession = 4096;
 
     /// <summary>
+    /// The most reconnections to a title whose sources keep dropping during playback, within
+    /// <see cref="PlaybackTimeouts.FailedSourceMemory"/>. The next one is refused: jellyfin-web never stops retrying (row 57).
+    /// </summary>
+    public const int Reconnections = 3;
+
+    /// <summary>
     /// The longest a call waits for a place among <see cref="CallsPerServer"/>. Below the shortest time decision 17 allows
     /// for a call, so that a busy server reads as busy and not as offline.
     /// </summary>

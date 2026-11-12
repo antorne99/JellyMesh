@@ -89,6 +89,59 @@ public class StreamRelayTests
         Assert.False(aborted.Aborted);
     }
 
+    [Fact]
+    public async Task A_remote_that_goes_silent_is_told_as_a_remote_that_stopped()
+    {
+        using var content = Content(new SilentStream());
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromMilliseconds(100), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(stopped);
+    }
+
+    [Fact]
+    public async Task A_remote_that_drops_mid_stream_breaks_the_connection_and_is_told_as_stopped()
+    {
+        using var content = Content(new BrokenStream(read: true));
+        var aborted = new AbortRecorder();
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.True(stopped);
+        Assert.True(aborted.Aborted);
+    }
+
+    [Fact]
+    public async Task A_client_that_drops_mid_stream_is_no_remote_that_stopped()
+    {
+        using var content = Content(new MemoryStream(new byte[] { 1, 2, 3 }));
+        var aborted = new AbortRecorder();
+        var context = Context(new BrokenStream(read: false));
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.False(stopped);
+        Assert.True(aborted.Aborted);
+    }
+
+    [Fact]
+    public async Task A_client_that_leaves_or_a_copy_that_ends_is_no_remote_that_stopped()
+    {
+        using var whole = Content(new MemoryStream(new byte[] { 1, 2, 3 }));
+        using var silent = Content(new SilentStream());
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+        using var left = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        Assert.False(await StreamRelay.CopyAsync(whole, context, TimeSpan.FromSeconds(30), CancellationToken.None));
+        Assert.False(await StreamRelay.CopyAsync(silent, context, TimeSpan.FromSeconds(30), left.Token).WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
     [Theory]
     [InlineData("text/html", "application/octet-stream")]
     [InlineData("text/html; charset=utf-8", "application/octet-stream")]
@@ -117,6 +170,40 @@ public class StreamRelayTests
         public CancellationToken RequestAborted { get; set; }
 
         public void Abort() => Aborted = true;
+    }
+
+    // A connection that breaks: on the first read for a remote, on the first write for a client.
+    private sealed class BrokenStream : Stream
+    {
+        private readonly bool _read;
+
+        public BrokenStream(bool read) => _read = read;
+
+        public override bool CanRead => _read;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => !_read;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => throw new IOException("The connection broke.");
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new IOException("The connection broke.");
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class SilentStream : Stream
