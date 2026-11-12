@@ -45,6 +45,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
+    private readonly UnreadablePasswords _unreadablePasswords = new();
 
     private TimeSpan _serverReadLimit = MaxServerRead;
     private int _busy;
@@ -109,6 +110,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     public async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)
     {
         var claim = TryClaim();
+        await ReportUnreadablePasswordsAsync(claim).ConfigureAwait(false);
         if (claim == SyncStartResult.Started)
         {
             // The nightly reconciliation also checks every stub's item: the safety net for an item left on an old URL.
@@ -122,6 +124,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     public async Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken)
     {
         var claim = TryClaim();
+        await ReportUnreadablePasswordsAsync(claim).ConfigureAwait(false);
         if (claim == SyncStartResult.Started)
         {
             await SyncAllAsync(SyncChangesAsync, false, cancellationToken).ConfigureAwait(false);
@@ -476,6 +479,20 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         if (!wasFailing)
         {
             await WriteActivityAsync(ActivityEntries.SyncFailed(server.Name, failure)).ConfigureAwait(false);
+        }
+    }
+
+    // A scheduled sync that finds a stored password no longer decrypting writes it once (49). A missing key is not that.
+    private async Task ReportUnreadablePasswordsAsync(SyncStartResult claim)
+    {
+        if (_activity is null || claim == SyncStartResult.AlreadyRunning || _vault.GetKeyState() == KeyState.Missing)
+        {
+            return;
+        }
+
+        foreach (var server in _unreadablePasswords.Update(_registry.GetServers()))
+        {
+            await WriteActivityAsync(ActivityEntries.PasswordUnreadable(server.Name)).ConfigureAwait(false);
         }
     }
 
