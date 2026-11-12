@@ -271,6 +271,25 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     }
 
     [Fact]
+    public async Task ALocalSeriesMergedWithAOneEpisodeSeriesTakesTheStateOfThatEpisode()
+    {
+        // The local series names no head, so the one remote episode is the only head.
+        var local = Add(new MediaBrowser.Controller.Entities.TV.Episode { Path = "/media/serie/local S01E01.mkv" }, _films);
+        var localCopy = new MergedCopy { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), IsLocal = true, Kind = ContentKind.Episode };
+        var aCopy = Series(_serverA, "sa");
+        var a1 = Episode(_serverA, "sa", 1);
+        Row(a1).IsFavorite = true;
+        var carry = await SaveAsync();
+        var heads = carry.FindHeads([localCopy, aCopy]);
+
+        await LinkAsync(local, a1);
+        var report = await carry.CarryAsync(heads, CancellationToken.None);
+
+        Assert.Single(report!.Moves);
+        Assert.True(Row(local).IsFavorite);
+    }
+
+    [Fact]
     public void ALocalSeriesNamesNoHead_ItsEpisodesAreFoundThroughTheirGroups()
     {
         var local = new MergedCopy { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), IsLocal = true, Kind = ContentKind.Episode };

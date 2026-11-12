@@ -102,7 +102,8 @@ public sealed class MergeWatchStateCarry : IMergeWatchStateCarry
         ArgumentNullException.ThrowIfNull(heads);
 
         var root = _store.Read(config => config.FederatedFolderPath) ?? string.Empty;
-        if (root.Length == 0 || heads.Count < 2)
+        // A local series names no head, so one remote episode can be the only head of its group.
+        if (root.Length == 0 || heads.Count == 0 || (heads.Count < 2 && heads[0].Stub?.Kind != StubKind.Episode))
         {
             return null;
         }

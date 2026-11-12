@@ -173,6 +173,10 @@ public sealed class ManualMergeStubTests : IDisposable
         Assert.Equal(before[both.Sources.Single(source => before[source.ItemId] == both.SeriesStubId).ItemId], both.SeriesStubId);
         Assert.Equal(before["b3"], state.Stubs.Single(stub => stub.Sources[0].ItemId == "b3").SeriesStubId);
         Assert.Empty(state.Groups);
+        var server = state.Stubs[0].ServerId!.Value;
+        // The series stub that stayed lists both series as sources, so either finds the episodes of the whole work.
+        Assert.Contains("b3", _fixture.Registry.FindEpisodesOfSeries(server, "sb").Select(stub => stub.Sources[0].ItemId));
+        Assert.Contains("a1", _fixture.Registry.FindEpisodesOfSeries(server, "sa").SelectMany(stub => stub.Sources).Select(source => source.ItemId));
     }
 
     [Fact]
@@ -328,6 +332,21 @@ public sealed class ManualMergeStubTests : IDisposable
         Assert.True(await service.UndoAsync(Assert.Single(_fixture.Merges.Merges).Id, CancellationToken.None));
 
         Assert.Equal(["link"], order);
+    }
+
+    [Fact]
+    public async Task AMergeOfSeries_CarriesEvenOneHead_ForALocalSeriesNamesNone()
+    {
+        await SeriesAsync();
+        var heads = new List<MergeHead> { new(Guid.NewGuid(), null) };
+        var carry = new Mock<IMergeWatchStateCarry>();
+        carry.Setup(item => item.FindHeads(It.IsAny<IReadOnlyList<MergedCopy>>())).Returns(heads);
+        var service = new ManualMergeService(_fixture.Resolver, _fixture.Merges, _fixture.Materializer, _fixture.Sync.Clock, new CapturingLogger<ManualMergeService>(), _linker.Object, carry.Object);
+        var keys = Assert.Single(service.GetList().SeriesCases).Titles.Select(title => title.WorkKey).ToList();
+
+        Assert.Equal(ManualMergeOutcome.Merged, await service.MergeAsync(keys, CancellationToken.None));
+
+        carry.Verify(item => item.CarryAsync(heads, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

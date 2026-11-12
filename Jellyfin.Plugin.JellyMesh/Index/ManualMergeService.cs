@@ -213,7 +213,7 @@ public sealed class ManualMergeService
     // The state moves once, at the merge, when two entities of one library become one (decision 172).
     private async Task CarryAsync(IReadOnlyList<MergeHead> heads, CancellationToken cancellationToken)
     {
-        if (_carry is null || heads.Count < 2)
+        if (_carry is null || heads.Count == 0)
         {
             return;
         }
