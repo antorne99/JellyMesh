@@ -28,4 +28,9 @@ public class RemovedServerLibrariesConfig
     /// Gets the ids of the libraries there at the last check of its registry, which are never taken for a renamed one.
     /// </summary>
     public Collection<string> FollowedLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets the names of its libraries left to the admin because the federated folder changed (decision 158).
+    /// </summary>
+    public Collection<string> ReleasedLibraries { get; } = [];
 }

@@ -224,7 +224,7 @@ public class PluginConfiguration : BasePluginConfiguration
             entry.Libraries.Remove(library);
         }
 
-        if (entry.Libraries.Count == 0)
+        if (entry.Libraries.Count == 0 && entry.ReleasedLibraries.Count == 0)
         {
             RemovedServerLibraries.Remove(entry);
         }

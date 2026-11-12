@@ -605,6 +605,44 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_new_federated_folder_lists_as_released_the_libraries_a_removed_server_left()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.RemoveFailure = new IOException("busy");
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+        fixture.Libraries.RemoveFailure = null;
+
+        fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+        await fixture.Manager.DeleteRemovedServerLibraries();
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], held.ReleasedLibraries);
+    }
+
+    [Fact]
+    public async Task A_server_removed_after_a_new_federated_folder_lists_as_released_the_libraries_it_left()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], held.ReleasedLibraries);
+    }
+
+    [Fact]
     public async Task A_server_removed_twice_deletes_what_both_left()
     {
         var fixture = new Fixture();

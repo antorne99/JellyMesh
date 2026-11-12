@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -140,7 +141,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
 
         // After a failure or a restart, what removed servers left is tried again.
-        if (_store.Read(config => config.RemovedServerLibraries.Count > 0))
+        if (_store.Read(config => config.RemovedServerLibraries.Any(HasWork)))
         {
             _ = DeleteRemovedServerLibraries();
         }
@@ -163,6 +164,9 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private static RemovedServerLibrariesConfig? HeldOf(PluginConfiguration config, Guid serverId) =>
         config.RemovedServerLibraries.FirstOrDefault(held => held.ServerId == serverId);
 
+    // An entry left only with released names stays for the warning (decision 158), and the cleanup skips it.
+    private static bool HasWork(RemovedServerLibrariesConfig held) => held.Libraries.Count > 0 || held.ReleasedLibraries.Count == 0;
+
     private static HashSet<string> IdSet(IEnumerable<string> ids) => ids.Where(id => id.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     // The registry of a configured server. It never adopts a library that a removed server with the same id left.
@@ -173,18 +177,21 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             server.ReleasedAutomaticLibraries,
             IdSet(server.PreexistingLibraryIds),
             IdSet(HeldOf(config, serverId)?.Libraries.Select(record => record.ItemId) ?? []),
-            server.FollowedLibraryIds)
+            server.FollowedLibraryIds,
+            true)
         : null;
 
     // The registry a removed server left. A configured server with the same id wins: its libraries are never seen here.
+    // A library it drops because the federated folder changed is listed as released, like in a live registry (decision 158).
     private static Registry? HeldRegistry(PluginConfiguration config, Guid serverId) => HeldOf(config, serverId) is { } held
         ? new Registry(
             serverId,
             held.Libraries,
-            null,
+            held.ReleasedLibraries,
             IdSet(held.PreexistingLibraryIds.Concat(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? [])),
             IdSet([]),
-            held.FollowedLibraryIds)
+            held.FollowedLibraryIds,
+            false)
         : null;
 
     private static string PathOf(ServerLibraryKind kind, string root, Guid serverId) => kind == ServerLibraryKind.Movies
@@ -198,6 +205,12 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         folder.CollectionType == TypeOf(kind)
         && folder.Locations is [var location]
         && FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId));
+
+    // A library left only because the federated folder changed: it still holds the server folder under another root.
+    private static bool PassesUnderOtherRoot(VirtualFolderInfo folder, ServerLibraryKind kind, Guid serverId) =>
+        folder.Locations is [var location]
+        && Path.GetDirectoryName(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(location))) is { Length: > 0 } other
+        && Passes(folder, kind, other, serverId);
 
     private static LibraryOptions OptionsFor(string path) => new()
     {
@@ -452,7 +465,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     // A removed server whose deletion stops keeps what is left, for the next try.
     private async Task DeleteHeldAsync(CancellationToken cancellationToken)
     {
-        var serverIds = _store.Read(config => config.RemovedServerLibraries.Select(held => held.ServerId).ToList());
+        var serverIds = _store.Read(config => config.RemovedServerLibraries.Where(HasWork).Select(held => held.ServerId).ToList());
         foreach (var serverId in serverIds)
         {
             if (!await DeleteAllAsync(config => HeldRegistry(config, serverId), null, cancellationToken).ConfigureAwait(false))
@@ -462,7 +475,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
             _store.Update(config =>
             {
-                if (HeldOf(config, serverId) is { Libraries.Count: 0 } held)
+                if (HeldOf(config, serverId) is { Libraries.Count: 0, ReleasedLibraries.Count: 0 } held)
                 {
                     config.RemovedServerLibraries.Remove(held);
                 }
@@ -629,7 +642,9 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 }
 
                 registry.Libraries.Remove(change.Record);
-                if (registry.Released is { } released && !released.Contains(change.ReleasedName, StringComparer.Ordinal))
+                if (registry.Released is { } released
+                    && (registry.ReleasesAll || change.RootChanged)
+                    && !released.Contains(change.ReleasedName, StringComparer.Ordinal))
                 {
                     released.Add(change.ReleasedName);
                 }
@@ -660,16 +675,16 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                     .Where(other => !claimed.Contains(other) && registry.MayAdopt(other) && Passes(other, record.Kind, root, registry.ServerId))
                     .ToList();
                 changes.Add(candidates.Count == 1
-                    ? new FollowChange(record, candidates[0], record.Name)
-                    : new FollowChange(record, null, record.Name));
+                    ? new FollowChange(record, candidates[0], record.Name, false)
+                    : new FollowChange(record, null, record.Name, false));
             }
             else if (!Passes(folder, record.Kind, root, registry.ServerId))
             {
-                changes.Add(new FollowChange(record, null, folder.Name));
+                changes.Add(new FollowChange(record, null, folder.Name, PassesUnderOtherRoot(folder, record.Kind, registry.ServerId)));
             }
             else if (!string.Equals(folder.Name, record.Name, StringComparison.Ordinal) || !string.Equals(folder.ItemId ?? string.Empty, record.ItemId, StringComparison.Ordinal))
             {
-                changes.Add(new FollowChange(record, folder, record.Name));
+                changes.Add(new FollowChange(record, folder, record.Name, false));
             }
         }
 
@@ -681,19 +696,20 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         (record.ItemId.Length > 0 ? folders.FirstOrDefault(folder => string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase)) : null)
         ?? folders.FirstOrDefault(folder => string.Equals(folder.Name, record.Name, StringComparison.Ordinal));
 
-    private sealed record FollowChange(AutomaticLibraryConfig Record, VirtualFolderInfo? Found, string ReleasedName);
+    private sealed record FollowChange(AutomaticLibraryConfig Record, VirtualFolderInfo? Found, string ReleasedName, bool RootChanged);
 
     private sealed record DeletedLibrary(Guid ServerId, ServerLibraryKind Kind, string Name);
 
-    // A registry with the ids it never sees, such as the libraries there at switch-on, those it sees but never adopts, and
-    // those there at its last check.
+    // A registry with the ids it never sees (libraries there at switch-on), never adopts, and saw at its last check.
+    // A live one lists every library it drops as released, a held one only those left by a new federated folder.
     private sealed record Registry(
         Guid ServerId,
         Collection<AutomaticLibraryConfig> Libraries,
         Collection<string>? Released,
         IReadOnlySet<string> Hidden,
         IReadOnlySet<string> NotAdopted,
-        Collection<string> Followed)
+        Collection<string> Followed,
+        bool ReleasesAll)
     {
         public List<VirtualFolderInfo> Visible(IReadOnlyList<VirtualFolderInfo> folders) =>
             folders.Where(folder => folder.ItemId is null || !Hidden.Contains(folder.ItemId)).ToList();
