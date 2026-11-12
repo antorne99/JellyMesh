@@ -26,4 +26,10 @@ public sealed record FederationStatus(
     /// Gets a value indicating whether <c>JELLYMESH_SECRET_KEY</c> is still set. It is no longer used, so it can be removed.
     /// </summary>
     public bool LegacyKeySet { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether a library the plugin renamed keeps its old id for some users until a restart
+    /// (§10 row 86).
+    /// </summary>
+    public bool RenamedLibrariesNeedRestart { get; init; }
 }

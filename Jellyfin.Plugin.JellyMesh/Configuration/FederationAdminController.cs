@@ -38,6 +38,7 @@ public class FederationAdminController : ControllerBase
     private readonly IServerLibraryManager _libraries;
     private readonly ILogger<FederationAdminController> _logger;
     private readonly ILayoutMigration? _migration;
+    private readonly IServerRenamer? _renamer;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -53,6 +54,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="libraries">The libraries the plugin keeps for each server.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="migration">The manual migration from the flat layout, for the banner.</param>
+    /// <param name="renamer">The server rename.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -64,7 +66,8 @@ public class FederationAdminController : ControllerBase
         IManualMergeStore merges,
         IServerLibraryManager libraries,
         ILogger<FederationAdminController> logger,
-        ILayoutMigration? migration = null)
+        ILayoutMigration? migration = null,
+        IServerRenamer? renamer = null)
     {
         _registry = registry;
         _vault = vault;
@@ -77,6 +80,7 @@ public class FederationAdminController : ControllerBase
         _libraries = libraries;
         _logger = logger;
         _migration = migration;
+        _renamer = renamer;
     }
 
     /// <summary>
@@ -95,7 +99,8 @@ public class FederationAdminController : ControllerBase
             GetFederatedFolder(),
             _registry.GetServers().Select(ToStatus).ToList())
         {
-            LegacyKeySet = _vault.IsLegacyKeySet
+            LegacyKeySet = _vault.IsLegacyKeySet,
+            RenamedLibrariesNeedRestart = _renamer?.NeedsRestart ?? false
         };
     }
 
@@ -317,6 +322,52 @@ public class FederationAdminController : ControllerBase
         return StatusCode(status, new AutomaticLibrariesRefusal(answer.Outcome, RefusalMessage(answer.Outcome), answer.ToDelete));
     }
 
+    /// <summary>
+    /// Renames a server with its stubs and automatic libraries, after a confirmation (Q38).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The new name and the confirmation.</param>
+    /// <returns>The state, while the work runs in the background.</returns>
+    [HttpPost("Servers/{serverId:guid}/Rename")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<ServerRenameState> RenameServer([FromRoute] Guid serverId, [FromBody] RenameServerRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (_renamer is null)
+        {
+            return NotFound();
+        }
+
+        var answer = _renamer.Rename(serverId, request.Name, request.Confirmed);
+        if (answer.Outcome == ServerRenameOutcome.Started)
+        {
+            return Accepted(_renamer.GetState(serverId));
+        }
+
+        var status = answer.Outcome switch
+        {
+            ServerRenameOutcome.InvalidName => StatusCodes.Status400BadRequest,
+            ServerRenameOutcome.UnknownServer => StatusCodes.Status404NotFound,
+            _ => StatusCodes.Status409Conflict
+        };
+        return StatusCode(status, new ServerRenameRefusal(answer.Outcome, RenameRefusalMessage(answer.Outcome), answer.Libraries));
+    }
+
+    internal static string RenameRefusalMessage(ServerRenameOutcome outcome)
+    {
+        return outcome switch
+        {
+            ServerRenameOutcome.InvalidName => "Enter a name.",
+            ServerRenameOutcome.UnknownServer => "This server is not configured.",
+            ServerRenameOutcome.ConfirmationRequired => "Confirm to rename this server.",
+            ServerRenameOutcome.Busy => "This server is being renamed, or its titles wait for a library scan. Try again when it is done.",
+            _ => "The operation failed."
+        };
+    }
+
     internal static string? KeyWarning(KeyState state)
     {
         return state switch
@@ -391,7 +442,8 @@ public class FederationAdminController : ControllerBase
         {
             NeedsPassword = server.NeedsPassword,
             RecognizedAs = server.RecognizedAs,
-            AutomaticLibraries = _libraries.GetState(server.Id)
+            AutomaticLibraries = _libraries.GetState(server.Id),
+            Rename = _renamer?.GetState(server.Id)
         };
     }
 

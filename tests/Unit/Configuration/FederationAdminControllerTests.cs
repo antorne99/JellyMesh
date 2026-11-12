@@ -36,7 +36,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, IServerRenamer? renamer = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -48,7 +48,8 @@ public class FederationAdminControllerTests
             new InMemoryMergeStore(),
             libraries ?? Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>(),
-            migration);
+            migration,
+            renamer);
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -474,6 +475,76 @@ public class FederationAdminControllerTests
         var body = Assert.IsType<AutomaticLibrariesRefusal>(refused.Value);
         Assert.Equal(outcome, body.Outcome);
         Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
+    public void A_confirmed_rename_starts_in_the_background_and_shows_the_state()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var id = Guid.NewGuid();
+        var state = new ServerRenameState(true, false, false);
+        renamer.Setup(r => r.Rename(id, "Mare", true)).Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
+        renamer.Setup(r => r.GetState(id)).Returns(state);
+
+        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true });
+
+        var accepted = Assert.IsType<AcceptedResult>(result.Result);
+        Assert.Same(state, accepted.Value);
+    }
+
+    [Fact]
+    public void A_rename_without_a_confirmation_answers_with_the_libraries_it_renames()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var id = Guid.NewGuid();
+        renamer.Setup(r => r.Rename(id, "Mare", false))
+            .Returns(new ServerRenameRequest(ServerRenameOutcome.ConfirmationRequired, Task.CompletedTask, ["Casa - Film"]));
+
+        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare" });
+
+        var conflict = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+        var body = Assert.IsType<ServerRenameRefusal>(conflict.Value);
+        Assert.Equal(ServerRenameOutcome.ConfirmationRequired, body.Outcome);
+        Assert.Equal(["Casa - Film"], body.Libraries);
+    }
+
+    [Theory]
+    [InlineData(ServerRenameOutcome.InvalidName, 400)]
+    [InlineData(ServerRenameOutcome.UnknownServer, 404)]
+    [InlineData(ServerRenameOutcome.Busy, 409)]
+    public void A_refused_rename_answers_with_its_reason(ServerRenameOutcome outcome, int status)
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        renamer.Setup(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>())).Returns(ServerRenameRequest.Refused(outcome));
+
+        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(Guid.NewGuid(), new RenameServerRequest { Name = " " });
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(status, refused.StatusCode);
+        var body = Assert.IsType<ServerRenameRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
+    public async Task The_status_shows_the_rename_of_each_server_and_whether_a_restart_is_needed()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var controller = ControllerFor(fixture, renamer: renamer.Object);
+        var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
+        var state = new ServerRenameState(false, true, false);
+        renamer.Setup(r => r.GetState(id)).Returns(state);
+        renamer.Setup(r => r.NeedsRestart).Returns(true);
+
+        var status = controller.GetStatus().Value!;
+
+        Assert.True(status.RenamedLibrariesNeedRestart);
+        Assert.Same(state, Assert.Single(status.Servers).Rename);
     }
 
     [Fact]
