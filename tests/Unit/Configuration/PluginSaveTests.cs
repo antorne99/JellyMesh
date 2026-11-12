@@ -164,7 +164,8 @@ public sealed class PluginSaveTests : IDisposable
                 serverId,
                 [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" }],
                 ["9a8b7c6d5e4f30211203f4e5d6c7b8a9"],
-                ["5d6c7b8a99a8b7c6d5e4f30211203f4e"]);
+                ["5d6c7b8a99a8b7c6d5e4f30211203f4e"],
+                true);
             config.RemovedServerLibraries[0].ReleasedLibraries.Add("Casa - Serie");
         });
         var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
@@ -178,6 +179,7 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Equal("Casa - Film", Assert.Single(held.Libraries).Name);
         Assert.Equal(["9a8b7c6d5e4f30211203f4e5d6c7b8a9"], held.PreexistingLibraryIds);
         Assert.Equal(["5d6c7b8a99a8b7c6d5e4f30211203f4e"], held.FollowedLibraryIds);
+        Assert.True(held.FollowSkipped);
         Assert.Equal(["Casa - Serie"], held.ReleasedLibraries);
     }
 

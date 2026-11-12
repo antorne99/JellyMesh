@@ -139,6 +139,10 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 _gate.Release();
             }
         }
+        else
+        {
+            MarkSkipped(config => FollowedServers(config).Select(serverId => LiveRegistry(config, serverId)));
+        }
 
         // After a failure or a restart, what removed servers left is tried again.
         if (_store.Read(config => config.RemovedServerLibraries.Any(HasWork)))
@@ -169,6 +173,10 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
     private static HashSet<string> IdSet(IEnumerable<string> ids) => ids.Where(id => id.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    // The servers each check follows: those with libraries in their registry.
+    private static List<Guid> FollowedServers(PluginConfiguration config) =>
+        config.Servers.Where(server => server.AutomaticLibraryRegistry.Count > 0).Select(server => server.Id).ToList();
+
     // The registry of a configured server. It never adopts a library that a removed server with the same id left.
     private static Registry? LiveRegistry(PluginConfiguration config, Guid serverId) => Find(config, serverId) is { } server
         ? new Registry(
@@ -178,6 +186,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             IdSet(server.PreexistingLibraryIds),
             IdSet(HeldOf(config, serverId)?.Libraries.Select(record => record.ItemId) ?? []),
             server.FollowedLibraryIds,
+            server.FollowSkipped,
+            skipped => server.FollowSkipped = skipped,
             true)
         : null;
 
@@ -193,6 +203,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 .Concat(config.Servers.SelectMany(server => server.PreexistingLibraryIds))),
             IdSet([]),
             held.FollowedLibraryIds,
+            held.FollowSkipped,
+            skipped => held.FollowSkipped = skipped,
             false)
         : null;
 
@@ -307,6 +319,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var folders = ReadFolders();
         if (folders is null)
         {
+            MarkSkipped(config => [Owned(config, owner) is null ? null : LiveRegistry(config, serverId)]);
             _errors[serverId] = AutomaticLibrariesError.ReadFailed;
             return;
         }
@@ -385,7 +398,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             }
             else
             {
-                config.HoldAutomaticLibraries(serverId, [record], [], owner.FollowedLibraryIds);
+                config.HoldAutomaticLibraries(serverId, [record], [], owner.FollowedLibraryIds, owner.FollowSkipped);
                 held = true;
             }
         });
@@ -495,6 +508,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             var root = _store.Read(config => config.FederatedFolderPath);
             if (folders is null || root.Length == 0)
             {
+                MarkSkipped(config => [locate(config)]);
                 SetError(errorKey, AutomaticLibrariesError.ReadFailed);
                 return false;
             }
@@ -581,17 +595,16 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
     private void FollowAll()
     {
-        var serverIds = _store.Read(config => config.FederatedFolderPath.Length == 0
-            ? []
-            : config.Servers.Where(server => server.AutomaticLibraryRegistry.Count > 0).Select(server => server.Id).ToList());
+        var (serverIds, root) = _store.Read(config => (FollowedServers(config), config.FederatedFolderPath));
         if (serverIds.Count == 0)
         {
             return;
         }
 
-        var folders = ReadFolders();
+        var folders = root.Length == 0 ? null : ReadFolders();
         if (folders is null)
         {
+            MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)));
             return;
         }
 
@@ -603,13 +616,30 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
     private void Follow(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders) => Follow(config => LiveRegistry(config, serverId), folders);
 
+    // A check that could not run: the next one of these registries only records the libraries there (decision 173).
+    private void MarkSkipped(Func<PluginConfiguration, IEnumerable<Registry?>> locate)
+    {
+        if (!_store.Read(config => locate(config).Any(registry => registry is { FollowSkipped: false })))
+        {
+            return;
+        }
+
+        _store.Update(config =>
+        {
+            foreach (var registry in locate(config).OfType<Registry>())
+            {
+                registry.SetFollowSkipped(true);
+            }
+        });
+    }
+
     // Follows a rename where path and type hold, and drops from the registry a library whose path or type changed.
-    // Then records the libraries there now, which a later check never takes for a renamed one (decision 157).
+    // Then records the libraries there now, which a later check never takes for a renamed one (decisions 157, 173).
     private void Follow(Func<PluginConfiguration, Registry?> locate, IReadOnlyList<VirtualFolderInfo> folders)
     {
         var present = IdSet(folders.Select(folder => folder.ItemId ?? string.Empty));
         var (plan, seenChanged) = _store.Read(config => locate(config) is { } registry
-            ? (config.FederatedFolderPath.Length > 0 ? PlanFollow(registry, config.FederatedFolderPath, folders) : [], !IdSet(registry.Followed).SetEquals(present))
+            ? (config.FederatedFolderPath.Length > 0 ? PlanFollow(registry, config.FederatedFolderPath, folders) : [], registry.FollowSkipped || !IdSet(registry.Followed).SetEquals(present))
             : ([], false));
         if (plan.Count == 0 && !seenChanged)
         {
@@ -628,6 +658,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             {
                 registry.Followed.Add(id);
             }
+
+            registry.SetFollowSkipped(false);
 
             foreach (var change in plan)
             {
@@ -702,8 +734,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
     private sealed record DeletedLibrary(Guid ServerId, ServerLibraryKind Kind, string Name);
 
-    // A registry with the ids it never sees (libraries there at switch-on), never adopts, and saw at its last check.
-    // A live one lists every library it drops as released, a held one only those left by a new federated folder.
+    // A registry with the ids it never sees (libraries there at switch-on), never adopts, and saw at its last check, and
+    // whether a check was skipped since. A live one releases every library it drops, a held one only for a new root.
     private sealed record Registry(
         Guid ServerId,
         Collection<AutomaticLibraryConfig> Libraries,
@@ -711,13 +743,15 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         IReadOnlySet<string> Hidden,
         IReadOnlySet<string> NotAdopted,
         Collection<string> Followed,
+        bool FollowSkipped,
+        Action<bool> SetFollowSkipped,
         bool ReleasesAll)
     {
         public List<VirtualFolderInfo> Visible(IReadOnlyList<VirtualFolderInfo> folders) =>
             folders.Where(folder => folder.ItemId is null || !Hidden.Contains(folder.ItemId)).ToList();
 
-        // Only a library new since the last check may be a renamed one, so one with no id never is.
+        // Only a library new since the previous check, with nothing skipped between, may be a renamed one; one with no id never is.
         public bool MayAdopt(VirtualFolderInfo folder) =>
-            folder.ItemId is { Length: > 0 } id && !NotAdopted.Contains(id) && !Followed.Contains(id, StringComparer.OrdinalIgnoreCase);
+            !FollowSkipped && folder.ItemId is { Length: > 0 } id && !NotAdopted.Contains(id) && !Followed.Contains(id, StringComparer.OrdinalIgnoreCase);
     }
 }

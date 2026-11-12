@@ -464,7 +464,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         if (removed.AutomaticLibraries || removed.AutomaticLibraryRegistry.Count > 0)
         {
-            config.HoldAutomaticLibraries(removed.Id, removed.AutomaticLibraryRegistry, removed.PreexistingLibraryIds, removed.FollowedLibraryIds);
+            config.HoldAutomaticLibraries(removed.Id, removed.AutomaticLibraryRegistry, removed.PreexistingLibraryIds, removed.FollowedLibraryIds, removed.FollowSkipped);
         }
     }
 

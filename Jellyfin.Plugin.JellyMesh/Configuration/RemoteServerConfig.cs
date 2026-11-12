@@ -72,6 +72,12 @@ public class RemoteServerConfig
     public Collection<string> FollowedLibraryIds { get; } = [];
 
     /// <summary>
+    /// Gets or sets a value indicating whether a check of the registry was skipped or failed since
+    /// <see cref="FollowedLibraryIds"/> was recorded: the next one takes no library for a renamed one (decision 173).
+    /// </summary>
+    public bool FollowSkipped { get; set; }
+
+    /// <summary>
     /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.
     /// </summary>
     public Collection<string> ReleasedAutomaticLibraries { get; } = [];

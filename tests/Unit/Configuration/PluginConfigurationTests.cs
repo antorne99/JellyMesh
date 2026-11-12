@@ -144,15 +144,27 @@ public class PluginConfigurationTests
     }
 
     [Fact]
+    public void HoldingLibrariesAgainKeepsASkippedCheckOfTheEntry()
+    {
+        var config = new PluginConfiguration();
+        var serverId = Guid.NewGuid();
+        config.HoldAutomaticLibraries(serverId, [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "a1" }], [], [], true);
+
+        config.HoldAutomaticLibraries(serverId, [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "b2" }], [], [], false);
+
+        Assert.True(Assert.Single(config.RemovedServerLibraries).FollowSkipped);
+    }
+
+    [Fact]
     public void TakingBackHeldLibrariesKeepsAnEntryOnlyWhileItListsReleasedOnes()
     {
         var config = new PluginConfiguration();
         var kept = Guid.NewGuid();
         var dropped = Guid.NewGuid();
         var library = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "a1" };
-        config.HoldAutomaticLibraries(kept, [library], [], []);
+        config.HoldAutomaticLibraries(kept, [library], [], [], false);
         config.RemovedServerLibraries[0].ReleasedLibraries.Add("Casa - Serie");
-        config.HoldAutomaticLibraries(dropped, [library], [], []);
+        config.HoldAutomaticLibraries(dropped, [library], [], [], false);
 
         config.ReleaseHeldAutomaticLibraries(kept, [library]);
         config.ReleaseHeldAutomaticLibraries(dropped, [library]);

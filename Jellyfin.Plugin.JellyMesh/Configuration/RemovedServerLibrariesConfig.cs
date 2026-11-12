@@ -30,6 +30,12 @@ public class RemovedServerLibrariesConfig
     public Collection<string> FollowedLibraryIds { get; } = [];
 
     /// <summary>
+    /// Gets or sets a value indicating whether a check of the registry was skipped or failed since
+    /// <see cref="FollowedLibraryIds"/> was recorded: the next one takes no library for a renamed one (decision 173).
+    /// </summary>
+    public bool FollowSkipped { get; set; }
+
+    /// <summary>
     /// Gets the names of its libraries left to the admin because the federated folder changed (decision 158).
     /// </summary>
     public Collection<string> ReleasedLibraries { get; } = [];
