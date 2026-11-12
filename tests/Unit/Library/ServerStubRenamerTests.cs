@@ -267,6 +267,43 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    [Fact]
+    public async Task AStubThatLeftTheRegistryHoldsUpNoRename()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [Film("o", FilmPath("Altro", _other))] });
+
+        Assert.False(_renamer.IsPending(_server));
+        Assert.False(_renamer.IsPending(_other));
+    }
+
+    [Fact]
+    public async Task ARenameBackOverTheOldFileOfAStubThatLeftKeepsTheNewFile()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [Film("g", FilmPath("Mare"))] });
+        Write(FilmPath("Mare"), "url-g");
+
+        await _renamer.RelabelAsync(_server, "Casa", CancellationToken.None);
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal("url-g", Read(FilmPath("Casa")));
+        Assert.Equal([new StubRename("g", FilmPath("Mare"))], _registry.State.Renames);
+    }
+
+    private async Task SaveAsync(StubState state)
+    {
+        await _registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await _registry.SaveAsync(state, CancellationToken.None);
+        }
+        finally
+        {
+            _registry.Exit();
+        }
+    }
+
     private static Guid IdOf(string key, Type type) => new(MD5.HashData(Encoding.UTF8.GetBytes(type.FullName + key)));
 
     private static StubEntry Film(string id, string path) => new()
