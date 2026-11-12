@@ -159,9 +159,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         Assert.Equal(RemoteFailure.Unreachable, result.Failure);
     }
 
-    private async Task<RemoteServerInfo> PeerAsync()
+    private async Task<RemoteServerInfo> PeerAsync(int protocolVersion = ProviderProtocol.CollectionsVersion)
     {
-        _fixture.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
+        _fixture.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, protocolVersion);
         var server = await _fixture.AddServerAsync("A", "films");
         Assert.Equal(RemoteMode.JellyMesh, server.Mode);
         return server;
@@ -184,6 +184,20 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         Assert.Equal(new IndexedBoxSet("Saga", null), result.Value["m2"]);
         Assert.Equal(2, result.Value.Count);
         Assert.Equal(["peer:films@0"], _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerOnAnOlderProtocolIsNotAskedForCollections()
+    {
+        var server = await PeerAsync(ProviderProtocol.CollectionsVersion - 1);
+        AddShared("m1", "Saga");
+        _fixture.Client.AddCollection("films", "box", "Stock", "m1");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value!);
+        Assert.Empty(_fixture.Client.CollectionReads);
     }
 
     [Fact]
