@@ -483,7 +483,7 @@ public static class StubPlanner
             Sources = SourcesOf(content, catalog)
         };
 
-        var metadata = StubMetadata.From(winner, input.IsProtected);
+        var metadata = StubMetadata.From(winner, input.IsProtected, input.WritesCollections);
         var nfo = NfoDocument.Movie(metadata);
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();

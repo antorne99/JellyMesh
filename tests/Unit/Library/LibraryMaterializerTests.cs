@@ -323,6 +323,29 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task ANewTrailerReachesAnIndexedItemAndAGoneOneLeavesIt()
+    {
+        var film = FilmWithArt();
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
+        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film", ShortcutPath = StubFixture.Text(path) };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { RemoteTrailers = [new RemoteMediaUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")] };
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["https://www.youtube.com/watch?v=dQw4w9WgXcQ"], item.RemoteTrailers.Select(trailer => trailer.Url));
+        Assert.Contains("plugin://plugin.video.youtube/play/?video_id=dQw4w9WgXcQ", StubFixture.Text(_fixture.Path_(a, "Film", "Film (2020)", "movie.nfo")), StringComparison.Ordinal);
+
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film;
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Empty(item.RemoteTrailers);
+    }
+
+    [Fact]
     public async Task ANewRuntimeReachesAnIndexedItem()
     {
         var film = FilmWithArt() with { RunTimeTicks = 100, Etag = "1" };

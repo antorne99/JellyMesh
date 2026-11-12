@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -46,6 +47,11 @@ public sealed class StubItemUpdater
         item.Name = metadata.Title ?? item.Name;
         item.ProductionYear = metadata.Year ?? item.ProductionYear;
         item.ProviderIds = new Dictionary<string, string>(metadata.ProviderIds, StringComparer.OrdinalIgnoreCase);
+        if (item is Movie && !string.IsNullOrEmpty(metadata.TmdbCollectionId))
+        {
+            // Jellyfin sets it from tmdbcolid when it first reads the .nfo.
+            item.SetProviderId(MetadataProvider.TmdbCollection, metadata.TmdbCollectionId);
+        }
 
         var isSeries = item is Series;
         item.IsLocked = metadata.IsProtected && !isSeries;
@@ -64,6 +70,17 @@ public sealed class StubItemUpdater
             item.CriticRating = metadata.CriticRating;
             item.PremiereDate = metadata.PremiereDate?.UtcDateTime;
             item.EndDate = metadata.EndDate?.UtcDateTime;
+        }
+
+        if (metadata.IsProtected && item is Movie or Series)
+        {
+            item.RemoteTrailers = metadata.TrailerIds.Select(id => new MediaUrl { Url = YouTubeTrailer.WatchPrefix + id }).ToArray();
+        }
+
+        // Unprotected films keep a collection the admin may have set; protected ones follow the remote.
+        if (item is Movie movie && (metadata.CollectionName is not null || (metadata.WritesCollections && metadata.IsProtected)))
+        {
+            movie.CollectionName = metadata.CollectionName;
         }
 
         // Not MetadataEdit: on that reason Jellyfin rewrites any .nfo it finds, in its own format, inside the federated

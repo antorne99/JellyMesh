@@ -1353,6 +1353,13 @@
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
                             </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input id="jmFederateCollections" type="checkbox" is="emby-checkbox" />
+                                    <span>Write remote collections into films</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with "Automatically add to collection" turned on. Turning this off keeps the collections already made.</div>
+                            </div>
                         </div>
                         <div class="jmGroup">
                             <h3 class="sectionTitle">Streams</h3>
@@ -1582,6 +1589,7 @@
                     "Password": "Password",
                     "Playback already running may not stop right away.": "Una riproduzione già in corso potrebbe non fermarsi subito.",
                     "Protect metadata": "Proteggi i metadati",
+                    "Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with \"Automatically add to collection\" turned on. Turning this off keeps the collections already made.": "Mette nel .nfo di un film la collezione che ha sul suo server. Jellyfin raggruppa i film solo nelle librerie con \"Aggiungi automaticamente alla collezione\" attivo. Se la disattivi, le collezioni già create restano.",
                     "Quality not read: a local copy plays whatever its quality.": "Qualità non letta: una copia locale viene riprodotta qualunque sia la sua qualità.",
                     "Quality unknown": "Qualità sconosciuta",
                     "Range": "Gamma",
@@ -1736,6 +1744,7 @@
                     "Untitled": "Senza titolo",
                     "User": "Utente",
                     "Version {version}": "Versione {version}",
+                    "Write remote collections into films": "Scrivi le collezioni dei remoti nei film",
                     "Wait for a remote to answer (seconds)": "Attesa della risposta di un remoto (secondi)",
                     "Wait for each step of opening a stream (seconds)": "Attesa di ogni fase di apertura di uno stream (secondi)",
                     "Warning: \"Automatically merge series that are spread across multiple folders\" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.": "Attenzione: \"Unisci automaticamente le serie distribuite su più cartelle\" è disattivato in {libraries}, quindi una serie presente in due cartelle resta divisa. Attivalo nelle opzioni della libreria.",
@@ -3805,6 +3814,7 @@
                     el('#jmReconciliationTime').value = config.ReconciliationTime;
                     el('#jmFederatedFolder').value = config.FederatedFolderPath;
                     el('#jmMetadataProtection').checked = config.MetadataProtection;
+                    el('#jmFederateCollections').checked = config.FederateCollections;
                     el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
                     el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
                     el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
@@ -4663,6 +4673,7 @@
                         config.ReconciliationTime = el('#jmReconciliationTime').value;
                         config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
                         config.MetadataProtection = el('#jmMetadataProtection').checked;
+                        config.FederateCollections = el('#jmFederateCollections').checked;
                         config.CloseTranscodeAtSlotExpiry = el('#jmCloseAtExpiry').checked;
                         config.RemotePlaybackInfoTimeoutSeconds = parseInt(el('#jmRemotePlaybackInfoTimeout').value, 10);
                         config.StreamOpenTimeoutSeconds = parseInt(el('#jmStreamOpenTimeout').value, 10);

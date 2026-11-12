@@ -31,6 +31,9 @@ public sealed record StubMetadata
     /// <summary>Gets the taglines.</summary>
     public IReadOnlyList<string> Taglines { get; init; } = [];
 
+    /// <summary>Gets the YouTube video IDs of the trailers of a film or a series.</summary>
+    public IReadOnlyList<string> TrailerIds { get; init; } = [];
+
     /// <summary>Gets the genres.</summary>
     public IReadOnlyList<string> Genres { get; init; } = [];
 
@@ -71,21 +74,38 @@ public sealed record StubMetadata
     public int? EpisodeNumberEnd { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether the plugin writes collections, an option that is off by default (decision 52).
+    /// </summary>
+    public bool WritesCollections { get; init; }
+
+    /// <summary>Gets the name of the collection of a film on its remote, written as <c>&lt;set&gt;</c>.</summary>
+    public string? CollectionName { get; init; }
+
+    /// <summary>Gets the TMDb ID of that collection.</summary>
+    public string? TmdbCollectionId { get; init; }
+
+    /// <summary>
     /// Builds the metadata of a catalog entry.
     /// </summary>
     /// <param name="item">The entry.</param>
     /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <param name="writesCollections">Whether the collection of a film is written.</param>
     /// <returns>The metadata.</returns>
-    public static StubMetadata From(IndexedItem item, bool isProtected)
+    public static StubMetadata From(IndexedItem item, bool isProtected, bool writesCollections = false)
     {
         ArgumentNullException.ThrowIfNull(item);
 
+        // Written in both modes: without protection a fetcher fills the collection only when it is empty.
+        var collection = writesCollections && item.Kind == IndexedItemKind.Movie ? item.Collection : null;
         var core = new StubMetadata
         {
             IsProtected = isProtected,
             Title = item.Kind == IndexedItemKind.Movie ? FederatedPaths.WithoutYear(item.Name, item.ProductionYear) : item.Name,
             Year = item.ProductionYear,
-            ProviderIds = item.ProviderIds
+            ProviderIds = item.ProviderIds,
+            WritesCollections = writesCollections,
+            CollectionName = collection?.Name,
+            TmdbCollectionId = collection?.TmdbId
         };
 
         // Without protection the fetchers fill the rest (plan §3.1).
@@ -94,6 +114,7 @@ public sealed record StubMetadata
             OriginalTitle = item.OriginalTitle,
             Overview = item.Overview,
             Taglines = item.Taglines,
+            TrailerIds = item.Kind is IndexedItemKind.Movie or IndexedItemKind.Series ? item.TrailerIds : [],
             Genres = item.Genres,
             Studios = item.Studios,
             Tags = item.Tags,

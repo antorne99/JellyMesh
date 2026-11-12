@@ -189,4 +189,34 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         var page = new RemoteItemPage(all.Skip(query.StartIndex).Take(query.Limit).ToList(), all.Count);
         return Task.FromResult(RemoteResult.Success(Rewrite(query, page)));
     }
+
+    /// <summary>The collections, each with its library and the IDs of its films.</summary>
+    public List<(string Library, RemoteItem Collection, List<string> Films)> Collections { get; } = [];
+
+    /// <summary>The collection reads, as library or collection ID and start index.</summary>
+    public List<string> CollectionReads { get; } = [];
+
+    /// <summary>Fails the collection reads.</summary>
+    public RemoteFailure CollectionFailure { get; set; }
+
+    public void AddCollection(string library, string id, string name, params string[] films)
+        => Collections.Add((library, new RemoteItem { Id = id, Name = name }, films.ToList()));
+
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        CollectionReads.Add(libraryId + "@" + startIndex);
+        var all = Collections.Where(entry => entry.Library == libraryId).Select(entry => entry.Collection).ToList();
+        return Task.FromResult(CollectionFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteItemPage(all.Skip(startIndex).Take(limit).ToList(), all.Count))
+            : RemoteResult.Fail<RemoteItemPage>(CollectionFailure));
+    }
+
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        CollectionReads.Add(collectionId + "@" + startIndex);
+        var films = Collections.Where(entry => entry.Collection.Id == collectionId).SelectMany(entry => entry.Films).Select(id => new RemoteItem { Id = id }).ToList();
+        return Task.FromResult(CollectionFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteItemPage(films.Skip(startIndex).Take(limit).ToList(), films.Count))
+            : RemoteResult.Fail<RemoteItemPage>(CollectionFailure));
+    }
 }

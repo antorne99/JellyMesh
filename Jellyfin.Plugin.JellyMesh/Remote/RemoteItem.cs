@@ -28,6 +28,9 @@ public sealed record RemoteItem
     /// <summary>Gets the taglines.</summary>
     public IReadOnlyList<string>? Taglines { get; init; }
 
+    /// <summary>Gets the trailers. An entry can be null, and is then skipped.</summary>
+    public IReadOnlyList<RemoteMediaUrl?>? RemoteTrailers { get; init; }
+
     /// <summary>Gets the genres.</summary>
     public IReadOnlyList<string>? Genres { get; init; }
 
