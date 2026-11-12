@@ -139,13 +139,11 @@ public sealed class VersionLinker : IVersionLinker
             }
         }
 
+        // Only the first local copy found is linked: two local films are never merged (decision 20).
         var locals = new List<Guid>();
-        foreach (var video in group.LocalItemIds.Select(FindLocal).OfType<Video>())
+        if (group.LocalItemIds.Select(FindLocal).OfType<Video>().FirstOrDefault() is { } local && items.TryAdd(local.Id, local))
         {
-            if (items.TryAdd(video.Id, video))
-            {
-                locals.Add(video.Id);
-            }
+            locals.Add(local.Id);
         }
 
         if (items.Count < 2)

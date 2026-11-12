@@ -129,6 +129,29 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task OnlyTheFirstLocalCopyIsLinked()
+    {
+        var first = Local();
+        var second = Local(played: true);
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [first.Id, second.Id]));
+        var itemA = Scanned(a);
+        var collection = Add(new BoxSet { LinkedChildren = [LinkedChild.Create(second)] }, Guid.NewGuid());
+        _boxSets.Add(collection);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Equal(first.Id, itemA.PrimaryVersionId);
+        Assert.Equal([itemA.Id], LinkedIds(first));
+        Assert.Null(second.PrimaryVersionId);
+        Assert.Empty(second.LinkedAlternateVersions);
+        Assert.DoesNotContain(_saves, save => save.Item == second.Id || save.Item == collection.Id);
+        Assert.False(Data(first).Played);
+        _userData.Verify(data => data.SaveUserData(It.IsAny<User>(), second, It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal([second.Id], ((Folder)collection).LinkedChildren.Select(child => child.ItemId!.Value));
+    }
+
+    [Fact]
     public async Task NoMetadataSaverRunsOnTheLocalCopy()
     {
         var local = Local();
