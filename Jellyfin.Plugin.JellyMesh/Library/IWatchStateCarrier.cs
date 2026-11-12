@@ -12,7 +12,9 @@ public interface IWatchStateCarrier
     /// <summary>
     /// Carries the watch state of each move for every user. Running it again changes nothing already carried.
     /// </summary>
-    /// <param name="moves">The old items and their new versions, which must be linked first.</param>
+    /// <param name="moves">
+    /// The old items and their new versions. Several versions must be linked first, with their primary among them.
+    /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>What was carried and what was left.</returns>
     WatchStateCarryReport Carry(IReadOnlyList<WatchStateMove> moves, CancellationToken cancellationToken);
