@@ -55,7 +55,7 @@ check "the page shows the idle time" 109 "$(echo "$fields" | jq -r .jmPlaybackId
 check "the page knows the limit" 109 "$(echo "$fields" | jq -r .jmPlaybackIdle.max)"
 check "the browser stops a low interval" false "$(grep '^INVALID' "$WORK/web/config.out" | cut -d' ' -f2 | tr 'FT' 'ft')"
 shown=$(grep '^FOLDER' "$WORK/web/config.out" | cut -d' ' -f2-)
-check "the page shows the folders of the server" 2 "$(echo "$shown" | jq -r '.servers[0]' | grep -cF "$(server_folder "$(cat "$WORK/id-remote")")/")"
+check "the page shows the folders of the server" 2 "$(echo "$shown" | jq -r '.servers[0]' | grep -cxE "$(server_folder "$(cat "$WORK/id-remote")")/(Film|Serie)")"
 check "and no flat path" 0 "$(echo "$shown" | grep -cE '/federata/(Film|Serie)' || true)"
 check "the page saved a new time" 95 "$(get local "/Plugins/$PLUGIN/Configuration" | jq -r .PlaybackIdleSeconds)"
 check "and kept the interval" 300 "$(get local "/Plugins/$PLUGIN/Configuration" | jq -r .SyncIntervalSeconds)"

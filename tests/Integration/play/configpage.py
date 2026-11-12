@@ -32,6 +32,7 @@ with sync_playwright() as p:
     print("FIELDS", json.dumps(read()), flush=True)
 
     # The folder section: the hint, then the name, the two paths and the warnings of each server.
+    page.wait_for_function("document.querySelectorAll('#jmFolderPaths .jmServerFolder').length > 0", timeout=15000)
     print("FOLDER", json.dumps(page.evaluate("""() => ({hint: document.querySelector('#jmFolderHint').innerText,
       servers: [...document.querySelectorAll('#jmFolderPaths .jmServerFolder')].map(b => b.innerText)})""")), flush=True)
     page.screenshot(path=CAP + ".png", full_page=True)
