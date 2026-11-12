@@ -91,6 +91,7 @@ public sealed class LayoutMigration : ILayoutMigration
             var catalog = new Catalog(IndexItemLookup.Build(snapshot), _servers.GetServers().Select(server => server.Id).ToHashSet(), state.RemovedServers.ToHashSet());
             var moves = new List<WatchStateMove>();
             var waiting = 0;
+            var blocked = 0;
             foreach (var stub in state.Stubs.Where(stub => stub.ServerId is null))
             {
                 Add(TitleMoveOf(root, state, stub, catalog), moves, ref waiting);
@@ -104,13 +105,19 @@ public sealed class LayoutMigration : ILayoutMigration
             if (moves.Count > 0)
             {
                 var report = await _carrier.CarryAsync(moves, cancellationToken).ConfigureAwait(false);
-                waiting += report.Moves.Count(outcome => !IsDone(outcome));
+                blocked = report.Moves.Count(IsBlocked);
+                waiting += report.Moves.Count(outcome => !IsDone(outcome) && !IsBlocked(outcome));
+                var refused = report.Moves.Count(outcome => outcome.Status == WatchStateMoveStatus.Refused);
+                if (refused > 0)
+                {
+                    _logger.LogWarning("Migration to the server folders: the watch state carry refused {Refused} old titles, which go without it", refused);
+                }
             }
 
-            _lastRun = new LastRun(waiting);
-            if (waiting > 0)
+            _lastRun = new LastRun(waiting, blocked);
+            if (waiting + blocked > 0)
             {
-                _logger.LogInformation("Migration to the server folders: {Waiting} old titles wait for a later run", waiting);
+                _logger.LogInformation("Migration to the server folders: {Waiting} old titles wait for a scan and {Blocked} are blocked", waiting, blocked);
                 return;
             }
 
@@ -143,16 +150,21 @@ public sealed class LayoutMigration : ILayoutMigration
         var step = old == 0
             ? LayoutMigrationStep.RemoveOldPaths
             : read is { ServerFoldersLinked: false } || libraries.Any(library => library.MissingPaths.Count > 0) ? LayoutMigrationStep.AddPaths : LayoutMigrationStep.Carrying;
-        return new LayoutMigrationStatus(step, libraries, old) { Waiting = old == 0 ? null : _lastRun?.Waiting };
+        return new LayoutMigrationStatus(step, libraries, old) { Waiting = old == 0 ? null : _lastRun?.Waiting, Blocked = old == 0 ? null : _lastRun?.Blocked };
     }
 
     private static bool HasOldTitles(StubState state) =>
         state.Stubs.Any(stub => stub.ServerId is null) || state.Series.Any(series => series.ServerId is null);
 
-    // Done for every user, or left only for users who see none of the new items (decision 166).
+    // Done for every user, left only for users who see none of the new items (decision 166), or refused as not valid (Q216).
     private static bool IsDone(WatchStateMoveOutcome outcome) =>
-        outcome.Status == WatchStateMoveStatus.Carried
+        outcome.Status is WatchStateMoveStatus.Carried or WatchStateMoveStatus.Refused
         || (outcome.Status == WatchStateMoveStatus.UsersLeft && outcome.SkippedUsers.All(user => user.Reason == WatchStateUserSkipReason.NoVisibleVersion));
+
+    // Not done for a reason a scan does not fix: a failed move, or a user row missing or not saved (Q216).
+    private static bool IsBlocked(WatchStateMoveOutcome outcome) =>
+        outcome.Status == WatchStateMoveStatus.Failed
+        || (outcome.Status == WatchStateMoveStatus.UsersLeft && !IsDone(outcome));
 
     private static void Add((WatchStateMove? Move, bool Waits) step, List<WatchStateMove> moves, ref int waiting)
     {
@@ -357,7 +369,7 @@ public sealed class LayoutMigration : ILayoutMigration
 
     private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked);
 
-    private sealed record LastRun(int Waiting);
+    private sealed record LastRun(int Waiting, int Blocked);
 
     // The index with the configured servers and the ones the admin removed, read once per run.
     private sealed record Catalog(IndexItemLookup Items, HashSet<Guid> Configured, HashSet<Guid> Removed);

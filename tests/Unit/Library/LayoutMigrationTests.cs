@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
@@ -49,6 +50,8 @@ public sealed class LayoutMigrationTests : IDisposable
     private readonly List<Guid> _configured = [_serverA, _serverB];
     private readonly List<Guid> _synced = [_serverA, _serverB];
     private readonly List<Guid> _removed = [];
+    private readonly CapturingLogger<LayoutMigration> _logger = new();
+    private Func<WatchStateMove, WatchStateMoveOutcome>? _outcome;
     private readonly User _mario = new("mario", "auth", "reset");
     private readonly User _luigi = new("luigi", "auth", "reset");
     private StubRegistry _registry;
@@ -394,6 +397,60 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task ARefusedMoveIsClosedWithAWarningThatCountsOnly()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []);
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+        var warning = Assert.Single(_logger.Lines, line => line.Contains("refused", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("Dune", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain(Root, warning, StringComparison.Ordinal);
+        Assert.Contains(LogLevel.Warning, _logger.Levels);
+    }
+
+    [Theory]
+    [InlineData(WatchStateMoveStatus.Failed, null)]
+    [InlineData(WatchStateMoveStatus.UsersLeft, WatchStateUserSkipReason.NoUserData)]
+    [InlineData(WatchStateMoveStatus.UsersLeft, WatchStateUserSkipReason.NotSaved)]
+    public async Task AMoveThatAScanCannotFixKeepsTheOldStubsAndShowsAsBlocked(WatchStateMoveStatus status, WatchStateUserSkipReason? reason)
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, status, reason is { } why ? [new WatchStateUserSkip(_mario.Id, why)] : []);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Blocked);
+        Assert.Equal(0, shown.Waiting);
+    }
+
+    [Fact]
+    public async Task AMoveWaitingForAScanIsNotBlocked()
+    {
+        OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.NotFound, []);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Waiting);
+        Assert.Equal(0, shown.Blocked);
+    }
+
+    [Fact]
     public async Task AnOldSeriesGivesItsFavoriteToTheNewSeriesAndGoesWithItsEpisodes()
     {
         var (oldShow, oldShowItem) = OldShow("Lost", (_serverA, "s1"));
@@ -609,8 +666,16 @@ public sealed class LayoutMigrationTests : IDisposable
     private async Task<LayoutMigration> MigrationAsync()
     {
         await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList(), RemovedServers = _removed.ToList() }, CancellationToken.None);
-        var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, new CapturingLogger<WatchStateCarrier>());
-        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), new CapturingLogger<LayoutMigration>());
+        IWatchStateCarrier carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, new CapturingLogger<WatchStateCarrier>());
+        if (_outcome is { } outcome)
+        {
+            var fake = new Mock<IWatchStateCarrier>();
+            fake.Setup(carry => carry.CarryAsync(It.IsAny<IReadOnlyList<WatchStateMove>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<WatchStateMove> moves, CancellationToken _) => new WatchStateCarryReport(moves.Select(outcome).ToList()));
+            carrier = fake.Object;
+        }
+
+        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _logger);
     }
 
     private UserItemData Row(User user, BaseItem item) => _userData.Object.GetUserData(user, item)!;
