@@ -28,7 +28,6 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     private const string MediaSourceArgument = "mediaSourceId";
 
     private readonly StubLookup _stubs;
-    private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
     private readonly PlaybackRefusal _refusal;
@@ -39,7 +38,6 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     /// Initializes a new instance of the <see cref="PlaybackInfoFilter"/> class.
     /// </summary>
     /// <param name="stubs">The stubs.</param>
-    /// <param name="libraryManager">The library manager.</param>
     /// <param name="authorization">The authorization context.</param>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="refusal">The refusal.</param>
@@ -47,7 +45,6 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     /// <param name="versions">The versions of a title.</param>
     public PlaybackInfoFilter(
         StubLookup stubs,
-        ILibraryManager libraryManager,
         IAuthorizationContext authorization,
         PlaybackCoordinator coordinator,
         PlaybackRefusal refusal,
@@ -55,7 +52,6 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         PlaybackVersions versions)
     {
         _stubs = stubs;
-        _libraryManager = libraryManager;
         _authorization = authorization;
         _coordinator = coordinator;
         _refusal = refusal;
@@ -117,9 +113,9 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        // A version the user cannot see, or of another title, is not found, and reaches no remote.
-        if (_libraryManager.GetItemById<BaseItem>(route, user) is null
-            || (asked is { } version && (_libraryManager.GetItemById<BaseItem>(version, user) is null || !_versions.IsVersionOf(route, version))))
+        // A version the user cannot see, in no library (D17) or of another title, is not found, and reaches no remote.
+        if (!_stubs.Sees(user, route)
+            || (asked is { } version && (!_stubs.Sees(user, version) || !_versions.IsVersionOf(route, version))))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
@@ -245,7 +241,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
     private async Task RefuseOrPlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, User user)
     {
-        if (_localCopies.Find(request.Stub, user) is not { } local)
+        // A local copy in no library is not one to fall back on for a non-admin (D17).
+        if (_localCopies.Find(request.Stub, user) is not { } local || !_stubs.Sees(user, local.Id))
         {
             context.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.TextOf(outcome));
             return;

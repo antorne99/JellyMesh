@@ -20,7 +20,8 @@ public interface ISyncHistory
     bool IsDamaged { get; }
 
     /// <summary>
-    /// Adds a run, dropping the oldest past the limit. The run shows at once, then the history is saved.
+    /// Adds a run, dropping the oldest past the limit, except the last reconciliations. The run shows at once, then the
+    /// history is saved.
     /// </summary>
     /// <param name="run">The run.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

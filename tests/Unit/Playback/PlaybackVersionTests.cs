@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
@@ -73,6 +74,7 @@ public class PlaybackVersionTests
         _stubs.Setup(stubs => stubs.FindGroup("b")).Returns(group);
         _stubs.Setup(stubs => stubs.FindGroupOfLocal(_localItem)).Returns(group);
         Sees(_localItem, _aItem, _bItem);
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
     }
 
     private static string N(Guid id) => id.ToString("N");
@@ -144,12 +146,22 @@ public class PlaybackVersionTests
         }
     }
 
+    // D17: Jellyfin shows an item that sits in no library to everyone.
+    private void InNoLibrary(Guid id)
+    {
+        _library.Setup(library => library.GetCollectionFolders(It.Is<BaseItem>(item => item.Id == id))).Returns([]);
+    }
+
+    private void Admin()
+    {
+        _user.Permissions.Add(new Permission(PermissionKind.IsAdministrator, true));
+    }
+
     private PlaybackInfoFilter Filter()
     {
         var lookup = new StubLookup(_library.Object, _stubs.Object, _store);
         return new PlaybackInfoFilter(
             lookup,
-            _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
@@ -571,6 +583,19 @@ public class PlaybackVersionTests
     }
 
     [Fact]
+    public async Task The_fallback_never_tries_a_version_in_no_library()
+    {
+        _fixture.Registry.Offline.Add(_serverA);
+        InNoLibrary(_bItem);
+        var context = Context(_localItem, ("mediaSourceId", N(_aItem)));
+
+        await RunAsync(context, StockSource(_localItem));
+
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
     public async Task A_local_transcode_after_a_fallback_runs_on_the_version_that_serves()
     {
         Hidden(_localItem);
@@ -589,6 +614,20 @@ public class PlaybackVersionTests
     }
 
     [Fact]
+    public async Task A_stub_whose_server_fails_does_not_fall_back_to_a_local_copy_in_no_library()
+    {
+        _fixture.Registry.Offline.Add(_serverA);
+        _fixture.Registry.Offline.Add(_serverB);
+        InNoLibrary(_localItem);
+        var context = Context(_bItem, ("mediaSourceId", N(_aItem)));
+
+        var (passed, _) = await RunAsync(context, StockSource(_localItem));
+
+        Assert.False(passed);
+        Assert.NotEqual(_localItem, context.ActionArguments["itemId"]);
+    }
+
+    [Fact]
     public async Task Without_a_version_the_choice_reads_no_library()
     {
         Hidden(_localItem);
@@ -596,6 +635,81 @@ public class PlaybackVersionTests
         await RunAsync(Context(_aItem));
 
         _resolver.Verify(resolver => resolver.Resolve(), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_named_version_in_no_library_is_not_found_to_a_non_admin(bool stub)
+    {
+        var version = stub ? _bItem : _localItem;
+        InNoLibrary(version);
+        var context = Context(_aItem, ("mediaSourceId", N(version)));
+
+        var (passed, _) = await RunAsync(context, StockSource(_localItem));
+
+        Assert.False(passed);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Fact]
+    public async Task A_named_stub_in_no_library_is_served_to_an_admin()
+    {
+        Admin();
+        InNoLibrary(_bItem);
+
+        await RunAsync(Context(_aItem, ("mediaSourceId", N(_bItem))));
+
+        Assert.Equal("item-b", RemoteItemAsked());
+    }
+
+    [Fact]
+    public async Task A_stub_in_no_library_is_not_found_to_a_non_admin()
+    {
+        InNoLibrary(_aItem);
+        var context = Context(_aItem);
+
+        var (passed, _) = await RunAsync(context, StockSource(_localItem));
+
+        Assert.False(passed);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Fact]
+    public async Task Without_a_version_the_local_copy_in_no_library_is_skipped()
+    {
+        InNoLibrary(_localItem);
+
+        var (_, response) = await RunAsync(Context(_aItem), StockSource(_localItem));
+
+        Assert.Equal("item-b", RemoteItemAsked());
+        Assert.Equal(N(_bItem), Assert.Single(response!.MediaSources).Id);
+    }
+
+    [Fact]
+    public async Task Without_a_version_the_best_stub_in_no_library_is_skipped()
+    {
+        Hidden(_localItem);
+        InNoLibrary(_bItem);
+
+        var (_, response) = await RunAsync(Context(_aItem));
+
+        Assert.Equal("item-a", RemoteItemAsked());
+        Assert.Equal(N(_aItem), Assert.Single(response!.MediaSources).Id);
+    }
+
+    [Fact]
+    public async Task Without_a_version_an_admin_gets_the_local_copy_in_no_library()
+    {
+        Admin();
+        InNoLibrary(_localItem);
+        var context = Context(_aItem);
+
+        await RunAsync(context, StockSource(_localItem));
+
+        Assert.Equal(_localItem, context.ActionArguments["itemId"]);
     }
 
     // The posted body as stock binds it: PlaybackInfoDto is not in a NuGet package, so the filter reads it by name.

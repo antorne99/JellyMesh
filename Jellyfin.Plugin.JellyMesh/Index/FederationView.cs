@@ -28,7 +28,7 @@ public sealed record FederationView(
     public IReadOnlyDictionary<string, Guid> LocalItemByWork { get; init; } = new Dictionary<string, Guid>();
 
     /// <summary>
-    /// Gets the film titles the administrator can merge (decision 20).
+    /// Gets the film and series titles the administrator can merge (decisions 20 and 51).
     /// </summary>
     public IReadOnlyList<MergeCaseView> MergeCases { get; init; } = [];
 

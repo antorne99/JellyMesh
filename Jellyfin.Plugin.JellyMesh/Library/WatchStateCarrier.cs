@@ -122,6 +122,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
 
         // A move done may rest on a record from an earlier run that is still not on disk, so none counts as done.
         // Rows are saved by now, so a late cancellation must not leave their records only in memory.
+        IReadOnlyList<Guid> forgettable = [];
         if (!await _log.SaveAsync(CancellationToken.None).ConfigureAwait(false))
         {
             for (var index = 0; index < outcomes.Count; index++)
@@ -139,16 +140,42 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
         else
         {
-            await ForgetRemovedAsync(outcomes).ConfigureAwait(false);
+            forgettable = ForgettableOf(outcomes);
         }
 
-        var report = new WatchStateCarryReport(outcomes);
+        var report = new WatchStateCarryReport(outcomes) { ForgettableOldItemIds = forgettable };
         if (report.Skipped > 0)
         {
             _logger.LogWarning("Watch state carried for {Carried} titles, {Skipped} left for a later run", report.Carried, report.Skipped);
         }
 
         return report;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> ForgetRemovedAsync(IReadOnlyCollection<Guid> oldItemIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(oldItemIds);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (oldItemIds.Count == 0)
+        {
+            return true;
+        }
+
+        // Without the record a later carry would look like the first (decision 176).
+        if (!_log.EnsureLoaded())
+        {
+            _logger.LogWarning("The record of the watch state carries cannot be read for now: the carries of {Count} removed titles are not forgotten", oldItemIds.Count);
+            return false;
+        }
+
+        // No users may mean they cannot be read for now, as in Prune.
+        if (!_users.GetUsers().Any())
+        {
+            return false;
+        }
+
+        return await ForgetOldAsync(oldItemIds).ConfigureAwait(false);
     }
 
     private static WatchStateMoveOutcome Outcome(WatchStateMove move, WatchStateMoveStatus status) => new(move, status, []);
@@ -477,25 +504,29 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         });
     }
 
-    // Forgets the records of old items removed right after a carry done for every user, once that carry is on disk, so
-    // that a path coming back starts fresh (decision 179). An old item with any other move in the run keeps them.
-    private async Task ForgetRemovedAsync(List<WatchStateMoveOutcome> outcomes)
+    // The old items whose moves all remove them and are done for every user (decisions 179, 187).
+    private static List<Guid> ForgettableOf(List<WatchStateMoveOutcome> outcomes) => outcomes
+        .GroupBy(outcome => outcome.Move.FromItemId)
+        .Where(moves => moves.All(outcome => outcome.Move.RemovesOldItem && outcome.Status == WatchStateMoveStatus.Carried))
+        .Select(moves => moves.Key)
+        .ToList();
+
+    private async Task<bool> ForgetOldAsync(IReadOnlyCollection<Guid> oldItemIds)
     {
-        var removed = outcomes
-            .GroupBy(outcome => outcome.Move.FromItemId)
-            .Where(moves => moves.All(outcome => outcome.Move.RemovesOldItem && outcome.Status == WatchStateMoveStatus.Carried))
-            .Select(moves => moves.Key)
-            .ToHashSet();
+        var removed = oldItemIds.ToHashSet();
         if (removed.Count == 0 || _log.Forget((_, itemId) => removed.Contains(itemId)) == 0)
         {
-            return;
+            return true;
         }
 
-        // The carries are on disk already; a later save keeps what is forgotten here.
+        // A late cancellation must not leave the log forgotten in memory and kept on disk.
         if (!await _log.SaveAsync(CancellationToken.None).ConfigureAwait(false))
         {
             _logger.LogWarning("Cannot save the record of the watch state carries after forgetting {Count} removed titles", removed.Count);
+            return false;
         }
+
+        return true;
     }
 
     // What a run reads once, with the group of each stub and local copy.

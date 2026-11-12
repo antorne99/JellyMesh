@@ -626,6 +626,39 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task TheStubsGroupedWithASeriesCopyAreTheStubsOfItsEpisodesGroups()
+    {
+        var a1 = Stub("a1", _serverA, 1080, StubKind.Episode) with { SeriesStubId = "series-a" };
+        var a2 = Stub("a2", _serverA, 1080, StubKind.Episode) with { SeriesStubId = "series-a" };
+        var b1 = Stub("b1", _serverB, 1080, StubKind.Episode) with { SeriesStubId = "series-b" };
+        var c1 = Stub("c1", _serverA, 1080, StubKind.Episode) with { SeriesStubId = "series-c" };
+        var c2 = Stub("c2", _serverB, 1080, StubKind.Episode);
+        var film = Stub("film", _serverA, 1080);
+        var film2 = Stub("film2", _serverB, 1080);
+        SeriesStub[] series =
+        [
+            new() { Id = "series-a", ServerId = _serverA, RelativePath = "a", WorkKey = "series|a", Sources = [new StubSource(_serverA, "SERIES-A", string.Empty)] },
+            new() { Id = "series-b", ServerId = _serverB, RelativePath = "b", WorkKey = "series|b", Sources = [new StubSource(_serverB, "series-a", string.Empty)] },
+            new() { Id = "series-c", ServerId = _serverA, RelativePath = "c", WorkKey = "series|c", Sources = [new StubSource(_serverA, "series-c", string.Empty)] }
+        ];
+        await _registry.SaveAsync(
+            StubState.Empty with
+            {
+                Stubs = [a1, a2, b1, c1, c2, film, film2],
+                Series = series,
+                Groups = [Group("g1", ["a1", "b1"]), Group("g2", ["c1", "c2"]), Group("g3", ["film", "film2"])]
+            },
+            CancellationToken.None);
+        MergedCopy[] copies =
+        [
+            new() { ServerId = _serverA.ToString("N"), ItemId = "series-a", Kind = ContentKind.Episode },
+            new() { ServerId = _serverA.ToString("N"), ItemId = "item-film", Kind = ContentKind.Episode }
+        ];
+
+        Assert.Equal(["a1", "b1"], _linker.GroupedStubsOf(copies).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task AStubInNoGroupWithoutLinksIsNotSaved()
     {
         var a = Stub("sa", _serverA, 1080);

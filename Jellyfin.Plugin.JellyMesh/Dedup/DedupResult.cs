@@ -20,7 +20,7 @@ public sealed record DedupResult(IReadOnlyList<FederationDecision> Decisions, IR
     public IReadOnlyDictionary<string, string> LocalItemByWork { get; init; } = new Dictionary<string, string>();
 
     /// <summary>
-    /// Gets the film titles the administrator can merge, sorted by the first key of each case.
+    /// Gets the film and series titles the administrator can merge, sorted by the first key of each case.
     /// </summary>
     public IReadOnlyList<MergeCase> MergeCases { get; init; } = [];
 

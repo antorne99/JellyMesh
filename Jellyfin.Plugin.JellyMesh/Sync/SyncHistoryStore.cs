@@ -22,9 +22,14 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     public const string FileName = "sync-history.json";
 
     /// <summary>
-    /// How many runs are kept.
+    /// How many of the last runs are kept.
     /// </summary>
     public const int Capacity = 50;
+
+    /// <summary>
+    /// How many of the last reconciliations are kept, also when older than the last <see cref="Capacity"/> runs (decision 194).
+    /// </summary>
+    public const int ReconciliationCapacity = 7;
 
     private const int CurrentVersion = 1;
 
@@ -69,7 +74,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var next = _runs.Prepend(run).Take(Capacity).ToList();
+            var next = Trim(_runs.Prepend(run));
             _runs = next;
             await SaveAsync(next, cancellationToken).ConfigureAwait(false);
             _isDamaged = false;
@@ -119,7 +124,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
             var file = JsonSerializer.Deserialize<HistoryFile>(stream, _options);
             if (file?.Version == CurrentVersion && IsWhole(file.Runs))
             {
-                return file.Runs.Take(Capacity).ToList();
+                return Trim(file.Runs);
             }
 
             _logger.LogError("The file of the sync history has an unsupported format. The history starts empty");
@@ -132,6 +137,24 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         _isDamaged = true;
         KeepDamagedCopy();
         return [];
+    }
+
+    // Keeps the last runs and the last reconciliations, newest first. By position, since two runs can be equal.
+    private static List<SyncRun> Trim(IEnumerable<SyncRun> runs)
+    {
+        var kept = new List<SyncRun>();
+        var index = 0;
+        var reconciliations = 0;
+        foreach (var run in runs)
+        {
+            var isLastReconciliation = run.Kind == SyncRunKind.Reconciliation && reconciliations++ < ReconciliationCapacity;
+            if (index++ < Capacity || isLastReconciliation)
+            {
+                kept.Add(run);
+            }
+        }
+
+        return kept;
     }
 
     // Tells whether no run and no server row is null, which the serializer lets through in lists.

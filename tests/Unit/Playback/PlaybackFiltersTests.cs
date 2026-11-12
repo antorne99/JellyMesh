@@ -57,6 +57,7 @@ public class PlaybackFiltersTests
         var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") };
         _library.Setup(library => library.GetItemById(_itemId)).Returns(video);
         _stubs.Setup(stubs => stubs.Find("stub")).Returns(_stub);
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
         _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 0, [], []));
         SignedIn();
     }
@@ -84,7 +85,6 @@ public class PlaybackFiltersTests
         var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         return new PlaybackInfoFilter(
             lookup,
-            _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
@@ -96,7 +96,6 @@ public class PlaybackFiltersTests
     {
         return new StockRouteGuardFilter(
             new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
-            _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
             sessions ?? _fixture.Sessions,
@@ -1273,5 +1272,105 @@ public class PlaybackFiltersTests
 
         Assert.NotNull(_fixture.Sessions.Find(session.Id));
         Assert.Empty(_fixture.Client.Stopped);
+    }
+
+    // D9: the legacy segment route serves any file of the transcode folder by name, whatever item its route names.
+    private const string JobHash = "0123456789abcdef0123456789abcdef";
+
+    private TranscodingJob JobOf(string playSessionId)
+    {
+        var job = new TranscodingJob(NullLogger<TranscodingJob>.Instance) { PlaySessionId = playSessionId, Path = "/cache/transcodes/" + JobHash + ".m3u8" };
+        _transcodes.Setup(manager => manager.GetTranscodingJob(playSessionId)).Returns(job);
+        return job;
+    }
+
+    private static ActionExecutingContext LegacySegment(Guid item, string playlistId, string segmentId) =>
+        Context("HlsSegment", "GetHlsVideoSegmentLegacy", ("itemId", item.ToString("N")), ("playlistId", playlistId), ("segmentId", segmentId), ("segmentContainer", "ts"));
+
+    [Fact]
+    public async Task A_legacy_segment_wants_a_user()
+    {
+        Anonymous();
+        var context = LegacySegment(LocalItem(), "anything", "anything0");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("other", JobHash + "3")]
+    [InlineData("other", "0123456789ABCDEF0123456789ABCDEF-1")]
+    [InlineData(JobHash, "other3")]
+    [InlineData("6789ABCDEF", "other3")]
+    public async Task A_legacy_segment_of_the_local_play_session_of_another_user_is_not_found(string playlistId, string segmentId)
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), playlistId, segmentId);
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_the_local_play_session_of_another_user_is_not_found_when_its_stub_is_gone()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        StubGone();
+        var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_the_play_session_of_a_peer_is_not_found()
+    {
+        using var job = JobOf("peer-play");
+        PeerPlays(Guid.NewGuid());
+        var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Its_user_reads_a_legacy_segment_of_their_local_play_session()
+    {
+        CanSeeItem();
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacySegment(_itemId, JobHash, JobHash + "0")));
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_their_local_play_session_on_a_stub_they_no_longer_see_is_not_found()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_that_names_a_stub_the_user_cannot_see_is_not_found()
+    {
+        var context = LegacySegment(_itemId, "other", "other0");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_a_job_nobody_recorded_stays_with_stock()
+    {
+        using var job = JobOf("real-title");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacySegment(LocalItem(), JobHash, JobHash + "0")));
     }
 }

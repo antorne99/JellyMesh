@@ -101,6 +101,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             ServerId = LocalServerId,
             ItemId = item.Id.ToString("N"),
             Kind = ContentKind.Episode,
+            SeriesId = episode.SeriesId == Guid.Empty ? null : episode.SeriesId.ToString("N"),
             Title = parent?.Name ?? episode.SeriesName,
             Year = parent?.ProductionYear,
             Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
