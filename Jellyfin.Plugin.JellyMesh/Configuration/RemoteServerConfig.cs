@@ -60,6 +60,12 @@ public class RemoteServerConfig
     public Collection<AutomaticLibraryConfig> AutomaticLibraryRegistry { get; } = [];
 
     /// <summary>
+    /// Gets the ids of the libraries there when the switch was last turned on, outside the registry: they are the admin's,
+    /// so the plugin never takes them for its own (decision 131).
+    /// </summary>
+    public Collection<string> PreexistingLibraryIds { get; } = [];
+
+    /// <summary>
     /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.
     /// </summary>
     public Collection<string> ReleasedAutomaticLibraries { get; } = [];

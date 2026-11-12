@@ -253,6 +253,51 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_already_there_at_switch_on_is_never_taken_for_a_renamed_one()
+    {
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_library_already_there_at_switch_on_is_never_taken_by_the_name_of_one_in_the_registry()
+    {
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+        fixture.Server.AutomaticLibraryRegistry.Single(record => record.Kind == ServerLibraryKind.Movies).Name = "Mine";
+
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task Switching_on_again_still_follows_a_library_of_the_registry_renamed_in_the_dashboard()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+        fixture.Libraries.Created.Clear();
+
+        await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Empty(fixture.Libraries.Created);
+        Assert.Equal(["Film di casa", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
     public async Task Switching_off_leaves_to_the_admin_a_library_whose_path_or_type_changed()
     {
         var fixture = new Fixture();

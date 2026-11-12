@@ -249,6 +249,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
 
         Follow(serverId, folders);
+        RecordPreexisting(serverId, folders);
         _materializer.PrepareServerFolders();
         var missing = _store.Read(config => _kinds
             .Where(kind => Find(config, serverId)?.AutomaticLibraryRegistry.All(record => record.Kind != kind) == true)
@@ -375,6 +376,27 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         });
     }
 
+    // Called after the follow, so that a library of the registry renamed in the dashboard is not recorded as the admin's.
+    private void RecordPreexisting(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders) => _store.Update(config =>
+    {
+        if (Find(config, serverId) is not { } server)
+        {
+            return;
+        }
+
+        var visible = Visible(server, folders);
+        var owned = server.AutomaticLibraryRegistry.Select(record => FindRecorded(record, visible)).OfType<VirtualFolderInfo>().ToList();
+        var preexisting = folders
+            .Where(folder => !owned.Contains(folder) && !string.IsNullOrEmpty(folder.ItemId))
+            .Select(folder => folder.ItemId!)
+            .ToList();
+        server.PreexistingLibraryIds.Clear();
+        foreach (var id in preexisting)
+        {
+            server.PreexistingLibraryIds.Add(id);
+        }
+    });
+
     private List<VirtualFolderInfo>? ReadFolders()
     {
         try
@@ -438,6 +460,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private static List<FollowChange> PlanFollow(RemoteServerConfig server, string root, IReadOnlyList<VirtualFolderInfo> folders)
     {
         // A library still known by id or name is the one in the registry, whatever its path now.
+        folders = Visible(server, folders);
         var known = server.AutomaticLibraryRegistry
             .Select(record => (Record: record, Folder: FindRecorded(record, folders)))
             .ToList();
@@ -465,6 +488,10 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
         return changes;
     }
+
+    // Hides the libraries that were there at switch-on, which are never the plugin's.
+    private static List<VirtualFolderInfo> Visible(RemoteServerConfig server, IReadOnlyList<VirtualFolderInfo> folders) =>
+        folders.Where(folder => folder.ItemId is null || !server.PreexistingLibraryIds.Contains(folder.ItemId, StringComparer.OrdinalIgnoreCase)).ToList();
 
     // The id wins over the name. A library made later under an old name gets its id too, and is then checked by path.
     private static VirtualFolderInfo? FindRecorded(AutomaticLibraryConfig record, IReadOnlyList<VirtualFolderInfo> folders) =>
