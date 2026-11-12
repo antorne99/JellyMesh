@@ -99,6 +99,41 @@ public class LocalCatalogReaderTests
     }
 
     [Fact]
+    public void AFilmWithoutIdsThatJellyfinHasNotRefreshedAwaitsARefresh()
+    {
+        var film = Film("/media/film/a.mkv");
+        film.ProviderIds = new Dictionary<string, string>();
+
+        Assert.True(Assert.Single(ReaderOver(film).Read()).AwaitsRefresh);
+    }
+
+    [Fact]
+    public void AFilmWithIdsAwaitsNoRefresh()
+    {
+        Assert.False(Assert.Single(ReaderOver(Film("/media/film/a.mkv")).Read()).AwaitsRefresh);
+    }
+
+    [Fact]
+    public void AFilmRefreshedWithoutFindingIdsAwaitsNoRefresh()
+    {
+        var film = Film("/media/film/a.mkv");
+        film.ProviderIds = new Dictionary<string, string>();
+        film.DateLastRefreshed = new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc);
+
+        Assert.False(Assert.Single(ReaderOver(film).Read()).AwaitsRefresh);
+    }
+
+    [Fact]
+    public void AnEpisodeAwaitsNoRefresh()
+    {
+        var series = new Series { Id = Guid.NewGuid(), Name = "Show" };
+        _library.Setup(library => library.GetItemById(series.Id)).Returns(series);
+        var episode = new Episode { Id = Guid.NewGuid(), SeriesId = series.Id, IndexNumber = 1, Path = "/media/serie/e.mkv" };
+
+        Assert.False(Assert.Single(ReaderOver(episode).Read()).AwaitsRefresh);
+    }
+
+    [Fact]
     public void ALocalDoubleKeepsItsLastNumber()
     {
         var series = new Series { Id = Guid.NewGuid(), Name = "Show" };
