@@ -35,6 +35,7 @@ public class FederationAdminController : ControllerBase
     private readonly IFederatedRootSource _rootSource;
     private readonly ICatalogSyncService _sync;
     private readonly IManualMergeStore _merges;
+    private readonly IServerLibraryManager _libraries;
     private readonly ILogger<FederationAdminController> _logger;
 
     /// <summary>
@@ -48,6 +49,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="rootSource">The source of the federated folder.</param>
     /// <param name="sync">The sync service, which deletes what a removed server left.</param>
     /// <param name="merges">The manual merges, which lose the copies of a removed server.</param>
+    /// <param name="libraries">The libraries the plugin keeps for each server.</param>
     /// <param name="logger">The logger.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
@@ -58,6 +60,7 @@ public class FederationAdminController : ControllerBase
         IFederatedRootSource rootSource,
         ICatalogSyncService sync,
         IManualMergeStore merges,
+        IServerLibraryManager libraries,
         ILogger<FederationAdminController> logger)
     {
         _registry = registry;
@@ -68,6 +71,7 @@ public class FederationAdminController : ControllerBase
         _rootSource = rootSource;
         _sync = sync;
         _merges = merges;
+        _libraries = libraries;
         _logger = logger;
     }
 
@@ -282,6 +286,31 @@ public class FederationAdminController : ControllerBase
         return _registry.SetImportedLibraries(serverId, request.LibraryIds) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
 
+    /// <summary>
+    /// Turns on or off the Film and Serie libraries the plugin keeps for a server. Turning them off deletes them, so it
+    /// needs a confirmation while there are any.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The switch and the confirmation.</param>
+    /// <returns>The state, while the work runs in the background.</returns>
+    [HttpPost("Servers/{serverId:guid}/AutomaticLibraries")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<AutomaticLibrariesState> SetAutomaticLibraries([FromRoute] Guid serverId, [FromBody] SetAutomaticLibrariesRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var answer = request.Enabled ? _libraries.Enable(serverId) : _libraries.Disable(serverId, request.Confirmed);
+        if (answer.Outcome == AutomaticLibrariesOutcome.Started)
+        {
+            return Accepted(_libraries.GetState(serverId));
+        }
+
+        var status = answer.Outcome == AutomaticLibrariesOutcome.UnknownServer ? StatusCodes.Status404NotFound : StatusCodes.Status409Conflict;
+        return StatusCode(status, new AutomaticLibrariesRefusal(answer.Outcome, RefusalMessage(answer.Outcome), answer.ToDelete));
+    }
+
     internal static string? KeyWarning(KeyState state)
     {
         return state switch
@@ -319,6 +348,18 @@ public class FederationAdminController : ControllerBase
         };
     }
 
+    private static string RefusalMessage(AutomaticLibrariesOutcome outcome)
+    {
+        return outcome switch
+        {
+            AutomaticLibrariesOutcome.UnknownServer => "This server is not configured.",
+            AutomaticLibrariesOutcome.NoFederatedFolder => "Set the federated folder first.",
+            AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the libraries of this server.",
+            AutomaticLibrariesOutcome.Busy => "The libraries of this server are being updated. Try again when it is done.",
+            _ => "The operation failed."
+        };
+    }
+
     private static string ConnectionOf(RemoteFailure? failure)
     {
         return failure switch
@@ -330,7 +371,7 @@ public class FederationAdminController : ControllerBase
         };
     }
 
-    private static ServerStatus ToStatus(RemoteServerInfo server)
+    private ServerStatus ToStatus(RemoteServerInfo server)
     {
         return new ServerStatus(
             server.Id,
@@ -343,7 +384,8 @@ public class FederationAdminController : ControllerBase
             server.LastCheckedUtc)
         {
             NeedsPassword = server.NeedsPassword,
-            RecognizedAs = server.RecognizedAs
+            RecognizedAs = server.RecognizedAs,
+            AutomaticLibraries = _libraries.GetState(server.Id)
         };
     }
 

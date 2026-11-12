@@ -36,7 +36,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -46,6 +46,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(federatedRoot),
             Mock.Of<ICatalogSyncService>(),
             new InMemoryMergeStore(),
+            libraries ?? Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
 
     [Fact]
@@ -81,6 +82,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
 
         var result = await controller.RemoveServer(source.ServerId, CancellationToken.None);
@@ -107,6 +109,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
 
         var result = await controller.RemoveServer(Guid.NewGuid(), CancellationToken.None);
@@ -135,6 +138,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
         fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(saveFailure)!;
 
@@ -166,6 +170,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
 
         var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
@@ -318,6 +323,7 @@ public class FederationAdminControllerTests
         new FixedFederatedRootSource(null),
         sync,
         merges ?? new InMemoryMergeStore(),
+        Mock.Of<IServerLibraryManager>(),
         logger ?? new CapturingLogger<FederationAdminController>());
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
@@ -353,6 +359,74 @@ public class FederationAdminControllerTests
         var route = typeof(FederationAdminController).GetCustomAttribute<RouteAttribute>()!.Template;
 
         Assert.DoesNotContain(route, JellyfinRemoteClient.CapabilitiesPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Switching_on_the_libraries_of_a_server_starts_in_the_background_and_shows_the_state()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        var controller = ControllerFor(fixture, libraries: libraries.Object);
+        var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
+        var state = new AutomaticLibrariesState(true, true, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None);
+        libraries.Setup(manager => manager.Enable(id)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+        libraries.Setup(manager => manager.GetState(id)).Returns(state);
+
+        var result = controller.SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = true });
+
+        var accepted = Assert.IsType<AcceptedResult>(result.Result);
+        Assert.Same(state, accepted.Value);
+        Assert.Same(state, Assert.Single(controller.GetStatus().Value!.Servers).AutomaticLibraries);
+    }
+
+    [Fact]
+    public void Switching_off_without_a_confirmation_answers_with_the_libraries_it_would_delete()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        var id = Guid.NewGuid();
+        libraries.Setup(manager => manager.Disable(id, false))
+            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Friend - Film", "Friend - Serie"]));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false });
+
+        var conflict = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+        var body = Assert.IsType<AutomaticLibrariesRefusal>(conflict.Value);
+        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, body.Outcome);
+        Assert.Equal(["Friend - Film", "Friend - Serie"], body.ToDelete);
+    }
+
+    [Fact]
+    public void A_confirmed_switch_off_reaches_the_manager()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        var id = Guid.NewGuid();
+        libraries.Setup(manager => manager.Disable(id, true)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false, Confirmed = true });
+
+        Assert.IsType<AcceptedResult>(result.Result);
+    }
+
+    [Theory]
+    [InlineData(AutomaticLibrariesOutcome.UnknownServer, 404)]
+    [InlineData(AutomaticLibrariesOutcome.NoFederatedFolder, 409)]
+    [InlineData(AutomaticLibrariesOutcome.Busy, 409)]
+    public void A_refused_switch_answers_with_its_reason(AutomaticLibrariesOutcome outcome, int status)
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.Enable(It.IsAny<Guid>())).Returns(AutomaticLibrariesRequest.Refused(outcome));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(Guid.NewGuid(), new SetAutomaticLibrariesRequest { Enabled = true });
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(status, refused.StatusCode);
+        var body = Assert.IsType<AutomaticLibrariesRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
     }
 
     [Fact]
