@@ -94,6 +94,41 @@ public sealed class LibraryScans : ILibraryScans
         }
     }
 
+    /// <inheritdoc />
+    public async Task<bool> WaitReadyAsync(TimeSpan limit, CancellationToken cancellationToken)
+    {
+        var start = _time.GetUtcNow();
+        while (!IsReady())
+        {
+            if (_time.GetUtcNow() - start >= limit)
+            {
+                return false;
+            }
+
+            await _delay(_poll, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    // A library renamed without a refresh, or new, gets its id only from a scan.
+    private bool IsReady()
+    {
+        if (IsRunning(Worker()))
+        {
+            return false;
+        }
+
+        try
+        {
+            return _libraries.GetVirtualFolders().All(folder => !string.IsNullOrEmpty(folder.ItemId));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
     private IScheduledTaskWorker? Worker() =>
         _tasks.ScheduledTasks.FirstOrDefault(worker => string.Equals(worker.ScheduledTask.Key, ScanTaskKey, StringComparison.Ordinal));
 

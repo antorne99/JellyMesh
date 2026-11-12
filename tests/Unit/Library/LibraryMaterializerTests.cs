@@ -928,6 +928,38 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task ASyncWaitsForTheServerLibrariesToBeReadyBeforeItStarts()
+    {
+        var steps = new List<string>();
+        var materializer = new Mock<ILibraryMaterializer>();
+        materializer.Setup(item => item.MaterializeAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => steps.Add("materialize"))
+            .Returns(Task.FromResult<MaterializationReport>(null!));
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.WaitReadyAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("ready")).Returns(Task.CompletedTask);
+        libraries.Setup(item => item.ReconcileAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("follow")).Returns(Task.CompletedTask);
+        using var sync = SyncWith(materializer.Object, libraries.Object);
+
+        await sync.RunIncrementalAsync(CancellationToken.None);
+
+        Assert.Equal(["ready", "materialize", "follow"], steps);
+    }
+
+    [Fact]
+    public async Task ASyncCancelledWhileWaitingForTheLibrariesMarksTheCheckAsSkipped()
+    {
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.WaitReadyAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new OperationCanceledException());
+        using var sync = SyncWith(Mock.Of<ILibraryMaterializer>(), libraries.Object);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sync.RunAsync(CancellationToken.None));
+
+        Assert.False(sync.GetStatus().IsRunning);
+        libraries.Verify(item => item.ReconcileAsync(It.IsAny<CancellationToken>()), Times.Never);
+        libraries.Verify(item => item.MarkFollowSkipped(), Times.Once);
+    }
+
+    [Fact]
     public async Task AFailureInFollowingTheServerLibrariesDoesNotFailTheSync()
     {
         var libraries = new Mock<IServerLibraryManager>();

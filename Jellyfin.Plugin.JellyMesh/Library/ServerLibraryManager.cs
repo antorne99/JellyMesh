@@ -21,6 +21,11 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 {
+    /// <summary>
+    /// The longest a sync waits for the libraries to be ready before it starts (decision 213).
+    /// </summary>
+    public static readonly TimeSpan ReadyLimit = TimeSpan.FromMinutes(10);
+
     private static readonly ServerLibraryKind[] _kinds = [ServerLibraryKind.Movies, ServerLibraryKind.Series];
 
     private readonly IPluginConfigurationStore _store;
@@ -148,6 +153,27 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         if (_store.Read(config => config.RemovedServerLibraries.Any(HasWork)))
         {
             _ = DeleteRemovedServerLibraries();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task WaitReadyAsync(CancellationToken cancellationToken)
+    {
+        if (_store.Read(config => config.FederatedFolderPath.Length == 0 || FollowedServers(config).Count == 0))
+        {
+            return;
+        }
+
+        try
+        {
+            if (!await _scans.WaitReadyAsync(ReadyLimit, cancellationToken).ConfigureAwait(false))
+            {
+                _logger.LogWarning("The libraries of the server are not ready after {Minutes} minutes, so the sync starts", ReadyLimit.TotalMinutes);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("Cannot wait for the libraries of the server: {Error}", exception.GetType().Name);
         }
     }
 
@@ -624,6 +650,15 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var folders = root.Length == 0 ? null : ReadFolders();
         if (folders is null)
         {
+            MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)));
+            return;
+        }
+
+        // A library with no id yet may be a renamed one, so the check waits for the next sync (decision 213).
+        var unready = folders.Count(folder => string.IsNullOrEmpty(folder.ItemId));
+        if (unready > 0)
+        {
+            _logger.LogWarning("{Count} libraries have no id yet, so their check is skipped", unready);
             MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)));
             return;
         }
