@@ -1520,6 +1520,7 @@
                     "IDs": "ID",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
                     "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
+                    "In total: {created} created, {updated} updated, {removed} removed.": "In totale: {created} creati, {updated} aggiornati, {removed} rimossi.",
                     "Incremental": "Incrementale",
                     "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
@@ -3732,6 +3733,20 @@
                     return line;
                 }
 
+                // Says what one sync did in the whole federated folder, with the single folder and the removed servers.
+                function historyTotalsLine(run) {
+                    var line = t('In total: {created} created, {updated} updated, {removed} removed.', {
+                        created: run.Created,
+                        updated: run.Updated,
+                        removed: run.Removed
+                    });
+                    if (run.Failed > 0) {
+                        line += ' ' + t('Titles not written or removed: {count}.', { count: run.Failed });
+                    }
+
+                    return line;
+                }
+
                 function historyRow(run) {
                     var row = create('tr');
                     var started = create('td');
@@ -3773,6 +3788,7 @@
                     run.Servers.forEach(function (server) {
                         servers.appendChild(create('p', historyServerLine(server)));
                     });
+                    servers.appendChild(create('p', historyTotalsLine(run)));
                     row.appendChild(servers);
                     return row;
                 }

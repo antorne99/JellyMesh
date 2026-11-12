@@ -203,6 +203,19 @@ public class PluginConfigurationTests
         Assert.Equal(cells.Order(), cells);
     }
 
+    // Decision 191: the totals also count the stubs of the single folder and of removed servers.
+    [Fact]
+    public void TheSyncHistoryShowsTheTotalsOfEachRun()
+    {
+        var history = Slice(ConfigPage(), "function historyServerLine(server)", "function renderHistory(view)");
+
+        Assert.Contains("t('In total: {created} created, {updated} updated, {removed} removed.'", history, StringComparison.Ordinal);
+        foreach (var total in new[] { "run.Created", "run.Updated", "run.Removed", "run.Failed" })
+        {
+            Assert.Contains(total, history, StringComparison.Ordinal);
+        }
+    }
+
     private static string Slice(string page, string start, string end)
     {
         var from = page.IndexOf(start, StringComparison.Ordinal);
