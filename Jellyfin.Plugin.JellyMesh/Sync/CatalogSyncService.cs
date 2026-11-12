@@ -328,10 +328,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
     }
 
-    // Saving the history never fails the sync. The type only: a message could hold a remote address.
+    // Saving the history never fails the sync, and a sync with no server is not recorded (decision 189).
+    // The type only: a message could hold a remote address.
     private async Task RecordAsync(SyncRunKind kind, DateTimeOffset started, IReadOnlyList<RemoteServerInfo> servers, Materialized materialized, SyncRunOutcome? stopped)
     {
-        if (_history is null)
+        if (_history is null || servers.Count == 0)
         {
             return;
         }

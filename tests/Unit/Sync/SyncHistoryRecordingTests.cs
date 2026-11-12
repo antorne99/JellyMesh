@@ -255,6 +255,19 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     }
 
     [Fact]
+    public async Task ASyncWithNoServerConfigured_IsNotRecorded()
+    {
+        using var sync = NewSync();
+
+        await sync.RunAsync(CancellationToken.None);
+        await sync.RunIncrementalAsync(CancellationToken.None);
+        Assert.Equal(SyncStartResult.Started, sync.TryStart());
+        await WaitUntilAsync(() => !sync.GetStatus().IsRunning);
+
+        Assert.Empty(_history.Runs);
+    }
+
+    [Fact]
     public async Task ASyncThatDoesNotRunIsNotRecorded()
     {
         await _fixture.AddServerAsync("Friend", "films");
