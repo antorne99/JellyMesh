@@ -85,7 +85,6 @@ public class PlaybackFiltersTests
         var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         return new PlaybackInfoFilter(
             lookup,
-            _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
