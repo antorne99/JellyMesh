@@ -58,6 +58,9 @@ public sealed record IndexedVersion
     /// <summary>Gets the 3D format.</summary>
     public string? Video3DFormat { get; init; }
 
+    /// <summary>Gets a value indicating whether the remote has media segments for the item, null when unknown.</summary>
+    public bool? HasSegments { get; init; }
+
     /// <summary>Gets every stream, in the layout of the remote. A stub item stores them as they are.</summary>
     public IReadOnlyList<IndexedTrack> Streams { get; init; } = [];
 }

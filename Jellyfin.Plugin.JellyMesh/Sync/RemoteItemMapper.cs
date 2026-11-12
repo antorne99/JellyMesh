@@ -124,6 +124,7 @@ public static class RemoteItemMapper
             VideoRangeType = quality?.VideoRangeType,
             Timestamp = source.Timestamp,
             Video3DFormat = source.Video3DFormat,
+            HasSegments = source.HasSegments,
             Streams = source.MediaStreams?.Select(ToStream).ToList() ?? []
         };
     }
