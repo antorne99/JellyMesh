@@ -42,3 +42,30 @@ stub_of() { vid "$(server_folder "$1")/Film/$2"; }
 dashed() { local id=$1; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
 
 DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'
+# reconcile: runs the nightly reconciliation, which links thoroughly, and waits for its sync to end.
+reconcile() {
+  local id last new i
+  id=$(get local /ScheduledTasks | jq -r '.[] | select(.Key == "JellyMeshReconciliation") | .Id')
+  last=$(get local "/ScheduledTasks/$id" | jq -r '.LastExecutionResult.EndTimeUtc // ""')
+  post local "/ScheduledTasks/Running/$id" >/dev/null
+  for i in $(seq 1 300); do
+    new=$(get local "/ScheduledTasks/$id" | jq -r '.LastExecutionResult.EndTimeUtc // ""')
+    [ "$new" != "$last" ] && [ "$(get local /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && return 0
+    sleep 1
+  done
+  echo "the reconciliation did not end" >&2
+  return 1
+}
+# film_links <path substring>: OwnerId, PrimaryVersionId and linked children of the items under a path, by path.
+film_links() {
+  sql "select b.Path || ' owner=' || coalesce(b.OwnerId, '') || ' primary=' || coalesce(p.Path, '') from BaseItems b
+    left join BaseItems p on p.Id = b.PrimaryVersionId where b.Path like '%$1%' order by b.Path;"
+  sql "select b.Path || ' -> ' || coalesce(c.Path, l.ChildId) || ' type=' || l.ChildType from LinkedChildren l
+    join BaseItems b on b.Id = l.ParentId left join BaseItems c on c.Id = l.ChildId where b.Path like '%$1%' order by 1;"
+}
+# put_film <media folder> <folder on the local server>: copies a film of the test media into /media/film.
+put_film() {
+  docker exec "$PREFIX-local" mkdir -p "/media/film/$2"
+  docker cp "$MEDIA/$1/." "$PREFIX-local:/media/film/$2/"
+  docker exec "$PREFIX-local" sh -c 'chmod -R a+rwX /media/film'
+}
