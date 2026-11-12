@@ -14,6 +14,6 @@ public enum ManualMergeOutcome
     /// <summary>A title is no longer one of a same case: the catalog changed since the list was read.</summary>
     ListChanged,
 
-    /// <summary>Two of the titles have a local copy, and local films cannot become one.</summary>
+    /// <summary>Two of the titles have a local copy, and local films or series cannot become one.</summary>
     TwoLocalTitles,
 }
