@@ -38,6 +38,7 @@ public class FederationAdminController : ControllerBase
     private readonly IServerLibraryManager _libraries;
     private readonly ILogger<FederationAdminController> _logger;
     private readonly ILayoutMigration? _migration;
+    private readonly ILibraryChangeTracker? _changes;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -53,6 +54,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="libraries">The libraries the plugin keeps for each server.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="migration">The manual migration from the flat layout, for the banner.</param>
+    /// <param name="changes">The libraries that changed on the federated folder since the last sync.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -64,7 +66,8 @@ public class FederationAdminController : ControllerBase
         IManualMergeStore merges,
         IServerLibraryManager libraries,
         ILogger<FederationAdminController> logger,
-        ILayoutMigration? migration = null)
+        ILayoutMigration? migration = null,
+        ILibraryChangeTracker? changes = null)
     {
         _registry = registry;
         _vault = vault;
@@ -77,6 +80,7 @@ public class FederationAdminController : ControllerBase
         _libraries = libraries;
         _logger = logger;
         _migration = migration;
+        _changes = changes;
     }
 
     /// <summary>
@@ -445,7 +449,8 @@ public class FederationAdminController : ControllerBase
             report.SeriesSplit,
             PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null)
         {
-            Migration = path.Length == 0 ? null : _migration?.GetStatus(path)
+            Migration = path.Length == 0 ? null : _migration?.GetStatus(path),
+            Changes = path.Length == 0 ? LibraryChanges.None : _changes?.Compare() ?? LibraryChanges.None
         };
     }
 

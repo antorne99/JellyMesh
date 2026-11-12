@@ -22,4 +22,7 @@ public sealed record FederatedFolderStatus(
 {
     /// <summary>Gets the manual migration from the flat layout, null when there is none to show.</summary>
     public LayoutMigrationStatus? Migration { get; init; }
+
+    /// <summary>Gets the libraries that came over the folder or left it since the last sync, whose links it rebuilds.</summary>
+    public LibraryChanges Changes { get; init; } = LibraryChanges.None;
 }

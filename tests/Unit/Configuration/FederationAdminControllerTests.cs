@@ -37,7 +37,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, ILibraryChangeTracker? changes = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -49,7 +49,8 @@ public class FederationAdminControllerTests
             new InMemoryMergeStore(),
             libraries ?? Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>(),
-            migration);
+            migration,
+            changes);
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -790,6 +791,32 @@ public class FederationAdminControllerTests
         var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
 
         Assert.Same(status, folder.Migration);
+    }
+
+    [Fact]
+    public void TheFolderSaysWhichLibrariesChangedOnItSinceTheSync()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var changes = new Mock<ILibraryChangeTracker>();
+        var found = new LibraryChanges(["Tutto"], ["Film"]);
+        changes.Setup(tracker => tracker.Compare()).Returns(found);
+
+        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Same(found, folder.Changes);
+        changes.Verify(tracker => tracker.Record(), Times.Never);
+    }
+
+    [Fact]
+    public void WithNoFolderThereAreNoChanges()
+    {
+        using var fixture = new RegistryFixture();
+        var changes = new Mock<ILibraryChangeTracker>(MockBehavior.Strict);
+
+        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Equal(LibraryChanges.None, folder.Changes);
     }
 
     [Fact]

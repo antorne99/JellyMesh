@@ -66,6 +66,23 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     /// <returns>Whether they are the same folder.</returns>
     internal static bool IsSamePath(string location, string path) => Holds(new VirtualFolderInfo { Locations = [location] }, path, _pathComparison);
 
+    /// <summary>Tells whether a library location is the given folder or one of its parents, on a separator boundary.</summary>
+    /// <param name="location">The library location.</param>
+    /// <param name="path">The folder.</param>
+    /// <returns>Whether the location holds the folder.</returns>
+    internal static bool IsAncestorOrSame(string location, string path)
+    {
+        var folder = Normalized(location);
+        var target = Normalized(path);
+        if (string.Equals(folder, target, _pathComparison))
+        {
+            return true;
+        }
+
+        var prefix = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
+        return target.StartsWith(prefix, _pathComparison);
+    }
+
     private static ServerFolderLink LinkOf(List<VirtualFolderInfo> libraries, string root, Guid serverId)
     {
         var movies = FederatedFolderLayout.ServerMoviesPath(root, serverId);
@@ -126,20 +143,6 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     private static IEnumerable<string> Locations(VirtualFolderInfo library) => (library.Locations ?? []).Where(location => !string.IsNullOrWhiteSpace(location));
 
     private static bool IsSame(string location, string path) => string.Equals(Normalized(location), Normalized(path), _pathComparison);
-
-    // Whether the folder is the path or one of its parents, on a separator boundary.
-    private static bool IsAncestorOrSame(string location, string path)
-    {
-        var folder = Normalized(location);
-        var target = Normalized(path);
-        if (string.Equals(folder, target, _pathComparison))
-        {
-            return true;
-        }
-
-        var prefix = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
-        return target.StartsWith(prefix, _pathComparison);
-    }
 
     // Trailing separators, doubled ones and dots do not make another folder.
     private static string Normalized(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));

@@ -88,6 +88,18 @@ public sealed class VersionLinkingSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task TheSyncRecordsTheLibrariesOnTheFolderBeforeLinkingThemAgain()
+    {
+        var changes = new Mock<ILibraryChangeTracker>();
+        changes.Setup(tracker => tracker.Record()).Callback(() => _calls.Add("record"));
+        using var sync = NewSync(null, changes.Object);
+
+        await sync.RunIncrementalAsync(CancellationToken.None);
+
+        Assert.Equal(["record", "materialize False", "link False"], _calls);
+    }
+
+    [Fact]
     public async Task AFailureInLinkingDoesNotFailTheSync()
     {
         _linker.Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException(TestValues.Host));
@@ -99,7 +111,7 @@ public sealed class VersionLinkingSyncTests : IDisposable
         Assert.Contains(_fixture.Logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
     }
 
-    private CatalogSyncService NewSync(ILayoutMigration? migration) => new(
+    private CatalogSyncService NewSync(ILayoutMigration? migration, ILibraryChangeTracker? changes = null) => new(
         _fixture.Registry,
         _fixture.Reader,
         _fixture.Index,
@@ -109,5 +121,6 @@ public sealed class VersionLinkingSyncTests : IDisposable
         _materializer.Object,
         _fixture.Stubs,
         linker: _linker.Object,
-        migration: migration);
+        migration: migration,
+        changes: changes);
 }
