@@ -57,6 +57,7 @@ public class PlaybackFiltersTests
         var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") };
         _library.Setup(library => library.GetItemById(_itemId)).Returns(video);
         _stubs.Setup(stubs => stubs.Find("stub")).Returns(_stub);
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
         _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 0, [], []));
         SignedIn();
     }
@@ -93,7 +94,6 @@ public class PlaybackFiltersTests
     {
         return new StockRouteGuardFilter(
             new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
-            _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
             sessions ?? _fixture.Sessions,

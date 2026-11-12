@@ -40,7 +40,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     };
 
     private readonly StubLookup _stubs;
-    private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
     private readonly PlaybackSessionStore _sessions;
@@ -52,7 +51,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
     /// </summary>
     /// <param name="stubs">The stubs.</param>
-    /// <param name="libraryManager">The library manager.</param>
     /// <param name="authorization">The authorization context.</param>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="sessions">The sessions.</param>
@@ -61,7 +59,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
     public StockRouteGuardFilter(
         StubLookup stubs,
-        ILibraryManager libraryManager,
         IAuthorizationContext authorization,
         PlaybackCoordinator coordinator,
         PlaybackSessionStore sessions,
@@ -70,7 +67,6 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         StreamSlots peerSlots)
     {
         _stubs = stubs;
-        _libraryManager = libraryManager;
         _authorization = authorization;
         _coordinator = coordinator;
         _sessions = sessions;
@@ -162,7 +158,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
 
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
-            if (stubs.Any(named => _libraryManager.GetItemById<BaseItem>(named.Key, user) is null) || _sessions.IsLocalOfAnother(user.Id, PlaySessionOf(context)))
+            if (stubs.Keys.Any(named => !_stubs.Sees(user, named)) || _sessions.IsLocalOfAnother(user.Id, PlaySessionOf(context)))
             {
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
@@ -241,7 +237,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return new StatusCodeResult(StatusCodes.Status401Unauthorized);
         }
 
-        if (named.TrueForAll(id => _libraryManager.GetItemById<BaseItem>(id, user) is not null))
+        if (named.TrueForAll(id => _stubs.Sees(user, id)))
         {
             return null;
         }

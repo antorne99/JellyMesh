@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
@@ -52,6 +53,7 @@ public class VersionGuardTests
         _stub = Item(new Movie { Path = "/federata/server/Film/b/b.strm", ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "b", "signature") }, _stubItem);
         _local = Item(new Movie { Path = "/media/privata/film.mkv" }, _localItem);
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
         _stubs.Setup(stubs => stubs.Find("b")).Returns(stub);
         Linked(new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["b"], LocalItemIds = [_localItem] });
         _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
@@ -91,7 +93,18 @@ public class VersionGuardTests
 
     private void Sees(Guid item)
     {
-        _library.Setup(library => library.GetItemById<BaseItem>(item, _user)).Returns(new Movie());
+        _library.Setup(library => library.GetItemById<BaseItem>(item, _user)).Returns(_items.GetValueOrDefault(item) ?? new Movie { Id = item });
+    }
+
+    // Jellyfin shows an item with no library to everyone, as between the removal of a path and the scan.
+    private void InNoLibrary(Guid item)
+    {
+        _library.Setup(library => library.GetCollectionFolders(It.Is<BaseItem>(found => found.Id == item))).Returns([]);
+    }
+
+    private void Admin()
+    {
+        _user.Permissions.Add(new Permission(PermissionKind.IsAdministrator, true));
     }
 
     private void Anonymous()
@@ -103,7 +116,6 @@ public class VersionGuardTests
     {
         return new StockRouteGuardFilter(
             new StubLookup(_library.Object, _stubs.Object, _store),
-            _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
             _fixture.Sessions,
@@ -464,5 +476,72 @@ public class VersionGuardTests
 
         Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", film.Id), ("mediaSourceId", N(_localItem)))));
         Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)))));
+    }
+
+    // D17: Jellyfin shows a stub or a version with no library to everyone; the guard refuses it to non-admins.
+    [Fact]
+    public async Task A_stub_in_no_library_is_not_found_for_a_user_who_is_not_an_admin()
+    {
+        Linked(null);
+        InNoLibrary(_stubItem);
+        var context = Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(_stubItem)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_stub_in_no_library_serves_an_admin()
+    {
+        Linked(null);
+        InNoLibrary(_stubItem);
+        Admin();
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(_stubItem)))));
+    }
+
+    [Theory]
+    [MemberData(nameof(RoutesThatNameAVersion))]
+    public async Task A_version_in_no_library_is_not_found_for_a_user_who_is_not_an_admin(string controller, string action, string item, string version, bool asText)
+    {
+        Sees(_localItem);
+        InNoLibrary(_localItem);
+        var context = Context(controller, action, (item, _stubItem), (version, asText ? N(_localItem) : _localItem), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_version_in_no_library_serves_an_admin()
+    {
+        Sees(_localItem);
+        InNoLibrary(_localItem);
+        Admin();
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(_localItem)))));
+    }
+
+    [Theory]
+    [MemberData(nameof(ReportsThatNameAVersion))]
+    public async Task A_playstate_report_on_a_version_in_no_library_is_answered_without_effect(string action)
+    {
+        Sees(_localItem);
+        InNoLibrary(_localItem);
+        var context = Context("Playstate", action, ReportOf(action, _stubItem, _localItem));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task A_film_in_no_library_with_no_linked_versions_stays_stock()
+    {
+        Linked(null);
+        var film = LocalFilm();
+        Sees(film.Id);
+        InNoLibrary(film.Id);
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", film.Id), ("mediaSourceId", N(film.Id)))));
     }
 }

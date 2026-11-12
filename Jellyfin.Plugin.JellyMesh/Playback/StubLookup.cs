@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Jellyfin.Data;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
@@ -171,6 +174,27 @@ public sealed class StubLookup
     {
         var group = Find(itemId) is { } stub ? _stubs.FindGroup(stub.Id) : _stubs.FindGroupOfLocal(itemId);
         return (group is not null && group.StubIds.Count + group.LocalItemIds.Count > 1) || IsLinkedToStub(itemId);
+    }
+
+    /// <summary>
+    /// Tells whether a user reaches an item: Jellyfin shows it to them and, unless they are an admin, a stub or a version
+    /// sits in a library, since Jellyfin shows an item with no library to everyone (D17).
+    /// </summary>
+    /// <param name="user">The user.</param>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True when the user may reach it.</returns>
+    public bool Sees(User user, Guid itemId)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        if (_libraryManager.GetItemById<BaseItem>(itemId, user) is not { } item)
+        {
+            return false;
+        }
+
+        return user.HasPermission(PermissionKind.IsAdministrator)
+            || (Find(itemId) is null && !HasVersions(itemId))
+            || _libraryManager.GetCollectionFolders(item).Count > 0;
     }
 
     /// <summary>
