@@ -112,6 +112,15 @@ scan_idle() {
   echo "scan did not end" >&2; return 1
 }
 
+wait_item_id() { # <library name>
+  local i
+  for i in $(seq 1 120); do
+    folder "$1" | jq -e '.ItemId // "" | length > 0' >/dev/null && return
+    sleep 1
+  done
+  echo "$1 got no id" >&2; return 1
+}
+
 movies_in() { get "/Items?ParentId=$1&Recursive=true&IncludeItemTypes=Movie" | jq .TotalRecordCount; }
 
 safe_options() { # <library name>
@@ -198,8 +207,10 @@ post /Library/VirtualFolders/LibraryOptions "$(folder "$SERIE" | jq '{Id: .ItemI
 check "MetadataSavers still empty after an admin save" safe_options "$SERIE"
 
 echo "== dashboard rename and path change [D7]"
-post "/Library/VirtualFolders/Name?name=$(urlencode "$SERIE")&newName=$(urlencode 'Serie di Casa')&refreshLibrary=false"
-sleep 2
+# The Dashboard refreshes after a rename. On 12.4 the renamed library has no id until then, and one with no id is never
+# taken for a renamed one.
+post "/Library/VirtualFolders/Name?name=$(urlencode "$SERIE")&newName=$(urlencode 'Serie di Casa')&refreshLibrary=true"
+wait_item_id 'Serie di Casa'
 scan_idle
 sync_full
 check "a rename is followed" [ "$(registry)" = "$(jq -nc --arg f "$FILM" '[$f,"Serie di Casa"]')" ]
