@@ -3739,8 +3739,6 @@
                     time.dateTime = run.StartedUtc;
                     started.appendChild(time);
                     row.appendChild(started);
-                    row.appendChild(create('td', runKinds[run.Kind] || run.Kind));
-                    row.appendChild(create('td', formatDuration(run.DurationMilliseconds)));
 
                     var outcome = create('td');
                     outcome.className = 'jmHistoryOutcome ' + (runTones[run.Outcome] || 'jmToneQuiet');
@@ -3764,6 +3762,8 @@
                         outcome.appendChild(note);
                     });
                     row.appendChild(outcome);
+                    row.appendChild(create('td', runKinds[run.Kind] || run.Kind));
+                    row.appendChild(create('td', formatDuration(run.DurationMilliseconds)));
 
                     var servers = create('td');
                     if (run.Servers.length === 0) {
@@ -3795,7 +3795,7 @@
                     caption.className = 'jmHidden';
                     table.appendChild(caption);
                     var head = create('tr');
-                    [t('Started'), t('Type'), t('Duration'), t('Outcome'), t('Servers')].forEach(function (text) {
+                    [t('Started'), t('Outcome'), t('Type'), t('Duration'), t('Servers')].forEach(function (text) {
                         var cell = create('th', text);
                         cell.scope = 'col';
                         head.appendChild(cell);

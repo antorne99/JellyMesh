@@ -188,6 +188,30 @@ public class PluginConfigurationTests
         Assert.Contains("t('Its automatic libraries are deleted too.')", dialog, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TheSyncHistoryShowsTheOutcomeRightAfterTheStart()
+    {
+        var page = ConfigPage();
+        var row = Slice(page, "function historyRow(run)", "function renderHistory(view)");
+        var table = Slice(page, "function renderHistory(view)", "container.appendChild(table)");
+
+        Assert.Contains("[t('Started'), t('Outcome'), t('Type'), t('Duration'), t('Servers')]", table, StringComparison.Ordinal);
+        var cells = new[] { "row.appendChild(started)", "row.appendChild(outcome)", "runKinds[run.Kind]", "formatDuration(run.DurationMilliseconds)", "row.appendChild(servers)" }
+            .Select(cell => row.IndexOf(cell, StringComparison.Ordinal))
+            .ToList();
+        Assert.DoesNotContain(-1, cells);
+        Assert.Equal(cells.Order(), cells);
+    }
+
+    private static string Slice(string page, string start, string end)
+    {
+        var from = page.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, start);
+        var to = page.IndexOf(end, from, StringComparison.Ordinal);
+        Assert.True(to >= 0, end);
+        return page[from..to];
+    }
+
     private static string ConfigPage()
     {
         using var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.JellyMesh.Configuration.configPage.html")!;
