@@ -155,6 +155,26 @@ public sealed class PluginSaveTests : IDisposable
     }
 
     [Fact]
+    public void TheLibrariesOfRemovedServersSurviveTheXmlAndAStockSaveAndAreNotShown()
+    {
+        var serverId = Guid.NewGuid();
+        _plugin.ChangeConfiguration(config => config.HoldAutomaticLibraries(
+            serverId,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" }],
+            ["9a8b7c6d5e4f30211203f4e5d6c7b8a9"]));
+        var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
+        _plugin.UpdateConfiguration(JsonSerializer.Deserialize<PluginConfiguration>(json, JsonDefaults.Options)!);
+
+        var loaded = (PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!;
+
+        Assert.DoesNotContain("0f1e2d3c4b5a69788796a5b4c3d2e1f0", json, StringComparison.Ordinal);
+        var held = Assert.Single(loaded.RemovedServerLibraries);
+        Assert.Equal(serverId, held.ServerId);
+        Assert.Equal("Casa - Film", Assert.Single(held.Libraries).Name);
+        Assert.Equal(["9a8b7c6d5e4f30211203f4e5d6c7b8a9"], held.PreexistingLibraryIds);
+    }
+
+    [Fact]
     public void ARoundTripThroughTheBrowserKeepsTheServers()
     {
         var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);

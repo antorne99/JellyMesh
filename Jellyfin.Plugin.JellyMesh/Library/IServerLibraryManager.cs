@@ -32,7 +32,15 @@ public interface IServerLibraryManager
     AutomaticLibrariesRequest Disable(Guid serverId, bool confirmed);
 
     /// <summary>
-    /// Compares the registry with the libraries of the server, following renames and dropping what changed.
+    /// Starts deleting in the background the libraries that removed servers left in their registry, with the checks of
+    /// the switch-off and no confirmation (decision 140). A call while it runs makes it look once more.
+    /// </summary>
+    /// <returns>The job, which never fails.</returns>
+    Task DeleteRemovedServerLibraries();
+
+    /// <summary>
+    /// Compares the registry with the libraries of the server, following renames and dropping what changed, then starts
+    /// deleting what removed servers left, if anything.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task that completes when done, or at once when a creation or a deletion is running.</returns>

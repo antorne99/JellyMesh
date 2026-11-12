@@ -114,13 +114,21 @@ public class PluginConfiguration : BasePluginConfiguration
     public Collection<FormerServerConfig> FormerServers { get; } = [];
 
     /// <summary>
+    /// Gets the libraries of removed servers that are still to delete (decision 140). Never sent to the browser through
+    /// this object.
+    /// </summary>
+    [JsonIgnore]
+    public Collection<RemovedServerLibrariesConfig> RemovedServerLibraries { get; } = [];
+
+    /// <summary>
     /// Gets the JellyMesh servers connected to this one. Never sent to the browser through this object.
     /// </summary>
     [JsonIgnore]
     public Collection<ProviderPeerConfig> Peers { get; } = [];
 
     /// <summary>
-    /// Replaces <see cref="Servers"/>, <see cref="FormerServers"/> and <see cref="Peers"/> with those of <paramref name="current"/>. The stock save
+    /// Replaces <see cref="Servers"/>, <see cref="FormerServers"/>, <see cref="RemovedServerLibraries"/> and <see cref="Peers"/> with those of
+    /// <paramref name="current"/>. The stock save
     /// endpoint deserializes JSON that never holds them, so they would otherwise be erased.
     /// </summary>
     /// <param name="current">The configuration in force.</param>
@@ -144,10 +152,68 @@ public class PluginConfiguration : BasePluginConfiguration
             FormerServers.Add(former);
         }
 
+        RemovedServerLibraries.Clear();
+        foreach (var removed in current.RemovedServerLibraries)
+        {
+            RemovedServerLibraries.Add(removed);
+        }
+
         Peers.Clear();
         foreach (var peer in current.Peers)
         {
             Peers.Add(peer);
+        }
+    }
+
+    /// <summary>
+    /// Keeps libraries of a server that left the configuration, so that they are deleted after it (decision 140).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraries">The libraries of its registry.</param>
+    /// <param name="preexistingIds">The ids of the libraries there when its switch was turned on.</param>
+    public void HoldAutomaticLibraries(Guid serverId, IEnumerable<AutomaticLibraryConfig> libraries, IEnumerable<string> preexistingIds)
+    {
+        ArgumentNullException.ThrowIfNull(libraries);
+        ArgumentNullException.ThrowIfNull(preexistingIds);
+        var entry = RemovedServerLibraries.FirstOrDefault(candidate => candidate.ServerId == serverId);
+        if (entry is null)
+        {
+            entry = new RemovedServerLibrariesConfig { ServerId = serverId };
+            RemovedServerLibraries.Add(entry);
+        }
+
+        foreach (var library in libraries)
+        {
+            entry.Libraries.Add(library);
+        }
+
+        foreach (var id in preexistingIds.Where(id => !entry.PreexistingLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase)))
+        {
+            entry.PreexistingLibraryIds.Add(id);
+        }
+    }
+
+    /// <summary>
+    /// Takes back libraries held by <see cref="HoldAutomaticLibraries"/>, when the removal of their server was not saved.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraries">The libraries it held.</param>
+    public void ReleaseHeldAutomaticLibraries(Guid serverId, IEnumerable<AutomaticLibraryConfig> libraries)
+    {
+        ArgumentNullException.ThrowIfNull(libraries);
+        if (RemovedServerLibraries.FirstOrDefault(candidate => candidate.ServerId == serverId) is not { } entry)
+        {
+            return;
+        }
+
+        foreach (var library in libraries)
+        {
+            entry.Libraries.Remove(library);
+        }
+
+        if (entry.Libraries.Count == 0)
+        {
+            RemovedServerLibraries.Remove(entry);
         }
     }
 

@@ -252,6 +252,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                     position = config.Servers.IndexOf(removed);
                     config.Servers.RemoveAt(position);
                     Remember(config, removed);
+                    HoldLibraries(config, removed);
                 }
             });
         }
@@ -436,6 +437,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             _store.Update(config =>
             {
                 RemoveFormer(config, candidate => candidate.Id == server.Id);
+                config.ReleaseHeldAutomaticLibraries(server.Id, server.AutomaticLibraryRegistry);
                 config.Servers.Insert(Math.Min(position, config.Servers.Count), server);
             });
         }
@@ -455,6 +457,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         RemoveFormer(config, candidate => candidate.Id == removed.Id || candidate.JellyfinServerId == removed.JellyfinServerId);
         config.FormerServers.Add(new FormerServerConfig { Id = removed.Id, JellyfinServerId = removed.JellyfinServerId, Name = removed.Name });
+    }
+
+    // The libraries of the server are deleted after it, including those a switch-on still running adds (140).
+    private static void HoldLibraries(PluginConfiguration config, RemoteServerConfig removed)
+    {
+        if (removed.AutomaticLibraries || removed.AutomaticLibraryRegistry.Count > 0)
+        {
+            config.HoldAutomaticLibraries(removed.Id, removed.AutomaticLibraryRegistry, removed.PreexistingLibraryIds);
+        }
     }
 
     private static void RemoveFormer(PluginConfiguration config, Func<FormerServerConfig, bool> match)

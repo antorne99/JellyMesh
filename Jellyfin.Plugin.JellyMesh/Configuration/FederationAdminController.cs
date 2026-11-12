@@ -129,9 +129,10 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Removes a server and starts deleting its content. Works whatever the state of the key. The removal is recorded before
-    /// the server leaves the configuration: only recorded servers lose their content (decision 44). If the removal cannot be
-    /// saved, the record is taken back and the server stays; the answer says whether its playback was already stopped.
+    /// Removes a server and starts deleting its content and its automatic libraries, with no confirmation (decision 140).
+    /// Works whatever the state of the key. The removal is recorded before the server leaves the configuration: only
+    /// recorded servers lose their content (decision 44). If the removal cannot be saved, the record is taken back and the
+    /// server stays; the answer says whether its playback was already stopped.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -174,6 +175,7 @@ public class FederationAdminController : ControllerBase
 
         await RemoveFromMergesAsync(serverId).ConfigureAwait(false);
         _sync.StartRemovalCleanup();
+        _ = _libraries.DeleteRemovedServerLibraries();
         return NoContent();
     }
 
