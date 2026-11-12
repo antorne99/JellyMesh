@@ -60,8 +60,9 @@ public sealed class PlaybackVersions
         }
 
         // The other files of a local film link up to it and not down from it, so the two climbs must meet.
-        var linked = _stubs.LinkedVersionsOf(itemId);
-        return linked.ContainsKey(versionId) || _stubs.LinkedVersionsOf(versionId).Keys.Any(linked.ContainsKey);
+        var linked = CopiesOf(itemId);
+        var copies = CopiesOf(versionId);
+        return linked.ContainsKey(itemId) && copies.ContainsKey(versionId) && (linked.ContainsKey(versionId) || copies.Keys.Any(linked.ContainsKey));
     }
 
     /// <summary>
@@ -78,7 +79,7 @@ public sealed class PlaybackVersions
         ArgumentNullException.ThrowIfNull(user);
 
         var group = _registry.FindGroup(stub.Id);
-        var linked = _stubs.LinkedVersionsOf(itemId);
+        var linked = CopiesOf(itemId);
         if (group is null && linked.Count < 2)
         {
             return itemId;
@@ -110,6 +111,14 @@ public sealed class PlaybackVersions
         }
 
         return items.Count == 1 ? itemId : items[StubRanking.Best([.. items.Keys], _registry.Find, CurrentLookup())];
+    }
+
+    // The items Jellyfin links with an item, without extras: a trailer is owned by its film but is no copy of it.
+    private Dictionary<Guid, Video> CopiesOf(Guid itemId)
+    {
+        return _stubs.LinkedVersionsOf(itemId)
+            .Where(entry => entry.Value.ExtraType is null)
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
     }
 
     private VersionGroup? GroupOf(Guid itemId)

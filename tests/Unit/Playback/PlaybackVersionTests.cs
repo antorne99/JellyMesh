@@ -14,6 +14,7 @@ using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -403,6 +404,52 @@ public class PlaybackVersionTests
         Assert.Empty(_fixture.Client.Requests);
         Assert.Equal(N(_otherItem), context.ActionArguments["mediaSourceId"]);
         Assert.Equal(N(_otherItem), Assert.Single(response!.MediaSources).Id);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_extra_of_the_local_copy_is_not_a_version_of_the_title(bool fromLocal)
+    {
+        var trailer = Item(new Movie { Path = "/media/film/trailers/film.mkv", OwnerId = _localItem, ExtraType = ExtraType.Trailer }, _otherItem);
+        trailer.SetPrimaryVersionId(_localItem);
+        Sees(_otherItem);
+        var context = Context(fromLocal ? _localItem : _aItem, ("mediaSourceId", N(_otherItem)));
+
+        var (passed, _) = await RunAsync(context, StockSource(_otherItem));
+
+        Assert.False(passed);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_stub_named_under_an_extra_of_the_local_copy_is_not_found()
+    {
+        Item(new Movie { Path = "/media/film/trailers/film.mkv", OwnerId = _localItem, ExtraType = ExtraType.Trailer }, _otherItem);
+        Sees(_otherItem);
+        var context = Context(_otherItem, ("mediaSourceId", N(_aItem)));
+
+        var (passed, _) = await RunAsync(context);
+
+        Assert.False(passed);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Fact]
+    public async Task Without_a_version_an_extra_linked_to_the_local_copy_never_starts()
+    {
+        var trailer = Item(new Movie { Path = "/media/film/trailers/film.mkv", OwnerId = _localItem, ExtraType = ExtraType.Trailer }, _otherItem);
+        Merged(_local, _a, _b, trailer);
+        Hidden(_localItem);
+        Sees(_otherItem);
+        var context = Context(_aItem);
+
+        var (passed, response) = await RunAsync(context, StockSource(_otherItem));
+
+        Assert.False(passed);
+        Assert.Equal("item-b", RemoteItemAsked());
+        Assert.Equal(N(_bItem), Assert.Single(response!.MediaSources).Id);
     }
 
     [Fact]
