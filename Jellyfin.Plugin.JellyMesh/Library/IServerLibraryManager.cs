@@ -59,4 +59,13 @@ public interface IServerLibraryManager
     /// one only records the libraries there and takes none for a renamed one (decision 185).
     /// </summary>
     void MarkFollowSkipped();
+
+    /// <summary>
+    /// Gives the automatic libraries of a renamed server their new names. The caller queues the scan, which also starts the
+    /// library monitor again.
+    /// </summary>
+    /// <param name="serverId">The server id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True when every library that passes has its name; false when one is left as it was.</returns>
+    Task<bool> RenameAsync(Guid serverId, CancellationToken cancellationToken);
 }

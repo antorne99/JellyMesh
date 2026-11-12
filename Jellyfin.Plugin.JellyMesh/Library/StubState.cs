@@ -37,4 +37,7 @@ public sealed record StubState
     /// from the configuration for any other reason, such as a reset file, keeps them (decision 44).
     /// </summary>
     public IReadOnlyList<Guid> RemovedServers { get; init; } = [];
+
+    /// <summary>Gets the stubs of renamed servers whose old files and items are not gone yet.</summary>
+    public IReadOnlyList<StubRename> Renames { get; init; } = [];
 }

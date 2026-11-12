@@ -1755,6 +1755,22 @@
                     "The folders of every server are linked.": "Le cartelle di ogni server sono collegate.",
                     "The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder, then the totals of the whole folder.": "Le ultime 50 sincronizzazioni e le ultime 7 riconciliazioni, dalla più recente. Per ogni server: gli elementi del catalogo letti, e i titoli creati, aggiornati e rimossi nella sua cartella, poi i totali di tutta la cartella.",
                     "The libraries of this server are being updated. Try again when it is done.": "Le librerie di questo server sono in aggiornamento. Riprova quando ha finito.",
+                    "The server refused to rename a library. Rename this server again with the same name to retry.": "Il server ha rifiutato di rinominare una libreria. Rinomina di nuovo questo server con lo stesso nome per riprovare.",
+                    "Being renamed. The libraries are scanned twice before it is done.": "Rinomina in corso. Le librerie vengono analizzate due volte prima che finisca.",
+                    "The rename finishes with the next library scan. Until then the titles of this server may show twice among the versions.": "La rinomina finisce con la prossima analisi delle librerie. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
+                    "The rename did not finish. Rename this server again with the same name to finish it.": "La rinomina non è finita. Rinomina di nuovo questo server con lo stesso nome per completarla.",
+                    "Rename {server}": "Rinomina {server}",
+                    "The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.": "Il nome compare nell'elenco delle versioni e nei nomi delle sue librerie automatiche. La sua cartella resta la stessa.",
+                    "Rename": "Rinomina",
+                    "Enter a name.": "Inserisci un nome.",
+                    "{server} becomes {name}. Its titles move to the new name, with the watch state of each user.": "{server} diventa {name}. I suoi titoli passano al nuovo nome, con lo stato di visione di ogni utente.",
+                    "Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.": "Vengono rinominate anche le sue librerie automatiche: {names}. Ognuna si svuota e si riempie di nuovo, e ordinamento e vista ripartono da capo.",
+                    "The libraries are scanned twice. Until then the titles of this server may show twice among the versions.": "Le librerie vengono analizzate due volte. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
+                    "Rename this server?": "Rinominare questo server?",
+                    "Renaming {server} to {name}.": "Rinomina di {server} in {name} in corso.",
+                    "A library JellyMesh renamed keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.": "Una libreria rinominata da JellyMesh tiene il suo vecchio ID fino al riavvio di Jellyfin: fino ad allora, gli utenti che la aprono con quell'ID ricevono un errore. Riavvia Jellyfin appena puoi.",
+                    "This server is being renamed, or its titles wait for a library scan. Try again when it is done.": "Questo server è in fase di rinomina, oppure i suoi titoli aspettano un'analisi delle librerie. Riprova quando ha finito.",
+                    "Confirm to rename this server.": "Conferma per rinominare questo server.",
                     "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
                     "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
                     "The Serie folders of the servers are in different libraries, so a series on more than one server stays split.": "Le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa.",
@@ -2708,6 +2724,80 @@
                     return server.AutomaticLibraries || { Enabled: false, Busy: false, Libraries: [], Released: [], Error: 'None' };
                 }
 
+                // The rename of a server, as an older server that sends none would have it.
+                function renameState(server) {
+                    return server.Rename || { Busy: false, Pending: false, Failed: false };
+                }
+
+                // Says where the rename of a server stands, or returns an empty text.
+                function renameProblem(state) {
+                    if (state.Busy) {
+                        return t('Being renamed. The libraries are scanned twice before it is done.');
+                    }
+
+                    if (state.Pending) {
+                        return t('The rename finishes with the next library scan. Until then the titles of this server may show twice among the versions.');
+                    }
+
+                    return state.Failed ? t('The rename did not finish. Rename this server again with the same name to finish it.') : '';
+                }
+
+                // Shows the form that renames a server, then asks for the confirmation of Q38.
+                function renderRename(container, server) {
+                    container.textContent = '';
+                    var form = create('form');
+                    form.autocomplete = 'off';
+                    form.noValidate = true;
+                    var title = create('p', t('Rename {server}', { server: server.Name }));
+                    title.className = 'jmLibrariesTitle';
+                    form.appendChild(title);
+                    var note = create('p', t('The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.'));
+                    note.className = 'jmLibrariesNote';
+                    form.appendChild(note);
+                    var name = create('input');
+                    name.setAttribute('is', 'emby-input');
+                    name.setAttribute('label', t('Name'));
+                    name.type = 'text';
+                    name.required = true;
+                    name.value = server.Name;
+                    form.appendChild(fieldBox('inputContainer', name));
+                    var save = button(t('Rename'), function () {});
+                    save.type = 'submit';
+                    form.appendChild(save);
+                    form.addEventListener('submit', function (e) {
+                        e.preventDefault();
+                        clearField(name);
+                        var wanted = name.value.trim();
+                        if (!wanted) {
+                            markField(name, t('Enter a name.'));
+                            focusField(name);
+                            return;
+                        }
+
+                        // The same name runs the steps again, which finishes a rename that stopped halfway.
+                        var paragraphs = [
+                            t('{server} becomes {name}. Its titles move to the new name, with the watch state of each user.', { server: escapeHtml(server.Name), name: escapeHtml(wanted) })
+                        ];
+                        var names = ownState(server).Libraries.map(function (library) {
+                            return library.Name;
+                        });
+                        if (names.length > 0) {
+                            paragraphs.push(t('Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.', { names: escapeHtml(names.join(', ')) }));
+                        }
+
+                        paragraphs.push(t('The libraries are scanned twice. Until then the titles of this server may show twice among the versions.'));
+                        confirmAction(t('Rename this server?'), paragraphs, function () {
+                            act(api('POST', 'Servers/' + server.Id + '/Rename', { Name: wanted, Confirmed: true }).then(function () {
+                                container.textContent = '';
+                                showMessage(t('Renaming {server} to {name}.', { server: server.Name, name: wanted }));
+                                return loadStatus();
+                            }));
+                        });
+                    });
+                    container.appendChild(form);
+                    focusField(name);
+                }
+
                 function renderServer(server, report) {
                     var row = create('details');
                     row.className = 'jmServer';
@@ -2740,12 +2830,16 @@
                     var ownNotes = create('div');
                     ownNotes.className = 'jmOwnNotes';
                     body.appendChild(ownNotes);
+                    var renameNote = create('p');
+                    renameNote.className = 'jmLibrariesNote';
+                    body.appendChild(renameNote);
                     var ownPending = false;
                     var ownErrors = {
                         NameTaken: t('A library name was taken, so a library was not created.'),
                         CreateFailed: t('The server refused to create a library.'),
                         RemoveFailed: t('The server refused to delete a library. Try again.'),
                         ReadFailed: t('The list of libraries could not be read. Try again.'),
+                        RenameFailed: t('The server refused to rename a library. Rename this server again with the same name to retry.'),
                         Failed: t('The change failed. Try again.')
                     };
                     var problemShown = '';
@@ -2791,6 +2885,9 @@
                         renderOwnNotes(ownNotes, ownCurrent, ownPending, function () {
                             switchOwn(true, false);
                         });
+                        var renameText = renameProblem(renameState(server));
+                        setText(renameNote, renameText);
+                        renameNote.hidden = !renameText;
                     };
                     row.jmUpdate(server, report);
 
@@ -2867,6 +2964,11 @@
                     actions.appendChild(button(t('Libraries'), function () {
                         act(row.jmShowLibraries());
                     }));
+                    var renameBox = create('div');
+                    renameBox.className = 'jmLibraries';
+                    actions.appendChild(button(t('Rename'), function () {
+                        renderRename(renameBox, server);
+                    }));
                     actions.appendChild(button(t('Remove'), function () {
                         var paragraphs = [
                             t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
@@ -2906,6 +3008,7 @@
                     }, 'jmDanger'));
                     body.appendChild(login);
                     body.appendChild(actions);
+                    body.appendChild(renameBox);
                     body.appendChild(libraries);
                     var update = row.jmUpdate;
                     row.jmUpdate = function (current, currentReport) {
@@ -4315,6 +4418,10 @@
                     }).filter(function (note) {
                         return note.text;
                     });
+                    if (status && status.RenamedLibrariesNeedRestart) {
+                        notes.push({ key: 'renamedLibraries', text: t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.'), tab: 'servers' });
+                    }
+
                     if (status && status.LegacyKeySet && status.KeyState === 'Ok') {
                         notes.push({ key: 'legacyKey', text: t('JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.'), tab: 'servers', calm: true });
                     }

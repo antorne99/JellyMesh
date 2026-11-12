@@ -109,6 +109,31 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal("sb", _registry.State.Groups.Single().PrimaryStubId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AGroupWithAStubWhoseRenameIsPendingIsLeftAsItIs(bool thorough)
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        var c = Stub("sc", _serverC, 720);
+        await _registry.SaveAsync(
+            StubState.Empty with { Stubs = [a, b, c], Groups = [Group("g", ["sa", "sb"])], Renames = [new StubRename("sa", "old.strm"), new StubRename("sc", "old2.strm")] },
+            CancellationToken.None);
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        var itemC = Scanned(c);
+        itemC.SetPrimaryVersionId(itemA.Id);
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Null(itemB.PrimaryVersionId);
+        Assert.Equal(itemA.Id, itemC.PrimaryVersionId);
+        Assert.Empty(_saves);
+        Assert.Null(_registry.State.Groups.Single().PrimaryStubId);
+    }
+
     [Fact]
     public async Task TheLocalCopyIsThePrimary()
     {

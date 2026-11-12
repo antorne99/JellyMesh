@@ -273,6 +273,24 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
+    public bool Rename(Guid serverId, string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        var found = false;
+        _store.Update(config =>
+        {
+            if (config.Servers.FirstOrDefault(candidate => candidate.Id == serverId) is { } server)
+            {
+                found = true;
+                server.Name = name.Trim();
+            }
+        });
+
+        return found;
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken)
     {
         var result = await RunWithSessionAsync(

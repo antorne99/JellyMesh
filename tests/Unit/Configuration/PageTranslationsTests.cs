@@ -94,6 +94,11 @@ public class PageTranslationsTests
             yield return FederationAdminController.RefusalMessage(outcome);
         }
 
+        foreach (var outcome in Enum.GetValues<ServerRenameOutcome>().Where(outcome => outcome != ServerRenameOutcome.Started))
+        {
+            yield return FederationAdminController.RenameRefusalMessage(outcome);
+        }
+
         yield return "A sync is already running.";
         yield return "This merge no longer exists.";
         yield return "Select at least two titles of one group.";

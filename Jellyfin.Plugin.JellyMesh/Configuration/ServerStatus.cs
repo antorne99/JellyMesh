@@ -42,4 +42,9 @@ public sealed record ServerStatus(
     /// Gets the state of the Film and Serie libraries the plugin keeps for this server.
     /// </summary>
     public AutomaticLibrariesState? AutomaticLibraries { get; init; }
+
+    /// <summary>
+    /// Gets the state of the rename of this server.
+    /// </summary>
+    public ServerRenameState? Rename { get; init; }
 }

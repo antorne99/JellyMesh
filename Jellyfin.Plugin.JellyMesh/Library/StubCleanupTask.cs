@@ -43,6 +43,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     private readonly ILogger<StubCleanupTask> _logger;
     private readonly IVersionLinker? _linker;
     private readonly ILayoutMigration? _migration;
+    private readonly IServerStubRenamer? _renames;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubCleanupTask"/> class.
@@ -61,6 +62,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     /// <param name="logger">The logger.</param>
     /// <param name="linker">The version linker, if any.</param>
     /// <param name="migration">The manual migration from the flat layout, if any.</param>
+    /// <param name="renames">The stub moves of renamed servers, if any.</param>
     public StubCleanupTask(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -75,7 +77,8 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         StubRemover remover,
         ILogger<StubCleanupTask> logger,
         IVersionLinker? linker = null,
-        ILayoutMigration? migration = null)
+        ILayoutMigration? migration = null,
+        IServerStubRenamer? renames = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -91,6 +94,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         _logger = logger;
         _linker = linker;
         _migration = migration;
+        _renames = renames;
     }
 
     /// <inheritdoc />
@@ -119,9 +123,29 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             _registry.Exit();
         }
 
+        await FinishRenamesAsync(cancellationToken).ConfigureAwait(false);
         await LinkAsync(cancellationToken).ConfigureAwait(false);
         await MigrateAsync(cancellationToken).ConfigureAwait(false);
         progress.Report(100);
+    }
+
+    // After the scan of the new paths of a renamed server, the old stubs hand over their state and go (Q38).
+    private async Task FinishRenamesAsync(CancellationToken cancellationToken)
+    {
+        if (_renames is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _renames.FinishAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Could not finish moving the stubs of a renamed server: {Error}", exception.GetType().Name);
+        }
     }
 
     // After the scan of the new paths and the link of their versions, the old stubs can hand over their state (Q40).

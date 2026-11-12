@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
@@ -33,6 +34,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private readonly IFileSystem _fileSystem;
     private readonly ILibraryScans _scans;
     private readonly ILibraryMaterializer _materializer;
+    private readonly ILibraryRenamer _renamer;
     private readonly ILogger<ServerLibraryManager> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -51,6 +53,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     /// <param name="fileSystem">The file system, which gives the name the server will store.</param>
     /// <param name="scans">The library scans.</param>
     /// <param name="materializer">The materializer, which writes the server folders.</param>
+    /// <param name="renamer">The renamer of libraries.</param>
     /// <param name="logger">The logger.</param>
     public ServerLibraryManager(
         IPluginConfigurationStore store,
@@ -58,6 +61,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         IFileSystem fileSystem,
         ILibraryScans scans,
         ILibraryMaterializer materializer,
+        ILibraryRenamer renamer,
         ILogger<ServerLibraryManager> logger)
     {
         _store = store;
@@ -65,6 +69,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         _fileSystem = fileSystem;
         _scans = scans;
         _materializer = materializer;
+        _renamer = renamer;
         _logger = logger;
     }
 
@@ -181,6 +186,21 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     public void MarkFollowSkipped() => MarkSkipped(config => config.Servers
         .Select(server => LiveRegistry(config, server.Id))
         .Concat(config.RemovedServerLibraries.Select(held => HeldRegistry(config, held.ServerId))));
+
+    /// <inheritdoc />
+    public async Task<bool> RenameAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _errors[serverId] = AutomaticLibrariesError.None;
+            return await RenameLibrariesAsync(serverId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     /// <inheritdoc />
     public void Dispose()
@@ -460,6 +480,86 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         return candidates
             .Select(candidate => _fileSystem.GetValidFilename(candidate).Trim())
             .FirstOrDefault(stored => stored.Length > 0 && !taken.Contains(stored));
+    }
+
+    // Renames each library of the registry that passes, after a follow on a fresh read, and records it in the same job.
+    private async Task<bool> RenameLibrariesAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        if (!_store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count > 0))
+        {
+            return true;
+        }
+
+        await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
+        var folders = ReadFolders();
+        if (folders is null)
+        {
+            _errors[serverId] = AutomaticLibrariesError.ReadFailed;
+            return false;
+        }
+
+        Follow(serverId, folders);
+        var (root, serverName, records) = _store.Read(config => (
+            config.FederatedFolderPath,
+            Find(config, serverId)?.Name,
+            Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => (record.Kind, record.Name, record.ItemId)).ToList() ?? []));
+        var done = true;
+        foreach (var (kind, name, itemId) in records)
+        {
+            var record = new AutomaticLibraryConfig { Kind = kind, Name = name, ItemId = itemId };
+            if (serverName is null || root.Length == 0 || FindRecorded(record, folders) is not { } folder || !Passes(folder, kind, root, serverId))
+            {
+                continue;
+            }
+
+            var newName = ChooseName(serverName, serverId, kind, folders.Where(other => !ReferenceEquals(other, folder)).ToList());
+            if (newName is null)
+            {
+                _logger.LogWarning("Cannot rename the library {Library}: its new names are taken", folder.Name);
+                _errors[serverId] = AutomaticLibrariesError.NameTaken;
+                done = false;
+                continue;
+            }
+
+            if (string.Equals(newName, folder.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (await RenameOneAsync(folder, kind, newName, cancellationToken).ConfigureAwait(false) is not { } newId)
+            {
+                _errors[serverId] = AutomaticLibrariesError.RenameFailed;
+                done = false;
+                continue;
+            }
+
+            _store.Update(config =>
+            {
+                if (Find(config, serverId)?.AutomaticLibraryRegistry.FirstOrDefault(live => live.Kind == kind && live.Name == name && live.ItemId == itemId) is { } live)
+                {
+                    live.Name = newName;
+                    live.ItemId = newId.ToString("N");
+                }
+            });
+            _logger.LogInformation("Renamed the library {Library} to {NewName}", folder.Name, newName);
+            folders = ReadFolders() ?? folders;
+        }
+
+        return done;
+    }
+
+    private async Task<Guid?> RenameOneAsync(VirtualFolderInfo folder, ServerLibraryKind kind, string newName, CancellationToken cancellationToken)
+    {
+        var type = kind == ServerLibraryKind.Movies ? CollectionType.movies : CollectionType.tvshows;
+        try
+        {
+            return await _renamer.RenameAsync(folder.Name, Guid.TryParse(folder.ItemId, out var id) ? id : null, type, newName, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot rename the library {Library}: {Error}", folder.Name, exception.GetType().Name);
+            return null;
+        }
     }
 
     private async Task DisableAsync(Guid serverId, CancellationToken cancellationToken)

@@ -51,6 +51,15 @@ public interface IRemoteServerRegistry
     bool Remove(Guid serverId);
 
     /// <summary>
+    /// Renames a server. Its ID, and so its folder, stay the same (Q5, Q38).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="name">The new name, trimmed.</param>
+    /// <returns>Whether the server existed.</returns>
+    /// <exception cref="System.ArgumentException">The name is blank.</exception>
+    bool Rename(Guid serverId, string name);
+
+    /// <summary>
     /// Tests the login and refreshes the capabilities of a server.
     /// </summary>
     /// <param name="serverId">The server.</param>

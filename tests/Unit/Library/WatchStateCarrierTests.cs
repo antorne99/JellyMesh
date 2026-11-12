@@ -268,6 +268,61 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task TheNewStubOfARenamedServerOwnedByTheOldItemTakesEverything()
+    {
+        var (old, oldStub) = Old();
+        var renamed = Movie(_serverA);
+        renamed.OwnerId = old.Id;
+        renamed.SetPrimaryVersionId(old.Id);
+        var row = Row(_mario, old);
+        row.PlaybackPositionTicks = 300;
+        row.PlayCount = 2;
+        row.LastPlayedDate = _older;
+
+        var report = await CarryAsync(RemovingMove(old, oldStub, (renamed, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Equal(300, Row(_mario, renamed).PlaybackPositionTicks);
+        Assert.Equal(2, Row(_mario, renamed).PlayCount);
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+    }
+
+    [Fact]
+    public async Task AVersionOwnedByTheOldItemIsNotLinkedWhenTheOldItemStays()
+    {
+        var (old, oldStub) = Old();
+        var renamed = Movie(_serverA);
+        renamed.OwnerId = old.Id;
+        renamed.SetPrimaryVersionId(old.Id);
+        Row(_mario, old).PlaybackPositionTicks = 300;
+        Row(_mario, old).LastPlayedDate = _older;
+
+        var report = await CarryAsync(Move(old, oldStub, (renamed, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.NotLinked, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+    }
+
+    [Fact]
+    public async Task AVersionOwnedByTheOldItemInATitleOfTwoIsNotLinked()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverB);
+        a.OwnerId = old.Id;
+        a.SetPrimaryVersionId(old.Id);
+        Link(a, b);
+        Group(a, b);
+        Row(_mario, old).PlaybackPositionTicks = 300;
+        Row(_mario, old).LastPlayedDate = _older;
+
+        var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA), (b, _serverB)));
+
+        Assert.Equal(WatchStateMoveStatus.NotLinked, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+    }
+
+    [Fact]
     public async Task AVersionMissingFromTheLinksOfThePrimaryIsNotLinked()
     {
         var (old, oldStub) = Old();

@@ -211,7 +211,8 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     private static (List<List<(Video Item, Guid? ServerId)>>? Titles, WatchStateMoveStatus Status) TitlesOf(
         IReadOnlyList<(BaseItem Item, Guid? ServerId)> targets,
         Run run,
-        StubRegistry registry)
+        StubRegistry registry,
+        WatchStateMove move)
     {
         if (targets.Count(target => target.ServerId is null) > 1)
         {
@@ -265,7 +266,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                 return (null, WatchStateMoveStatus.Refused);
             }
 
-            if (PrimaryOf(title.Select(version => version.Item).ToList()) is null)
+            if (PrimaryOf(title, move) is null)
             {
                 return (null, WatchStateMoveStatus.NotLinked);
             }
@@ -273,6 +274,12 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
 
         return (byGroup.Values.ToList(), WatchStateMoveStatus.Carried);
     }
+
+    // The new item of a renamed stub, owned by the old item until its file goes, is the primary of its own title (Q38).
+    private static Guid? PrimaryOf(List<(Video Item, Guid? ServerId)> title, WatchStateMove move) =>
+        move.RemovesOldItem && title is [{ ServerId: not null, Item: var only }] && only.OwnerId == move.FromItemId && only.PrimaryVersionId == move.FromItemId
+            ? only.Id
+            : PrimaryOf(title.Select(version => version.Item).ToList());
 
     // The primary as the link left it: the only version that names none, named by every other and holding each of them.
     private static Guid? PrimaryOf(IReadOnlyList<Video> versions)
@@ -332,7 +339,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                 : Outcome(move, WatchStateMoveStatus.Refused);
         }
 
-        var (titles, status) = TitlesOf(targets, run, _registry);
+        var (titles, status) = TitlesOf(targets, run, _registry, move);
         return titles is null
             ? Outcome(move, status)
             : CarryUsers(move, run, from, recorded, (user, old, mode) => TitleRows(user, old, mode, move, titles), cancellationToken);
@@ -420,7 +427,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         foreach (var title in titles)
         {
             var versions = new List<(BaseItem Item, WatchStateVersion Version)>(title.Count);
-            var primary = PrimaryOf(title.Select(version => version.Item).ToList());
+            var primary = PrimaryOf(title, move);
             foreach (var (item, serverId) in title)
             {
                 if (_userData.GetUserData(user, item) is not { } data)

@@ -10,6 +10,7 @@ using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -64,11 +65,18 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
         serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
         serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
+        serviceCollection.AddSingleton<RetiredLibraryIds>();
+        serviceCollection.AddSingleton<ILibraryViewIds, LibraryViewIds>();
+        serviceCollection.AddSingleton<ILibraryRenamer, LibraryRenamer>();
+        serviceCollection.AddSingleton<RetiredLibraryFilter>();
+        serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<RetiredLibraryFilter>());
         serviceCollection.AddSingleton<IVersionLinker, VersionLinker>();
         serviceCollection.AddSingleton<IWatchStateCarryLog>(provider => new WatchStateCarryLog(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<WatchStateCarryLog>>()));
         serviceCollection.AddSingleton<IWatchStateCarrier, WatchStateCarrier>();
+        serviceCollection.AddSingleton<IServerStubRenamer, ServerStubRenamer>();
+        serviceCollection.AddSingleton<IServerRenamer, ServerRenamer>();
         serviceCollection.AddSingleton<IMergeWatchStateCarry, MergeWatchStateCarry>();
         serviceCollection.AddSingleton<ISyncHistory>(provider => new SyncHistoryStore(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
