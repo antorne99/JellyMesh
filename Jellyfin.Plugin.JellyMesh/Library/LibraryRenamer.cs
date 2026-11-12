@@ -40,6 +40,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     private readonly ILibraryViewIds _views;
     private readonly RetiredLibraryIds _retired;
     private readonly ILogger<LibraryRenamer> _logger;
+    private readonly ILibraryChangeTracker? _changes;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LibraryRenamer"/> class.
@@ -51,6 +52,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     /// <param name="views">The view ids of the running server.</param>
     /// <param name="retired">The retired library ids.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="changes">The library change tracker, told of the new id so the page does not warn (Q53).</param>
     public LibraryRenamer(
         IServerApplicationPaths paths,
         ILibraryManager library,
@@ -58,7 +60,8 @@ public sealed class LibraryRenamer : ILibraryRenamer
         IUserManager users,
         ILibraryViewIds views,
         RetiredLibraryIds retired,
-        ILogger<LibraryRenamer> logger)
+        ILogger<LibraryRenamer> logger,
+        ILibraryChangeTracker? changes = null)
     {
         _paths = paths;
         _library = library;
@@ -67,6 +70,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
         _views = views;
         _retired = retired;
         _logger = logger;
+        _changes = changes;
     }
 
     /// <inheritdoc />
@@ -107,6 +111,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
             }
 
             _retired.Restore(newId);
+            _changes?.Renamed(oldId, newId, newName);
             await RewritePreferencesAsync(oldId, newId, name, newName, type).ConfigureAwait(false);
         }
         finally

@@ -28,6 +28,7 @@ public sealed class LibraryRenamerTests : IDisposable
     private readonly Mock<IUserManager> _users = new();
     private readonly FakeViewIds _views = new();
     private readonly RetiredLibraryIds _retired = new();
+    private readonly Mock<ILibraryChangeTracker> _changes = new();
     private readonly User _limited = new("limited", "auth", "reset");
     private readonly User _blocked = new("blocked", "auth", "reset");
     private readonly User _other = new("other", "auth", "reset");
@@ -39,7 +40,7 @@ public sealed class LibraryRenamerTests : IDisposable
         _paths.SetupGet(paths => paths.DefaultUserViewsPath).Returns(_root);
         _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), typeof(CollectionFolder))).Returns((string key, Type _) => IdOf(key));
         _users.Setup(users => users.GetUsers()).Returns(() => [_limited, _blocked, _other]);
-        _renamer = new LibraryRenamer(_paths.Object, _library.Object, _monitor.Object, _users.Object, _views, _retired, NullLogger<LibraryRenamer>.Instance);
+        _renamer = new LibraryRenamer(_paths.Object, _library.Object, _monitor.Object, _users.Object, _views, _retired, NullLogger<LibraryRenamer>.Instance, _changes.Object);
     }
 
     private Guid OldId => IdOf(Path.Combine(_root, "Casa - Film"));
@@ -63,6 +64,14 @@ public sealed class LibraryRenamerTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_root, "Mare - Film")));
         Assert.True(_retired.Contains(OldId));
         _monitor.Verify(monitor => monitor.Stop(), Times.Once);
+    }
+
+    [Fact]
+    public async Task The_change_tracker_follows_the_library_to_its_new_id()
+    {
+        await RenameAsync();
+
+        _changes.Verify(changes => changes.Renamed(OldId, NewId, "Mare - Film"), Times.Once);
     }
 
     [Fact]
@@ -126,6 +135,7 @@ public sealed class LibraryRenamerTests : IDisposable
         Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
         Assert.False(_retired.Contains(OldId));
         _monitor.Verify(monitor => monitor.Stop(), Times.Never);
+        _changes.Verify(changes => changes.Renamed(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]

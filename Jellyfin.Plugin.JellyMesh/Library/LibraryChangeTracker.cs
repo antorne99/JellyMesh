@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Configuration;
@@ -18,6 +19,9 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
     private readonly ILogger<LibraryChangeTracker> _logger;
     private readonly object _lock = new();
     private Snapshot? _last;
+
+    // The new ids of libraries the plugin renamed, by name, until their scan gives them the id.
+    private Dictionary<string, string> _pendingIds = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LibraryChangeTracker"/> class.
@@ -67,6 +71,29 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         return added.Count == 0 && removed.Count == 0 ? LibraryChanges.None : new LibraryChanges(added, removed);
     }
 
+    /// <inheritdoc />
+    public void Renamed(Guid oldId, Guid newId, string newName)
+    {
+        var newKey = newId.ToString("N", CultureInfo.InvariantCulture);
+        lock (_lock)
+        {
+            // Copies, since Read and Compare use them out of the lock.
+            _pendingIds = new Dictionary<string, string>(_pendingIds, StringComparer.Ordinal) { [newName] = newKey };
+            if (_last is null || oldId.Equals(newId))
+            {
+                return;
+            }
+
+            var libraries = new Dictionary<string, string>(_last.Libraries, StringComparer.Ordinal);
+            var key = libraries.Keys.FirstOrDefault(id => Guid.TryParse(id, out var parsed) && parsed.Equals(oldId));
+            if (key is not null && libraries.Remove(key, out var name))
+            {
+                libraries[newKey] = name;
+                _last = _last with { Libraries = libraries };
+            }
+        }
+    }
+
     // Null when there is no folder or the libraries cannot be read.
     private Snapshot? Read()
     {
@@ -78,11 +105,23 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
 
         try
         {
-            var libraries = _libraryManager.GetVirtualFolders()
+            var folders = _libraryManager.GetVirtualFolders()
                 .Where(library => (library.Locations ?? [])
                     .Any(location => !string.IsNullOrWhiteSpace(location)
                         && (FederatedFolderLinkChecker.IsAncestorOrSame(location, root) || FederatedFolderLinkChecker.IsAncestorOrSame(root, location))))
-                .GroupBy(library => string.IsNullOrEmpty(library.ItemId) ? library.Name : library.ItemId, StringComparer.Ordinal)
+                .ToList();
+            Dictionary<string, string> pending;
+            lock (_lock)
+            {
+                // A name with an id again no longer needs its pending id.
+                _pendingIds = _pendingIds
+                    .Where(entry => !folders.Any(library => !string.IsNullOrEmpty(library.ItemId) && string.Equals(library.Name, entry.Key, StringComparison.Ordinal)))
+                    .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+                pending = _pendingIds;
+            }
+
+            var libraries = folders
+                .GroupBy(library => !string.IsNullOrEmpty(library.ItemId) ? library.ItemId : pending.GetValueOrDefault(library.Name, library.Name), StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.First().Name, StringComparer.Ordinal);
             return new Snapshot(root, libraries);
         }

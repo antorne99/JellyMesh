@@ -82,6 +82,78 @@ public sealed class LibraryChangeTrackerTests
     }
 
     [Fact]
+    public void ALibraryThePluginRenamedToANewIdIsNotAChange()
+    {
+        var oldId = Guid.NewGuid();
+        var newId = Guid.NewGuid();
+        _libraries.Add(Library(oldId.ToString("N"), "Casa - Film", "/federata/a/Film"));
+        _tracker.Record();
+        _libraries[0] = Library(newId.ToString("N"), "Mare - Film", "/federata/a/Film");
+
+        _tracker.Renamed(oldId, newId, "Mare - Film");
+
+        Assert.Equal(LibraryChanges.None, _tracker.Compare());
+    }
+
+    [Fact]
+    public void ALibraryAddedDuringAPluginRenameIsStillNamed()
+    {
+        var oldId = Guid.NewGuid();
+        var newId = Guid.NewGuid();
+        _libraries.Add(Library(oldId.ToString("N"), "Casa - Film", "/federata/a/Film"));
+        _tracker.Record();
+        _libraries[0] = Library(newId.ToString("N"), "Mare - Film", "/federata/a/Film");
+        _libraries.Add(Library("2", "Tutto", "/"));
+
+        _tracker.Renamed(oldId, newId, "Mare - Film");
+        var changes = _tracker.Compare();
+
+        Assert.Equal(["Tutto"], changes.Added);
+        Assert.Empty(changes.Removed);
+    }
+
+    [Fact]
+    public void ARenamedLibraryStillWithNoIdUntilItsScanIsNotAChange()
+    {
+        var oldId = Guid.NewGuid();
+        var newId = Guid.NewGuid();
+        _libraries.Add(Library(oldId.ToString("N"), "Casa - Film", "/federata/a/Film"));
+        _tracker.Record();
+        _libraries[0] = Library(string.Empty, "Mare - Film", "/federata/a/Film");
+
+        _tracker.Renamed(oldId, newId, "Mare - Film");
+
+        Assert.Equal(LibraryChanges.None, _tracker.Compare());
+        _libraries[0] = Library(newId.ToString("N"), "Mare - Film", "/federata/a/Film");
+        Assert.Equal(LibraryChanges.None, _tracker.Compare());
+    }
+
+    [Fact]
+    public void ASyncBeforeTheScanOfARenamedLibraryRecordsItsNewId()
+    {
+        var oldId = Guid.NewGuid();
+        var newId = Guid.NewGuid();
+        _libraries.Add(Library(oldId.ToString("N"), "Casa - Film", "/federata/a/Film"));
+        _tracker.Record();
+        _libraries[0] = Library(string.Empty, "Mare - Film", "/federata/a/Film");
+        _tracker.Renamed(oldId, newId, "Mare - Film");
+
+        _tracker.Record();
+        _libraries[0] = Library(newId.ToString("N"), "Mare - Film", "/federata/a/Film");
+
+        Assert.Equal(LibraryChanges.None, _tracker.Compare());
+    }
+
+    [Fact]
+    public void ARenameBeforeAnySyncChangesNothing()
+    {
+        _tracker.Renamed(Guid.NewGuid(), Guid.NewGuid(), "Mare - Film");
+        _libraries.Add(Library("1", "Casa - Film", "/federata/a/Film"));
+
+        Assert.Equal(LibraryChanges.None, _tracker.Compare());
+    }
+
+    [Fact]
     public void TheNextSyncClearsTheWarning()
     {
         _tracker.Record();
