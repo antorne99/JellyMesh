@@ -70,7 +70,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         // Without the record every carry would look like the first and put back what users took off (decision 176).
         if (!_log.EnsureLoaded())
         {
-            _logger.LogWarning("The record of the watch state carries cannot be read for now: {Count} titles wait for it", moves.Count);
+            _logger.LogWarning("The record of the watch state carries cannot be read for now: the watch state of {Count} titles is not carried", moves.Count);
             return new WatchStateCarryReport(moves.Select(move => Outcome(move, WatchStateMoveStatus.Failed)).ToList());
         }
 

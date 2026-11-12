@@ -198,7 +198,8 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
     }
 
-    // Null when the file cannot be read for now: the carries wait for it rather than start again from nothing.
+    // Null when the file cannot be read for now, or is damaged and cannot be set aside: the carries wait for it rather
+    // than start again from nothing.
     private IReadOnlyList<Entry>? Load()
     {
         try
@@ -240,7 +241,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}. Carries wait for it", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}. Carries are suspended until it is set aside", exception.GetType().Name);
             return false;
         }
     }
