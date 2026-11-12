@@ -67,6 +67,18 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task AFilmInTwoCollectionsGetsTheFirstByTrimmedName()
+    {
+        _fixture.Client.AddCollection("films", "a", "  Saga B", "m1");
+        _fixture.Client.AddCollection("films", "b", "Saga A ", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal("Saga A", result.Value!["m1"].Name);
+    }
+
+    [Fact]
     public async Task ACollectionWithoutANameIsLeftOut()
     {
         _fixture.Client.AddCollection("films", "a", " ", "m1");
@@ -87,7 +99,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         var result = await ReadCollectionsAsync(server);
 
         Assert.False(result.Value!.ContainsKey("m1"));
-        Assert.Equal(" " + new string('y', 256) + " ", result.Value["m2"].Name);
+        Assert.Equal(new string('y', 256), result.Value["m2"].Name);
     }
 
     [Fact]

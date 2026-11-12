@@ -184,7 +184,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
             foreach (var collection in read.Value!.Where(HasUsableName))
             {
-                collections.TryAdd(collection.Id, new IndexedBoxSet(collection.Name!, TmdbIdOf(collection)));
+                collections.TryAdd(collection.Id, new IndexedBoxSet(collection.Name!.Trim(), TmdbIdOf(collection)));
             }
 
             if (collections.Count > MaxCollections)
