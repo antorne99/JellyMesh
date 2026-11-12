@@ -79,11 +79,20 @@ public sealed class VersionLinker : IVersionLinker
             var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
             var changed = false;
 
+            // A renamed stub waits until its old item is gone: the old item owns the new one, and its group keeps its links.
+            var renaming = state.Renames.Select(rename => rename.StubId).ToHashSet(StringComparer.Ordinal);
+
             // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
             foreach (var group in state.Groups.OrderBy(group => group.Id, StringComparer.Ordinal))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var recorded = group.PrimaryStubId;
+                if (group.StubIds.Any(renaming.Contains))
+                {
+                    recordedById[group.Id] = recorded;
+                    continue;
+                }
+
                 try
                 {
                     recorded = await LinkGroupAsync(group, run, cancellationToken).ConfigureAwait(false);
@@ -102,7 +111,7 @@ public sealed class VersionLinker : IVersionLinker
 
             if (thorough)
             {
-                await DetachUngroupedAsync(state, state.Stubs, run, cancellationToken).ConfigureAwait(false);
+                await DetachUngroupedAsync(state, state.Stubs.Where(stub => !renaming.Contains(stub.Id)), run, cancellationToken).ConfigureAwait(false);
             }
 
             await MoveCollectionEntriesAsync(run, cancellationToken).ConfigureAwait(false);
