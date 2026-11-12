@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -10,6 +11,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Extensions.Json;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Model.Dlna;
@@ -24,7 +26,7 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// Logs nothing and lets no transport exception out, as <see cref="JellyfinRemoteClient"/>: their messages can hold the
 /// remote address. Cancellation goes through, so that the caller can apply its own timeouts.
 /// </remarks>
-public sealed class RemotePlaybackClient : IRemotePlaybackClient
+public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegmentClient
 {
     /// <summary>
     /// Name of the <see cref="HttpClient"/> configuration. It has no overall timeout: a stream lasts as long as the film.
@@ -36,6 +38,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
     /// close to a kilobyte, so a film of many hours needs several megabytes.
     /// </summary>
     public const int MaxDocumentBytes = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// Most segments kept for one item. A film has a handful; the rest would only be rows a remote makes us store.
+    /// </summary>
+    public const int MaxSegments = 64;
 
     private const string AcceptJson = "application/json; profile=\"PascalCase\"";
 
@@ -258,6 +265,49 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
     }
 
+    /// <inheritdoc />
+    public async Task<RemoteResult<IReadOnlyList<RemoteSegment>>> GetSegmentsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(itemId);
+
+        using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/MediaSegments/" + Uri.EscapeDataString(itemId));
+        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        if (!document.IsSuccess)
+        {
+            return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(document.Failure);
+        }
+
+        if (Parse<SegmentPage>(document.Value!)?.Items is not { } items)
+        {
+            return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(RemoteFailure.InvalidResponse);
+        }
+
+        IReadOnlyList<RemoteSegment> segments = items
+            .Select(ToSegment)
+            .OfType<RemoteSegment>()
+            .Take(MaxSegments)
+            .ToList();
+        return RemoteResult.Success(segments);
+    }
+
+    // Null for a type Jellyfin does not name, or times stock would refuse to store.
+    private static RemoteSegment? ToSegment(SegmentEntry? entry)
+    {
+        if (entry?.Type is not { Length: > 0 } name
+            || !name.All(char.IsAsciiLetter)
+            || !Enum.TryParse<MediaSegmentType>(name, out var type)
+            || type == MediaSegmentType.Unknown
+            || entry.StartTicks < 0
+            || entry.EndTicks <= entry.StartTicks)
+        {
+            return null;
+        }
+
+        return new RemoteSegment(type, entry.StartTicks, entry.EndTicks);
+    }
+
     private static string StreamPath(string playSessionId) => "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
 
     // Null when the path cannot be accepted: paths come from the answers of the remote.
@@ -368,6 +418,10 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         bool? AllowVideoStreamCopy,
         bool? AllowAudioStreamCopy,
         bool? AlwaysBurnInSubtitleWhenTranscoding);
+
+    private sealed record SegmentPage(IReadOnlyList<SegmentEntry?>? Items);
+
+    private sealed record SegmentEntry(string? Type, long StartTicks, long EndTicks);
 
     private sealed record UserResponse(UserPolicyResponse? Policy);
 
