@@ -96,6 +96,7 @@ public sealed class VersionLinker : IVersionLinker
                 groups.Add(group with { PrimaryStubId = recorded });
             }
 
+            await MoveCollectionEntriesAsync(run, cancellationToken).ConfigureAwait(false);
             if (changed)
             {
                 await _registry.SaveAsync(state with { Groups = groups }, cancellationToken).ConfigureAwait(false);
@@ -155,10 +156,9 @@ public sealed class VersionLinker : IVersionLinker
         var alternates = items.Keys.Where(id => id != primary.ItemId).ToList();
         var plan = await ApplyAsync(primary.ItemId, alternates, items, run, cancellationToken).ConfigureAwait(false);
 
-        var moved = plan.Joined.Where(id => id != primary.ItemId).ToList();
-        if (moved.Count > 0)
+        foreach (var moved in plan.Joined.Where(id => id != primary.ItemId))
         {
-            await MoveCollectionEntriesAsync(moved, items[primary.ItemId], run, cancellationToken).ConfigureAwait(false);
+            run.Moves[moved] = items[primary.ItemId];
         }
 
         return primary.PrimaryStubId;
@@ -258,25 +258,39 @@ public sealed class VersionLinker : IVersionLinker
         }
     }
 
-    // Collections follow the primary as MergeVersions does; playlists keep the version that was added (Q79).
-    private async Task MoveCollectionEntriesAsync(IReadOnlyList<Guid> moved, Video primary, Run run, CancellationToken cancellationToken)
+    // Collections follow the primary as MergeVersions does; playlists keep the version that was added (Q79). A collection
+    // whose save fails is put back, so that a later run finds the entry where it still is.
+    private async Task MoveCollectionEntriesAsync(Run run, CancellationToken cancellationToken)
     {
-        var from = moved.ToHashSet();
-        foreach (var collection in run.Collections().Where(collection => collection.LinkedChildren.Any(child => child.ItemId is { } id && from.Contains(id))))
+        if (run.Moves.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var collection in run.Collections().Where(collection => collection.LinkedChildren.Any(child => child.ItemId is { } id && run.Moves.ContainsKey(id))))
         {
             var seen = new HashSet<Guid>();
             var children = new List<LinkedChild>(collection.LinkedChildren.Length);
             foreach (var child in collection.LinkedChildren)
             {
-                var target = child.ItemId is { } id && from.Contains(id) ? LinkedChild.Create(primary) : child;
+                var target = child.ItemId is { } id && run.Moves.TryGetValue(id, out var primary) ? LinkedChild.Create(primary) : child;
                 if (target.ItemId is not { } targetId || seen.Add(targetId))
                 {
                     children.Add(target);
                 }
             }
 
+            var before = collection.LinkedChildren;
             collection.LinkedChildren = children.ToArray();
-            await _updater.SaveAsync(collection, ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _updater.SaveAsync(collection, ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                collection.LinkedChildren = before;
+                _logger.LogError("Cannot move the entries of a collection to the primary version: {Error}", exception.GetType().Name);
+            }
         }
     }
 
@@ -285,6 +299,9 @@ public sealed class VersionLinker : IVersionLinker
     {
         private IndexItemLookup? _lookup;
         private List<BoxSet>? _collections;
+
+        // The primary that each alternate's collection entries move to.
+        public Dictionary<Guid, Video> Moves { get; } = [];
 
         public bool IsStub(BaseItem item) => item.Path is { } path && FederatedPaths.RelativeTo(root, path) is not null;
 

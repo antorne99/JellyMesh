@@ -410,6 +410,27 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task ACollectionWhoseSaveFailsIsPutBackAndTheOthersStillMove()
+    {
+        var local = Local();
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        var itemA = Scanned(a);
+        var failing = Add(new BoxSet { LinkedChildren = [LinkedChild.Create(itemA)] }, Guid.NewGuid());
+        var other = Add(new BoxSet { LinkedChildren = [LinkedChild.Create(itemA)] }, Guid.NewGuid());
+        _boxSets.AddRange([failing, other]);
+        _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == failing.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(TestValues.Host));
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+
+        Assert.Equal(local.Id, itemA.PrimaryVersionId);
+        Assert.Equal([itemA.Id], ((Folder)failing).LinkedChildren.Select(child => child.ItemId!.Value));
+        Assert.Equal([local.Id], ((Folder)other).LinkedChildren.Select(child => child.ItemId!.Value));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AFailedGroupDoesNotStopTheOthers()
     {
         var a = Stub("sa", _serverA, 1080);
