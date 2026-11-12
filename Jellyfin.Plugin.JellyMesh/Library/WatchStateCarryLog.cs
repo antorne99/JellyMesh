@@ -223,7 +223,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries wait for it", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries are suspended until it reads", exception.GetType().Name);
             return null;
         }
 
