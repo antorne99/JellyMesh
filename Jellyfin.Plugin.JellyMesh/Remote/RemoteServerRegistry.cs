@@ -198,6 +198,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         var found = false;
+        var heldElsewhere = false;
         string? storedId = null;
         _store.Update(config =>
         {
@@ -207,7 +208,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 storedId = server.JellyfinServerId;
                 if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
                 {
-                    server.JellyfinServerId = remoteId;
+                    heldElsewhere = !TryStoreServerId(config, server, remoteId);
                 }
 
                 found = true;
@@ -219,6 +220,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         WarnIfOtherServerId(stored.Name, storedId, login.Value!.ServerId);
+        if (heldElsewhere)
+        {
+            WarnServerIdHeldElsewhere(stored.Name, login.Value!.ServerId!);
+        }
 
         var runtime = RuntimeOf(serverId);
         runtime.Session = login.Value;
@@ -562,19 +567,45 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         try
         {
+            var heldElsewhere = false;
             _store.Update(config =>
             {
                 if (config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id) is { JellyfinServerId.Length: 0 } stored)
                 {
-                    stored.JellyfinServerId = remoteId;
+                    heldElsewhere = !TryStoreServerId(config, stored, remoteId);
                 }
             });
+            if (heldElsewhere)
+            {
+                WarnServerIdHeldElsewhere(server.Name, remoteId);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The type only: a message could hold a path or an address.
             _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}", server.Name, exception.GetType().Name);
         }
+    }
+
+    // Stores a Server Id read after the add unless another configured server holds it (decision 128).
+    private static bool TryStoreServerId(PluginConfiguration config, RemoteServerConfig server, string remoteId)
+    {
+        if (config.Servers.Any(other => other.Id != server.Id && other.JellyfinServerId == remoteId))
+        {
+            return false;
+        }
+
+        server.JellyfinServerId = remoteId;
+        return true;
+    }
+
+    // Logs a Server Id left unstored because another configured server already holds it (decision 128).
+    private void WarnServerIdHeldElsewhere(string serverName, string remoteId)
+    {
+        _logger.LogWarning(
+            "Remote server {ServerName} answered with Server Id {RemoteServerId}, which another configured server holds; it is not stored",
+            serverName,
+            remoteId);
     }
 
     // Logs a login whose Server Id differs from the stored one, which stays (decision 126).
