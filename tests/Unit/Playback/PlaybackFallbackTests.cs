@@ -92,6 +92,30 @@ public class PlaybackFallbackTests
     }
 
     [Fact]
+    public async Task A_session_left_on_another_version_does_not_drop_the_indexes_of_the_version_asked()
+    {
+        await OpenAsync(_b, _user);
+        var old = Assert.Single(_fixture.Sessions.All);
+        _fixture.Client.Requests.Clear();
+
+        await _fixture.Coordinator.OpenAsync(
+            new PlaybackOpenRequest
+            {
+                Identity = IdentityOf(_user, _a),
+                Stub = _a,
+                Fallbacks = [new PlaybackCandidate(_bItem, _b)],
+                LocalToken = PlaybackValues.LocalToken,
+                AudioStreamIndex = 3
+            },
+            CancellationToken.None);
+
+        var request = Assert.Single(_fixture.Client.Requests);
+        Assert.Equal("a1", request.ItemId);
+        Assert.Equal(3, request.AudioStreamIndex);
+        Assert.DoesNotContain(old, _fixture.Sessions.All);
+    }
+
+    [Fact]
     public async Task The_other_versions_are_tried_after_every_source_of_the_stub()
     {
         Fails("a1", "a2", "b1");

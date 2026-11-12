@@ -98,8 +98,8 @@ public sealed class PlaybackCoordinator
             return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable, AnyReachable: true);
         }
 
-        // Stream indexes are in the numbering of the source the client was told about.
-        var told = previous?.Source ?? request.Stub.Sources[0];
+        // Stream indexes are in the numbering of the source the client was told about for the version it asks.
+        var told = _sessions.FindSameStream(request.Identity)?.Source ?? request.Stub.Sources[0];
         var reachable = new List<(PlaybackOpenRequest Version, StubSource Source)>();
         var refused = 0;
         var tried = 0;
