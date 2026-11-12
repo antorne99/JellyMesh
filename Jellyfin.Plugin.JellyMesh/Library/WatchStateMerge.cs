@@ -5,7 +5,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// Hands the user data of a stub over to the stub of the same server that it was merged into (decision 2, Q23). Copies
-/// that become versions keep their own, and only "played" is aligned when they are linked (Q42, D4).
+/// that become versions keep their own, and only "played" is aligned when they are linked (Q42, D4), except that a manual
+/// merge carries favorite, rating and play count to the primary (decision 172).
 /// </summary>
 public static class WatchStateMerge
 {
