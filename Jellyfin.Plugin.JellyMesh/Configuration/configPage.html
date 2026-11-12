@@ -1112,6 +1112,79 @@
             .jmMerge .emby-button {
                 margin: 0.75em 0 0;
             }
+
+            .jmTableWrap {
+                overflow-x: auto;
+                border: 1px solid var(--jm-line);
+                border-radius: var(--jm-radius);
+                background: var(--jm-surface);
+            }
+
+            .jmTableWrap:focus-visible {
+                outline: 2px solid var(--jm-teal);
+                outline-offset: 2px;
+            }
+
+            #JellyMeshConfigPage .jmTableWrap > p {
+                margin: 0;
+                padding: 0.85em 1em;
+                color: var(--jm-muted);
+            }
+
+            .jmHistory {
+                width: 100%;
+                border-collapse: collapse;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .jmHistory th,
+            .jmHistory td {
+                padding: 0.65em 1em;
+                border-bottom: 1px solid var(--jm-line);
+                text-align: left;
+                vertical-align: top;
+            }
+
+            .jmHistory tbody tr:last-child td {
+                border-bottom: 0;
+            }
+
+            .jmHistory th {
+                color: var(--jm-muted);
+                font-size: 0.875em;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
+            .jmHistory td:not(:last-child) {
+                white-space: nowrap;
+            }
+
+            .jmHistory td:last-child {
+                min-width: 18em;
+            }
+
+            #JellyMeshConfigPage .jmHistory p {
+                margin: 0;
+            }
+
+            #JellyMeshConfigPage .jmHistory p + p {
+                margin-top: 0.3em;
+            }
+
+            .jmHistoryOutcome .jmDot {
+                display: inline-block;
+                margin-right: 0.45em;
+                vertical-align: 0.05em;
+            }
+
+            .jmHistoryNote {
+                display: block;
+                margin-top: 0.25em;
+                color: var(--jm-muted);
+                font-size: 0.875em;
+                white-space: normal;
+            }
         </style>
         <div data-role="content">
             <div class="content-primary">
@@ -1212,6 +1285,12 @@
                     <div id="jmMergeCases"></div>
                     <h3 class="sectionTitle">Merged films</h3>
                     <div id="jmMerges" class="jmRowList"></div>
+
+                    <h3 class="sectionTitle">Sync history</h3>
+                    <p>The last 50 syncs, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder.</p>
+                    <div id="jmHistoryWarning" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmHistoryFailure" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmSyncHistory" class="jmTableWrap" role="region" tabindex="0" aria-label="Sync history"></div>
                 </section>
 
                 <section data-jm-tab="sharing" role="tabpanel" aria-label="Sharing" hidden>
@@ -1273,6 +1352,13 @@
                                     <span>Protect metadata</span>
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input id="jmFederateCollections" type="checkbox" is="emby-checkbox" />
+                                    <span>Write remote collections into films</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with "Automatically add to collection" turned on. Turning this off keeps the collections already made.</div>
                             </div>
                         </div>
                         <div class="jmGroup">
@@ -1371,6 +1457,7 @@
                     "Best version: {quality}": "Versione migliore: {quality}",
                     "Bitrate": "Bitrate",
                     "Both paths are linked.": "Entrambi i percorsi sono collegati.",
+                    "Cancelled": "Annullata",
                     "Catalog": "Catalogo",
                     "Check that the URL leads to a Jellyfin server, then test the connection.": "Controlla che l'URL porti a un server Jellyfin, poi prova la connessione.",
                     "Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.": "Controlla che l'URL porti a un server Jellyfin. Se non è così, rimuovi questo server e aggiungilo di nuovo.",
@@ -1408,12 +1495,14 @@
                     "Done": "Fatto",
                     "Duplicate films": "Film duplicati",
                     "Duplicates to review": "Duplicati da rivedere",
+                    "Duration": "Durata",
                     "Enter a name, a user and an http or https URL with no credentials, query or fragment.": "Inserisci un nome, un utente e un URL http o https senza credenziali, query o frammento.",
                     "Enter a time as hours and minutes.": "Inserisci un orario in ore e minuti.",
                     "Enter a whole number from {min} to {max}.": "Inserisci un numero intero da {min} a {max}.",
                     "Enter a whole number of at least {min}.": "Inserisci un numero intero di almeno {min}.",
                     "Enter an absolute path other than the filesystem root, without \"..\".": "Inserisci un percorso assoluto diverso dalla radice del filesystem, senza \"..\".",
                     "Error": "Errore",
+                    "Failed": "Non riuscita",
                     "Federated folder": "Cartella federata",
                     "Film library": "Libreria film",
                     "Fix the login on that server, or remove this server and add it again with a working one.": "Sistema l'accesso su quel server, oppure rimuovi questo server e aggiungilo di nuovo con un accesso funzionante.",
@@ -1431,6 +1520,7 @@
                     "IDs": "ID",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
                     "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
+                    "Incremental": "Incrementale",
                     "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
                     "Its automatic libraries are deleted too: {names}.": "Vengono eliminate anche le sue librerie automatiche: {names}.",
@@ -1472,7 +1562,9 @@
                     "No doubtful films.": "Nessun film dubbio.",
                     "No libraries chosen, so nothing is imported from this server yet.": "Nessuna libreria scelta, quindi per ora da questo server non si importa nulla.",
                     "No remote servers yet.": "Ancora nessun server remoto.",
+                    "No remote servers.": "Nessun server remoto.",
                     "No server was left to forget.": "Non restava nessun server da dimenticare.",
+                    "No sync has run yet.": "Nessuna sincronizzazione eseguita finora.",
                     "None": "Nessuno",
                     "None yet": "Ancora nessuno",
                     "Not checked": "Non controllata",
@@ -1481,6 +1573,7 @@
                     "Not known": "Non noto",
                     "Not linked": "Non collegata",
                     "Not read yet": "Non ancora letto",
+                    "Not read: {failure}.": "Non letto: {failure}.",
                     "Not since this server started": "Non dall'avvio di questo server",
                     "Nothing is imported from a server until you choose its libraries.": "Da un server non si importa nulla finché non scegli le sue librerie.",
                     "Nothing is imported from a server until you choose its libraries. Still to choose: {servers}.": "Da un server non si importa nulla finché non scegli le sue librerie. Ancora da scegliere: {servers}.",
@@ -1489,16 +1582,20 @@
                     "Open Libraries and save the selection again.": "Apri Librerie e salva di nuovo la selezione.",
                     "Open {tab}": "Apri {tab}",
                     "Other version: {quality}": "Altra versione: {quality}",
+                    "Outcome": "Esito",
                     "Overview": "Panoramica",
                     "Part of this page could not be loaded, and each part says so. {reason}": "Una parte di questa pagina non si è caricata, e ogni parte lo segnala. {reason}",
+                    "Partly failed": "Riuscita in parte",
                     "Password": "Password",
                     "Playback already running may not stop right away.": "Una riproduzione già in corso potrebbe non fermarsi subito.",
                     "Protect metadata": "Proteggi i metadati",
+                    "Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with \"Automatically add to collection\" turned on. Turning this off keeps the collections already made.": "Mette nel .nfo di un film la collezione che ha sul suo server. Jellyfin raggruppa i film solo nelle librerie con \"Aggiungi automaticamente alla collezione\" attivo. Se la disattivi, le collezioni già create restano.",
                     "Quality not read: a local copy plays whatever its quality.": "Qualità non letta: una copia locale viene riprodotta qualunque sia la sua qualità.",
                     "Quality unknown": "Qualità sconosciuta",
                     "Range": "Gamma",
                     "Reading...": "Lettura...",
                     "Recognized as “{server}”: it takes back its folder and its label.": "Riconosciuto come «{server}»: riprende la sua cartella e la sua etichetta.",
+                    "Reconciliation": "Riconciliazione",
                     "Reload the page before saving.": "Ricarica la pagina prima di salvare.",
                     "Remember the transcoding rights of a remote (minutes)": "Ricorda i diritti di transcodifica di un remoto (minuti)",
                     "Remote servers": "Server remoti",
@@ -1530,18 +1627,25 @@
                     "Setup": "Configurazione",
                     "Shared libraries": "Librerie condivise",
                     "Sharing": "Condivisione",
+                    "Started": "Inizio",
                     "Status": "Stato",
                     "Status unknown.": "Stato sconosciuto.",
                     "Stored encrypted and never shown again.": "Salvata cifrata e mai più mostrata.",
                     "Stream limit": "Limite di stream",
                     "Streams": "Stream",
                     "Streams in use": "Stream in uso",
+                    "Succeeded": "Riuscita",
                     "Sync": "Sincronizzazione",
                     "Let JellyMesh keep its key file": "Permetti a JellyMesh di tenere il file della chiave",
                     "JellyMesh encrypts the stored logins with a key file in its plugin data folder, and it cannot write that file. Let Jellyfin write to that folder, then restart Jellyfin.": "JellyMesh cifra gli accessi salvati con un file della chiave nella cartella dati del plugin, e non riesce a scrivere quel file. Permetti a Jellyfin di scrivere in quella cartella, poi riavvia Jellyfin.",
                     "Enter the passwords again": "Inserisci di nuovo le password",
+                    "Sync history": "Storico delle sincronizzazioni",
                     "The change failed. Try again.": "La modifica non è riuscita. Riprova.",
+                    "The federated folder could not be updated.": "Non è stato possibile aggiornare la cartella federata.",
+                    "The federation index could not be saved.": "Non è stato possibile salvare l'indice della federazione.",
+                    "The file of the sync history could not be read, so earlier syncs are not shown. A copy of the file is kept next to it.": "Non è stato possibile leggere il file dello storico delle sincronizzazioni, quindi le sincronizzazioni precedenti non sono mostrate. Una copia del file è conservata accanto.",
                     "The files in the federated folder stay, and nothing changes on {server}.": "I file nella cartella federata restano e su {server} non cambia nulla.",
+                    "The last 50 syncs, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder.": "Le ultime 50 sincronizzazioni, dalla più recente. Per ogni server: gli elementi del catalogo letti, e i titoli creati, aggiornati e rimossi nella sua cartella.",
                     "The libraries of this server are being updated. Try again when it is done.": "Le librerie di questo server sono in aggiornamento. Riprova quando ha finito.",
                     "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
                     "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
@@ -1552,6 +1656,7 @@
                     "Suspended. Sync and remote playback are stopped until JellyMesh can keep its key file.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché JellyMesh non riesce a tenere il file della chiave.",
                     "Suspended. Sync and remote playback are stopped until the password of each marked server is entered again.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché non inserisci di nuovo la password di ogni server segnato.",
                     "Connecting a server waits until the stored logins can be used. The Overview says what to do.": "Il collegamento di un server attende che gli accessi salvati si possano usare. La Panoramica dice cosa fare.",
+                    "the sync history": "lo storico delle sincronizzazioni",
                     "These libraries are deleted now: {names}.": "Queste librerie vengono eliminate ora: {names}.",
                     "password needed": "password da inserire",
                     "The stored password no longer decrypts. Enter the login again below. {problem}": "La password salvata non si decifra più. Inserisci di nuovo l'accesso qui sotto. {problem}",
@@ -1560,6 +1665,11 @@
                     "JellyMesh logs in with it before saving it, encrypted with the new key file.": "JellyMesh accede con questo prima di salvarlo, cifrato con il nuovo file della chiave.",
                     "Save login": "Salva l'accesso",
                     "Enter the user JellyMesh logs in with.": "Inserisci l'utente con cui JellyMesh accede.",
+                    "Titles not written or removed: {count}.": "Titoli non scritti o non rimossi: {count}.",
+                    "Type": "Tipo",
+                    "{hours} h {minutes} min": "{hours} h {minutes} min",
+                    "{minutes} min {seconds} s": "{minutes} min {seconds} s",
+                    "{seconds} s": "{seconds} s",
                     "{server}: login saved.": "{server}: accesso salvato.",
                     "JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.": "JELLYMESH_SECRET_KEY non si usa più: ora la chiave è un file nella cartella dati del plugin. Puoi togliere la variabile dall'ambiente di Jellyfin.",
                     "{server}: enter its login again.": "{server}: inserisci di nuovo il suo accesso.",
@@ -1634,6 +1744,7 @@
                     "Untitled": "Senza titolo",
                     "User": "Utente",
                     "Version {version}": "Versione {version}",
+                    "Write remote collections into films": "Scrivi le collezioni dei remoti nei film",
                     "Wait for a remote to answer (seconds)": "Attesa della risposta di un remoto (secondi)",
                     "Wait for each step of opening a stream (seconds)": "Attesa di ogni fase di apertura di uno stream (secondi)",
                     "Warning: \"Automatically merge series that are spread across multiple folders\" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.": "Attenzione: \"Unisci automaticamente le serie distribuite su più cartelle\" è disattivato in {libraries}, quindi una serie presente in due cartelle resta divisa. Attivalo nelle opzioni della libreria.",
@@ -1715,6 +1826,7 @@
                     "{server}: the last sync failed ({failure}). Its titles are kept as they were.": "{server}: l'ultima sincronizzazione non è riuscita ({failure}). I suoi titoli restano com'erano.",
                     "{server}: the last sync failed. Its titles are kept as they were.": "{server}: l'ultima sincronizzazione non è riuscita. I suoi titoli restano com'erano.",
                     "{server}: {outcome}.": "{server}: {outcome}.",
+                    "{server}: {read} read, {created} created, {updated} updated, {removed} removed.": "{server}: {read} letti, {created} creati, {updated} aggiornati, {removed} rimossi.",
                     "{title} on {place}": "{title} su {place}",
                     "{used} of {total}": "{used} di {total}",
                     "{used} of {total} by connected servers": "{used} di {total} dai server connessi",
@@ -1797,6 +1909,9 @@
                 var stepIcons = { done: 'check_circle', todo: 'radio_button_unchecked', unknown: 'help_outline' };
                 var shownTab = tabNames[0];
                 var compareRows = ['Server', 'Length', 'Resolution', 'Range', 'Bitrate', 'Codec', 'IDs'];
+                var runKinds = { Incremental: t('Incremental'), Reconciliation: t('Reconciliation') };
+                var runOutcomes = { Succeeded: t('Succeeded'), PartlyFailed: t('Partly failed'), Failed: t('Failed'), Cancelled: t('Cancelled') };
+                var runTones = { Succeeded: 'jmToneGood', PartlyFailed: 'jmToneWarn', Failed: 'jmToneBad', Cancelled: 'jmToneQuiet' };
                 var compareLabels = { Server: t('Server'), Length: t('Length'), Resolution: t('Resolution'), Range: t('Range'), Bitrate: t('Bitrate'), Codec: t('Codec'), IDs: t('IDs') };
                 var outcomeKinds = { Done: t('Done'), Error: t('Error') };
                 var reading = t('Reading...');
@@ -2955,6 +3070,7 @@
                     var finished = status.LastFinishedUtc || null;
                     if (lastFinished !== undefined && lastFinished !== finished) {
                         mergesSection.stale = true;
+                        historySection.stale = true;
                         statusSection.stale = true;
                     }
 
@@ -3581,11 +3697,124 @@
                     updateRows(el('#jmMerges'), merges);
                 }
 
+                // Gives a duration in the largest units that keep it short.
+                function formatDuration(milliseconds) {
+                    var seconds = Math.round(milliseconds / 1000);
+                    if (seconds < 60) {
+                        return t('{seconds} s', { seconds: seconds });
+                    }
+
+                    var minutes = Math.floor(seconds / 60);
+                    if (minutes < 60) {
+                        return t('{minutes} min {seconds} s', { minutes: minutes, seconds: seconds % 60 });
+                    }
+
+                    return t('{hours} h {minutes} min', { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+                }
+
+                // Says what one sync did for one server. Its name comes from the admin, so it only ever goes in as text.
+                function historyServerLine(server) {
+                    var line = t('{server}: {read} read, {created} created, {updated} updated, {removed} removed.', {
+                        server: server.ServerName,
+                        read: server.Read,
+                        created: server.Created,
+                        updated: server.Updated,
+                        removed: server.Removed
+                    });
+                    if (server.Failure) {
+                        line += ' ' + t('Not read: {failure}.', { failure: connectionLabel(server.Failure) });
+                    }
+
+                    if (server.Failed > 0) {
+                        line += ' ' + t('Titles not written or removed: {count}.', { count: server.Failed });
+                    }
+
+                    return line;
+                }
+
+                function historyRow(run) {
+                    var row = create('tr');
+                    var started = create('td');
+                    var time = create('time', formatDate(run.StartedUtc));
+                    time.dateTime = run.StartedUtc;
+                    started.appendChild(time);
+                    row.appendChild(started);
+                    row.appendChild(create('td', runKinds[run.Kind] || run.Kind));
+                    row.appendChild(create('td', formatDuration(run.DurationMilliseconds)));
+
+                    var outcome = create('td');
+                    outcome.className = 'jmHistoryOutcome ' + (runTones[run.Outcome] || 'jmToneQuiet');
+                    var dot = create('span');
+                    dot.className = 'jmDot';
+                    dot.setAttribute('aria-hidden', 'true');
+                    outcome.appendChild(dot);
+                    outcome.appendChild(create('span', runOutcomes[run.Outcome] || run.Outcome));
+                    var notes = [];
+                    if (run.MaterializationFailed) {
+                        notes.push(t('The federated folder could not be updated.'));
+                    }
+
+                    if (run.IndexSaveFailed) {
+                        notes.push(t('The federation index could not be saved.'));
+                    }
+
+                    notes.forEach(function (text) {
+                        var note = create('span', text);
+                        note.className = 'jmHistoryNote';
+                        outcome.appendChild(note);
+                    });
+                    row.appendChild(outcome);
+
+                    var servers = create('td');
+                    if (run.Servers.length === 0) {
+                        servers.appendChild(create('p', t('No remote servers.')));
+                    }
+
+                    run.Servers.forEach(function (server) {
+                        servers.appendChild(create('p', historyServerLine(server)));
+                    });
+                    row.appendChild(servers);
+                    return row;
+                }
+
+                function renderHistory(view) {
+                    var warning = el('#jmHistoryWarning');
+                    setText(warning, view.IsDamaged ? t('The file of the sync history could not be read, so earlier syncs are not shown. A copy of the file is kept next to it.') : '');
+                    warning.hidden = !view.IsDamaged;
+
+                    var container = el('#jmSyncHistory');
+                    container.textContent = '';
+                    if (view.Runs.length === 0) {
+                        container.appendChild(create('p', t('No sync has run yet.')));
+                        return;
+                    }
+
+                    var table = create('table');
+                    table.className = 'jmHistory';
+                    var caption = create('caption', t('Sync history'));
+                    caption.className = 'jmHidden';
+                    table.appendChild(caption);
+                    var head = create('tr');
+                    [t('Started'), t('Type'), t('Duration'), t('Outcome'), t('Servers')].forEach(function (text) {
+                        var cell = create('th', text);
+                        cell.scope = 'col';
+                        head.appendChild(cell);
+                    });
+                    table.appendChild(create('thead')).appendChild(head);
+                    var body = create('tbody');
+                    view.Runs.forEach(function (run) {
+                        body.appendChild(historyRow(run));
+                    });
+                    table.appendChild(body);
+                    container.appendChild(table);
+                }
+
                 function renderSettings(config) {
                     el('#jmSyncInterval').value = config.SyncIntervalSeconds;
                     el('#jmReconciliationTime').value = config.ReconciliationTime;
                     el('#jmFederatedFolder').value = config.FederatedFolderPath;
                     el('#jmMetadataProtection').checked = config.MetadataProtection;
+                    el('#jmFederateCollections').checked = config.FederateCollections;
                     el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
                     el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
                     el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
@@ -4199,6 +4428,12 @@
                     showFailure('#jmMergesFailure', t('the duplicate and merged films'), keepsTrying, reason);
                 });
 
+                var historySection = section(function () {
+                    return read('Sync/History');
+                }, renderHistory, function (reason) {
+                    showFailure('#jmHistoryFailure', t('the sync history'), keepsTrying, reason);
+                });
+
                 var settingsSection = section(function () {
                     settingFields().forEach(clearField);
                     return ApiClient.getPluginConfiguration(pluginId).catch(function (error) {
@@ -4224,8 +4459,12 @@
                     return refresh(mergesSection);
                 }
 
+                function loadHistory() {
+                    return refresh(historySection);
+                }
+
                 function load() {
-                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges()]);
+                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges(), loadHistory()]);
                 }
 
                 // Plans the next read while the page is open and its tab is shown, sooner while a sync runs.
@@ -4247,8 +4486,8 @@
                         nextStatusPoll = Date.now() + statusPollMilliseconds;
                     }
 
-                    var parts = [syncSection, statusSection, peersSection, mergesSection].filter(function (part) {
-                        return part.pending === 0 && (part === syncSection || part.stale || (due && part !== mergesSection));
+                    var parts = [syncSection, statusSection, peersSection, mergesSection, historySection].filter(function (part) {
+                        return part.pending === 0 && (part === syncSection || part.stale || (due && part !== mergesSection && part !== historySection));
                     });
                     polling = true;
                     Promise.all(parts.map(refresh)).then(function () {
@@ -4434,6 +4673,7 @@
                         config.ReconciliationTime = el('#jmReconciliationTime').value;
                         config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
                         config.MetadataProtection = el('#jmMetadataProtection').checked;
+                        config.FederateCollections = el('#jmFederateCollections').checked;
                         config.CloseTranscodeAtSlotExpiry = el('#jmCloseAtExpiry').checked;
                         config.RemotePlaybackInfoTimeoutSeconds = parseInt(el('#jmRemotePlaybackInfoTimeout').value, 10);
                         config.StreamOpenTimeoutSeconds = parseInt(el('#jmStreamOpenTimeout').value, 10);

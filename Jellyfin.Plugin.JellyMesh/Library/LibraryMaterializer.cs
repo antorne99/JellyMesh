@@ -95,7 +95,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <inheritdoc />
     public async Task<MaterializationReport> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
-        var (root, isProtected) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection));
+        var (root, isProtected, writesCollections) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection, config.FederateCollections));
         if (root.Length == 0)
         {
             var report = new MaterializationReport(_timeProvider.GetUtcNow(), false, 0, 0, 0, 0, 0, []);
@@ -106,7 +106,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var report = await RunAsync(root, isProtected, verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            var report = await RunAsync(root, isProtected, writesCollections, verifyEveryStub, cancellationToken).ConfigureAwait(false);
             _lastReport = report;
             return report;
         }
@@ -218,13 +218,13 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return string.Equals(stub.UrlTag, urlTag, StringComparison.Ordinal) && stub.StrmWrittenUtc == File.GetLastWriteTimeUtc(strm);
     }
 
-    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool verifyEveryStub, CancellationToken cancellationToken)
+    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool writesCollections, bool verifyEveryStub, CancellationToken cancellationToken)
     {
         // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
-        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null));
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null) { WritesCollections = writesCollections });
 
         WriteServerFolders(root, servers);
 
@@ -280,7 +280,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             run.Failed);
         return new MaterializationReport(_timeProvider.GetUtcNow(), true, run.Created, run.Updated, run.Removed, run.Failed, plan.Unplaceable, plan.Held)
         {
-            Unconfigured = plan.Unconfigured
+            Unconfigured = plan.Unconfigured,
+            ByServer = run.ByServer()
         };
     }
 
@@ -315,7 +316,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            run.Failed++;
+            run.Fail(entry.ServerId);
             _logger.LogError("Cannot write a stub series: {Error}", exception.GetType().Name);
         }
     }
@@ -374,12 +375,18 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             run.Put(entry);
-            run.Created += work.IsNew ? 1 : 0;
-            run.Updated += !work.IsNew && changed ? 1 : 0;
+            if (work.IsNew)
+            {
+                run.Count(entry.ServerId, created: 1);
+            }
+            else if (changed)
+            {
+                run.Count(entry.ServerId, updated: 1);
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            run.Failed++;
+            run.Fail(entry.ServerId);
             _logger.LogError("Cannot write a stub: {Error}", exception.GetType().Name);
         }
     }
@@ -399,7 +406,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            run.Failed++;
+            run.Fail(stub.ServerId);
             _logger.LogError("Cannot sign a stub: {Error}", exception.GetType().Name);
         }
     }
@@ -533,6 +540,17 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             _logger.LogError("Cannot remove a stub: {Error}", failure.GetType().Name);
         }
+
+        // A stub still in the registry was not removed. The totals count the failures themselves.
+        var left = removal.State.Stubs.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var stub in stubs)
+        {
+            if (stub.ServerId is { } serverId)
+            {
+                var kept = left.Contains(stub.Id);
+                run.CountServer(serverId, removed: kept ? 0 : 1, failed: kept ? 1 : 0);
+            }
+        }
     }
 
     // The library item of a path, looked up on first use. A stub minted by this run has none yet.
@@ -563,6 +581,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         private readonly List<SeriesStub> _series;
         private readonly Dictionary<string, int> _stubAt;
         private readonly Dictionary<string, int> _seriesAt;
+        private readonly Dictionary<Guid, StubCounts> _byServer = [];
 
         public Run(string root, StubState state)
         {
@@ -595,6 +614,36 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public int Removed { get; set; }
 
         public int Failed { get; set; }
+
+        /// <summary>Adds to the totals and to the counts of the server, if the stub has one.</summary>
+        public void Count(Guid? serverId, int created = 0, int updated = 0)
+        {
+            Created += created;
+            Updated += updated;
+            if (serverId is { } id)
+            {
+                CountServer(id, created, updated);
+            }
+        }
+
+        /// <summary>Counts a stub or series that could not be written.</summary>
+        public void Fail(Guid? serverId)
+        {
+            Failed++;
+            if (serverId is { } id)
+            {
+                CountServer(id, failed: 1);
+            }
+        }
+
+        /// <summary>Adds to the counts of one server only.</summary>
+        public void CountServer(Guid serverId, int created = 0, int updated = 0, int removed = 0, int failed = 0)
+        {
+            var counts = _byServer.GetValueOrDefault(serverId) ?? new StubCounts(0, 0, 0, 0);
+            _byServer[serverId] = new StubCounts(counts.Created + created, counts.Updated + updated, counts.Removed + removed, counts.Failed + failed);
+        }
+
+        public IReadOnlyDictionary<Guid, StubCounts> ByServer() => new Dictionary<Guid, StubCounts>(_byServer);
 
         public void Put(StubEntry stub)
         {

@@ -137,6 +137,10 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                 outcomes[index] = outcome with { Status = WatchStateMoveStatus.Failed, SkippedUsers = skipped.ToList() };
             }
         }
+        else
+        {
+            await ForgetRemovedAsync(outcomes).ConfigureAwait(false);
+        }
 
         var report = new WatchStateCarryReport(outcomes);
         if (report.Skipped > 0)
@@ -471,6 +475,27 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
 
             return !found;
         });
+    }
+
+    // Forgets the records of old items removed right after a carry done for every user, once that carry is on disk, so
+    // that a path coming back starts fresh (decision 179). An old item with any other move in the run keeps them.
+    private async Task ForgetRemovedAsync(List<WatchStateMoveOutcome> outcomes)
+    {
+        var removed = outcomes
+            .GroupBy(outcome => outcome.Move.FromItemId)
+            .Where(moves => moves.All(outcome => outcome.Move.RemovesOldItem && outcome.Status == WatchStateMoveStatus.Carried))
+            .Select(moves => moves.Key)
+            .ToHashSet();
+        if (removed.Count == 0 || _log.Forget((_, itemId) => removed.Contains(itemId)) == 0)
+        {
+            return;
+        }
+
+        // The carries are on disk already; a later save keeps what is forgotten here.
+        if (!await _log.SaveAsync(CancellationToken.None).ConfigureAwait(false))
+        {
+            _logger.LogWarning("Cannot save the record of the watch state carries after forgetting {Count} removed titles", removed.Count);
+        }
     }
 
     // What a run reads once, with the group of each stub and local copy.

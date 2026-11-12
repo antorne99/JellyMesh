@@ -18,6 +18,90 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     private Task<RemoteResult<System.Collections.Generic.IReadOnlyList<IndexedItem>>> ReadAsync(RemoteServerInfo server)
         => _fixture.Reader.ReadAsync(server, SyncFixture.Start, CancellationToken.None);
 
+    private Task<RemoteResult<System.Collections.Generic.IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server)
+        => _fixture.Reader.ReadCollectionsAsync(server, ["films"], CancellationToken.None);
+
+    [Fact]
+    public async Task EachFilmOfACollectionGetsItsNameAndTmdbId()
+    {
+        _fixture.Client.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = "10" } }, ["m1", "m2"]));
+        _fixture.Client.AddCollection("other", "elsewhere", "Not read", "m9");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal(new IndexedBoxSet("Saga", "10"), result.Value!["m1"]);
+        Assert.Equal(new IndexedBoxSet("Saga", "10"), result.Value["m2"]);
+        Assert.Equal(2, result.Value.Count);
+    }
+
+    [Theory]
+    [InlineData("12a")]
+    [InlineData("")]
+    [InlineData("1\" tmdb=\"2")]
+    public async Task ATmdbIdThatIsNotDigitsIsLeftOut(string tmdb)
+    {
+        _fixture.Client.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = tmdb } }, ["m1"]));
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal(new IndexedBoxSet("Saga", null), result.Value!["m1"]);
+    }
+
+    [Fact]
+    public async Task AFilmInTwoCollectionsGetsTheFirstByName()
+    {
+        _fixture.Client.AddCollection("films", "b", "Saga B", "m1");
+        _fixture.Client.AddCollection("films", "a", "Saga A", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal("Saga A", result.Value!["m1"].Name);
+    }
+
+    [Fact]
+    public async Task ACollectionWithoutANameIsLeftOut()
+    {
+        _fixture.Client.AddCollection("films", "a", " ", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Empty(result.Value!);
+    }
+
+    [Fact]
+    public async Task CollectionsAndTheirFilmsAreReadPageByPage()
+    {
+        for (var index = 0; index < RemoteCatalogReader.PageSize + 1; index++)
+        {
+            _fixture.Client.AddCollection("films", "box" + index, "Saga " + index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture), "m" + index);
+        }
+
+        _fixture.Client.Collections[0].Films.AddRange(Enumerable.Range(1000, RemoteCatalogReader.PageSize).Select(index => "m" + index));
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal((2 * RemoteCatalogReader.PageSize) + 1, result.Value!.Count);
+        Assert.Contains("films@" + RemoteCatalogReader.PageSize, _fixture.Client.CollectionReads);
+        Assert.Contains("box0@" + RemoteCatalogReader.PageSize, _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AFailedCollectionReadIsAFailure()
+    {
+        _fixture.Client.AddCollection("films", "a", "Saga", "m1");
+        _fixture.Client.CollectionFailure = RemoteFailure.Unreachable;
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal(RemoteFailure.Unreachable, result.Failure);
+    }
+
     [Fact]
     public async Task ReadsEveryPageInOrder()
     {

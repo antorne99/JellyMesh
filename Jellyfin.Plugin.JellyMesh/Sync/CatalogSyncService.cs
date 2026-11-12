@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Activity;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -44,9 +45,12 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly IActivityWriter? _activity;
     private readonly IServerLibraryManager? _libraries;
     private readonly IVersionLinker? _linker;
+    private readonly ISyncHistory? _history;
+    private readonly IPluginConfigurationStore? _store;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
+    private readonly ConcurrentDictionary<Guid, int> _runReads = new();
     private readonly UnreadablePasswords _unreadablePasswords = new();
 
     private TimeSpan _serverReadLimit = MaxServerRead;
@@ -67,6 +71,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="activity">Where completed and failed syncs are written.</param>
     /// <param name="libraries">The libraries kept for each server, followed after every sync.</param>
     /// <param name="linker">What links the copies of a title as versions after the materialization.</param>
+    /// <param name="history">Where each run is recorded.</param>
+    /// <param name="store">The configuration, which says whether collections are read.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -78,7 +84,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         StubRegistry? stubs = null,
         IActivityWriter? activity = null,
         IServerLibraryManager? libraries = null,
-        IVersionLinker? linker = null)
+        IVersionLinker? linker = null,
+        ISyncHistory? history = null,
+        IPluginConfigurationStore? store = null)
     {
         _registry = registry;
         _reader = reader;
@@ -91,6 +99,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _activity = activity;
         _libraries = libraries;
         _linker = linker;
+        _history = history;
+        _store = store;
     }
 
     /// <summary>
@@ -122,7 +132,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         if (claim == SyncStartResult.Started)
         {
             // The nightly reconciliation also checks every stub's item: the safety net for an item left on an old URL.
-            await SyncAllAsync(SyncServerAsync, true, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, true, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -135,7 +145,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
-            await SyncAllAsync(SyncChangesAsync, false, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncChangesAsync, SyncRunKind.Incremental, false, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -248,7 +258,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     {
         try
         {
-            await SyncAllAsync(SyncServerAsync, false, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, false, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -275,30 +285,93 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         await _index.DropServersAsync(removed, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, bool verifyEveryStub, CancellationToken cancellationToken)
+    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, SyncRunKind kind, bool verifyEveryStub, CancellationToken cancellationToken)
     {
+        var started = _run.StartedUtc ?? _timeProvider.GetUtcNow();
+        IReadOnlyList<RemoteServerInfo> servers = [];
+        var materialized = new Materialized(null, false);
+        SyncRunOutcome? stopped = null;
         try
         {
             _runFailures.Clear();
-            var servers = _registry.GetServers();
+            _runReads.Clear();
+            servers = _registry.GetServers();
             foreach (var server in servers)
             {
                 await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
             }
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
-            await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            materialized = await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
             await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
             if (servers.Count > 0)
             {
                 WriteActivity(ActivityEntries.SyncCompleted(servers.Count, _runFailures.Values.ToList()));
             }
         }
+        catch (OperationCanceledException)
+        {
+            stopped = SyncRunOutcome.Cancelled;
+            throw;
+        }
+        catch (Exception)
+        {
+            stopped = SyncRunOutcome.Failed;
+            throw;
+        }
         finally
         {
+            // Before the run shows finished: the page reads the history again when it sees a new end.
+            await RecordAsync(kind, started, servers, materialized, stopped).ConfigureAwait(false);
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
             Interlocked.Exchange(ref _busy, 0);
         }
+    }
+
+    // Saving the history never fails the sync. The type only: a message could hold a remote address.
+    private async Task RecordAsync(SyncRunKind kind, DateTimeOffset started, IReadOnlyList<RemoteServerInfo> servers, Materialized materialized, SyncRunOutcome? stopped)
+    {
+        if (_history is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var report = materialized.Report;
+            var rows = servers.Select(server =>
+            {
+                var counts = report?.ByServer.GetValueOrDefault(server.Id) ?? new StubCounts(0, 0, 0, 0);
+                RemoteFailure? failure = _runFailures.TryGetValue(server.Id, out var failed) ? failed.Value : null;
+                return new SyncRunServer(server.Id, server.Name, _runReads.GetValueOrDefault(server.Id), counts.Created, counts.Updated, counts.Removed, counts.Failed, failure);
+            }).ToList();
+            var run = new SyncRun(started, (long)(_timeProvider.GetUtcNow() - started).TotalMilliseconds, kind, stopped ?? OutcomeOf(rows, report, materialized.Failed), rows)
+            {
+                Created = report?.Created ?? 0,
+                Updated = report?.Updated ?? 0,
+                Removed = report?.Removed ?? 0,
+                Failed = report?.Failed ?? 0,
+                IndexSaveFailed = _run.IndexSaveFailed,
+                MaterializationFailed = materialized.Failed
+            };
+            await _history.AddAsync(run, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError("Could not save the sync history: {Error}", exception.GetType().Name);
+        }
+    }
+
+    private SyncRunOutcome OutcomeOf(IReadOnlyList<SyncRunServer> rows, MaterializationReport? report, bool materializationFailed)
+    {
+        if (materializationFailed || (rows.Count > 0 && rows.All(row => row.Failure is not null)))
+        {
+            return SyncRunOutcome.Failed;
+        }
+
+        return rows.Any(row => row.Failure is not null) || _run.IndexSaveFailed || report?.Failed > 0
+            ? SyncRunOutcome.PartlyFailed
+            : SyncRunOutcome.Succeeded;
     }
 
     // What goes wrong with one server stays with it: the others are read, and the materialization still runs.
@@ -327,16 +400,17 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     // After every sync, also a failed one: what one server sent is still good, and removals check each server by itself.
-    private async Task MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
+    private async Task<Materialized> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
         if (_materializer is null)
         {
-            return;
+            return new Materialized(null, false);
         }
 
+        var materialized = new Materialized(null, true);
         try
         {
-            await _materializer.MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            materialized = new Materialized(await _materializer.MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false), false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -346,7 +420,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         if (_linker is null)
         {
-            return;
+            return materialized;
         }
 
         try
@@ -358,6 +432,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             _logger.LogError("Could not link the versions of the titles: {Error}", exception.GetType().Name);
         }
+
+        return materialized;
     }
 
     private async Task FollowServerLibrariesAsync(CancellationToken cancellationToken)
@@ -408,8 +484,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         _logger.LogInformation("Read {Count} catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
+        _runReads[server.Id] = read.Value.Count;
+        var entries = await WithCollectionsAsync(server, read.Value, cancellationToken).ConfigureAwait(false);
         var mark = new SyncMark(started.Value, server.ImportedLibraryIds);
-        var saved = await _index.ReplaceServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false);
+        var saved = await _index.ReplaceServerAsync(server.Id, entries, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false);
         TrackSave(saved);
         RememberCursor(server.Id, saved ? cursor : null);
     }
@@ -445,8 +523,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         _logger.LogInformation("Read {Count} changed catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
+        _runReads[server.Id] = read.Value.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
-        TrackSave(await _index.MergeServerAsync(server.Id, read.Value, _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false));
+        TrackSave(await _index.MergeServerAsync(server.Id, KeepCollections(read.Value, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false));
     }
 
     // The change feed instead of polling. The mark still moves: if the remote stops being a JellyMesh one, polling goes on
@@ -482,8 +561,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         _logger.LogInformation("Read {Count} entries from the change feed of remote server {ServerName}", read.Value.Items.Count, server.Name);
+        _runReads[server.Id] = read.Value.Items.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
-        var saved = await _index.MergeServerAsync(server.Id, read.Value.Items, _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false);
+        var saved = await _index.MergeServerAsync(server.Id, KeepCollections(read.Value.Items, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false);
         TrackSave(saved);
 
         // Not saved means not applied, so the old cursor reads the same changes again.
@@ -491,6 +571,42 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             RememberCursor(server.Id, read.Value.Cursor);
         }
+    }
+
+    // A read of changes does not read collections, and a film does not change when its collection does (decision 52).
+    private static IReadOnlyList<IndexedItem> KeepCollections(IReadOnlyList<IndexedItem> changed, ServerCatalog catalog)
+    {
+        var known = catalog.Items.Where(item => item.Collection is not null).ToDictionary(item => item.ItemId, item => item.Collection, StringComparer.Ordinal);
+        return known.Count == 0
+            ? changed
+            : changed.Select(item => known.TryGetValue(item.ItemId, out var collection) ? item with { Collection = collection } : item).ToList();
+    }
+
+    // Only a stock server answers the stock route, and only with the option on. A failed read keeps what was known, so that
+    // the .nfo does not lose its collection for one night.
+    private async Task<IReadOnlyList<IndexedItem>> WithCollectionsAsync(RemoteServerInfo server, IReadOnlyList<IndexedItem> entries, CancellationToken cancellationToken)
+    {
+        if (_store?.Read(config => config.FederateCollections) != true || server.Mode == RemoteMode.JellyMesh)
+        {
+            return entries;
+        }
+
+        var libraries = entries.Where(item => item.Kind == IndexedItemKind.Movie).Select(item => item.LibraryId).Distinct(StringComparer.Ordinal).ToList();
+        if (libraries.Count == 0)
+        {
+            return entries;
+        }
+
+        var read = await _reader.ReadCollectionsAsync(server, libraries, cancellationToken).ConfigureAwait(false);
+        if (!read.IsSuccess)
+        {
+            _logger.LogWarning("Could not read the collections of remote server {ServerName}: {Failure}. The ones known are kept", server.Name, read.Failure);
+            return _index.Snapshot.Find(server.Id) is { } catalog ? KeepCollections(entries, catalog) : entries;
+        }
+
+        return entries
+            .Select(item => item.Kind == IndexedItemKind.Movie && read.Value!.TryGetValue(item.ItemId, out var collection) ? item with { Collection = collection } : item)
+            .ToList();
     }
 
     private void RememberCursor(Guid serverId, string? cursor)
@@ -552,4 +668,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     private sealed record RunState(bool IsRunning, bool IndexSaveFailed, DateTimeOffset? StartedUtc, DateTimeOffset? FinishedUtc);
+
+    // The report of this run's materialization, null without one, and whether it threw.
+    private sealed record Materialized(MaterializationReport? Report, bool Failed);
 }

@@ -6,7 +6,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// Carries each user's watch state from old items to the new items of their titles, for the migration and a server
-/// rename (Q38, Q41, Q47, decisions 149-155).
+/// rename (Q38, Q41, Q47, decisions 149-155, 179).
 /// </summary>
 /// <remarks>
 /// It writes the rows of every user, so only the system or an administrator route may call it, never a user request
@@ -17,7 +17,8 @@ public interface IWatchStateCarrier
     /// <summary>
     /// Carries the watch state of each move for every user. A carry done for a user and old item is repeated only after
     /// a newer watch of the old item, and then without favorite and rating (decision 155). A move is not counted as done
-    /// when its record cannot be saved, and none runs while the record cannot be read (decision 176).
+    /// when its record cannot be saved, and none runs while the record cannot be read (decision 176). The records of an
+    /// old item whose moves all remove it and are done for every user are forgotten after the run (decision 179).
     /// </summary>
     /// <param name="moves">
     /// The old items and their new items. Versions in one registry group must be linked first, with their primary among

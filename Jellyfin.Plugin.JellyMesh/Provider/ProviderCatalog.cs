@@ -40,7 +40,8 @@ public sealed class ProviderCatalog
         ItemFields.Tags,
         ItemFields.Taglines,
         ItemFields.OriginalTitle,
-        ItemFields.Chapters
+        ItemFields.Chapters,
+        ItemFields.RemoteTrailers
     ];
 
     private readonly ILibraryManager _library;

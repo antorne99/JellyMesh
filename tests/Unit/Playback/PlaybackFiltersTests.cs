@@ -81,13 +81,16 @@ public class PlaybackFiltersTests
 
     private PlaybackInfoFilter InfoFilter()
     {
+        var store = new InMemoryConfigurationStore();
+        var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         return new PlaybackInfoFilter(
-            new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
+            lookup,
             _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
-            new LocalCopyLookup(_resolver.Object, _library.Object));
+            new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store));
     }
 
     private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null)
@@ -378,7 +381,7 @@ public class PlaybackFiltersTests
         var source = Assert.Single(response.MediaSources);
         Assert.StartsWith("/Videos/" + _localId.ToString("N") + "/stream.mp4?static=true", source.TranscodingUrl, StringComparison.Ordinal);
         Assert.Contains("ApiKey=" + Token, source.TranscodingUrl, StringComparison.Ordinal);
-        Assert.Equal(_itemId.ToString("N"), source.Id);
+        Assert.Equal(_localId.ToString("N"), source.Id);
         Assert.False(source.SupportsDirectPlay);
         Assert.False(source.SupportsDirectStream);
         Assert.True(source.SupportsTranscoding);

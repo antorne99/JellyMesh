@@ -831,6 +831,176 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task AnOldItemRemovedRightAfterItsCarryForgetsItsRecordsSoThatThePathCanComeBack()
+    {
+        // A to B, then B to A, then A to B again with no run in between: the last move starts fresh (decision 179).
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        Row(_mario, old).Rating = 7;
+
+        var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+
+        var b = Movie(_serverA);
+        report = await CarryAsync(RemovingMove(old, oldStub, (b, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, b).IsFavorite);
+        Assert.Equal(7, Row(_mario, b).Rating);
+    }
+
+    [Fact]
+    public async Task AnOldItemThatStaysKeepsItsRecordsAndIsNotCarriedAgain()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        var b = Movie(_serverA);
+        var report = await CarryAsync(Move(old, oldStub, (b, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+        Assert.False(Row(_mario, b).IsFavorite);
+    }
+
+    [Fact]
+    public async Task TheRecordsForgottenAfterARemovingCarryStayForgottenOnDisk()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var (other, otherStub) = Old();
+        var b = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        Row(_mario, other).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)), Move(other, otherStub, (b, _serverA)));
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+        Assert.True(_log.TryFind(_mario.Id, other.Id, out _));
+    }
+
+    [Fact]
+    public async Task ARemovingCarryNotDoneForEveryUserKeepsItsRecords()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        Row(_luigi, old).IsFavorite = true;
+        _hidden.Add((_luigi.Id, a.Id));
+        var move = RemovingMove(old, oldStub, (a, _serverA));
+
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.UsersLeft, report.Moves.Single().Status);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+
+        _hidden.Clear();
+        report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_luigi, a).IsFavorite);
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+        Assert.False(_log.TryFind(_luigi.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task ARemovingCarryToVersionsNotLinkedKeepsTheRecordsOfAnEarlierCarry()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        var b = Movie(_serverA);
+        var c = Movie(_serverB);
+        Group(b, c);
+
+        var report = await CarryAsync(RemovingMove(old, oldStub, (b, _serverA), (c, _serverB)));
+
+        Assert.Equal(WatchStateMoveStatus.NotLinked, report.Moves.Single().Status);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task AnOldItemWithAMoveThatDoesNotRemoveItKeepsItsRecords()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+
+        var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)), Move(old, oldStub, (b, _serverA)));
+
+        Assert.Equal((2, 0), (report.Carried, report.Skipped));
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task ARemovingCarryWhoseRecordCannotBeSavedKeepsItsRecordsInMemory()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        _log.Dispose();
+        Directory.CreateDirectory(_data);
+        await File.WriteAllTextAsync(Path.Combine(_data, "log"), "in the way");
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        var move = RemovingMove(old, oldStub, (a, _serverA));
+
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+
+        // A run again does not put back the favorite the user took off meanwhile.
+        Row(_mario, a).IsFavorite = false;
+        _saves.Clear();
+        File.Delete(Path.Combine(_data, "log"));
+        report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task ARemovingSeriesCarryForgetsItsRecords()
+    {
+        var (old, oldStub) = OldSeries();
+        var a = Series(_serverA);
+        Row(_mario, old).IsFavorite = true;
+
+        var report = await CarryAsync(WatchStateMove.OfSeries(oldStub, old.Id, [new WatchStateTarget(a.Id, _serverA)], removesOldItem: true));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public void OnlyAMoveMadeAsRemovingTheOldItemSaysSo()
+    {
+        var (old, oldStub) = Old();
+        var (series, seriesStub) = OldSeries();
+        List<WatchStateTarget> targets = [new WatchStateTarget(Guid.NewGuid(), _serverA)];
+
+        Assert.False(WatchStateMove.Of(oldStub, old.Id, targets).RemovesOldItem);
+        Assert.True(WatchStateMove.Of(oldStub, old.Id, targets, removesOldItem: true).RemovesOldItem);
+        Assert.False(WatchStateMove.OfSeries(seriesStub, series.Id, targets).RemovesOldItem);
+        Assert.True(WatchStateMove.OfSeries(seriesStub, series.Id, targets, removesOldItem: true).RemovesOldItem);
+        Assert.False(WatchStateMove.OfMerge(oldStub, old.Id, targets).RemovesOldItem);
+    }
+
+    [Fact]
     public void TheServersOfAMoveFollowTheSourcesOfTheOldStubBestFirst()
     {
         var stub = new StubEntry
@@ -851,6 +1021,10 @@ public sealed class WatchStateCarrierTests : IDisposable
 
     private static WatchStateMove Move(BaseItem from, StubEntry stub, params (BaseItem Item, Guid? Server)[] versions) =>
         WatchStateMove.Of(stub, from.Id, versions.Select(version => new WatchStateTarget(version.Item.Id, version.Server)).ToList());
+
+    // A move whose old item is removed right after, as a rename or the automatic migration (decision 179).
+    private static WatchStateMove RemovingMove(BaseItem from, StubEntry stub, params (BaseItem Item, Guid? Server)[] versions) =>
+        WatchStateMove.Of(stub, from.Id, versions.Select(version => new WatchStateTarget(version.Item.Id, version.Server)).ToList(), removesOldItem: true);
 
     private static void Link(Video primary, Video alternate)
     {

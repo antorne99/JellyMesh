@@ -64,6 +64,16 @@ public interface IRemoteCatalogReader
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads the collections (BoxSets) of the film libraries of a stock server, and the films in each (decision 52).
+    /// All or nothing, like <see cref="ReadAsync"/>.
+    /// </summary>
+    /// <param name="server">The server.</param>
+    /// <param name="libraryIds">The film libraries.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The collection of each film, by its ID on the server, or why they could not all be read.</returns>
+    Task<RemoteResult<IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server, IReadOnlyCollection<string> libraryIds, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Reads the clock of a server. A read must be stamped with it, because a change is filtered by the time on the remote.
     /// </summary>
     /// <param name="server">The server.</param>
