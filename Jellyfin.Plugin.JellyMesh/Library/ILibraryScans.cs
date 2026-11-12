@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -21,4 +22,12 @@ public interface ILibraryScans
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task that completes when the queued scan ended.</returns>
     Task QueueAndWaitAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Waits until no library scan is running and every library has its id, for at most the limit.
+    /// </summary>
+    /// <param name="limit">The longest wait.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the libraries are ready.</returns>
+    Task<bool> WaitReadyAsync(TimeSpan limit, CancellationToken cancellationToken);
 }

@@ -299,6 +299,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var followed = false;
         try
         {
+            if (_libraries is not null)
+            {
+                await _libraries.WaitReadyAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             _runFailures.Clear();
             _runReads.Clear();
             servers = _registry.GetServers();
