@@ -122,10 +122,9 @@ check "the viewer is told what anyone without a copy is told" 1 "$(grep -a '^SEE
 admin=$(req local POST "/Items/$stub_private/PlaybackInfo" "$chosen" | jq -r '.MediaSources[0].TranscodingUrl' | grep -c master.m3u8 || true)
 check "the admin, who sees it, gets the copy" 1 "$admin"
 
-echo "--- the next full scan"
+echo "--- the next full scan: a local copy no longer removes the stub, nor takes its state (Q18 b)"
 scan local
-check "the post-scan task removes the stub" "" "$(stub_item local "$DIRECT")"
-moved=$(user_data "$local_direct")
-echo "watch state on the copy: $moved"
-check "the state moved to the copy" "$(echo "$data" | jq -c '{Played, LastPlayedDate}')" "$(echo "$moved" | jq -c '{Played, LastPlayedDate}')"
+check "the post-scan task keeps the stub" "$stub_direct" "$(stub_item local "$DIRECT")"
+check "the state stays on the stub" "$(echo "$data" | jq -c '{Played, LastPlayedDate}')" "$(user_data "$stub_direct" | jq -c '{Played, LastPlayedDate}')"
+echo "watch state on the copy: $(user_data "$local_direct")"
 exit $FAILED
