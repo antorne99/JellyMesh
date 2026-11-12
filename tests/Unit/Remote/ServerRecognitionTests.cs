@@ -184,6 +184,45 @@ public class ServerRecognitionTests
         Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
     }
 
+    // Decision 126: a different Server Id at a later login keeps the stored one and is logged with both.
+    [Fact]
+    public async Task ADifferentIdAtLoginIsLoggedWithBothIds()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, fixture.Client, fixture.Logger);
+        _serverId = OtherId;
+        fixture.Logger.Lines.Clear();
+        fixture.Logger.Levels.Clear();
+
+        await restarted.RunWithSessionAsync(server.Id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
+
+        var index = Assert.Single(Enumerable.Range(0, fixture.Logger.Lines.Count), i => fixture.Logger.Lines[i].Contains(OtherId, StringComparison.Ordinal));
+        var line = fixture.Logger.Lines[index];
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, fixture.Logger.Levels[index]);
+        Assert.Contains("Friend", line, StringComparison.Ordinal);
+        Assert.Contains(FirstId, line, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Token, line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ADifferentIdWhenTheLoginIsEnteredAgainIsKeptOutAndLogged()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        _serverId = OtherId;
+        fixture.Logger.Lines.Clear();
+        fixture.Logger.Levels.Clear();
+
+        await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
+        var index = Assert.Single(Enumerable.Range(0, fixture.Logger.Lines.Count), i => fixture.Logger.Lines[i].Contains(OtherId, StringComparison.Ordinal));
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, fixture.Logger.Levels[index]);
+        Assert.Contains(FirstId, fixture.Logger.Lines[index], StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AnIdThatCannotBeSavedAtLoginLeavesTheCallWorking()
     {

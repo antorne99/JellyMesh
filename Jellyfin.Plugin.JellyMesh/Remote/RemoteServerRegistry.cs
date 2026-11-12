@@ -198,11 +198,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         var found = false;
+        string? storedId = null;
         _store.Update(config =>
         {
             if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
             {
                 server.EncryptedCredentials = encrypted;
+                storedId = server.JellyfinServerId;
                 if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
                 {
                     server.JellyfinServerId = remoteId;
@@ -215,6 +217,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
         }
+
+        WarnIfOtherServerId(stored.Name, storedId, login.Value!.ServerId);
 
         var runtime = RuntimeOf(serverId);
         runtime.Session = login.Value;
@@ -549,8 +553,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // Stores the Server Id of a server configured before it was read, at its first login (decision 121).
     private void RememberServerId(StoredServer server, string remoteId)
     {
-        if (!_store.Read(config => config.Servers.Any(candidate => candidate.Id == server.Id && candidate.JellyfinServerId.Length == 0)))
+        var stored = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id)?.JellyfinServerId);
+        if (stored is null || stored.Length > 0)
         {
+            WarnIfOtherServerId(server.Name, stored, remoteId);
             return;
         }
 
@@ -568,6 +574,19 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             // The type only: a message could hold a path or an address.
             _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}", server.Name, exception.GetType().Name);
+        }
+    }
+
+    // Logs a login whose Server Id differs from the stored one, which stays (decision 126).
+    private void WarnIfOtherServerId(string serverName, string? storedId, string? remoteId)
+    {
+        if (!string.IsNullOrEmpty(storedId) && remoteId is not null && remoteId != storedId)
+        {
+            _logger.LogWarning(
+                "Remote server {ServerName} answered with Server Id {RemoteServerId}, not the stored {StoredServerId}; the stored one is kept",
+                serverName,
+                remoteId,
+                storedId);
         }
     }
 
