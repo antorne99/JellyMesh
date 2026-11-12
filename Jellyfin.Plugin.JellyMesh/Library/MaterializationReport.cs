@@ -28,4 +28,10 @@ public sealed record MaterializationReport(
     /// Gets how many stubs are kept because none of their servers is configured and none was removed from the page.
     /// </summary>
     public int Unconfigured { get; init; }
+
+    /// <summary>
+    /// Gets the counts of each server's folder, for the servers whose stubs the run touched. Stubs of the flat layout are
+    /// only in the totals.
+    /// </summary>
+    public IReadOnlyDictionary<Guid, StubCounts> ByServer { get; init; } = new Dictionary<Guid, StubCounts>();
 }

@@ -377,6 +377,30 @@ public sealed class LibraryMaterializerTests : IDisposable
         _fixture.Library.Verify(library => library.DeleteItem(item, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
     }
 
+    // Decision 48: the sync history shows what each server's folder got.
+    [Fact]
+    public async Task TheReportCountsTheStubsOfEachServer()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        var b = await _fixture.Sync.AddServerAsync("B", "films");
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+
+        var first = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(new StubCounts(2, 0, 0, 0), first.ByServer[a.Id]);
+        Assert.Equal(new StubCounts(2, 0, 0, 0), first.ByServer[b.Id]);
+
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+
+        var second = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(new StubCounts(0, 0, 1, 0), second.ByServer[a.Id]);
+        Assert.Equal(new StubCounts(0, 0, 1, 0), second.ByServer[b.Id]);
+        Assert.Equal(2, second.Removed);
+    }
+
     [Fact]
     public async Task RemovingAServerDeletesItsStubsAndLeavesThoseOfTheOther()
     {
