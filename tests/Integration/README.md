@@ -187,7 +187,7 @@ bash playback/final.sh            # the whole proof in order, then final2.sh, fi
 
 To run beside another stack, give every script the same `PREFIX` and `PORT_A`: the servers are `$PREFIX-a` and `$PREFIX-b` on `PORT_A` and `PORT_A+1`, and the gates listen on `PORT_A+2` to `PORT_A+4`. The stock remote is the `remoto-standard` of this stack on `STOCK_PORT` (default 8097). With `STOCK=own`, `up.sh` starts a private one instead, `$PREFIX-s` on `PORT_A+5` unless `STOCK_PORT` says otherwise, and `down.sh` removes it. `down.sh` stops only the gates on this run's ports. `peer-device.sh` makes one server of its own, with defaults `jm-q92` and 8280.
 
-Stubs go to a folder per remote server, `/federata/<server id>/Film` and `/Serie`, so `federate.sh` adds the folders of each server it connects to the libraries, as an admin would. The `Film` library keeps `/media/film` and `/extra/film`, so it holds local copies and stays one a peer can be given.
+Stubs go to a folder per remote server, `/federata/<server id>/Film` and `/Serie`, so `federate.sh` adds the folders of each server it connects to the libraries, as an admin would. The limit tests need `a` to win ties against the stock remote, which falls to the server ID. A remote added back takes back its ID, so when the draw goes the wrong way, `federate.sh` makes the private stock remote of `STOCK=own` again, with a new Server Id, and draws once more; with the shared one it stops and says so. The `Film` library keeps `/media/film` and `/extra/film`, so it holds local copies and stays one a peer can be given.
 
 ```sh
 export MEDIA=<main checkout>/tests/Integration/media WORK=<scratch folder>
