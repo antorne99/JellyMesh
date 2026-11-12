@@ -88,7 +88,7 @@ public sealed class LayoutMigration : ILayoutMigration
                 return;
             }
 
-            var catalog = IndexItemLookup.Build(snapshot);
+            var catalog = new Catalog(IndexItemLookup.Build(snapshot), _servers.GetServers().Select(server => server.Id).ToHashSet(), state.RemovedServers.ToHashSet());
             var moves = new List<WatchStateMove>();
             var waiting = 0;
             foreach (var stub in state.Stubs.Where(stub => stub.ServerId is null))
@@ -165,10 +165,19 @@ public sealed class LayoutMigration : ILayoutMigration
         }
     }
 
-    // Gone when no server that still has the item in the index, or could still send it, holds any of its remote items.
-    private static bool IsGone(IReadOnlyList<StubSource> sources, IndexItemLookup catalog) => sources.All(source =>
-        catalog.Find(source.ServerId, source.ItemId) is null
-        && (catalog.Snapshot.Find(source.ServerId) is null || catalog.Snapshot.IsAuthoritativeFor(source.ServerId)));
+    // Gone as the stub planner decides (decision 44): sources only on unconfigured servers go if the admin removed them all,
+    // otherwise each configured server must be read in full and lack the item, since a lost index proves nothing.
+    private static bool IsGone(IReadOnlyList<StubSource> sources, Catalog catalog)
+    {
+        if (sources.Count > 0 && sources.All(source => !catalog.Configured.Contains(source.ServerId)))
+        {
+            return sources.All(source => catalog.Removed.Contains(source.ServerId));
+        }
+
+        var snapshot = catalog.Items.Snapshot;
+        return snapshot.Health == IndexHealth.Ok && sources.Where(source => catalog.Configured.Contains(source.ServerId)).All(source =>
+            snapshot.IsAuthoritativeFor(source.ServerId) && catalog.Items.Find(source.ServerId, source.ItemId) is null);
+    }
 
     private static HashSet<(Guid ServerId, string ItemId)> ItemsOf(IReadOnlyList<StubSource> sources) =>
         sources.Select(source => (source.ServerId, source.ItemId)).ToHashSet();
@@ -203,7 +212,7 @@ public sealed class LayoutMigration : ILayoutMigration
 
     // The move of an old film or episode, or whether it still waits: an old stub with no item, or whose title is gone, has
     // nothing to carry.
-    private (WatchStateMove? Move, bool Waits) TitleMoveOf(string root, StubState state, StubEntry old, IndexItemLookup catalog)
+    private (WatchStateMove? Move, bool Waits) TitleMoveOf(string root, StubState state, StubEntry old, Catalog catalog)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), false) is not Video item)
         {
@@ -219,7 +228,7 @@ public sealed class LayoutMigration : ILayoutMigration
         return TargetsOf(root, news) is { } targets ? (WatchStateMove.Of(old, item.Id, targets), false) : (null, true);
     }
 
-    private (WatchStateMove? Move, bool Waits) SeriesMoveOf(string root, StubState state, SeriesStub old, IndexItemLookup catalog)
+    private (WatchStateMove? Move, bool Waits) SeriesMoveOf(string root, StubState state, SeriesStub old, Catalog catalog)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), true) is not Series item)
         {
@@ -342,4 +351,7 @@ public sealed class LayoutMigration : ILayoutMigration
     }
 
     private sealed record LastRun(int Waiting);
+
+    // The index with the configured servers and the ones the admin removed, read once per run.
+    private sealed record Catalog(IndexItemLookup Items, HashSet<Guid> Configured, HashSet<Guid> Removed);
 }

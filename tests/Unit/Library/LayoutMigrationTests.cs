@@ -46,6 +46,9 @@ public sealed class LayoutMigrationTests : IDisposable
     private readonly List<VersionGroup> _groups = [];
     private readonly List<VirtualFolderInfo> _libraries = [];
     private readonly List<(Guid Server, string ItemId)> _indexed = [];
+    private readonly List<Guid> _configured = [_serverA, _serverB];
+    private readonly List<Guid> _synced = [_serverA, _serverB];
+    private readonly List<Guid> _removed = [];
     private readonly User _mario = new("mario", "auth", "reset");
     private readonly User _luigi = new("luigi", "auth", "reset");
     private StubRegistry _registry;
@@ -79,15 +82,12 @@ public sealed class LayoutMigrationTests : IDisposable
         _userData.Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
             .Callback((User user, BaseItem item, UserItemData data, UserDataSaveReason _, CancellationToken _) => _rows[(user.Id, item.Id)] = data);
         _servers.Setup(servers => servers.GetServers()).Returns(() =>
-        [
-            new RemoteServerInfo(_serverA, "Casa", "http://a", RemoteMode.Standard, 0, [], null, null),
-            new RemoteServerInfo(_serverB, "Ufficio", "http://b", RemoteMode.Standard, 0, [], null, null)
-        ]);
+            _configured.Select(server => new RemoteServerInfo(server, "Server", "http://" + server.ToString("N"), RemoteMode.Standard, 0, [], null, null)).ToList());
         _index.Setup(index => index.Snapshot).Returns(() => new IndexSnapshot
         {
             Version = IndexSnapshot.CurrentVersion,
             Health = IndexHealth.Ok,
-            Servers = new[] { _serverA, _serverB }.Select(server => new ServerCatalog
+            Servers = _synced.Select(server => new ServerCatalog
             {
                 ServerId = server,
                 State = ServerSyncState.Complete,
@@ -295,6 +295,66 @@ public sealed class LayoutMigrationTests : IDisposable
         await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
         Assert.Single(_registry.State.Stubs, stub => stub.ServerId is null);
+    }
+
+    [Fact]
+    public async Task AConfiguredServerMissingFromAnEmptyIndexKeepsTheOldStubsWaiting()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _synced.Clear();
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+    }
+
+    [Fact]
+    public async Task AConfiguredServerNotReadInFullKeepsTheOldStubsWaiting()
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        _index.Setup(index => index.Snapshot).Returns(() => new IndexSnapshot
+        {
+            Version = IndexSnapshot.CurrentVersion,
+            Health = IndexHealth.Ok,
+            Servers = [new ServerCatalog { ServerId = _serverA, State = ServerSyncState.Stale, Items = [] }]
+        });
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task ATitleOnlyOnARemovedServerIsGoneEvenWhileTheIndexStillListsIt()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverB, "b1"));
+        _configured.Remove(_serverB);
+        _removed.Add(_serverB);
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+    }
+
+    [Fact]
+    public async Task ATitleOnlyOnAServerMissingFromTheSettingsWithoutTheRemovalMarkWaits()
+    {
+        var (old, _) = OldFilm("Dune", (_serverB, "b1"));
+        _configured.Remove(_serverB);
+        _synced.Remove(_serverB);
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
     }
 
     [Fact]
@@ -512,7 +572,7 @@ public sealed class LayoutMigrationTests : IDisposable
 
     private async Task<LayoutMigration> MigrationAsync()
     {
-        await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList() }, CancellationToken.None);
+        await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList(), RemovedServers = _removed.ToList() }, CancellationToken.None);
         var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, new CapturingLogger<WatchStateCarrier>());
         return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), new CapturingLogger<LayoutMigration>());
     }
