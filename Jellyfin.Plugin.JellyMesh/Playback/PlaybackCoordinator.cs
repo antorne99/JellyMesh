@@ -765,7 +765,7 @@ public sealed class PlaybackCoordinator
         limit.CancelAfter(timeout);
         try
         {
-            return await _registry.RunWithSessionAsync(serverId, call, limit.Token).ConfigureAwait(false);
+            return await _registry.RunPlaybackCallAsync(serverId, call, limit.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

@@ -46,6 +46,34 @@ public class ServerReachabilityActivityTests
             });
     }
 
+    // Decision 130: playback calls do not write, and do not hide the change a sync or admin call sees next.
+    [Fact]
+    public async Task Playback_calls_never_write_and_leave_the_next_change_to_sync_calls()
+    {
+        var remote = new SwitchableRemote();
+        using var registry = remote.NewRegistry();
+        var server = await remote.AddAsync(registry);
+
+        foreach (var failure in new[] { RemoteFailure.Unreachable, RemoteFailure.None, RemoteFailure.Timeout, RemoteFailure.None, RemoteFailure.Unreachable })
+        {
+            await PlaybackCallAsync(registry, server.Id, failure);
+        }
+
+        Assert.Empty(remote.Activity.Entries);
+        Assert.Equal(RemoteFailure.Unreachable, registry.GetServers().Single().LastFailure);
+
+        remote.Answer = Answer.Offline;
+        await registry.GetLibrariesAsync(server.Id, CancellationToken.None);
+
+        Assert.Equal([Offline], remote.Activity.Entries.Select(entry => entry.Type));
+    }
+
+    private static Task<RemoteResult<int>> PlaybackCallAsync(RemoteServerRegistry registry, Guid serverId, RemoteFailure failure)
+        => registry.RunPlaybackCallAsync(
+            serverId,
+            (_, _, _) => Task.FromResult(failure == RemoteFailure.None ? RemoteResult.Success(1) : RemoteResult.Fail<int>(failure)),
+            CancellationToken.None);
+
     [Fact]
     public async Task After_a_restart_the_first_failure_is_written_and_the_first_answer_is_not()
     {

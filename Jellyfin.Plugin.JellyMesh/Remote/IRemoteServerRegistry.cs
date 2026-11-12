@@ -95,4 +95,18 @@ public interface IRemoteServerRegistry
         Guid serverId,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs a playback call like <see cref="RunWithSessionAsync{T}"/>, without telling the activity log that the server
+    /// went offline or came back (decision 130).
+    /// </summary>
+    /// <typeparam name="T">The result type.</typeparam>
+    /// <param name="serverId">The server.</param>
+    /// <param name="call">The call.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The result of <paramref name="call"/>, or why it could not run.</returns>
+    Task<RemoteResult<T>> RunPlaybackCallAsync<T>(
+        Guid serverId,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken);
 }
