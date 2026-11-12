@@ -578,6 +578,92 @@ public sealed class ServerLibraryManagerTests
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
 
+    [Fact]
+    public async Task A_server_removed_and_added_back_while_its_switch_on_waits_for_the_scans_gets_nothing_from_that_job()
+    {
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, "/media/film");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var on = fixture.Manager.Enable(_serverId);
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        fixture.RemoveServer();
+        var back = fixture.AddServerBack("Nuovo");
+        release.SetResult();
+        await on.Job.WaitAsync(TimeSpan.FromSeconds(10));
+        await fixture.Manager.DeleteRemovedServerLibraries().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(fixture.Libraries.Created);
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        AssertUntouched(back);
+        Assert.Equal(AutomaticLibrariesError.None, fixture.Manager.GetState(_serverId).Error);
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task A_server_removed_and_added_back_while_its_library_is_being_created_leaves_that_library_to_delete()
+    {
+        var fixture = new Fixture();
+        RemoteServerConfig? back = null;
+        fixture.Libraries.OnCreate = () =>
+        {
+            if (back is null)
+            {
+                fixture.RemoveServer();
+                back = fixture.AddServerBack("Nuovo");
+            }
+        };
+
+        await fixture.Manager.Enable(_serverId).Job.WaitAsync(TimeSpan.FromSeconds(10));
+        await fixture.Manager.DeleteRemovedServerLibraries().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Created.Select(call => call.Name));
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Empty(fixture.Libraries.Folders);
+        AssertUntouched(back!);
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task A_server_removed_and_added_back_before_its_switch_on_starts_gets_nothing_from_that_job()
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            []);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var cleanup = fixture.Manager.DeleteRemovedServerLibraries();
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var on = fixture.Manager.Enable(_serverId);
+
+        fixture.RemoveServer();
+        var back = fixture.AddServerBack("Nuovo");
+        release.SetResult();
+        await on.Job.WaitAsync(TimeSpan.FromSeconds(10));
+        await cleanup.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AutomaticLibrariesOutcome.Started, on.Outcome);
+        Assert.Empty(fixture.Libraries.Created);
+        Assert.Equal(["Altro - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+        AssertUntouched(back);
+    }
+
+    // A server added back is a new one: a job started for the one removed writes nothing in it.
+    private static void AssertUntouched(RemoteServerConfig server)
+    {
+        Assert.False(server.AutomaticLibraries);
+        Assert.Empty(server.AutomaticLibraryRegistry);
+        Assert.Empty(server.ReleasedAutomaticLibraries);
+        Assert.Empty(server.PreexistingLibraryIds);
+    }
+
     private sealed class Fixture
     {
         public Fixture(string root = Root, string serverName = "Casa")
@@ -615,6 +701,14 @@ public sealed class ServerLibraryManagerTests
             config.Servers.Remove(server);
             config.HoldAutomaticLibraries(server.Id, server.AutomaticLibraryRegistry, server.PreexistingLibraryIds);
         });
+
+        // Like the registry for a remote that comes back: a new server with the same id.
+        public RemoteServerConfig AddServerBack(string name)
+        {
+            var server = new RemoteServerConfig { Id = _serverId, Name = name };
+            Store.Update(config => config.Servers.Add(server));
+            return server;
+        }
     }
 
     internal sealed record CreateCall(string Name, CollectionTypeOptions? Type, LibraryOptions Options, bool Refresh);

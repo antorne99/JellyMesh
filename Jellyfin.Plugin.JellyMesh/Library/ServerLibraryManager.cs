@@ -79,10 +79,13 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     /// <inheritdoc />
     public AutomaticLibrariesRequest Enable(Guid serverId)
     {
-        var outcome = _store.Read(config => Find(config, serverId) is null
-            ? AutomaticLibrariesOutcome.UnknownServer
-            : config.FederatedFolderPath.Length == 0 ? AutomaticLibrariesOutcome.NoFederatedFolder : AutomaticLibrariesOutcome.Started);
-        return outcome == AutomaticLibrariesOutcome.Started ? Start(serverId, EnableAsync) : AutomaticLibrariesRequest.Refused(outcome);
+        // The job is bound to this server: one removed and added back with the same id is another (decision 116).
+        var (outcome, owner) = _store.Read(config => Find(config, serverId) is not { } server
+            ? (AutomaticLibrariesOutcome.UnknownServer, null)
+            : (config.FederatedFolderPath.Length == 0 ? AutomaticLibrariesOutcome.NoFederatedFolder : AutomaticLibrariesOutcome.Started, server));
+        return outcome == AutomaticLibrariesOutcome.Started && owner is not null
+            ? Start(serverId, (id, token) => EnableAsync(id, owner, token))
+            : AutomaticLibrariesRequest.Refused(outcome);
     }
 
     /// <inheritdoc />
@@ -152,6 +155,10 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     private static RemoteServerConfig? Find(PluginConfiguration config, Guid serverId) => config.Servers.FirstOrDefault(server => server.Id == serverId);
+
+    // The server only while it is still the instance a job started for.
+    private static RemoteServerConfig? Owned(PluginConfiguration config, RemoteServerConfig owner) =>
+        config.Servers.FirstOrDefault(server => ReferenceEquals(server, owner));
 
     private static RemovedServerLibrariesConfig? HeldOf(PluginConfiguration config, Guid serverId) =>
         config.RemovedServerLibraries.FirstOrDefault(held => held.ServerId == serverId);
@@ -263,16 +270,22 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
     }
 
-    private async Task EnableAsync(Guid serverId, CancellationToken cancellationToken)
+    private async Task EnableAsync(Guid serverId, RemoteServerConfig owner, CancellationToken cancellationToken)
     {
+        var live = false;
         _store.Update(config =>
         {
-            if (Find(config, serverId) is { } server)
+            if (Owned(config, owner) is { } server)
             {
                 server.AutomaticLibraries = true;
                 server.ReleasedAutomaticLibraries.Clear();
+                live = true;
             }
         });
+        if (!live)
+        {
+            return;
+        }
 
         var folders = ReadFolders();
         if (folders is null)
@@ -281,11 +294,11 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             return;
         }
 
-        Follow(serverId, folders);
-        RecordPreexisting(serverId, folders);
+        Follow(config => Owned(config, owner) is null ? null : LiveRegistry(config, serverId), folders);
+        RecordPreexisting(serverId, owner, folders);
         _materializer.PrepareServerFolders();
         var missing = _store.Read(config => _kinds
-            .Where(kind => Find(config, serverId)?.AutomaticLibraryRegistry.All(record => record.Kind != kind) == true)
+            .Where(kind => Owned(config, owner)?.AutomaticLibraryRegistry.All(record => record.Kind != kind) == true)
             .ToList());
         if (missing.Count == 0)
         {
@@ -296,7 +309,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var created = false;
         foreach (var kind in missing)
         {
-            created |= await CreateAsync(serverId, kind).ConfigureAwait(false);
+            created |= await CreateAsync(serverId, owner, kind).ConfigureAwait(false);
         }
 
         if (created)
@@ -305,11 +318,17 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
     }
 
-    private async Task<bool> CreateAsync(Guid serverId, ServerLibraryKind kind)
+    private async Task<bool> CreateAsync(Guid serverId, RemoteServerConfig owner, ServerLibraryKind kind)
     {
         var folders = ReadFolders();
-        var (root, serverName) = _store.Read(config => (config.FederatedFolderPath, Find(config, serverId)?.Name));
-        if (folders is null || root.Length == 0 || serverName is null)
+        var (root, serverName) = _store.Read(config => (config.FederatedFolderPath, Owned(config, owner)?.Name));
+        if (serverName is null)
+        {
+            // Removed meanwhile: nothing more is made for it, and a server added back is not told of this job.
+            return false;
+        }
+
+        if (folders is null || root.Length == 0)
         {
             _errors[serverId] = AutomaticLibrariesError.ReadFailed;
             return false;
@@ -342,8 +361,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var held = false;
         _store.Update(config =>
         {
-            // A server removed meanwhile leaves the library to delete after it, in the same save (decision 140).
-            if (Find(config, serverId) is { } server)
+            // A server removed meanwhile, even if added back, leaves the library to delete after it, in the same save (decision 140).
+            if (Owned(config, owner) is { } server)
             {
                 server.AutomaticLibraryRegistry.Add(record);
             }
@@ -510,9 +529,9 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     // Called after the follow, so that a library of the registry renamed in the dashboard is not recorded as the admin's.
-    private void RecordPreexisting(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders) => _store.Update(config =>
+    private void RecordPreexisting(Guid serverId, RemoteServerConfig owner, IReadOnlyList<VirtualFolderInfo> folders) => _store.Update(config =>
     {
-        if (Find(config, serverId) is not { } server || LiveRegistry(config, serverId) is not { } registry)
+        if (Owned(config, owner) is not { } server || LiveRegistry(config, serverId) is not { } registry)
         {
             return;
         }
