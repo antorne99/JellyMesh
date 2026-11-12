@@ -320,4 +320,30 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Equal(["abc", "def"], loaded.StubIds);
         Assert.Equal([local], loaded.LocalItemIds);
     }
+
+    [Fact]
+    public async Task AVersionGroupIsFoundByEachOfItsStubsAndLocalCopies()
+    {
+        var local = Guid.NewGuid();
+        var group = new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["abc", "def"], LocalItemIds = [local] };
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", "x/Film/A/A.strm"), Entry("def", "y/Film/A/A.strm")], Groups = [group] });
+
+        Assert.Equal("g", registry.FindGroup("abc")?.Id);
+        Assert.Equal("g", registry.FindGroup("def")?.Id);
+        Assert.Equal("g", registry.FindGroupOfLocal(local)?.Id);
+        Assert.Null(registry.FindGroup("other"));
+        Assert.Null(registry.FindGroupOfLocal(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task AStubListedInTwoGroupsDoesNotBreakTheRegistry()
+    {
+        var first = new VersionGroup { Id = "g1", IdentityKey = "key", StubIds = ["abc"] };
+        var second = new VersionGroup { Id = "g2", IdentityKey = "key", StubIds = ["abc"] };
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", "x/Film/A/A.strm")], Groups = [first, second] });
+
+        Assert.Equal("g1", registry.FindGroup("abc")?.Id);
+    }
 }
