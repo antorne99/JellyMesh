@@ -58,10 +58,26 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         list.AddRange(items);
     }
 
+    /// <summary>The Server Id the remote gives itself at login. Null gives none, as a server before this was read.</summary>
+    public string? ServerId { get; set; }
+
+    /// <summary>The device of each login, in order.</summary>
+    public List<string> LoginDevices { get; } = [];
+
+    /// <summary>The device of each session ended.</summary>
+    public List<string> LogoutDevices { get; } = [];
+
     public Task<RemoteResult<RemoteSession>> AuthenticateAsync(RemoteEndpoint endpoint, RemoteCredentials credentials, CancellationToken cancellationToken)
     {
         Logins++;
-        return Task.FromResult(RemoteResult.Success(new RemoteSession(TestValues.Token, "abc")));
+        LoginDevices.Add(endpoint.DeviceId);
+        return Task.FromResult(RemoteResult.Success(new RemoteSession(TestValues.Token, "abc") { ServerId = ServerId }));
+    }
+
+    public Task<RemoteResult<bool>> LogoutAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        LogoutDevices.Add(endpoint.DeviceId);
+        return Task.FromResult(RemoteResult.Success(true));
     }
 
     /// <summary>What the capability endpoint answers.</summary>

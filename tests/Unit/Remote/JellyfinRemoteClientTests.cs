@@ -39,6 +39,37 @@ public class JellyfinRemoteClientTests
         Assert.Contains("\"Pw\":\"" + TestValues.Password + "\"", request.Body, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("\"ServerId\":\"8E3F1C2A4B5D4E6F8A9B0C1D2E3F4A5B\",", "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b")]
+    [InlineData("\"ServerId\":\"8e3f1c2a-4b5d-4e6f-8a9b-0c1d2e3f4a5b\",", "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b")]
+    [InlineData("", null)]
+    [InlineData("\"ServerId\":\"\",", null)]
+    [InlineData("\"ServerId\":\"not an id\",", null)]
+    [InlineData("\"ServerId\":\"00000000000000000000000000000000\",", null)]
+    public async Task LoginReadsTheServerIdOfTheRemoteWhenItIsAnId(string field, string? expected)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{" + field + TestValues.LoginJson[1..]));
+
+        var result = await LoginAsync(handler);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(expected, result.Value!.ServerId);
+    }
+
+    [Fact]
+    public async Task LogoutPostsTheSessionTokenInTheHeaderOnly()
+    {
+        var handler = new StubHandler(_ => StubHandler.Status(HttpStatusCode.NoContent));
+
+        await ClientFor(handler).LogoutAsync(_endpoint, _session, CancellationToken.None);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/Sessions/Logout", request.Uri.AbsolutePath);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AnImageIsReadWithTheSessionInTheHeaderOnly()
     {

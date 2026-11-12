@@ -112,7 +112,16 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
         return result.User.Policy.IsAdministrator
             ? RemoteResult.Fail<RemoteSession>(RemoteFailure.AdministratorAccount)
-            : RemoteResult.Success<RemoteSession>(new RemoteSession(result.AccessToken!, result.User.Id));
+            : RemoteResult.Success<RemoteSession>(new RemoteSession(result.AccessToken!, result.User.Id) { ServerId = ServerIdOf(result.ServerId) });
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<bool>> LogoutAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var response = await SendAsync(endpoint, HttpMethod.Post, "/Sessions/Logout", session, null, cancellationToken).ConfigureAwait(false);
+        return response.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(response.Failure);
     }
 
     /// <inheritdoc />
@@ -306,6 +315,12 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
     }
 
+    // The Server Id a remote gives itself, as 32 lowercase digits. Anything that is not an id counts as none.
+    private static string? ServerIdOf(string? value)
+    {
+        return Guid.TryParse(value, out var id) && id != Guid.Empty ? id.ToString("N") : null;
+    }
+
     internal static string AuthorizationHeader(RemoteEndpoint endpoint, RemoteSession? session)
     {
         var header = string.Create(CultureInfo.InvariantCulture, $"MediaBrowser Client=\"JellyMesh\", Device=\"JellyMesh\", DeviceId=\"{endpoint.DeviceId}\", Version=\"{_version}\"");
@@ -483,7 +498,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     private sealed record AuthenticateRequest(string Username, string Pw);
 
-    private sealed record AuthenticateResponse(string? AccessToken, AuthenticatedUser? User);
+    private sealed record AuthenticateResponse(string? AccessToken, AuthenticatedUser? User, string? ServerId);
 
     private sealed record AuthenticatedUser(string? Id, UserPolicy? Policy);
 

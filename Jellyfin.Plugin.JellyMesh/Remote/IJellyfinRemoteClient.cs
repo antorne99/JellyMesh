@@ -21,6 +21,15 @@ public interface IJellyfinRemoteClient
     Task<RemoteResult<RemoteSession>> AuthenticateAsync(RemoteEndpoint endpoint, RemoteCredentials credentials, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Ends a session on the remote, so that its device leaves the list there. A failure is only reported.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session to end.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the remote ended it.</returns>
+    Task<RemoteResult<bool>> LogoutAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Detects whether the remote runs JellyMesh. A 404 means standard mode.
     /// </summary>
     /// <param name="endpoint">The remote.</param>
