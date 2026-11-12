@@ -393,6 +393,22 @@ public class RemoteServerRegistryTests
     }
 
     [Fact]
+    public async Task RenameChangesOnlyTheNameOfAKnownServer()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+
+        Assert.True(fixture.Registry.Rename(server.Id, "  Casa nuova "));
+
+        var renamed = Assert.Single(fixture.Registry.GetServers());
+        Assert.Equal("Casa nuova", renamed.Name);
+        Assert.Equal(server.Id, renamed.Id);
+        Assert.Equal(server.Url, renamed.Url);
+        Assert.False(fixture.Registry.Rename(Guid.NewGuid(), "Altro"));
+        Assert.Throws<ArgumentException>(() => fixture.Registry.Rename(server.Id, "  "));
+    }
+
+    [Fact]
     public async Task UnknownServersAreReported()
     {
         using var fixture = new RegistryFixture();

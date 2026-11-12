@@ -124,6 +124,8 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public bool SetImportedLibraries(Guid serverId, IEnumerable<string> libraryIds) => throw new NotSupportedException();
 
+    public bool Rename(Guid serverId, string name) => throw new NotSupportedException();
+
     public Task<RemoteResult<T>> RunWithSessionAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
     {
         return Offline.Contains(serverId)
