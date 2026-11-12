@@ -13,6 +13,7 @@ namespace Jellyfin.Plugin.JellyMesh.Index;
 /// Merges film titles by hand and undoes it (decision 20). A merge only changes what the resolver returns, so everything
 /// after it is the path of any two copies that became one title: copies of one server keep one stub, whose post-scan task
 /// hands the state of the other over (decision 2), and copies of different servers or a local one become versions (Q23).
+/// When titles of one library become one entity, the merge carries their state to the primary (decision 172).
 /// </summary>
 public sealed class ManualMergeService
 {
@@ -22,6 +23,7 @@ public sealed class ManualMergeService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ManualMergeService> _logger;
     private readonly IVersionLinker? _linker;
+    private readonly IMergeWatchStateCarry? _carry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ManualMergeService"/> class.
@@ -32,13 +34,15 @@ public sealed class ManualMergeService
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="linker">The version linker, if any.</param>
+    /// <param name="carry">The watch state carry of a merge, if any.</param>
     public ManualMergeService(
         IFederationResolver resolver,
         IManualMergeStore store,
         ILibraryMaterializer materializer,
         TimeProvider timeProvider,
         ILogger<ManualMergeService> logger,
-        IVersionLinker? linker = null)
+        IVersionLinker? linker = null,
+        IMergeWatchStateCarry? carry = null)
     {
         _resolver = resolver;
         _store = store;
@@ -46,6 +50,7 @@ public sealed class ManualMergeService
         _timeProvider = timeProvider;
         _logger = logger;
         _linker = linker;
+        _carry = carry;
     }
 
     /// <summary>
@@ -87,6 +92,7 @@ public sealed class ManualMergeService
             return outcome;
         }
 
+        var heads = FindHeads(titles);
         var replaced = titles.SelectMany(title => title.MergeIds).ToHashSet();
         await _store.UpdateAsync(
             current =>
@@ -105,6 +111,7 @@ public sealed class ManualMergeService
 
         _logger.LogInformation("Merged {Count} film titles by hand", titles.Count);
         await ApplyAsync(false, cancellationToken).ConfigureAwait(false);
+        await CarryAsync(heads, cancellationToken).ConfigureAwait(false);
         return ManualMergeOutcome.Merged;
     }
 
@@ -180,6 +187,39 @@ public sealed class ManualMergeService
     // A local copy is never on a remote server, whatever its server ID says.
     private static bool IsOn(MergedCopy copy, string serverId)
         => !copy.IsLocal && string.Equals(copy.ServerId, serverId, StringComparison.OrdinalIgnoreCase);
+
+    // The entities the titles show before the merge links them.
+    private IReadOnlyList<MergeHead> FindHeads(List<MergeTitleView> titles)
+    {
+        try
+        {
+            return _carry?.FindHeads(titles.SelectMany(title => title.Copies).Select(copy => copy.Copy).ToList()) ?? [];
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot find the titles a manual merge joins: {Error}", exception.GetType().Name);
+            return [];
+        }
+    }
+
+    // The state moves once, at the merge, when two entities of one library become one (decision 172).
+    private async Task CarryAsync(IReadOnlyList<MergeHead> heads, CancellationToken cancellationToken)
+    {
+        if (_carry is null || heads.Count < 2)
+        {
+            return;
+        }
+
+        try
+        {
+            await _carry.CarryAsync(heads, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Cannot carry the watch state of a manual merge: {Error}", exception.GetType().Name);
+        }
+    }
 
     // Finds the titles of a merge, or why it cannot be made.
     private (ManualMergeOutcome Outcome, List<MergeTitleView> Titles) Check(IReadOnlyCollection<string> workKeys)

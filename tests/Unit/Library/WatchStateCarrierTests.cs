@@ -45,6 +45,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     private readonly List<VersionGroup> _groups = [];
     private readonly User _mario = new("mario", "auth", "reset");
     private readonly User _luigi = new("luigi", "auth", "reset");
+    private readonly List<User> _everyone;
     private WatchStateCarryLog _log;
     private string? _lastServedStub;
 
@@ -57,7 +58,8 @@ public sealed class WatchStateCarrierTests : IDisposable
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>()))
             .Returns((Guid id, User user) => _hidden.Contains((user.Id, id)) ? null : _items.GetValueOrDefault(id));
-        _users.Setup(users => users.GetUsers()).Returns(() => [_mario, _luigi]);
+        _everyone = [_mario, _luigi];
+        _users.Setup(users => users.GetUsers()).Returns(() => _everyone);
         _userData.Setup(data => data.GetUserData(It.IsAny<User>(), It.IsAny<BaseItem>()))
             .Returns((User user, BaseItem item) =>
             {
@@ -568,6 +570,177 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(File.Exists(Path.Combine(_data, "log", WatchStateCarryLog.FileName)));
+    }
+
+    [Fact]
+    public async Task TheRecordsOfAnOldItemNoLongerInTheLibraryGoAtTheEndOfARun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var row = Row(_mario, old);
+        row.IsFavorite = true;
+        row.LastPlayedDate = _older;
+        var move = Move(old, oldStub, (a, _serverA));
+        await CarryAsync(move);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+
+        _items.Remove(old.Id);
+        await CarryAsync();
+        await RestartAsync();
+
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task APathThatComesBackCarriesItsStateAgain()
+    {
+        // A to B, then B to A, then A to B again: the old item of the last move had a record from the first (decision 165).
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        _items.Remove(old.Id);
+        await CarryAsync();
+
+        _items[old.Id] = old;
+        var b = Movie(_serverA);
+        Row(_mario, old).Rating = 7;
+        var report = await CarryAsync(Move(old, oldStub, (b, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, b).IsFavorite);
+        Assert.Equal(7, Row(_mario, b).Rating);
+    }
+
+    [Fact]
+    public async Task TheRecordsOfAUserWhoIsGoneGoAtTheEndOfARun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        Row(_luigi, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        Assert.True(_log.TryFind(_luigi.Id, old.Id, out _));
+
+        _everyone.Remove(_luigi);
+        await CarryAsync();
+        await RestartAsync();
+
+        Assert.False(_log.TryFind(_luigi.Id, old.Id, out _));
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task ALogThatCannotBeReadForNowSuspendsEveryCarry()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        Row(_mario, a).IsFavorite = false;
+        _saves.Clear();
+        var folder = Path.Combine(_data, "log");
+        var file = Path.Combine(folder, WatchStateCarryLog.FileName);
+        var content = await File.ReadAllTextAsync(file);
+        _log.Dispose();
+        var failing = true;
+        _log = new WatchStateCarryLog(folder, new CapturingLogger<WatchStateCarryLog>(), path => failing ? throw new IOException("busy") : File.OpenRead(path));
+
+        var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.Equal(content, await File.ReadAllTextAsync(file));
+
+        failing = false;
+        report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.False(Row(_mario, a).IsFavorite);
+    }
+
+    [Fact]
+    public async Task AFavoriteSavedBeforeAnotherRowFailedIsNotPutBackByTheNextRun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        Group(a, b);
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 6;
+        _failingSaves.Add(b.Id);
+        var move = Move(old, oldStub, (a, _serverA), (b, _serverB));
+
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.UsersLeft, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+
+        Row(_mario, a).IsFavorite = false;
+        Row(_mario, a).Rating = null;
+        _failingSaves.Clear();
+        await RestartAsync();
+        report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, b).Played);
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.Null(Row(_mario, a).Rating);
+    }
+
+    [Fact]
+    public async Task AMergeLeavesThePositionAndPutsTheRestOnThePrimary()
+    {
+        // Two copies of one library become one entity (decision 172): as Q47, but each version keeps its position.
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        Group(a, b);
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        row.PlaybackPositionTicks = 500;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 8;
+        await Served(_mario, _serverB);
+
+        var report = await CarryAsync(WatchStateMove.OfMerge(oldStub, old.Id, [new WatchStateTarget(a.Id, _serverA), new WatchStateTarget(b.Id, _serverB)]));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.Equal(8, Row(_mario, a).Rating);
+        Assert.Equal(2, Row(_mario, a).PlayCount);
+        Assert.All([a, b], version => Assert.True(Row(_mario, version).Played));
+        Assert.All([a, b], version => Assert.Equal(0, Row(_mario, version).PlaybackPositionTicks));
+        Assert.False(Row(_mario, b).IsFavorite);
+        Assert.Equal(500, Row(_mario, old).PlaybackPositionTicks);
+    }
+
+    [Fact]
+    public async Task AMergedVersionIsNotATargetOfItsOwnMove()
+    {
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        var bStub = _stubs.Last();
+        Group(a, b);
+        var row = Row(_mario, b);
+        row.PlayCount = 3;
+        row.PlaybackPositionTicks = 400;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+
+        var report = await CarryAsync(WatchStateMove.OfMerge(bStub, b.Id, [new WatchStateTarget(a.Id, _serverA), new WatchStateTarget(b.Id, _serverB)]));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.Equal(3, Row(_mario, a).PlayCount);
+        Assert.Equal(0, Row(_mario, a).PlaybackPositionTicks);
+        Assert.Equal(400, Row(_mario, b).PlaybackPositionTicks);
     }
 
     [Fact]

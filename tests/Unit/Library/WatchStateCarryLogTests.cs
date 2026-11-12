@@ -104,6 +104,75 @@ public sealed class WatchStateCarryLogTests : IDisposable
     }
 
     [Fact]
+    public async Task ForgottenCarriesAreGoneAfterARestart()
+    {
+        using (var log = Log())
+        {
+            log.Record(_user, _item, _date);
+            log.Record(_otherUser, _item, _date);
+            log.Record(_user, _otherItem, _date);
+            Assert.True(await log.SaveAsync(CancellationToken.None));
+
+            Assert.Equal(2, log.Forget((user, item) => user == _otherUser || item == _otherItem));
+            Assert.False(log.TryFind(_otherUser, _item, out _));
+            Assert.True(await log.SaveAsync(CancellationToken.None));
+        }
+
+        using var reloaded = Log();
+
+        Assert.True(reloaded.TryFind(_user, _item, out _));
+        Assert.False(reloaded.TryFind(_otherUser, _item, out _));
+        Assert.False(reloaded.TryFind(_user, _otherItem, out _));
+    }
+
+    [Fact]
+    public async Task ForgettingNothingWritesNoFile()
+    {
+        using var log = Log();
+
+        Assert.Equal(0, log.Forget((_, _) => true));
+        Assert.True(await log.SaveAsync(CancellationToken.None));
+
+        Assert.False(File.Exists(FilePath));
+    }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public async Task AFileThatCannotBeReadForNowSuspendsTheLogUntilItReads(Type error)
+    {
+        using (var log = Log())
+        {
+            log.Record(_user, _item, _date);
+            Assert.True(await log.SaveAsync(CancellationToken.None));
+        }
+
+        var content = await File.ReadAllTextAsync(FilePath);
+        var failing = true;
+        var logger = new CapturingLogger<WatchStateCarryLog>();
+        using var reloaded = new WatchStateCarryLog(
+            _folder,
+            logger,
+            path => failing ? throw (Exception)Activator.CreateInstance(error, "denied /secret")! : File.OpenRead(path));
+
+        Assert.False(reloaded.EnsureLoaded());
+        Assert.False(reloaded.TryFind(_user, _item, out _));
+        reloaded.Record(_otherUser, _item, _date);
+        Assert.False(await reloaded.SaveAsync(CancellationToken.None));
+        Assert.Equal(content, await File.ReadAllTextAsync(FilePath));
+        Assert.False(File.Exists(FilePath + ".damaged"));
+        Assert.Contains(logger.Lines, line => line.Contains(error.Name, StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+
+        failing = false;
+
+        Assert.True(reloaded.EnsureLoaded());
+        Assert.True(reloaded.TryFind(_user, _item, out var date));
+        Assert.Equal(_date, date);
+        Assert.False(reloaded.TryFind(_otherUser, _item, out _));
+    }
+
+    [Fact]
     public async Task NoTemporaryFileStays()
     {
         using var log = Log();

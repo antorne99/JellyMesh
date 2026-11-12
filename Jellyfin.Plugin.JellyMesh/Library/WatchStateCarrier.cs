@@ -67,6 +67,13 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     {
         ArgumentNullException.ThrowIfNull(moves);
 
+        // Without the record every carry would look like the first and put back what users took off (decision 176).
+        if (!_log.EnsureLoaded())
+        {
+            _logger.LogWarning("The record of the watch state carries cannot be read for now: {Count} titles wait for it", moves.Count);
+            return new WatchStateCarryReport(moves.Select(move => Outcome(move, WatchStateMoveStatus.Failed)).ToList());
+        }
+
         var run = new Run(_store.Read(config => config.FederatedFolderPath) ?? string.Empty, _registry.State, _users.GetUsers().ToList());
         var outcomes = new List<WatchStateMoveOutcome>(moves.Count);
         var recorded = new Dictionary<int, List<Guid>>();
@@ -103,6 +110,8 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             throw;
         }
 
+        Prune(run);
+
         // A move done may rest on a record from an earlier run that is still not on disk, so none counts as done.
         if (!await _log.SaveAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -130,6 +139,9 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     }
 
     private static WatchStateMoveOutcome Outcome(WatchStateMove move, WatchStateMoveStatus status) => new(move, status, []);
+
+    private static bool ChangesFavoriteOrRating(UserItemData? before, UserItemData after) =>
+        before is null || before.IsFavorite != after.IsFavorite || before.Rating != after.Rating;
 
     private static bool HasAnything(UserItemData data) =>
         data.Played || data.PlayCount > 0 || data.PlaybackPositionTicks > 0 || data.LastPlayedDate is not null || data.IsFavorite || data.Rating is not null;
@@ -235,7 +247,9 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
 
         var targets = new List<(BaseItem Item, Guid? ServerId)>();
-        foreach (var target in move.Targets.DistinctBy(target => target.ItemId))
+
+        // A merged version takes nothing from itself.
+        foreach (var target in move.Targets.Where(target => target.ItemId != move.FromItemId).DistinctBy(target => target.ItemId))
         {
             if (_library.GetItemById(target.ItemId) is not { } item)
             {
@@ -294,8 +308,15 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                 continue;
             }
 
-            if (!Save(user, changed, cancellationToken))
+            var (saved, favoriteSaved) = Save(user, changed, cancellationToken);
+            if (!saved)
             {
+                // A favorite or rating already written is not written again: a later run carries only the watch (decision 155).
+                if (favoriteSaved && mode == WatchStateCarryMode.First)
+                {
+                    _log.Record(user.Id, from.Id, null);
+                }
+
                 skipped.Add(new WatchStateUserSkip(user.Id, WatchStateUserSkipReason.NotSaved));
                 continue;
             }
@@ -353,7 +374,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             }
 
             seen = true;
-            var rows = WatchStateTransfer.Carry(old, lastServer, move.Servers, versions.Select(version => version.Version).ToList(), mode)
+            var rows = WatchStateTransfer.Carry(old, lastServer, move.Servers, versions.Select(version => version.Version).ToList(), mode, move.CarriesPosition)
                 .ToHashSet(ReferenceEqualityComparer.Instance);
             changed.AddRange(versions.Where(version => rows.Contains(version.Version.Data)).Select(version => (version.Item, version.Version.Data)));
         }
@@ -389,23 +410,51 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         return (visible.Where(series => rows.Contains(series.Data)).ToList(), default);
     }
 
-    private bool Save(User user, List<(BaseItem Item, UserItemData Data)> rows, CancellationToken cancellationToken)
+    // Saves the rows with a new favorite or rating first, and tells whether one of those was saved.
+    private (bool Saved, bool FavoriteSaved) Save(User user, List<(BaseItem Item, UserItemData Data)> rows, CancellationToken cancellationToken)
     {
-        foreach (var (item, data) in rows)
+        var ordered = rows
+            .Select(row => (row.Item, row.Data, Favorite: ChangesFavoriteOrRating(_userData.GetUserData(user, row.Item), row.Data)))
+            .OrderByDescending(row => row.Favorite)
+            .ToList();
+        var favoriteSaved = false;
+        foreach (var (item, data, favorite) in ordered)
         {
             try
             {
                 _userData.SaveUserData(user, item, data, UserDataSaveReason.Import, cancellationToken);
+                favoriteSaved |= favorite;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 // The type only: a message could hold a path.
                 _logger.LogError("Cannot save the watch state carried to a title: {Error}", exception.GetType().Name);
-                return false;
+                return (false, favoriteSaved);
             }
         }
 
-        return true;
+        return (true, favoriteSaved);
+    }
+
+    // Drops the records of users who are gone and of old items no longer in the library (decision 165).
+    private void Prune(Run run)
+    {
+        var users = run.Users.Select(user => user.Id).ToHashSet();
+        var exists = new Dictionary<Guid, bool>();
+        _log.Forget((userId, itemId) =>
+        {
+            if (users.Count > 0 && !users.Contains(userId))
+            {
+                return true;
+            }
+
+            if (!exists.TryGetValue(itemId, out var found))
+            {
+                exists[itemId] = found = _library.GetItemById(itemId) is not null;
+            }
+
+            return !found;
+        });
     }
 
     // What a run reads once, with the group of each stub and local copy.

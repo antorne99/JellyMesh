@@ -205,6 +205,59 @@ public sealed class ManualMergeStubTests : IDisposable
     }
 
     [Fact]
+    public async Task AMerge_FindsTheEntitiesBeforeTheLink_AndCarriesTheirStateAfterIt()
+    {
+        await ChainAsync();
+        var order = new List<string>();
+        var heads = new List<MergeHead> { new(Guid.NewGuid(), null), new(Guid.NewGuid(), null) };
+        IReadOnlyList<MergedCopy>? copies = null;
+        var carry = new Mock<IMergeWatchStateCarry>();
+        carry.Setup(item => item.FindHeads(It.IsAny<IReadOnlyList<MergedCopy>>()))
+            .Callback<IReadOnlyList<MergedCopy>>(found =>
+            {
+                copies = found;
+                order.Add("heads");
+            })
+            .Returns(heads);
+        carry.Setup(item => item.CarryAsync(heads, It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("carry"))
+            .ReturnsAsync((WatchStateCarryReport?)null);
+        _linker.Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("link"))
+            .Returns(Task.CompletedTask);
+        var service = new ManualMergeService(_fixture.Resolver, _fixture.Merges, _fixture.Materializer, _fixture.Sync.Clock, new CapturingLogger<ManualMergeService>(), _linker.Object, carry.Object);
+        var keys = Assert.Single(service.GetList().Cases).Titles.Select(title => title.WorkKey).ToList();
+
+        Assert.Equal(ManualMergeOutcome.Merged, await service.MergeAsync(keys, CancellationToken.None));
+
+        Assert.Equal(["heads", "link", "carry"], order);
+        Assert.Equal(3, copies!.Count);
+
+        order.Clear();
+        Assert.True(await service.UndoAsync(Assert.Single(_fixture.Merges.Merges).Id, CancellationToken.None));
+
+        Assert.Equal(["link"], order);
+    }
+
+    [Fact]
+    public async Task AFailedCarry_KeepsTheMerge_AndIsLoggedByItsTypeOnly()
+    {
+        await ChainAsync();
+        var carry = new Mock<IMergeWatchStateCarry>();
+        carry.Setup(item => item.FindHeads(It.IsAny<IReadOnlyList<MergedCopy>>())).Returns([new(Guid.NewGuid(), null), new(Guid.NewGuid(), null)]);
+        carry.Setup(item => item.CarryAsync(It.IsAny<IReadOnlyList<MergeHead>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("no space on /secret"));
+        var logger = new CapturingLogger<ManualMergeService>();
+        var service = new ManualMergeService(_fixture.Resolver, _fixture.Merges, _fixture.Materializer, _fixture.Sync.Clock, logger, _linker.Object, carry.Object);
+        var keys = Assert.Single(service.GetList().Cases).Titles.Select(title => title.WorkKey).ToList();
+
+        Assert.Equal(ManualMergeOutcome.Merged, await service.MergeAsync(keys, CancellationToken.None));
+
+        Assert.Single(_fixture.Merges.Merges);
+        Assert.Contains(logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AFailedLink_KeepsTheMerge_AndIsLoggedByItsTypeOnly()
     {
         await ChainAsync();

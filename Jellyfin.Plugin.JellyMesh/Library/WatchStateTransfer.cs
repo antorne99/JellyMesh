@@ -20,13 +20,15 @@ public static class WatchStateTransfer
     /// <param name="servers">The servers of the old item, best first (§4.3).</param>
     /// <param name="versions">The new versions of the title, exactly one of them the primary.</param>
     /// <param name="mode">Whether favorite and rating are carried too, only the first time (decision 155).</param>
+    /// <param name="withPosition">Whether the position is carried; a merge leaves it on each version (decision 172).</param>
     /// <returns>The rows that changed, none when the user sees no version.</returns>
     public static IReadOnlyList<UserItemData> Carry(
         UserItemData from,
         Guid? lastServer,
         IReadOnlyList<Guid> servers,
         IReadOnlyList<WatchStateVersion> versions,
-        WatchStateCarryMode mode = WatchStateCarryMode.First)
+        WatchStateCarryMode mode = WatchStateCarryMode.First,
+        bool withPosition = true)
     {
         ArgumentNullException.ThrowIfNull(from);
         ArgumentNullException.ThrowIfNull(servers);
@@ -49,7 +51,7 @@ public static class WatchStateTransfer
             .First().Data;
 
         // All decided before any change: the target can be the primary.
-        var toTarget = WatchStateMerge.IsNewer(from, target);
+        var toTarget = withPosition && WatchStateMerge.IsNewer(from, target);
         var toPrimary = WatchStateMerge.IsNewer(from, primary);
         var played = HasWatchState(from)
             ? PlayedAlignment.Decide(versions.Select(version => version.Data).Prepend(from))
