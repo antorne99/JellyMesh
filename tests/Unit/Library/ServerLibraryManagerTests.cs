@@ -433,6 +433,22 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task Turning_the_switch_on_again_recreates_a_library_deleted_in_the_dashboard()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.Created.Clear();
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Created.Select(library => library.Name));
+        Assert.Equal([ServerLibraryKind.Series, ServerLibraryKind.Movies], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Kind));
+        Assert.Equal(2, fixture.Manager.GetState(_serverId).Libraries.Count);
+    }
+
+    [Fact]
     public async Task A_library_list_that_cannot_be_read_changes_nothing()
     {
         var fixture = new Fixture();
