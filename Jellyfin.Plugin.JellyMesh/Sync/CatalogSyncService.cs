@@ -42,6 +42,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ILibraryMaterializer? _materializer;
     private readonly StubRegistry? _stubs;
     private readonly IActivityWriter? _activity;
+    private readonly IServerLibraryManager? _libraries;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
@@ -63,6 +64,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="materializer">What brings the federated folder in step after a sync.</param>
     /// <param name="stubs">The stub registry, which remembers the servers the administrator removed.</param>
     /// <param name="activity">Where completed and failed syncs are written.</param>
+    /// <param name="libraries">The libraries kept for each server, followed after every sync.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -72,7 +74,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         ILogger<CatalogSyncService> logger,
         ILibraryMaterializer? materializer = null,
         StubRegistry? stubs = null,
-        IActivityWriter? activity = null)
+        IActivityWriter? activity = null,
+        IServerLibraryManager? libraries = null)
     {
         _registry = registry;
         _reader = reader;
@@ -83,6 +86,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _materializer = materializer;
         _stubs = stubs;
         _activity = activity;
+        _libraries = libraries;
     }
 
     /// <summary>
@@ -280,6 +284,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
             if (servers.Count > 0)
             {
                 WriteActivity(ActivityEntries.SyncCompleted(servers.Count, _runFailures.Values.ToList()));
@@ -333,6 +338,23 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             // The type only: a message could hold a remote address.
             _logger.LogError("Could not materialize the federated folder: {Error}", exception.GetType().Name);
+        }
+    }
+
+    private async Task FollowServerLibrariesAsync(CancellationToken cancellationToken)
+    {
+        if (_libraries is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _libraries.ReconcileAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Could not follow the libraries of the servers: {Error}", exception.GetType().Name);
         }
     }
 

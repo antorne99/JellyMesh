@@ -862,6 +862,47 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.DoesNotContain(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task ASyncFollowsTheServerLibrariesAfterMaterializing()
+    {
+        var steps = new List<string>();
+        var materializer = new Mock<ILibraryMaterializer>();
+        materializer.Setup(item => item.MaterializeAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => steps.Add("materialize"))
+            .Returns(Task.FromResult<MaterializationReport>(null!));
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.ReconcileAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("follow")).Returns(Task.CompletedTask);
+        using var sync = SyncWith(materializer.Object, libraries.Object);
+
+        await sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(["materialize", "follow"], steps);
+    }
+
+    [Fact]
+    public async Task AFailureInFollowingTheServerLibrariesDoesNotFailTheSync()
+    {
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.ReconcileAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException(TestValues.Host));
+        using var sync = SyncWith(Mock.Of<ILibraryMaterializer>(), libraries.Object);
+
+        Assert.Equal(SyncStartResult.Started, await sync.RunAsync(CancellationToken.None));
+
+        Assert.False(sync.GetStatus().IsRunning);
+        Assert.DoesNotContain(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_fixture.Sync.Logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+    }
+
+    private CatalogSyncService SyncWith(ILibraryMaterializer materializer, IServerLibraryManager libraries) => new(
+        _fixture.Sync.Registry,
+        _fixture.Sync.Reader,
+        _fixture.Sync.Index,
+        _fixture.Sync.Vault,
+        _fixture.Sync.Clock,
+        _fixture.Sync.Logger,
+        materializer,
+        libraries: libraries);
+
     private CatalogSyncService SyncWithMaterializer() => new(
         _fixture.Sync.Registry,
         _fixture.Sync.Reader,

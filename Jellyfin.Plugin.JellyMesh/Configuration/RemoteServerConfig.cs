@@ -48,4 +48,19 @@ public class RemoteServerConfig
     /// Gets the identifiers of the remote libraries to import.
     /// </summary>
     public Collection<string> ImportedLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the plugin keeps a Film and a Serie library for this server.
+    /// </summary>
+    public bool AutomaticLibraries { get; set; }
+
+    /// <summary>
+    /// Gets the libraries the plugin created for this server and still manages.
+    /// </summary>
+    public Collection<AutomaticLibraryConfig> AutomaticLibraryRegistry { get; } = [];
+
+    /// <summary>
+    /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.
+    /// </summary>
+    public Collection<string> ReleasedAutomaticLibraries { get; } = [];
 }

@@ -226,6 +226,11 @@ public static partial class FederatedPaths
         return path.StartsWith(folder, _pathComparison) ? path[folder.Length..] : null;
     }
 
+    /// <summary>Gives the first digits of a server GUID, as appended to a label that is taken.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The digits.</returns>
+    internal static string GuidStart(Guid serverId) => serverId.ToString("N")[..GuidDigits];
+
     private static string CleanLabel(Guid serverId, string? name)
     {
         // Delimiters become spaces, so that only the extras rules that follow a space can apply.
@@ -242,8 +247,6 @@ public static partial class FederatedPaths
 
         return label.Length == 0 ? GuidStart(serverId) : label;
     }
-
-    private static string GuidStart(Guid serverId) => serverId.ToString("N")[..GuidDigits];
 
     private static bool IsUnsafe(char character)
     {

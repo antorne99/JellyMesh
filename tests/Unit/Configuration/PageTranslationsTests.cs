@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Xunit;
@@ -86,6 +87,11 @@ public class PageTranslationsTests
         foreach (var state in Enum.GetValues<KeyState>().Where(state => state != KeyState.Ok))
         {
             yield return FederationAdminController.KeyWarning(state)!;
+        }
+
+        foreach (var outcome in Enum.GetValues<AutomaticLibrariesOutcome>())
+        {
+            yield return FederationAdminController.RefusalMessage(outcome);
         }
 
         yield return "A sync is already running.";

@@ -1343,6 +1343,7 @@
                     "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
                     "A dedicated non-admin user on the remote. API keys are not used.": "Un utente dedicato non amministratore sul remoto. Le chiavi API non vengono usate.",
                     "A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.": "Una cartella di questo server in cui Jellyfin può scrivere. JellyMesh scrive solo lì dentro.",
+                    "A library name was taken, so a library was not created.": "Un nome di libreria era già usato, quindi una libreria non è stata creata.",
                     "A library of {server} came back empty. Its {count} titles are kept.": "Una libreria di {server} è risultata vuota. I suoi {count} titoli restano.",
                     "A series in two folders stays split in {libraries}.": "Una serie presente in due cartelle resta divisa in {libraries}.",
                     "A sync is already running.": "Una sincronizzazione è già in corso.",
@@ -1365,6 +1366,7 @@
                     "Already merged.": "Già uniti.",
                     "Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.": "Un altro server JellyMesh accede qui con un utente dedicato non amministratore di questo server. Scegli quell'utente, cosa può leggere e quanti stream può tenere insieme. Un utente così non può raggiungere nient'altro su questo server.",
                     "At least 300 seconds.": "Almeno 300 secondi.",
+                    "Being updated": "In aggiornamento",
                     "Best version first.": "Prima la versione migliore.",
                     "Best version: {quality}": "Versione migliore: {quality}",
                     "Bitrate": "Bitrate",
@@ -1382,6 +1384,7 @@
                     "Close an idle remote transcode after (seconds)": "Chiudi una transcodifica remota inattiva dopo (secondi)",
                     "Close the transcode of an expired stream": "Chiudi la transcodifica di uno stream scaduto",
                     "Codec": "Codec",
+                    "Confirm to delete the libraries of this server.": "Conferma per eliminare le librerie di questo server.",
                     "Connect": "Connetti",
                     "Connect a server": "Connetti un server",
                     "Connect and choose libraries": "Connetti e scegli le librerie",
@@ -1393,7 +1396,11 @@
                     "Copy: {label}": "Copia: {label}",
                     "Could not read {what}. {next} Reason: {reason}": "Impossibile leggere {what}. {next} Motivo: {reason}",
                     "Could not tell which copy would play. {reason}": "Impossibile dire quale copia verrebbe riprodotta. {reason}",
+                    "Create a Film and a Serie library for this server": "Crea una libreria Film e una Serie per questo server",
                     "Create a non-admin user for the other server first.": "Prima crea un utente non amministratore per l'altro server.",
+                    "Creating the libraries of {server}. JellyMesh then scans them.": "Creazione delle librerie di {server} in corso. Poi JellyMesh le analizza.",
+                    "Delete the libraries of this server?": "Eliminare le librerie di questo server?",
+                    "Deleting the libraries of {server}.": "Eliminazione delle librerie di {server} in corso.",
                     "Disconnect": "Disconnetti",
                     "Disconnect this server?": "Disconnettere questo server?",
                     "Disconnected {name}.": "{name} è stato disconnesso.",
@@ -1511,8 +1518,10 @@
                     "Select at most one title with a local copy: two local films cannot be merged.": "Seleziona al massimo un titolo con una copia locale: due film locali non si possono unire.",
                     "Series library": "Libreria serie",
                     "Server": "Server",
+                    "Server libraries": "Librerie del server",
                     "Servers": "Server",
                     "Set by JELLYMESH_FEDERATED_ROOT on the server. To choose it here, remove the variable and restart.": "Impostata da JELLYMESH_FEDERATED_ROOT sul server. Per sceglierla qui, rimuovi la variabile e riavvia.",
+                    "Set the federated folder first.": "Imposta prima la cartella federata.",
                     "Settings": "Impostazioni",
                     "Settings not saved. {reason}": "Impostazioni non salvate. {reason}",
                     "Settings not saved: the server answered with error {status}.": "Impostazioni non salvate: il server ha risposto con l'errore {status}.",
@@ -1529,12 +1538,19 @@
                     "Let JellyMesh keep its key file": "Permetti a JellyMesh di tenere il file della chiave",
                     "JellyMesh encrypts the stored logins with a key file in its plugin data folder, and it cannot write that file. Let Jellyfin write to that folder, then restart Jellyfin.": "JellyMesh cifra gli accessi salvati con un file della chiave nella cartella dati del plugin, e non riesce a scrivere quel file. Permetti a Jellyfin di scrivere in quella cartella, poi riavvia Jellyfin.",
                     "Enter the passwords again": "Inserisci di nuovo le password",
+                    "The change failed. Try again.": "La modifica non è riuscita. Riprova.",
+                    "The files in the federated folder stay, and nothing changes on {server}.": "I file nella cartella federata restano e su {server} non cambia nulla.",
+                    "The libraries of this server are being updated. Try again when it is done.": "Le librerie di questo server sono in aggiornamento. Riprova quando ha finito.",
+                    "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
                     "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
+                    "The server refused to create a library.": "Il server ha rifiutato di creare una libreria.",
+                    "The server refused to delete a library. Try again.": "Il server ha rifiutato di eliminare una libreria. Riprova.",
                     "The stored logins do not decrypt with the key file: it was lost or replaced. Enter the password of each marked server again.": "Gli accessi salvati non si decifrano con il file della chiave: è stato perso o sostituito. Inserisci di nuovo la password di ogni server segnato.",
                     "It waits until the stored logins can be used.": "Attende che gli accessi salvati si possano usare.",
                     "Suspended. Sync and remote playback are stopped until JellyMesh can keep its key file.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché JellyMesh non riesce a tenere il file della chiave.",
                     "Suspended. Sync and remote playback are stopped until the password of each marked server is entered again.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché non inserisci di nuovo la password di ogni server segnato.",
                     "Connecting a server waits until the stored logins can be used. The Overview says what to do.": "Il collegamento di un server attende che gli accessi salvati si possano usare. La Panoramica dice cosa fare.",
+                    "These libraries are deleted now: {names}.": "Queste librerie vengono eliminate ora: {names}.",
                     "password needed": "password da inserire",
                     "The stored password no longer decrypts. Enter the login again below. {problem}": "La password salvata non si decifra più. Inserisci di nuovo l'accesso qui sotto. {problem}",
                     "Sync and remote playback are suspended until the stored logins can be used. {problem}": "Sincronizzazione e riproduzione remota sono sospese finché gli accessi salvati non si possono usare. {problem}",
@@ -2451,6 +2467,11 @@
                     return { state: connectionLabel(failure), tone: 'jmStateBad', icon: 'error', cause: (problem + ' ' + step).trim(), failure: failure };
                 }
 
+                // The libraries the plugin keeps for a server, as an older server that sends none would have them.
+                function ownState(server) {
+                    return server.AutomaticLibraries || { Enabled: false, Busy: false, Libraries: [], Released: [], Error: 'None' };
+                }
+
                 function renderServer(server, report) {
                     var row = create('details');
                     row.className = 'jmServer';
@@ -2474,7 +2495,20 @@
                     var catalog = addFact(facts, t('Catalog'));
                     var checked = addFact(facts, t('Last check'));
                     var synced = addFact(facts, t('Last complete sync'));
+                    var own = addFact(facts, t('Server libraries'));
                     body.appendChild(facts);
+                    var ownSwitch = create('div');
+                    ownSwitch.className = 'checkboxList';
+                    var ownBox = addCheckbox(ownSwitch, server.Id, t('Create a Film and a Serie library for this server'));
+                    body.appendChild(ownSwitch);
+                    var ownPending = false;
+                    var ownErrors = {
+                        NameTaken: t('A library name was taken, so a library was not created.'),
+                        CreateFailed: t('The server refused to create a library.'),
+                        RemoveFailed: t('The server refused to delete a library. Try again.'),
+                        ReadFailed: t('The list of libraries could not be read. Try again.'),
+                        Failed: t('The change failed. Try again.')
+                    };
                     var problemShown = '';
                     row.jmUpdate = function (current, currentReport) {
                         server = current;
@@ -2504,8 +2538,56 @@
                         setText(catalog, catalogText);
                         setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : t('Not since this server started'));
                         setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : t('Not read yet'));
+                        var ownCurrent = ownState(server);
+                        if (!ownPending && !ownCurrent.Busy) {
+                            ownBox.checked = ownCurrent.Enabled;
+                        }
+
+                        ownBox.disabled = ownPending || ownCurrent.Busy;
+                        var ownNames = ownCurrent.Libraries.map(function (library) {
+                            return library.Name;
+                        }).join(', ');
+                        var ownError = ownErrors[ownCurrent.Error] || '';
+                        setText(own, ownCurrent.Busy ? t('Being updated') : ((ownNames || t('None')) + (ownError ? ' ' + ownError : '')));
                     };
                     row.jmUpdate(server, report);
+
+                    // Turns the libraries of the server on or off, then reads the state again.
+                    function switchOwn(enabled, confirmed) {
+                        ownPending = true;
+                        ownBox.disabled = true;
+                        return act(api('POST', 'Servers/' + server.Id + '/AutomaticLibraries', { Enabled: enabled, Confirmed: confirmed }).then(function () {
+                            showMessage(enabled
+                                ? t('Creating the libraries of {server}. JellyMesh then scans them.', { server: server.Name })
+                                : t('Deleting the libraries of {server}.', { server: server.Name }));
+                        })).then(function () {
+                            ownPending = false;
+                            return loadStatus();
+                        });
+                    }
+
+                    ownBox.addEventListener('change', function () {
+                        if (ownBox.checked) {
+                            switchOwn(true, false);
+                            return;
+                        }
+
+                        var names = ownState(server).Libraries.map(function (library) {
+                            return library.Name;
+                        });
+                        if (names.length === 0) {
+                            switchOwn(false, false);
+                            return;
+                        }
+
+                        ownBox.checked = true;
+                        confirmAction(t('Delete the libraries of this server?'), [
+                            t('These libraries are deleted now: {names}.', { names: escapeHtml(names.join(', ')) }),
+                            t('The files in the federated folder stay, and nothing changes on {server}.', { server: escapeHtml(server.Name) })
+                        ], function () {
+                            switchOwn(false, true);
+                        });
+                    });
 
                     var login = create('div');
                     login.className = 'jmLibraries';
