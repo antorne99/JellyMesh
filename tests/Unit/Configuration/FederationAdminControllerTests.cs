@@ -395,6 +395,47 @@ public class FederationAdminControllerTests
         sync.Verify(service => service.PrepareServerFolders(), Times.Once);
     }
 
+    private static StubHandler RemoteWithServerId() => new(request => request.RequestUri!.AbsolutePath == "/Users/AuthenticateByName"
+        ? StubHandler.Json("{\"ServerId\":\"8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b\"," + TestValues.LoginJson[1..])
+        : StubHandler.StockServer_Respond(request));
+
+    [Fact]
+    public async Task ARemoteAlreadyConfiguredIsRefusedWithTheNameItHasHere()
+    {
+        using var fixture = new RegistryFixture(RemoteWithServerId());
+        var sync = new Mock<ICatalogSyncService>();
+        var controller = CreateController(fixture, sync.Object);
+        await controller.AddServer(_request, CancellationToken.None);
+        sync.Invocations.Clear();
+
+        var again = await controller.AddServer(new AddServerRequest { Name = "Again", Url = TestValues.Url, Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+
+        var refused = Assert.IsType<ObjectResult>(again.Result);
+        Assert.Equal(409, refused.StatusCode);
+        var body = Assert.IsType<FailureResponse>(refused.Value);
+        Assert.Equal(RemoteFailure.AlreadyConfigured, body.Failure);
+        Assert.Equal("Friend", body.ServerName);
+        Assert.Equal("This server is already configured as “Friend”.", body.Message);
+        Assert.DoesNotContain(TestValues.Host, ToJson(body), StringComparison.Ordinal);
+        sync.Verify(service => service.PrepareServerFolders(), Times.Never);
+    }
+
+    [Fact]
+    public async Task ARemovedServerAddedAgainSaysWhatItWasCalled()
+    {
+        using var fixture = new RegistryFixture(RemoteWithServerId());
+        var controller = ControllerFor(fixture);
+        var first = (await controller.AddServer(_request, CancellationToken.None)).Value!;
+        fixture.Registry.Remove(first.Id);
+
+        var again = await controller.AddServer(new AddServerRequest { Name = "Renamed", Url = TestValues.Url, Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+
+        Assert.Equal(first.Id, again.Value!.Id);
+        Assert.Equal("Friend", again.Value.RecognizedAs);
+        Assert.Null(first.RecognizedAs);
+        Assert.Null(controller.GetStatus().Value!.Servers.Single().RecognizedAs);
+    }
+
     [Fact]
     public async Task AServerThatCannotBeAddedGetsNoFolders()
     {

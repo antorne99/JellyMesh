@@ -1489,6 +1489,7 @@
                     "Quality unknown": "Qualità sconosciuta",
                     "Range": "Gamma",
                     "Reading...": "Lettura...",
+                    "Recognized as “{server}”: it takes back its folder and its label.": "Riconosciuto come «{server}»: riprende la sua cartella e la sua etichetta.",
                     "Reload the page before saving.": "Ricarica la pagina prima di salvare.",
                     "Remember the transcoding rights of a remote (minutes)": "Ricorda i diritti di transcodifica di un remoto (minuti)",
                     "Remote servers": "Server remoti",
@@ -1599,6 +1600,8 @@
                     "This account is an administrator. Use a dedicated non-admin user.": "Questo account è un amministratore. Usa un utente dedicato non amministratore.",
                     "This list follows the real state of the server and goes away when setup is complete.": "Questo elenco segue lo stato reale del server e sparisce quando la configurazione è completa.",
                     "This merge no longer exists.": "Questa unione non esiste più.",
+                    "This server is already configured as “{server}”.": "Questo server è già configurato come «{server}».",
+                    "This server is already configured.": "Questo server è già configurato.",
                     "This server is at its stream limit on that remote.": "Questo server ha raggiunto il suo limite di stream su quel remoto.",
                     "This server is not configured.": "Questo server non è configurato.",
                     "This user sees no film or series libraries. Give it access on that server, then open Libraries again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Librerie.",
@@ -2072,6 +2075,7 @@
                             if (!response.ok) {
                                 var failure = new Error(data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status }));
                                 failure.failure = data.Failure;
+                                failure.serverName = data.ServerName;
                                 throw failure;
                             }
 
@@ -2775,17 +2779,22 @@
                     updateRows(el('#jmServers'), servers);
                 }
 
+                // Says that an added server was recognized as a removed one, before what comes next (decision 122).
+                function recognized(server) {
+                    return server.RecognizedAs ? t('Recognized as “{server}”: it takes back its folder and its label.', { server: server.RecognizedAs }) + ' ' : '';
+                }
+
                 // Opens the card of a server just added with its libraries, and moves the focus to the choice.
                 function chooseLibraries(server) {
                     var row = (el('#jmServers').jmRows || {})[server.Id];
                     if (!row) {
-                        showMessage(t('Added {server}. Open Libraries on its card to choose what to import.', { server: server.Name }));
+                        showMessage(recognized(server) + t('Added {server}. Open Libraries on its card to choose what to import.', { server: server.Name }));
                         return Promise.resolve();
                     }
 
                     row.open = true;
                     return row.jmShowLibraries().then(function () {
-                        showMessage(t('Added {server}. Choose its libraries.', { server: server.Name }));
+                        showMessage(recognized(server) + t('Added {server}. Choose its libraries.', { server: server.Name }));
                         var target = row.querySelector('.jmLibraries input') || row.querySelector('.jmLibrariesNote');
                         target.focus({ preventScroll: true });
                         target.scrollIntoView({ block: 'center' });
@@ -4279,13 +4288,19 @@
                         Password: password.value
                     };
                     password.value = '';
-                    act(api('POST', 'Servers', request).then(function (server) {
+                    act(api('POST', 'Servers', request).catch(function (error) {
+                        if (error.failure === 'AlreadyConfigured' && error.serverName) {
+                            throw new Error(t('This server is already configured as “{server}”.', { server: error.serverName }));
+                        }
+
+                        throw error;
+                    }).then(function (server) {
                         el('#jmAddServerForm').reset();
                         el('#jmAddServerPart').open = false;
                         return Promise.all([loadStatus(), loadSync()]).then(function () {
                             return chooseLibraries(server);
                         }).catch(function (error) {
-                            throw new Error(t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
+                            throw new Error(recognized(server) + t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
                         });
                     }));
                 });

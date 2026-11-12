@@ -108,6 +108,13 @@ public class FederationAdminController : ControllerBase
 
         var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
         var result = await _registry.AddAsync(request.Name, request.Url, credentials, cancellationToken).ConfigureAwait(false);
+        if (result.Failure == RemoteFailure.AlreadyConfigured && result.Value is { } configured)
+        {
+            return StatusCode(
+                StatusCodes.Status409Conflict,
+                new FailureResponse(result.Failure, $"This server is already configured as “{configured.Name}”.") { ServerName = configured.Name });
+        }
+
         if (!result.IsSuccess)
         {
             return Failed(result.Failure);
@@ -307,6 +314,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
             RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
             RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
+            RemoteFailure.AlreadyConfigured => "This server is already configured.",
             _ => "The operation failed."
         };
     }
@@ -334,7 +342,8 @@ public class FederationAdminController : ControllerBase
             ConnectionOf(server.LastFailure),
             server.LastCheckedUtc)
         {
-            NeedsPassword = server.NeedsPassword
+            NeedsPassword = server.NeedsPassword,
+            RecognizedAs = server.RecognizedAs
         };
     }
 
@@ -342,7 +351,7 @@ public class FederationAdminController : ControllerBase
     {
         var status = failure switch
         {
-            RemoteFailure.Suspended => StatusCodes.Status409Conflict,
+            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
