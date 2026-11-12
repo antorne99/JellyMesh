@@ -181,14 +181,16 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             true)
         : null;
 
-    // The registry a removed server left. A configured server with the same id wins: its libraries are never seen here.
-    // A library it drops because the federated folder changed is listed as released, like in a live registry (decision 158).
+    // The registry a removed server left. It never sees the libraries of a configured server with the same id, nor those
+    // any configured server found at switch-on (decision 175). One it drops for a new federated folder is released (158).
     private static Registry? HeldRegistry(PluginConfiguration config, Guid serverId) => HeldOf(config, serverId) is { } held
         ? new Registry(
             serverId,
             held.Libraries,
             held.ReleasedLibraries,
-            IdSet(held.PreexistingLibraryIds.Concat(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? [])),
+            IdSet(held.PreexistingLibraryIds
+                .Concat(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? [])
+                .Concat(config.Servers.SelectMany(server => server.PreexistingLibraryIds))),
             IdSet([]),
             held.FollowedLibraryIds,
             false)
@@ -716,6 +718,6 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
         // Only a library new since the last check may be a renamed one, so one with no id never is.
         public bool MayAdopt(VirtualFolderInfo folder) =>
-            folder.ItemId is { } id && !NotAdopted.Contains(id) && !Followed.Contains(id, StringComparer.OrdinalIgnoreCase);
+            folder.ItemId is { Length: > 0 } id && !NotAdopted.Contains(id) && !Followed.Contains(id, StringComparer.OrdinalIgnoreCase);
     }
 }

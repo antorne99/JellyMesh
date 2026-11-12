@@ -585,7 +585,7 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_server_added_back_keeps_its_new_libraries_while_those_it_left_are_deleted()
+    public async Task A_server_added_back_keeps_its_new_libraries_and_those_it_left_and_found_at_switch_on()
     {
         var fixture = new Fixture();
         await fixture.Manager.Enable(_serverId).Job;
@@ -599,8 +599,8 @@ public sealed class ServerLibraryManagerTests
         await fixture.Manager.Enable(_serverId).Job;
         await fixture.Manager.DeleteRemovedServerLibraries();
 
-        Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
-        Assert.Equal(["Casa - Film", "Casa 1a2b3c4d - Serie"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Casa - Serie", "Casa - Film", "Casa 1a2b3c4d - Serie"], fixture.Libraries.Folders.Select(folder => folder.Name));
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
 
@@ -741,6 +741,61 @@ public sealed class ServerLibraryManagerTests
         Assert.Empty(fixture.Libraries.Created);
         Assert.Equal(["Altro - Film"], fixture.Libraries.Removed.Select(call => call.Name));
         AssertUntouched(back);
+    }
+
+    [Fact]
+    public async Task A_library_with_an_empty_id_is_never_taken_for_a_renamed_one()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.Find("Mine").ItemId = string.Empty;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_removed_server_never_deletes_a_library_a_configured_server_found_at_switch_on()
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Altro - Film"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            [],
+            []);
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Altro - Film"], fixture.Libraries.Folders.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_removed_server_never_takes_for_a_renamed_one_a_library_a_configured_server_found_at_switch_on()
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Mine"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            [],
+            []);
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
 
     // A server added back is a new one: a job started for the one removed writes nothing in it.
