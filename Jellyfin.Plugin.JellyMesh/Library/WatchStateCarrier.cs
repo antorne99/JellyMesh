@@ -67,6 +67,13 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     {
         ArgumentNullException.ThrowIfNull(moves);
 
+        // Without the record every carry would look like the first and put back what users took off (decision 176).
+        if (!_log.EnsureLoaded())
+        {
+            _logger.LogWarning("The record of the watch state carries cannot be read for now: {Count} titles wait for it", moves.Count);
+            return new WatchStateCarryReport(moves.Select(move => Outcome(move, WatchStateMoveStatus.Failed)).ToList());
+        }
+
         var run = new Run(_store.Read(config => config.FederatedFolderPath) ?? string.Empty, _registry.State, _users.GetUsers().ToList());
         var outcomes = new List<WatchStateMoveOutcome>(moves.Count);
         var recorded = new Dictionary<int, List<Guid>>();

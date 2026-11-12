@@ -16,7 +16,8 @@ public interface IWatchStateCarrier
 {
     /// <summary>
     /// Carries the watch state of each move for every user. A carry done for a user and old item is repeated only after
-    /// a newer watch of the old item, and then without favorite and rating (decision 155).
+    /// a newer watch of the old item, and then without favorite and rating (decision 155). A move is not counted as done
+    /// when its record cannot be saved, and none runs while the record cannot be read (decision 176).
     /// </summary>
     /// <param name="moves">
     /// The old items and their new items. Versions in one registry group must be linked first, with their primary among

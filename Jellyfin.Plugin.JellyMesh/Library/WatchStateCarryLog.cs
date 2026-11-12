@@ -12,7 +12,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// <see cref="IWatchStateCarryLog"/> over a file in the plugin data folder. It holds user and item IDs and a date. A write
-/// replaces the file in one step; a file that cannot be read is set aside.
+/// replaces the file in one step. A damaged file is set aside; one that cannot be read for now suspends the carries until
+/// it reads again (decision 176).
 /// </summary>
 public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 {
@@ -32,9 +33,11 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
     private readonly string _path;
     private readonly ILogger<WatchStateCarryLog> _logger;
+    private readonly Func<string, Stream> _openRead;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), DateTime?> _carries = new();
     private volatile bool _unsaved;
+    private volatile bool _loaded;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WatchStateCarryLog"/> class.
@@ -42,12 +45,50 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     /// <param name="folder">The folder of the file.</param>
     /// <param name="logger">The logger.</param>
     public WatchStateCarryLog(string folder, ILogger<WatchStateCarryLog> logger)
+        : this(folder, logger, File.OpenRead)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="WatchStateCarryLog"/> class that reads the file through a test seam.
+    /// </summary>
+    /// <param name="folder">The folder of the file.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="openRead">Opens the file to read it.</param>
+    internal WatchStateCarryLog(string folder, ILogger<WatchStateCarryLog> logger, Func<string, Stream> openRead)
     {
         _path = Path.Combine(folder, FileName);
         _logger = logger;
-        foreach (var entry in Load())
+        _openRead = openRead;
+        EnsureLoaded();
+    }
+
+    /// <inheritdoc />
+    public bool EnsureLoaded()
+    {
+        if (_loaded)
         {
-            _carries[(entry.UserId, entry.ItemId)] = entry.LastPlayedDate;
+            return true;
+        }
+
+        _gate.Wait();
+        try
+        {
+            if (!_loaded && Load() is { } entries)
+            {
+                foreach (var entry in entries)
+                {
+                    _carries[(entry.UserId, entry.ItemId)] = entry.LastPlayedDate;
+                }
+
+                _loaded = true;
+            }
+
+            return _loaded;
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
@@ -57,6 +98,11 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     /// <inheritdoc />
     public void Record(Guid userId, Guid fromItemId, DateTime? lastPlayedDate)
     {
+        if (!_loaded)
+        {
+            return;
+        }
+
         _carries[(userId, fromItemId)] = lastPlayedDate;
         _unsaved = true;
     }
@@ -67,6 +113,12 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // A file not read yet would be replaced by what little is in memory.
+            if (!_loaded)
+            {
+                return false;
+            }
+
             if (!_unsaved)
             {
                 return true;
@@ -124,7 +176,8 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
     }
 
-    private IReadOnlyList<Entry> Load()
+    // Null when the file cannot be read for now: the carries wait for it rather than start again from nothing.
+    private IReadOnlyList<Entry>? Load()
     {
         if (!File.Exists(_path))
         {
@@ -133,7 +186,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
         try
         {
-            using var stream = File.OpenRead(_path);
+            using var stream = _openRead(_path);
             var file = JsonSerializer.Deserialize<CarryFile>(stream, _options);
             if (file?.Version == CurrentVersion && file.Entries.All(entry => entry is not null))
             {
@@ -142,9 +195,14 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
             _logger.LogError("The file of the watch state carries done has an unsupported format. It is set aside");
         }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
             _logger.LogError("Cannot read the file of the watch state carries done: {Error}. It is set aside", exception.GetType().Name);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries wait for it", exception.GetType().Name);
+            return null;
         }
 
         KeepDamagedCopy();

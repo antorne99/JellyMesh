@@ -11,6 +11,12 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface IWatchStateCarryLog
 {
     /// <summary>
+    /// Reads the file if it could not be read before. Until it is read nothing is found, recorded or saved (decision 176).
+    /// </summary>
+    /// <returns>Whether the carries done are known.</returns>
+    bool EnsureLoaded();
+
+    /// <summary>
     /// Finds the carry done for a user from an old item.
     /// </summary>
     /// <param name="userId">The local user.</param>
@@ -31,6 +37,6 @@ public interface IWatchStateCarryLog
     /// Saves the carries recorded since the last save. A failure is logged, not thrown.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>Whether every recorded carry is on disk.</returns>
+    /// <returns>Whether every recorded carry is on disk; false while the file is not read.</returns>
     Task<bool> SaveAsync(CancellationToken cancellationToken);
 }

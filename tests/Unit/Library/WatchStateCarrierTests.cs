@@ -45,6 +45,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     private readonly List<VersionGroup> _groups = [];
     private readonly User _mario = new("mario", "auth", "reset");
     private readonly User _luigi = new("luigi", "auth", "reset");
+    private readonly List<User> _everyone;
     private WatchStateCarryLog _log;
     private string? _lastServedStub;
 
@@ -57,7 +58,8 @@ public sealed class WatchStateCarrierTests : IDisposable
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>()))
             .Returns((Guid id, User user) => _hidden.Contains((user.Id, id)) ? null : _items.GetValueOrDefault(id));
-        _users.Setup(users => users.GetUsers()).Returns(() => [_mario, _luigi]);
+        _everyone = [_mario, _luigi];
+        _users.Setup(users => users.GetUsers()).Returns(() => _everyone);
         _userData.Setup(data => data.GetUserData(It.IsAny<User>(), It.IsAny<BaseItem>()))
             .Returns((User user, BaseItem item) =>
             {
@@ -568,6 +570,35 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(File.Exists(Path.Combine(_data, "log", WatchStateCarryLog.FileName)));
+    }
+
+    [Fact]
+    public async Task ALogThatCannotBeReadForNowSuspendsEveryCarry()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        Row(_mario, a).IsFavorite = false;
+        _saves.Clear();
+        var folder = Path.Combine(_data, "log");
+        var file = Path.Combine(folder, WatchStateCarryLog.FileName);
+        var content = await File.ReadAllTextAsync(file);
+        _log.Dispose();
+        var failing = true;
+        _log = new WatchStateCarryLog(folder, new CapturingLogger<WatchStateCarryLog>(), path => failing ? throw new IOException("busy") : File.OpenRead(path));
+
+        var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.Equal(content, await File.ReadAllTextAsync(file));
+
+        failing = false;
+        report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.False(Row(_mario, a).IsFavorite);
     }
 
     [Fact]
