@@ -110,6 +110,8 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             throw;
         }
 
+        Prune(run);
+
         // A move done may rest on a record from an earlier run that is still not on disk, so none counts as done.
         if (!await _log.SaveAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -413,6 +415,27 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
 
         return true;
+    }
+
+    // Drops the records of users who are gone and of old items no longer in the library (decision 165).
+    private void Prune(Run run)
+    {
+        var users = run.Users.Select(user => user.Id).ToHashSet();
+        var exists = new Dictionary<Guid, bool>();
+        _log.Forget((userId, itemId) =>
+        {
+            if (users.Count > 0 && !users.Contains(userId))
+            {
+                return true;
+            }
+
+            if (!exists.TryGetValue(itemId, out var found))
+            {
+                exists[itemId] = found = _library.GetItemById(itemId) is not null;
+            }
+
+            return !found;
+        });
     }
 
     // What a run reads once, with the group of each stub and local copy.

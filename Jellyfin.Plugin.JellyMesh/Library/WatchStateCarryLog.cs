@@ -108,6 +108,28 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     }
 
     /// <inheritdoc />
+    public int Forget(Func<Guid, Guid, bool> match)
+    {
+        ArgumentNullException.ThrowIfNull(match);
+
+        var forgotten = 0;
+        foreach (var key in _carries.Keys.Where(key => match(key.UserId, key.ItemId)).ToList())
+        {
+            if (_carries.TryRemove(key, out _))
+            {
+                forgotten++;
+            }
+        }
+
+        if (forgotten > 0)
+        {
+            _unsaved = true;
+        }
+
+        return forgotten;
+    }
+
+    /// <inheritdoc />
     public async Task<bool> SaveAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);

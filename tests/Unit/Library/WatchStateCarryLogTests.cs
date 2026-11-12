@@ -103,6 +103,39 @@ public sealed class WatchStateCarryLogTests : IDisposable
         Assert.Equal(content, File.ReadAllText(FilePath + ".damaged"));
     }
 
+    [Fact]
+    public async Task ForgottenCarriesAreGoneAfterARestart()
+    {
+        using (var log = Log())
+        {
+            log.Record(_user, _item, _date);
+            log.Record(_otherUser, _item, _date);
+            log.Record(_user, _otherItem, _date);
+            Assert.True(await log.SaveAsync(CancellationToken.None));
+
+            Assert.Equal(2, log.Forget((user, item) => user == _otherUser || item == _otherItem));
+            Assert.False(log.TryFind(_otherUser, _item, out _));
+            Assert.True(await log.SaveAsync(CancellationToken.None));
+        }
+
+        using var reloaded = Log();
+
+        Assert.True(reloaded.TryFind(_user, _item, out _));
+        Assert.False(reloaded.TryFind(_otherUser, _item, out _));
+        Assert.False(reloaded.TryFind(_user, _otherItem, out _));
+    }
+
+    [Fact]
+    public async Task ForgettingNothingWritesNoFile()
+    {
+        using var log = Log();
+
+        Assert.Equal(0, log.Forget((_, _) => true));
+        Assert.True(await log.SaveAsync(CancellationToken.None));
+
+        Assert.False(File.Exists(FilePath));
+    }
+
     [Theory]
     [InlineData(typeof(IOException))]
     [InlineData(typeof(UnauthorizedAccessException))]

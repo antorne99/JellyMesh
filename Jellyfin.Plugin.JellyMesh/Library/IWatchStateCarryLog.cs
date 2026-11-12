@@ -34,6 +34,13 @@ public interface IWatchStateCarryLog
     void Record(Guid userId, Guid fromItemId, DateTime? lastPlayedDate);
 
     /// <summary>
+    /// Forgets in memory the carries that match; <see cref="SaveAsync"/> keeps that (decision 165).
+    /// </summary>
+    /// <param name="match">Tells, from the user and the old item, whether a carry goes.</param>
+    /// <returns>The number of carries forgotten.</returns>
+    int Forget(Func<Guid, Guid, bool> match);
+
+    /// <summary>
     /// Saves the carries recorded since the last save. A failure is logged, not thrown.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>

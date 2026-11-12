@@ -573,6 +573,64 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task TheRecordsOfAnOldItemNoLongerInTheLibraryGoAtTheEndOfARun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var row = Row(_mario, old);
+        row.IsFavorite = true;
+        row.LastPlayedDate = _older;
+        var move = Move(old, oldStub, (a, _serverA));
+        await CarryAsync(move);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+
+        _items.Remove(old.Id);
+        await CarryAsync();
+        await RestartAsync();
+
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task APathThatComesBackCarriesItsStateAgain()
+    {
+        // A to B, then B to A, then A to B again: the old item of the last move had a record from the first (decision 165).
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        _items.Remove(old.Id);
+        await CarryAsync();
+
+        _items[old.Id] = old;
+        var b = Movie(_serverA);
+        Row(_mario, old).Rating = 7;
+        var report = await CarryAsync(Move(old, oldStub, (b, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, b).IsFavorite);
+        Assert.Equal(7, Row(_mario, b).Rating);
+    }
+
+    [Fact]
+    public async Task TheRecordsOfAUserWhoIsGoneGoAtTheEndOfARun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        Row(_luigi, old).IsFavorite = true;
+        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        Assert.True(_log.TryFind(_luigi.Id, old.Id, out _));
+
+        _everyone.Remove(_luigi);
+        await CarryAsync();
+        await RestartAsync();
+
+        Assert.False(_log.TryFind(_luigi.Id, old.Id, out _));
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
     public async Task ALogThatCannotBeReadForNowSuspendsEveryCarry()
     {
         var (old, oldStub) = Old();
