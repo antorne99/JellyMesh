@@ -43,6 +43,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly StubRegistry? _stubs;
     private readonly IActivityWriter? _activity;
     private readonly IServerLibraryManager? _libraries;
+    private readonly IVersionLinker? _linker;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
@@ -65,6 +66,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="stubs">The stub registry, which remembers the servers the administrator removed.</param>
     /// <param name="activity">Where completed and failed syncs are written.</param>
     /// <param name="libraries">The libraries kept for each server, followed after every sync.</param>
+    /// <param name="linker">What links the copies of a title as versions after the materialization.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -75,7 +77,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         ILibraryMaterializer? materializer = null,
         StubRegistry? stubs = null,
         IActivityWriter? activity = null,
-        IServerLibraryManager? libraries = null)
+        IServerLibraryManager? libraries = null,
+        IVersionLinker? linker = null)
     {
         _registry = registry;
         _reader = reader;
@@ -87,6 +90,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _stubs = stubs;
         _activity = activity;
         _libraries = libraries;
+        _linker = linker;
     }
 
     /// <summary>
@@ -338,6 +342,21 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             // The type only: a message could hold a remote address.
             _logger.LogError("Could not materialize the federated folder: {Error}", exception.GetType().Name);
+        }
+
+        if (_linker is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // The nightly run also finds by path a stub whose item is not where its path says.
+            await _linker.LinkAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Could not link the versions of the titles: {Error}", exception.GetType().Name);
         }
     }
 
