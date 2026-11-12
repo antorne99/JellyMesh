@@ -46,6 +46,9 @@ public sealed record RemoteMediaSource
     /// <summary>Gets the 3D format.</summary>
     public string? Video3DFormat { get; init; }
 
+    /// <summary>Gets a value indicating whether the remote has media segments for the item, null when it does not say.</summary>
+    public bool? HasSegments { get; init; }
+
     /// <summary>Gets the quality worked out by a JellyMesh provider, null from a stock remote.</summary>
     public RemoteQuality? Quality { get; init; }
 

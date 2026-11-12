@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Tasks;
 using Moq;
 using Xunit;
@@ -116,6 +117,54 @@ public sealed class LibraryScansTests
         await Scans.WaitIdleAsync(CancellationToken.None);
 
         Assert.Equal(TimeSpan.FromHours(6), _clock.Now - _start);
+    }
+
+    [Fact]
+    public async Task The_libraries_are_ready_once_the_scan_ended_and_every_library_has_its_id()
+    {
+        Enqueue(true, true, false);
+        var reads = 0;
+        _libraries.Setup(manager => manager.GetVirtualFolders()).Returns(() =>
+        [
+            new VirtualFolderInfo { Name = "Film", ItemId = "a" },
+            new VirtualFolderInfo { Name = "Rinominata", ItemId = ++reads < 3 ? null : "b" }
+        ]);
+
+        Assert.True(await Scans.WaitReadyAsync(TimeSpan.FromMinutes(10), CancellationToken.None));
+
+        Assert.Equal(4, _polls);
+    }
+
+    [Fact]
+    public async Task A_library_still_without_its_id_is_given_up_after_the_limit()
+    {
+        _libraries.Setup(manager => manager.GetVirtualFolders()).Returns([new VirtualFolderInfo { Name = "Rinominata" }]);
+
+        Assert.False(await Scans.WaitReadyAsync(TimeSpan.FromMinutes(10), CancellationToken.None));
+
+        Assert.Equal(TimeSpan.FromMinutes(10), _clock.Now - _start);
+    }
+
+    [Fact]
+    public async Task An_unreadable_library_list_is_not_ready()
+    {
+        _libraries.Setup(manager => manager.GetVirtualFolders()).Throws(new InvalidOperationException("db"));
+
+        Assert.False(await Scans.WaitReadyAsync(TimeSpan.FromSeconds(5), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Waiting_for_the_libraries_honours_the_cancellation()
+    {
+        _libraries.SetupGet(manager => manager.IsScanRunning).Returns(true);
+        using var cancelled = new CancellationTokenSource();
+        var scans = new LibraryScans(_libraries.Object, _tasks.Object, _logger, _clock, async (_, token) =>
+        {
+            await cancelled.CancelAsync();
+            token.ThrowIfCancellationRequested();
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scans.WaitReadyAsync(TimeSpan.FromMinutes(10), cancelled.Token));
     }
 
     private void Enqueue(params bool[] states)

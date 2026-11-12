@@ -55,7 +55,8 @@ internal sealed class StubFixture : IDisposable
             Remover,
             new StubUrlBuilder(Host.Object, Network.Object, Signer),
             Sync.Clock,
-            Logger);
+            Logger,
+            Refresher);
     }
 
     public SyncFixture Sync { get; }
@@ -97,6 +98,8 @@ internal sealed class StubFixture : IDisposable
     public CapturingLogger<LibraryMaterializer> Logger { get; } = new();
 
     public LibraryMaterializer Materializer { get; }
+
+    public RecordingRefresher Refresher { get; } = new();
 
     public string[] Files => Directory.Exists(Root)
         ? Directory.GetFiles(Root, "*", SearchOption.AllDirectories).Select(file => Path.GetRelativePath(Root, file)).Order(StringComparer.Ordinal).ToArray()
@@ -148,6 +151,13 @@ internal sealed class StubFixture : IDisposable
             after();
             return view;
         }
+    }
+
+    internal sealed class RecordingRefresher : ILocalRefreshRequester
+    {
+        public List<Guid> Requested { get; } = [];
+
+        public void Request(IReadOnlyCollection<Guid> itemIds) => Requested.AddRange(itemIds);
     }
 
     internal sealed class FakeCatalog : ILocalCatalogReader

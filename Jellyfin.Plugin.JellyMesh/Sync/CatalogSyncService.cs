@@ -47,6 +47,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly IVersionLinker? _linker;
     private readonly ISyncHistory? _history;
     private readonly IPluginConfigurationStore? _store;
+    private readonly ILayoutMigration? _migration;
+    private readonly ILibraryChangeTracker? _changes;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
@@ -73,6 +75,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="linker">What links the copies of a title as versions after the materialization.</param>
     /// <param name="history">Where each run is recorded.</param>
     /// <param name="store">The configuration, which says whether collections are read.</param>
+    /// <param name="migration">The migration from the flat layout, which also runs after each sync (Q222).</param>
+    /// <param name="changes">What remembers the libraries on the federated folder at each sync, for the page (Q53).</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -86,7 +90,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         IServerLibraryManager? libraries = null,
         IVersionLinker? linker = null,
         ISyncHistory? history = null,
-        IPluginConfigurationStore? store = null)
+        IPluginConfigurationStore? store = null,
+        ILayoutMigration? migration = null,
+        ILibraryChangeTracker? changes = null)
     {
         _registry = registry;
         _reader = reader;
@@ -101,6 +107,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _linker = linker;
         _history = history;
         _store = store;
+        _migration = migration;
+        _changes = changes;
     }
 
     /// <summary>
@@ -167,10 +175,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
-    public void StartRemovalCleanup()
+    public Task StartRemovalCleanup()
     {
         var cancellationToken = _shutdown.Token;
-        _ = Task.Run(() => CleanUpAfterRemovalAsync(cancellationToken), CancellationToken.None);
+        return Task.Run(() => CleanUpAfterRemovalAsync(cancellationToken), CancellationToken.None);
     }
 
     /// <inheritdoc />
@@ -295,6 +303,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var followed = false;
         try
         {
+            if (_libraries is not null)
+            {
+                await _libraries.WaitReadyAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             _runFailures.Clear();
             _runReads.Clear();
             servers = _registry.GetServers();
@@ -304,7 +317,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             }
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
+
+            // The link below takes in what changed until now, so the page warns only about later changes.
+            _changes?.Record();
             materialized = await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            await MigrateAsync(cancellationToken).ConfigureAwait(false);
             followed = await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
             if (servers.Count > 0)
             {
@@ -442,6 +459,25 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         return materialized;
+    }
+
+    // Takes the stub registry lock itself, so it runs after the materialization and the link have let it go.
+    private async Task MigrateAsync(CancellationToken cancellationToken)
+    {
+        if (_migration is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _migration.RunAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}", exception.GetType().Name);
+        }
     }
 
     // False when the check failed, so that it counts as skipped. A cancelled one throws and counts as skipped too.

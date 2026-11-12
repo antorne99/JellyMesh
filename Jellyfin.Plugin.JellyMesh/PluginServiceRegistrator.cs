@@ -61,6 +61,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<StubTechnicalData>();
         serviceCollection.AddSingleton<StubItemUpdater>();
         serviceCollection.AddSingleton<StubRemover>();
+        serviceCollection.AddSingleton<ILocalRefreshRequester, LocalRefreshRequester>();
         serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
         serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
         serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
@@ -81,6 +82,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<SyncHistoryStore>>()));
         serviceCollection.AddSingleton<ILayoutMigration, LayoutMigration>();
+        serviceCollection.AddSingleton<ILibraryChangeTracker, LibraryChangeTracker>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 

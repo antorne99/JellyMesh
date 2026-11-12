@@ -8,9 +8,12 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Segments;
+using Jellyfin.Plugin.JellyMesh.Tests.Segments;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaSegments;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
@@ -55,6 +58,8 @@ public class PlaybackVersionTests
     private readonly Movie _local;
     private readonly Movie _a;
     private readonly Movie _b;
+    private readonly Mock<IMediaSegmentManager> _segmentManager = new();
+    private readonly StubSegments _segments;
 
     public PlaybackVersionTests()
     {
@@ -75,6 +80,14 @@ public class PlaybackVersionTests
         _stubs.Setup(stubs => stubs.FindGroupOfLocal(_localItem)).Returns(group);
         Sees(_localItem, _aItem, _bItem);
         _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
+        _segments = new StubSegments(
+            new StubLookup(_library.Object, _stubs.Object, _store),
+            _index.Object,
+            _fixture.Registry,
+            new StubSegmentsTests.FakeSegmentClient(),
+            _store,
+            TimeProvider.System,
+            NullLogger<StubSegments>.Instance);
     }
 
     private static string N(Guid id) => id.ToString("N");
@@ -166,7 +179,8 @@ public class PlaybackVersionTests
             _fixture.Coordinator,
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
-            new PlaybackVersions(lookup, _stubs.Object, _library.Object, _index.Object, _store));
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, _index.Object, _store),
+            new SegmentOffer(_segmentManager.Object, _segments, lookup, _fixture.Sessions));
     }
 
     private static ActionExecutingContext Context(Guid itemId, params (string Key, object? Value)[] arguments)
@@ -566,6 +580,54 @@ public class PlaybackVersionTests
         var session = Assert.Single(_fixture.Sessions.All);
         Assert.Equal(_bItem, session.Identity.ItemId);
         Assert.Equal("b", session.Identity.StubId);
+    }
+
+    [Fact]
+    public async Task After_a_fallback_the_segments_offered_are_those_of_the_version_that_serves()
+    {
+        _fixture.Registry.Offline.Add(_serverA);
+        _segmentManager.Setup(manager => manager.HasSegments(_bItem)).Returns(true);
+        _segments.Remember(_bItem, new SegmentOrigin(new StubSource(_serverB, "item-b", "ms-b"), 1000));
+
+        var (_, response) = await RunAsync(Context(_aItem, ("mediaSourceId", N(_aItem))));
+
+        var source = Assert.Single(response!.MediaSources);
+        Assert.Equal(N(_bItem), source.Id);
+        Assert.True(source.HasSegments);
+    }
+
+    [Fact]
+    public async Task A_remote_source_other_than_the_origin_of_the_segments_offers_none_without_the_same_duration()
+    {
+        _segmentManager.Setup(manager => manager.HasSegments(_aItem)).Returns(true);
+        _segments.Remember(_aItem, new SegmentOrigin(new StubSource(_serverC, "item-c", "ms-c"), 1000));
+        _fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            answer.Value!.MediaSources[0].HasSegments = true;
+            return Task.FromResult(answer);
+        };
+
+        var (_, response) = await RunAsync(Context(_aItem, ("mediaSourceId", N(_aItem))));
+
+        Assert.False(Assert.Single(response!.MediaSources).HasSegments);
+    }
+
+    [Theory]
+    [InlineData("ms-b", true)]
+    [InlineData("ms-other", false)]
+    public async Task A_local_transcode_offers_segments_only_from_their_source(string originMediaSource, bool offered)
+    {
+        Hidden(_localItem);
+        _fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError));
+        _segmentManager.Setup(manager => manager.HasSegments(_bItem)).Returns(true);
+        _segments.Remember(_bItem, new SegmentOrigin(new StubSource(_serverB, "item-b", originMediaSource), 1000));
+        var transcoded = new MediaSourceInfo { Id = N(_bItem), TranscodingUrl = "/videos/" + N(_bItem) + "/master.m3u8?MediaSourceId=" + N(_bItem), HasSegments = true };
+        var context = Context(_aItem, ("playbackInfoDto", new PostedBody { DeviceProfile = PlaybackValues.WebProfile }));
+
+        var (_, response) = await RunAsync(context, transcoded);
+
+        Assert.Equal(offered, Assert.Single(response!.MediaSources).HasSegments);
     }
 
     [Fact]

@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
@@ -46,6 +47,12 @@ public sealed class LayoutMigrationTests : IDisposable
     private readonly List<VersionGroup> _groups = [];
     private readonly List<VirtualFolderInfo> _libraries = [];
     private readonly List<(Guid Server, string ItemId)> _indexed = [];
+    private readonly List<Guid> _configured = [_serverA, _serverB];
+    private readonly List<Guid> _synced = [_serverA, _serverB];
+    private readonly List<Guid> _removed = [];
+    private readonly List<string> _imported = [];
+    private readonly CapturingLogger<LayoutMigration> _logger = new();
+    private Func<WatchStateMove, WatchStateMoveOutcome>? _outcome;
     private readonly User _mario = new("mario", "auth", "reset");
     private readonly User _luigi = new("luigi", "auth", "reset");
     private StubRegistry _registry;
@@ -79,15 +86,12 @@ public sealed class LayoutMigrationTests : IDisposable
         _userData.Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
             .Callback((User user, BaseItem item, UserItemData data, UserDataSaveReason _, CancellationToken _) => _rows[(user.Id, item.Id)] = data);
         _servers.Setup(servers => servers.GetServers()).Returns(() =>
-        [
-            new RemoteServerInfo(_serverA, "Casa", "http://a", RemoteMode.Standard, 0, [], null, null),
-            new RemoteServerInfo(_serverB, "Ufficio", "http://b", RemoteMode.Standard, 0, [], null, null)
-        ]);
+            _configured.Select(server => new RemoteServerInfo(server, "Server", "http://" + server.ToString("N"), RemoteMode.Standard, 0, _imported.ToList(), null, null)).ToList());
         _index.Setup(index => index.Snapshot).Returns(() => new IndexSnapshot
         {
             Version = IndexSnapshot.CurrentVersion,
             Health = IndexHealth.Ok,
-            Servers = new[] { _serverA, _serverB }.Select(server => new ServerCatalog
+            Servers = _synced.Select(server => new ServerCatalog
             {
                 ServerId = server,
                 State = ServerSyncState.Complete,
@@ -153,14 +157,14 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.Equal("Film", library.Name);
         Assert.Equal([OldFilms], library.OldPaths);
         Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], library.MissingPaths);
+        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
     [Fact]
-    public async Task OldPathsRemovedBeforeTheNewOnesAreAddedLetTheOldStubsGoWithNothingCarried()
+    public async Task OldPathsRemovedBeforeTheNewOnesAreAddedKeepTheOldStubs()
     {
-        // Pins the behaviour of today: with no library on an old path the gate is open, and an old item gone is closed.
-        var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         _items.Remove(oldItem.Id);
         _items.Remove(a.Id);
@@ -168,8 +172,47 @@ public sealed class LayoutMigrationTests : IDisposable
         var migration = await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
 
+        Assert.NotNull(_registry.Find(old.Id));
+        var status = migration.GetStatus(Root)!;
+        Assert.Equal(LayoutMigrationStep.AddPaths, status.Step);
+        Assert.Empty(status.Libraries);
+        Assert.Equal(NewPaths(), status.UnlinkedFolders);
+        Assert.Equal(1, status.OldTitles);
+    }
+
+    [Fact]
+    public async Task TheOldFoldersWaitForTheSeriesFoldersOfEachServerInSomeLibrary()
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies,
+            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.Equal(LayoutMigrationStep.AddPaths, migration.GetStatus(Root)!.Step);
+        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
+
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
+            [FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)]));
+        await migration.RunAsync(CancellationToken.None);
+
         Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
-        Assert.Null(migration.GetStatus(Root));
+    }
+
+    [Fact]
+    public async Task OldPathsRemovedAfterTheNewOnesAreAddedLetAnOldStubWithoutItsItemGo()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _items.Remove(oldItem.Id);
+        _libraries.Add(Library("Nuovi", CollectionTypeOptions.mixed, NewPaths().ToArray()));
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
     }
 
     [Fact]
@@ -298,6 +341,185 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task AConfiguredServerMissingFromAnEmptyIndexKeepsTheOldStubsWaiting()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _synced.Clear();
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+    }
+
+    [Fact]
+    public async Task AConfiguredServerNotReadInFullKeepsTheOldStubsWaiting()
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        _index.Setup(index => index.Snapshot).Returns(() => new IndexSnapshot
+        {
+            Version = IndexSnapshot.CurrentVersion,
+            Health = IndexHealth.Ok,
+            Servers = [new ServerCatalog { ServerId = _serverA, State = ServerSyncState.Stale, Items = [] }]
+        });
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task AnImportedLibraryReadEmptyKeepsTheOldStubsWaiting()
+    {
+        _imported.Add("lib");
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+    }
+
+    [Fact]
+    public async Task AnOldEpisodeOfAnImportedLibraryReadEmptyKeepsItsOldSeries()
+    {
+        _imported.Add("lib");
+        var (show, showItem) = OldShow("Lost", (_serverA, "s1"));
+        var (episode, episodeItem) = OldEpisode(show, (_serverA, "e1"));
+        _stubs[_stubs.IndexOf(episode)] = episode with { Sources = [Source((_serverA, "e1")) with { LibraryId = "lib" }] };
+        _indexed.Clear();
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(episode.Id));
+        Assert.Contains(_registry.State.Series, series => series.Id == show.Id);
+        Assert.True(_items.ContainsKey(episodeItem.Id) && _items.ContainsKey(showItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+    }
+
+    [Fact]
+    public async Task ATitleGoneFromAnImportedLibraryWithOtherItemsIsGone()
+    {
+        _imported.Add("lib");
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        _indexed.Add((_serverA, "other"));
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+    }
+
+    [Fact]
+    public async Task AnOldSourceWithNoLibraryIsGoneEvenIfTheImportedLibraryReadsEmpty()
+    {
+        _imported.Add("lib");
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _stubs[_stubs.IndexOf(old)] = old with { Sources = [Source((_serverA, "a1"))] };
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+    }
+
+    [Fact]
+    public async Task ATitleOnlyOnARemovedServerIsGoneEvenWhileTheIndexStillListsIt()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverB, "b1"));
+        _configured.Remove(_serverB);
+        _removed.Add(_serverB);
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+    }
+
+    [Fact]
+    public async Task ATitleOnlyOnAServerMissingFromTheSettingsWithoutTheRemovalMarkWaits()
+    {
+        var (old, _) = OldFilm("Dune", (_serverB, "b1"));
+        _configured.Remove(_serverB);
+        _synced.Remove(_serverB);
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task ARefusedMoveIsClosedWithAWarningThatCountsOnly()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []);
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+        var warning = Assert.Single(_logger.Lines, line => line.Contains("refused", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("Dune", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain(Root, warning, StringComparison.Ordinal);
+        Assert.Contains(LogLevel.Warning, _logger.Levels);
+    }
+
+    [Theory]
+    [InlineData(WatchStateMoveStatus.Failed, null)]
+    [InlineData(WatchStateMoveStatus.UsersLeft, WatchStateUserSkipReason.NoUserData)]
+    [InlineData(WatchStateMoveStatus.UsersLeft, WatchStateUserSkipReason.NotSaved)]
+    public async Task AMoveThatAScanCannotFixKeepsTheOldStubsAndShowsAsBlocked(WatchStateMoveStatus status, WatchStateUserSkipReason? reason)
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, status, reason is { } why ? [new WatchStateUserSkip(_mario.Id, why)] : []);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Blocked);
+        Assert.Equal(0, shown.Waiting);
+    }
+
+    [Fact]
+    public async Task AMoveWaitingForAScanIsNotBlocked()
+    {
+        OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.NotFound, []);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Waiting);
+        Assert.Equal(0, shown.Blocked);
+    }
+
+    [Fact]
     public async Task AnOldSeriesGivesItsFavoriteToTheNewSeriesAndGoesWithItsEpisodes()
     {
         var (oldShow, oldShowItem) = OldShow("Lost", (_serverA, "s1"));
@@ -350,6 +572,28 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task APrimaryTheAdminChoseForTheLocalCopyTakesTheFavoriteOfTheOldStub()
+    {
+        var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        var local = Add(new Movie { Path = "/media/film/Dune.mkv" });
+        var chosen = Add(new Movie { Path = "/media/film/Dune Extended.mkv" });
+        Group(local, a);
+
+        // The admin merged the local copy into another film, and the linker put the stub under that film (row 162).
+        local.SetPrimaryVersionId(chosen.Id);
+        a.SetPrimaryVersionId(chosen.Id);
+        chosen.LinkedAlternateVersions = new[] { local, a }.Select(version => new LinkedChild { ItemId = version.Id, Type = LinkedChildType.LinkedAlternateVersion }).ToArray();
+        AllPathsLinked();
+        Row(_mario, oldItem).IsFavorite = true;
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.True(Row(_mario, chosen).IsFavorite);
+        Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+    }
+
+    [Fact]
     public async Task AGroupWithALocalCopyNotLinkedYetKeepsTheOldStub()
     {
         var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
@@ -394,7 +638,7 @@ public sealed class LayoutMigrationTests : IDisposable
             Kind = StubKind.Movie,
             RelativePath = Path.Combine("Film", title, title + ".strm"),
             IdentityKey = "old:" + title,
-            Sources = sources.Select(Source).ToList()
+            Sources = sources.Select(source => Source(source) with { LibraryId = "lib" }).ToList()
         };
         _stubs.Add(stub);
         _indexed.AddRange(sources);
@@ -512,9 +756,17 @@ public sealed class LayoutMigrationTests : IDisposable
 
     private async Task<LayoutMigration> MigrationAsync()
     {
-        await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList() }, CancellationToken.None);
-        var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, new CapturingLogger<WatchStateCarrier>());
-        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), new CapturingLogger<LayoutMigration>());
+        await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList(), RemovedServers = _removed.ToList() }, CancellationToken.None);
+        IWatchStateCarrier carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, new CapturingLogger<WatchStateCarrier>());
+        if (_outcome is { } outcome)
+        {
+            var fake = new Mock<IWatchStateCarrier>();
+            fake.Setup(carry => carry.CarryAsync(It.IsAny<IReadOnlyList<WatchStateMove>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<WatchStateMove> moves, CancellationToken _) => new WatchStateCarryReport(moves.Select(outcome).ToList()));
+            carrier = fake.Object;
+        }
+
+        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _logger);
     }
 
     private UserItemData Row(User user, BaseItem item) => _userData.Object.GetUserData(user, item)!;

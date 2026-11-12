@@ -75,6 +75,17 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
 
         var run = new Run(_store.Read(config => config.FederatedFolderPath) ?? string.Empty, _registry.State, _users.GetUsers().ToList());
+
+        // The film the admin merged a local copy into heads its group in place of that copy (Q220).
+        var heads = moves.SelectMany(move => move.Targets).Where(target => target.ServerId is null && !run.GroupOfLocal.ContainsKey(target.ItemId)).Select(target => target.ItemId).ToHashSet();
+        foreach (var group in run.State.Groups.Where(group => heads.Count > 0 && group.LocalItemIds.Count > 0))
+        {
+            if (LocalVersionHead.Of(group.LocalItemIds, _library, item => FederatedPaths.IsInside(run.Root, item.Path)) is { } head && heads.Contains(head.Id))
+            {
+                run.GroupOfLocal.TryAdd(head.Id, group.Id);
+            }
+        }
+
         var outcomes = new List<WatchStateMoveOutcome>(moves.Count);
         var recorded = new Dictionary<int, List<Guid>>();
         try

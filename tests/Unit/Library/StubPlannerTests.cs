@@ -480,6 +480,60 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void AnEmptyLibraryNextToAServerNotReadInFullKeepsTheStubAndHoldsNothing()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with
+        {
+            Sources = [new StubSource(_serverA, "m1", "m1") { LibraryId = Library }, new StubSource(_serverB, "z1", "z1") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete), Catalog(_serverB, ServerSyncState.Stale)], new StubState { Stubs = [existing] });
+
+        Assert.Empty(plan.Removals);
+        Assert.Empty(plan.Held);
+    }
+
+    [Fact]
+    public void TwoSourcesInOneEmptyLibraryHoldTheStubOnce()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with
+        {
+            Sources = [new StubSource(_serverA, "m1", "m1") { LibraryId = Library }, new StubSource(_serverA, "m2", "m2") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete)], new StubState { Stubs = [existing] });
+
+        Assert.Empty(plan.Removals);
+        var held = Assert.Single(plan.Held);
+        Assert.Equal((_serverA, Library, 1), (held.ServerId, held.LibraryId, held.Stubs));
+    }
+
+    [Fact]
+    public void EmptyLibrariesOnTwoServersAreEachHeld()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with
+        {
+            Sources = [new StubSource(_serverA, "m1", "m1") { LibraryId = Library }, new StubSource(_serverB, "z1", "z1") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete), Catalog(_serverB, ServerSyncState.Complete)], new StubState { Stubs = [existing] });
+
+        Assert.Empty(plan.Removals);
+        Assert.Equal([(_serverA, 1), (_serverB, 1)], plan.Held.Select(held => (held.ServerId, held.Stubs)).OrderBy(held => held.ServerId));
+    }
+
+    [Fact]
+    public void ASourceWithNoLibraryIsNotHeld()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with { Sources = [new StubSource(_serverA, "m1", "m1")] };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete)], new StubState { Stubs = [existing] });
+
+        Assert.Single(plan.Removals);
+        Assert.Empty(plan.Held);
+    }
+
+    [Fact]
     public void AServerTheAdministratorRemovedReleasesItsStubs()
     {
         var plan = Plan(

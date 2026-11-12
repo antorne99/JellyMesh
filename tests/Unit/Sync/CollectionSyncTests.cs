@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Xunit;
 
@@ -60,7 +61,7 @@ public sealed class CollectionSyncTests : IDisposable
     public async Task AJellyMeshServerGivesItsCollectionsByTheProviderApiOnAFullRead()
     {
         var server = await ServerWithSagaAsync();
-        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
         Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
@@ -71,10 +72,56 @@ public sealed class CollectionSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task AJellyMeshServerOnAnOlderProtocolIsSkippedWithoutAWarning()
+    {
+        var server = await ServerWithSagaAsync();
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion - 1);
+        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(ServerSyncState.Complete, _fixture.Index.Snapshot.Find(server.Id)!.State);
+        Assert.Empty(Remote.CollectionReads);
+        Assert.Null(CollectionOf(server, "b"));
+        Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains("Could not read the collections", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerUpgradedToTheCollectionsProtocolIsReadOnTheNextFullRead()
+    {
+        var server = await ServerWithSagaAsync();
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion - 1);
+        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(["peer:films@0"], Remote.CollectionReads);
+        Assert.Equal(new IndexedBoxSet("Peer saga", "7"), CollectionOf(server, "b"));
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerBackOnAnOlderProtocolLosesItsCollectionsAsWithTheOptionOff()
+    {
+        var server = await ServerWithSagaAsync();
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
+        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion - 1);
+        Remote.CollectionReads.Clear();
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Empty(Remote.CollectionReads);
+        Assert.Null(CollectionOf(server, "b"));
+    }
+
+    [Fact]
     public async Task AFailedCollectionReadOfAJellyMeshServerKeepsTheCollectionsKnown()
     {
         var server = await ServerWithSagaAsync();
-        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
         Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", null)));
         await _fixture.Sync.RunAsync(CancellationToken.None);
         Remote.CollectionFailure = RemoteFailure.ServerError;

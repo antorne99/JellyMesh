@@ -79,6 +79,12 @@ public sealed record CatalogItem
     public bool IsFederated { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether this is a local film without IDs whose metadata Jellyfin has not read yet (decision
+    /// 214). It still takes part in matching, but the merge cases it is in wait for that refresh.
+    /// </summary>
+    public bool AwaitsRefresh { get; init; }
+
+    /// <summary>
     /// Gets the playable versions. Only read for remote items, and a remote item without any is skipped.
     /// </summary>
     public IReadOnlyList<MediaVersion> Versions { get; init; } = [];

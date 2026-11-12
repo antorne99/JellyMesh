@@ -47,6 +47,14 @@ public interface IServerLibraryManager
     Task ReconcileAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Waits, for at most a bounded time, until no library scan runs and every library has its id, when a check would
+    /// follow a library (decision 213). It never fails but for a cancellation.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when the libraries are ready or the wait ended.</returns>
+    Task WaitReadyAsync(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Records that a check of the libraries could not start, for every configured and removed server, so that the next
     /// one only records the libraries there and takes none for a renamed one (decision 185).
     /// </summary>

@@ -136,6 +136,50 @@ public sealed class StubRemover
         return new StubRemoval(state with { Series = state.Series.Where(entry => !gone.Contains(entry.Id)).ToList() }, gone.Count, failures);
     }
 
+    /// <summary>
+    /// Deletes the folder of each server, with the series still in it, once no stub of that server is left. A server with a
+    /// stub left, or whose series cannot be removed, keeps its folder and is tried again next time.
+    /// </summary>
+    /// <param name="root">The federated folder.</param>
+    /// <param name="state">The registry.</param>
+    /// <param name="servers">The removed servers.</param>
+    /// <returns>The registry without their series, with how many folders went and what failed.</returns>
+    public StubRemoval RemoveServerFolders(string root, StubState state, IReadOnlyCollection<Guid> servers)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(servers);
+
+        var failures = new List<Exception>();
+        var removed = 0;
+        foreach (var serverId in servers.Distinct())
+        {
+            if (state.Stubs.Any(stub => stub.ServerId == serverId))
+            {
+                continue;
+            }
+
+            var series = state.Series.Where(entry => entry.ServerId == serverId).ToList();
+            if (series.Count > 0)
+            {
+                var removal = RemoveSeries(root, state, series);
+                state = removal.State;
+                failures.AddRange(removal.Failures);
+                if (state.Series.Any(entry => entry.ServerId == serverId))
+                {
+                    continue;
+                }
+            }
+
+            var folder = FederatedPaths.ServerFolder(serverId);
+            if (Directory.Exists(FederatedPaths.Resolve(root, folder)) && Try(failures, () => DeleteFolder(root, folder)))
+            {
+                removed++;
+            }
+        }
+
+        return new StubRemoval(state, removed, failures);
+    }
+
     private static bool Try(List<Exception> failures, Action action)
     {
         try

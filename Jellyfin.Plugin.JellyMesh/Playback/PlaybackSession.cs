@@ -36,6 +36,7 @@ public sealed partial class PlaybackSession
     private int _activeRequests;
     private int _parked;
     private int _abandoned;
+    private int _failed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSession"/> class.
@@ -83,6 +84,11 @@ public sealed partial class PlaybackSession
 
     /// <summary>Gets a value indicating whether a request is being served.</summary>
     public bool IsActive => Volatile.Read(ref _activeRequests) > 0;
+
+    /// <summary>
+    /// Gets a value indicating whether the source of this session stopped serving during playback.
+    /// </summary>
+    public bool HasFailed => Volatile.Read(ref _failed) == 1;
 
     /// <summary>
     /// Finds the folder of the master playlist or stream on the remote.
@@ -136,6 +142,12 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <returns>Whether this call parked it.</returns>
     public bool TryPark() => Interlocked.Exchange(ref _parked, 1) == 0;
+
+    /// <summary>
+    /// Marks the source of this session as stopped, once: the retries of a player count as one failure.
+    /// </summary>
+    /// <returns>Whether this call marked it.</returns>
+    public bool TryFail() => Interlocked.Exchange(ref _failed, 1) == 0;
 
     /// <summary>
     /// Tells whether the client went: its last request lost the connection and no other has come for the whole grace. A

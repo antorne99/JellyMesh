@@ -65,10 +65,14 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             && (stubPrefix is null || !item.Path.StartsWith(stubPrefix, StringComparison.Ordinal));
     }
 
+    // Matching reads only these two IDs on a film.
+    private static bool HasNoFilmIds(ContentIds ids) => string.IsNullOrWhiteSpace(ids.Tmdb) && string.IsNullOrWhiteSpace(ids.Imdb);
+
     private CatalogItem ToCatalogItem(BaseItem item, Dictionary<Guid, BaseItem?> series)
     {
         if (item is not Episode episode)
         {
+            var ids = ContentIds.FromProviderIds(item.ProviderIds);
             return new CatalogItem
             {
                 ServerId = LocalServerId,
@@ -76,7 +80,9 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
                 Kind = ContentKind.Movie,
                 Title = item.Name,
                 Year = item.ProductionYear,
-                Ids = ContentIds.FromProviderIds(item.ProviderIds),
+                Ids = ids,
+                // Jellyfin stamps an item at the end of each metadata refresh, so an unstamped one has never had one.
+                AwaitsRefresh = HasNoFilmIds(ids) && item.DateLastRefreshed == DateTime.MinValue,
                 Metadata = new ComparableMetadata
                 {
                     OriginalTitle = item.OriginalTitle,

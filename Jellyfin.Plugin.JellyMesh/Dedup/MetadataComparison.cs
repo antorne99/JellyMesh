@@ -87,6 +87,18 @@ internal static class MetadataComparison
         return first.SequenceEqual(second, StringComparer.Ordinal) ? Field.Agrees : Field.Differs;
     }
 
+    /// <summary>
+    /// Tells whether two durations differ by at most 1% of the longer one, or by at most 2 seconds.
+    /// </summary>
+    /// <param name="first">The first duration, in ticks.</param>
+    /// <param name="second">The second duration, in ticks.</param>
+    /// <returns>True when they are the same duration.</returns>
+    internal static bool RuntimesAgree(long first, long second)
+    {
+        var tolerance = Math.Max(MinimumRuntimeToleranceTicks, Math.Max(first, second) / 100 * RuntimeTolerancePercent);
+        return Math.Abs(first - second) <= tolerance;
+    }
+
     private static Field CompareRuntimes(ComparableMetadata left, ComparableMetadata right)
     {
         if (left.RunTimeTicks is not > 0 || right.RunTimeTicks is not > 0)
@@ -94,9 +106,7 @@ internal static class MetadataComparison
             return Field.Missing;
         }
 
-        var (first, second) = (left.RunTimeTicks.Value, right.RunTimeTicks.Value);
-        var tolerance = Math.Max(MinimumRuntimeToleranceTicks, Math.Max(first, second) / 100 * RuntimeTolerancePercent);
-        return Math.Abs(first - second) <= tolerance ? Field.Agrees : Field.Differs;
+        return RuntimesAgree(left.RunTimeTicks.Value, right.RunTimeTicks.Value) ? Field.Agrees : Field.Differs;
     }
 
     private static Field CompareOverviews(ComparableMetadata left, ComparableMetadata right)

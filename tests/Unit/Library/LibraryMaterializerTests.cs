@@ -721,11 +721,69 @@ public sealed class LibraryMaterializerTests : IDisposable
 
         Assert.False(Directory.Exists(_fixture.Path_(removed, "Film", "Other (2021)")));
         Assert.False(Directory.Exists(_fixture.Path_(removed, "Film", "Film (2020)")));
-        Assert.True(File.Exists(_fixture.Path_(removed, "Film", ".jellymesh")));
+        Assert.False(Directory.Exists(_fixture.Path_(removed)));
+        Assert.True(File.Exists(_fixture.Path_(kept, "Film", ".jellymesh")));
         Assert.True(File.Exists(_fixture.Path_(kept, "Film", "Film (2020)", "Film (2020) - B.strm")));
         Assert.Equal(kept.Id, Assert.Single(_fixture.Registry.State.Stubs).ServerId);
         Assert.Null(_fixture.Sync.Index.Snapshot.Find(removed.Id));
         _fixture.Library.Verify(library => library.DeleteItem(item, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
+    }
+
+    // Row 209: the last server removed also loses its folder, with its series.
+    [Fact]
+    public async Task RemovingTheLastServerDeletesItsFolderAndItsSeries()
+    {
+        AddSeasonedShow();
+        var removed = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Single(_fixture.Registry.State.Series);
+        using var sync = SyncWithMaterializer();
+
+        await sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(removed.Id)), CancellationToken.None);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.False(Directory.Exists(_fixture.Path_(removed)));
+        Assert.Empty(_fixture.Registry.State.Stubs);
+        Assert.Empty(_fixture.Registry.State.Series);
+        Assert.Equal([removed.Id], _fixture.Registry.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task ARemovedServerWhoseStubCannotGoKeepsItsFolderUntilItDoes()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var removed = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_(removed, "Film", "Film (2020)", "Film (2020) - A.strm");
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Throws(new IOException("busy"));
+        using var sync = SyncWithMaterializer();
+        await sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(removed.Id)), CancellationToken.None);
+
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(path));
+        Assert.Single(_fixture.Registry.State.Stubs);
+
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns((BaseItem?)null);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.False(Directory.Exists(_fixture.Path_(removed)));
+        Assert.Empty(_fixture.Registry.State.Stubs);
+    }
+
+    [Fact]
+    public async Task AServerMissingFromAResetConfigurationKeepsItsFolder()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        using var sync = SyncWithMaterializer();
+
+        _fixture.Sync.Registry.Remove(server.Id);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(_fixture.Path_(server, "Film", "Film (2020)", "Film (2020) - A.strm")));
+        Assert.True(File.Exists(_fixture.Path_(server, "Film", ".jellymesh")));
     }
 
     // Decisions 116 and 117: a removed remote added again is known by its Server Id and gets its folder and label back.
@@ -782,7 +840,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         using var sync = SyncWithMaterializer();
         await sync.RemoveServerAsync(first.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(first.Id)), CancellationToken.None);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
-        Directory.Delete(_fixture.Path_(first), true);
+        Assert.False(Directory.Exists(_fixture.Path_(first)));
 
         await _fixture.Sync.AddServerAsync("A", "films");
         await _fixture.SyncAndMaterializeAsync();
@@ -872,6 +930,31 @@ public sealed class LibraryMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.True(File.Exists(_fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm")));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task ANewLocalFilmIsRefreshedAndItsCaseWaits(bool awaitsRefresh, bool logged)
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", "films");
+        var local = Guid.NewGuid();
+        _fixture.LocalCatalog.Items.Add(new CatalogItem
+        {
+            ServerId = "local",
+            ItemId = local.ToString("N"),
+            Kind = ContentKind.Movie,
+            Title = "Film",
+            Year = 2020,
+            Metadata = new ComparableMetadata { Overview = "Altro" },
+            AwaitsRefresh = awaitsRefresh
+        });
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(awaitsRefresh ? [local] : [], _fixture.Refresher.Requested);
+        Assert.Equal(logged, _fixture.Logger.Lines.Exists(line => line.Contains("may be duplicates", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -1201,6 +1284,38 @@ public sealed class LibraryMaterializerTests : IDisposable
         await sync.RunAsync(CancellationToken.None);
 
         Assert.Equal(["materialize", "follow"], steps);
+    }
+
+    [Fact]
+    public async Task ASyncWaitsForTheServerLibrariesToBeReadyBeforeItStarts()
+    {
+        var steps = new List<string>();
+        var materializer = new Mock<ILibraryMaterializer>();
+        materializer.Setup(item => item.MaterializeAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => steps.Add("materialize"))
+            .Returns(Task.FromResult<MaterializationReport>(null!));
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.WaitReadyAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("ready")).Returns(Task.CompletedTask);
+        libraries.Setup(item => item.ReconcileAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("follow")).Returns(Task.CompletedTask);
+        using var sync = SyncWith(materializer.Object, libraries.Object);
+
+        await sync.RunIncrementalAsync(CancellationToken.None);
+
+        Assert.Equal(["ready", "materialize", "follow"], steps);
+    }
+
+    [Fact]
+    public async Task ASyncCancelledWhileWaitingForTheLibrariesMarksTheCheckAsSkipped()
+    {
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.WaitReadyAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new OperationCanceledException());
+        using var sync = SyncWith(Mock.Of<ILibraryMaterializer>(), libraries.Object);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sync.RunAsync(CancellationToken.None));
+
+        Assert.False(sync.GetStatus().IsRunning);
+        libraries.Verify(item => item.ReconcileAsync(It.IsAny<CancellationToken>()), Times.Never);
+        libraries.Verify(item => item.MarkFollowSkipped(), Times.Once);
     }
 
     [Fact]

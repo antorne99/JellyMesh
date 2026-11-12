@@ -40,6 +40,7 @@ public sealed class PlaybackCoordinator
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
+    private readonly SourceFailures _failures = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackCoordinator"/> class.
@@ -92,6 +93,16 @@ public sealed class PlaybackCoordinator
         // After a fallback the session is under the version that served, which the same client may ask for again.
         var versions = VersionsOf(request).ToList();
         var previous = versions.Select(version => _sessions.FindSameStream(version.Identity)).FirstOrDefault(session => session is not null);
+
+        // jellyfin-web asks again after every drop and never stops by itself (row 57).
+        var stubIds = versions.Select(version => version.Stub.Id).ToList();
+        if (_failures.Count(request.Identity.UserId, stubIds, _clock.GetUtcNow()) > PlaybackLimits.Reconnections)
+        {
+            _logger.LogInformation("A title dropped more than {Count} times during playback for a user, its playback is refused for now", PlaybackLimits.Reconnections);
+            await ClosePreviousAsync(previous).ConfigureAwait(false);
+            return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable, AnyReachable: true);
+        }
+
         if (!await MakeRoomForAsync(request.Identity.UserId, previous).ConfigureAwait(false))
         {
             _logger.LogInformation("A user has {Count} streams running, the most allowed", PlaybackLimits.SessionsPerUser);
@@ -103,29 +114,26 @@ public sealed class PlaybackCoordinator
         var reachable = new List<(PlaybackOpenRequest Version, StubSource Source)>();
         var refused = 0;
         var tried = 0;
-        foreach (var version in versions)
+        foreach (var (version, source) in Chain(versions, previous))
         {
-            foreach (var source in Ordered(version.Stub.Sources, previous?.Source))
+            tried++;
+            var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
+            if (attempt.Response is not null)
             {
-                tried++;
-                var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
-                if (attempt.Response is not null)
-                {
-                    Remember(version, source);
-                    await ClosePreviousAsync(previous).ConfigureAwait(false);
-                    await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
-                    await RecordServedAsync(version, source).ConfigureAwait(false);
-                    return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
-                }
-
-                _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
-                if (attempt.Reachable)
-                {
-                    reachable.Add((version, source));
-                }
-
-                refused += attempt.AtLimit ? 1 : 0;
+                Remember(version, source);
+                await ClosePreviousAsync(previous).ConfigureAwait(false);
+                await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
+                await RecordServedAsync(version, source).ConfigureAwait(false);
+                return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
             }
+
+            _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
+            if (attempt.Reachable)
+            {
+                reachable.Add((version, source));
+            }
+
+            refused += attempt.AtLimit ? 1 : 0;
         }
 
         foreach (var (version, source) in reachable)
@@ -146,6 +154,32 @@ public sealed class PlaybackCoordinator
             PlaybackOutcomeKind.Unavailable,
             AtStreamLimit: refused > 0 && refused == tried,
             AnyReachable: refused > 0 || reachable.Count > 0);
+    }
+
+    /// <summary>
+    /// Records that the source of a session stopped serving during playback.
+    /// </summary>
+    /// <param name="session">The session.</param>
+    public void ReportFailure(PlaybackSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        if (!session.TryFail())
+        {
+            return;
+        }
+
+        var identity = session.Identity;
+        _failures.Record(identity.UserId, identity.StubId, session.Source, _clock.GetUtcNow());
+
+        // The .strm would otherwise read first the source that just dropped.
+        var key = (identity.UserId, identity.StubId);
+        if (_workingSources.TryGetValue(key, out var working) && working.Source == session.Source)
+        {
+            _workingSources.TryRemove(KeyValuePair.Create(key, working));
+        }
+
+        _logger.LogInformation("A source on server {ServerId} stopped serving during playback. It goes last for this user and title", session.Source.ServerId);
     }
 
     /// <summary>
@@ -387,6 +421,8 @@ public sealed class PlaybackCoordinator
         {
             _workingSources.TryRemove(entry);
         }
+
+        _failures.ForgetOld(now);
     }
 
     /// <summary>
@@ -416,6 +452,18 @@ public sealed class PlaybackCoordinator
                 Fallbacks = []
             };
         }
+    }
+
+    // Every source of every version in order, the one of the session replaced first, then those that dropped during playback
+    // for this user and title last: the session replaced is often the one that dropped (row 57).
+    private List<(PlaybackOpenRequest Version, StubSource Source)> Chain(IReadOnlyList<PlaybackOpenRequest> versions, PlaybackSession? previous)
+    {
+        var now = _clock.GetUtcNow();
+        var steps = versions
+            .SelectMany(version => Ordered(version.Stub.Sources, previous?.Source).Select(source => (Version: version, Source: source)))
+            .Select(step => (Step: step, Failed: _failures.Failed(step.Version.Identity.UserId, step.Version.Stub.Id, step.Source, now)))
+            .ToList();
+        return [.. steps.Where(step => !step.Failed).Select(step => step.Step), .. steps.Where(step => step.Failed).Select(step => step.Step)];
     }
 
     private static IEnumerable<StubSource> Ordered(IReadOnlyList<StubSource> sources, StubSource? first)

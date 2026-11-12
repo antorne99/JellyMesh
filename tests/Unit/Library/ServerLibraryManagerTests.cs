@@ -433,6 +433,22 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task Turning_the_switch_on_again_recreates_a_library_deleted_in_the_dashboard()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.Created.Clear();
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Created.Select(library => library.Name));
+        Assert.Equal([ServerLibraryKind.Series, ServerLibraryKind.Movies], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Kind));
+        Assert.Equal(2, fixture.Manager.GetState(_serverId).Libraries.Count);
+    }
+
+    [Fact]
     public async Task A_library_list_that_cannot_be_read_changes_nothing()
     {
         var fixture = new Fixture();
@@ -924,19 +940,68 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_library_with_an_empty_id_is_never_taken_for_a_renamed_one()
+    public async Task A_library_with_an_empty_id_is_never_taken_for_a_renamed_one_at_the_switch_off()
     {
         var fixture = new Fixture();
         await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         fixture.Libraries.Find("Mine").ItemId = string.Empty;
-        await fixture.Manager.ReconcileAsync(CancellationToken.None);
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
 
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_check_while_a_library_has_no_id_is_skipped_and_logs_only_a_count()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+        fixture.Libraries.Find("Film di casa").ItemId = null;
+
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
-        Assert.Equal(["Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
-        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Empty(fixture.Server.ReleasedAutomaticLibraries);
+        Assert.True(fixture.Server.FollowSkipped);
+        var line = Assert.Single(fixture.Logger.Lines, entry => entry.Contains("no id", StringComparison.Ordinal));
+        Assert.Contains("1 ", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("Film di casa", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_library_renamed_without_a_refresh_is_followed_once_the_wait_gives_it_its_id()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+        var renamed = fixture.Libraries.Find("Film di casa");
+        renamed.ItemId = null;
+        fixture.Scans.DuringReadyWait = () => renamed.ItemId = fixture.Libraries.IdOf("Film di casa");
+
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal([ServerLibraryManager.ReadyLimit], fixture.Scans.ReadyWaits);
+        Assert.Equal(["Film di casa", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Empty(fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task With_no_library_to_follow_the_sync_does_not_wait_for_the_libraries()
+    {
+        var fixture = new Fixture();
+
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        Assert.Empty(fixture.Scans.ReadyWaits);
     }
 
     [Fact]
@@ -987,6 +1052,77 @@ public sealed class ServerLibraryManagerTests
         Assert.Equal(["Altro - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
         Assert.Equal(["Altro - Film"], fixture.Libraries.Folders.Select(folder => folder.Name));
         Assert.Equal(["Altro - Film"], Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).ReleasedLibraries);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_held_library_a_configured_server_found_at_switch_on_and_the_admin_renamed_is_released_under_its_old_name(bool skipped)
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Altro - Film"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            [],
+            [fixture.Libraries.IdOf("Altro - Film")],
+            skipped);
+        fixture.Libraries.RenameFromDashboard("Altro - Film", "Film mio");
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Film mio"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Altro - Film"], held.ReleasedLibraries);
+    }
+
+    [Fact]
+    public async Task A_held_library_a_configured_server_found_at_switch_on_and_the_admin_renamed_is_never_taken_when_another_holds_its_folder()
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Altro - Film"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            [],
+            [fixture.Libraries.IdOf("Altro - Film"), fixture.Libraries.IdOf("Mine")],
+            false);
+        fixture.Libraries.RenameFromDashboard("Altro - Film", "Film mio");
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Film mio", "Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task A_held_library_the_server_added_back_found_at_switch_on_and_the_admin_renamed_is_never_deleted_next_to_its_new_library()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Add("Vecchia", CollectionTypeOptions.movies, _movies);
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Vecchia"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            _serverId,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Vecchia", ItemId = fixture.Libraries.IdOf("Vecchia") }],
+            [],
+            [fixture.Libraries.IdOf("Vecchia")],
+            false);
+        fixture.Libraries.RenameFromDashboard("Vecchia", "Film mio");
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Casa - Film", "Casa - Serie", "Film mio"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
 
     [Fact]
@@ -1226,10 +1362,12 @@ public sealed class ServerLibraryManagerTests
 
         public FakeRenamer Renamer { get; } = new();
 
+        public CapturingLogger<ServerLibraryManager> Logger { get; } = new();
+
         public ServerLibraryManager NewManager()
         {
             Renamer.Libraries = Libraries;
-            return new(Store, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, new CapturingLogger<ServerLibraryManager>());
+            return new(Store, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Logger);
         }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.
@@ -1390,6 +1528,17 @@ public sealed class ServerLibraryManagerTests
         {
             Steps.Add("scan");
             return Task.CompletedTask;
+        }
+
+        public List<TimeSpan> ReadyWaits { get; } = [];
+
+        public Action? DuringReadyWait { get; set; }
+
+        public Task<bool> WaitReadyAsync(TimeSpan limit, CancellationToken cancellationToken)
+        {
+            ReadyWaits.Add(limit);
+            DuringReadyWait?.Invoke();
+            return Task.FromResult(true);
         }
     }
 }
