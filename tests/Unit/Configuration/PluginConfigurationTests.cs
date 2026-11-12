@@ -143,6 +143,19 @@ public class PluginConfigurationTests
         Assert.True(PlaybackTimeouts.Idle.TotalSeconds <= PluginConfiguration.MaxPlaybackIdleSeconds);
     }
 
+    [Fact]
+    public void TheServerRemovalDialogSaysItsAutomaticLibrariesAreDeletedToo()
+    {
+        var page = ConfigPage();
+        var start = page.IndexOf("button(t('Remove'), function () {", StringComparison.Ordinal);
+        var end = page.IndexOf("act(api('DELETE', 'Servers/'", start, StringComparison.Ordinal);
+        var dialog = page[start..end];
+
+        Assert.Contains("ownState(server)", dialog, StringComparison.Ordinal);
+        Assert.Contains("t('Its automatic libraries are deleted too: {names}.', { names: escapeHtml(", dialog, StringComparison.Ordinal);
+        Assert.Contains("t('Its automatic libraries are deleted too.')", dialog, StringComparison.Ordinal);
+    }
+
     private static string ConfigPage()
     {
         using var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.JellyMesh.Configuration.configPage.html")!;
