@@ -22,6 +22,8 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
 public sealed class LibraryMaterializerTests : IDisposable
 {
+    private const string RemoteServerId = "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b";
+
     private readonly StubFixture _fixture = new();
 
     public void Dispose() => _fixture.Dispose();
@@ -400,6 +402,90 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(kept.Id, Assert.Single(_fixture.Registry.State.Stubs).ServerId);
         Assert.Null(_fixture.Sync.Index.Snapshot.Find(removed.Id));
         _fixture.Library.Verify(library => library.DeleteItem(item, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
+    }
+
+    // Decisions 116 and 117: a removed remote added again is known by its Server Id and gets its folder and label back.
+    [Fact]
+    public async Task AServerAddedBackTakesBackItsFolderItsLabelAndItsStubs()
+    {
+        _fixture.Sync.Client.ServerId = RemoteServerId;
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var first = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_(first, "Film", "Film (2020)", "Film (2020) - A.strm");
+        Assert.True(File.Exists(path));
+        using var sync = SyncWithMaterializer();
+        await sync.RemoveServerAsync(first.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(first.Id)), CancellationToken.None);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        Assert.False(File.Exists(path));
+
+        var again = await _fixture.Sync.AddServerAsync("Renamed", "films");
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(first.Id, again.Id);
+        Assert.True(File.Exists(path));
+        Assert.Empty(_fixture.Registry.State.RemovedServers);
+        Assert.Equal(first.Id, Assert.Single(_fixture.Registry.State.Stubs).ServerId);
+    }
+
+    [Fact]
+    public async Task AServerAddedBackBeforeTheCleanupKeepsItsStubs()
+    {
+        _fixture.Sync.Client.ServerId = RemoteServerId;
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var first = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_(first, "Film", "Film (2020)", "Film (2020) - A.strm");
+        using var sync = SyncWithMaterializer();
+        await sync.RemoveServerAsync(first.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(first.Id)), CancellationToken.None);
+
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(path));
+        Assert.NotNull(_fixture.Sync.Index.Snapshot.Find(first.Id));
+        Assert.Empty(_fixture.Registry.State.RemovedServers);
+        Assert.Equal(first.Id, Assert.Single(_fixture.Registry.State.Stubs).ServerId);
+    }
+
+    [Fact]
+    public async Task AServerAddedBackAfterItsFolderWasDeletedWritesItAgain()
+    {
+        _fixture.Sync.Client.ServerId = RemoteServerId;
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var first = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        using var sync = SyncWithMaterializer();
+        await sync.RemoveServerAsync(first.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(first.Id)), CancellationToken.None);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        Directory.Delete(_fixture.Path_(first), true);
+
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.True(File.Exists(_fixture.Path_(first, "Film", "Film (2020)", "Film (2020) - A.strm")));
+        Assert.Empty(_fixture.Registry.State.RemovedServers);
+    }
+
+    [Fact]
+    public async Task AnotherServerNeverTakesTheLabelOfARemovedOne()
+    {
+        _fixture.Sync.Client.ServerId = RemoteServerId;
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var first = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        using var sync = SyncWithMaterializer();
+        await sync.RemoveServerAsync(first.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(first.Id)), CancellationToken.None);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        _fixture.Sync.Client.ServerId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9";
+
+        var other = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.NotEqual(first.Id, other.Id);
+        var stub = Path.GetFileName(Assert.Single(Directory.GetFiles(_fixture.Path_(other, "Film", "Film (2020)"), "*.strm")));
+        Assert.StartsWith("Film (2020) - A ", stub, StringComparison.Ordinal);
+        Assert.Equal("A", _fixture.Registry.State.Labels[first.Id]);
     }
 
     [Fact]
