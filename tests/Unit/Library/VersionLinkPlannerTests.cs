@@ -144,6 +144,90 @@ public class VersionLinkPlannerTests
     }
 
     [Fact]
+    public void AFilmTheAdminMergedWithTheLocalCopyStaysLinked()
+    {
+        var plan = VersionLinkPlanner.Plan(
+            _local,
+            [_a],
+            [Primary(_local, _other), Fresh(_a), Alternate(_other, _local)],
+            id => id == _local || id == _other);
+
+        Assert.Equal(
+            [new VersionLinkUpdate(_a, _local, []), new VersionLinkUpdate(_local, null, [_a, _other])],
+            plan.Updates,
+            UpdateComparer.Instance);
+        Assert.Equal([_a], plan.Joined);
+    }
+
+    [Fact]
+    public void AStubTheAdminMergedWithTheLocalCopyIsStillDetached()
+    {
+        var plan = VersionLinkPlanner.Plan(
+            _local,
+            [_a],
+            [Primary(_local, _a, _outsider, _other), Alternate(_a, _local), Alternate(_outsider, _local), Alternate(_other, _local)],
+            id => id == _local || id == _other);
+
+        Assert.Equal(
+            [new VersionLinkUpdate(_outsider, null, []), new VersionLinkUpdate(_local, null, [_a, _other])],
+            plan.Updates,
+            UpdateComparer.Instance);
+    }
+
+    [Fact]
+    public void AFilmTheAdminMergedWithAStubPrimaryIsDetached()
+    {
+        var plan = VersionLinkPlanner.Plan(_b, [_a], [Primary(_b, _a, _other), Alternate(_a, _b), Alternate(_other, _b)], id => id == _other);
+
+        Assert.Equal(
+            [new VersionLinkUpdate(_other, null, []), new VersionLinkUpdate(_b, null, [_a])],
+            plan.Updates,
+            UpdateComparer.Instance);
+    }
+
+    [Fact]
+    public void ALocalCopyMergedIntoAnotherFilmKeepsThatLink()
+    {
+        var plan = VersionLinkPlanner.Plan(_local, [_a], [Alternate(_local, _other), Fresh(_a), Primary(_other, _local)], id => id == _local || id == _other);
+
+        Assert.Equal(
+            [new VersionLinkUpdate(_a, _local, []), new VersionLinkUpdate(_local, _other, [_a])],
+            plan.Updates,
+            UpdateComparer.Instance);
+        Assert.Equal([_a], plan.Joined);
+    }
+
+    [Fact]
+    public void ALoneLocalCopyLosesOnlyItsStubs()
+    {
+        var plan = VersionLinkPlanner.Plan(
+            _local,
+            [],
+            [Primary(_local, _a, _other), Alternate(_a, _local), Alternate(_other, _local)],
+            id => id == _local || id == _other);
+
+        Assert.Equal(
+            [new VersionLinkUpdate(_a, null, []), new VersionLinkUpdate(_local, null, [_other])],
+            plan.Updates,
+            UpdateComparer.Instance);
+    }
+
+    [Fact]
+    public void ALoneStubIsDetachedFromEverything()
+    {
+        var plan = VersionLinkPlanner.Plan(
+            _a,
+            [],
+            [Alternate(_a, _local), Primary(_local, _a, _other), Alternate(_other, _local)],
+            id => id == _local || id == _other);
+
+        Assert.Equal(
+            [new VersionLinkUpdate(_local, null, [_other]), new VersionLinkUpdate(_a, null, [])],
+            plan.Updates,
+            UpdateComparer.Instance);
+    }
+
+    [Fact]
     public void AMemberWithoutAKnownStateIsLinkedAsNew()
     {
         var plan = VersionLinkPlanner.Plan(_local, [_a], []);

@@ -96,6 +96,12 @@ public sealed class VersionLinker : IVersionLinker
                 groups.Add(group with { PrimaryStubId = recorded });
             }
 
+            if (thorough)
+            {
+                await DetachUngroupedAsync(state, run, cancellationToken).ConfigureAwait(false);
+            }
+
+            await MoveCollectionEntriesAsync(run, cancellationToken).ConfigureAwait(false);
             if (changed)
             {
                 await _registry.SaveAsync(state with { Groups = groups }, cancellationToken).ConfigureAwait(false);
@@ -139,37 +145,55 @@ public sealed class VersionLinker : IVersionLinker
             }
         }
 
+        // Only the first local copy found is linked: two local films are never merged (decision 20).
         var locals = new List<Guid>();
-        foreach (var video in group.LocalItemIds.Select(FindLocal).OfType<Video>())
+        if (PrimaryLocal(group, run) is { } local && items.TryAdd(local.Id, local))
         {
-            if (items.TryAdd(video.Id, video))
-            {
-                locals.Add(video.Id);
-            }
+            locals.Add(local.Id);
         }
 
         if (items.Count < 2)
         {
+            // Only the nightly run detaches, so that an item missing for a moment is not detached and linked again (Q144).
+            if (run.Thorough && items.Count == 1 && items.Values.Single().OwnerId.Equals(Guid.Empty))
+            {
+                await ApplyAsync(items.Keys.Single(), [], items, run, cancellationToken).ConfigureAwait(false);
+            }
+
             return group.PrimaryStubId;
         }
 
         var primary = VersionLinkPlanner.ChoosePrimary(locals, stubs, group.PrimaryStubId, candidates => run.Best(candidates, _registry));
         var alternates = items.Keys.Where(id => id != primary.ItemId).ToList();
+        var plan = await ApplyAsync(primary.ItemId, alternates, items, run, cancellationToken).ConfigureAwait(false);
 
-        var known = new Dictionary<Guid, Video>(items);
-        foreach (var id in items.Values.SelectMany(video => StateOf(video).LinkedIds.Append(video.PrimaryVersionId ?? Guid.Empty)))
+        // The nightly run also moves entries added to an alternate after it was linked (Q146).
+        foreach (var moved in run.Thorough ? alternates : plan.Joined.Where(id => id != primary.ItemId))
         {
-            // A version of a local film belongs to its owner: it is never detached.
-            if (id != Guid.Empty && !known.ContainsKey(id) && _library.GetItemById(id) is Video { OwnerId: var owner } other && owner.Equals(Guid.Empty))
+            run.Moves[moved] = items[primary.ItemId];
+        }
+
+        return primary.PrimaryStubId;
+    }
+
+    // Plans the links of some members against what Jellyfin has, aligns played if one joins, and saves the plan.
+    private async Task<VersionLinkPlan> ApplyAsync(Guid primary, IReadOnlyList<Guid> alternates, IReadOnlyDictionary<Guid, Video> members, Run run, CancellationToken cancellationToken)
+    {
+        var resolved = new Dictionary<Guid, Video>(members);
+        foreach (var id in members.Values.SelectMany(video => StateOf(video).LinkedIds.Append(video.PrimaryVersionId ?? Guid.Empty)))
+        {
+            if (id != Guid.Empty && !resolved.ContainsKey(id) && _library.GetItemById(id) is Video other)
             {
-                known[id] = other;
+                resolved[id] = other;
             }
         }
 
-        var plan = VersionLinkPlanner.Plan(primary.ItemId, alternates, known.Values.Select(StateOf).ToList());
-        if (plan.Joined.Count > 0)
+        // A version of a local film belongs to its owner: it is never saved.
+        var known = resolved.Values.Where(video => members.ContainsKey(video.Id) || video.OwnerId.Equals(Guid.Empty)).ToDictionary(video => video.Id);
+        var plan = VersionLinkPlanner.Plan(primary, alternates, known.Values.Select(StateOf).ToList(), id => resolved.TryGetValue(id, out var video) && !run.IsStub(video));
+        if (alternates.Count > 0 && plan.Joined.Count > 0)
         {
-            AlignPlayed(items.Values.ToList(), cancellationToken);
+            AlignPlayed(members.Values.ToList(), cancellationToken);
         }
 
         foreach (var update in plan.Updates)
@@ -177,13 +201,30 @@ public sealed class VersionLinker : IVersionLinker
             await SaveLinksAsync(known[update.ItemId], update, cancellationToken).ConfigureAwait(false);
         }
 
-        var moved = plan.Joined.Where(id => id != primary.ItemId).ToList();
-        if (moved.Count > 0)
-        {
-            await MoveCollectionEntriesAsync(moved, items[primary.ItemId], run, cancellationToken).ConfigureAwait(false);
-        }
+        return plan;
+    }
 
-        return primary.PrimaryStubId;
+    // Detaches each stub that is in no group from every item it is linked to, keeping only links between films (Q144).
+    private async Task DetachUngroupedAsync(StubState state, Run run, CancellationToken cancellationToken)
+    {
+        var grouped = state.Groups.SelectMany(group => group.StubIds).ToHashSet(StringComparer.Ordinal);
+        foreach (var stub in state.Stubs.Where(stub => !grouped.Contains(stub.Id)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (run.FindStub(stub) is { OwnerId: var owner } video && owner.Equals(Guid.Empty)
+                    && (video.PrimaryVersionId is not null || video.LinkedAlternateVersions.Length > 0))
+                {
+                    await ApplyAsync(video.Id, [], new Dictionary<Guid, Video> { [video.Id] = video }, run, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // The type only: a message could hold a remote address.
+                _logger.LogError("Cannot detach a version that left its group: {Error}", exception.GetType().Name);
+            }
+        }
     }
 
     // The cached item is put back if the save fails, or the next run would find it linked already.
@@ -203,6 +244,20 @@ public sealed class VersionLinker : IVersionLinker
             video.SetPrimaryVersionId(primary);
             throw;
         }
+    }
+
+    // The first local copy found, or the film the administrator merged it into as a version (§10 row 148).
+    private Video? PrimaryLocal(VersionGroup group, Run run)
+    {
+        var local = group.LocalItemIds.Select(FindLocal).OfType<Video>().FirstOrDefault();
+        var seen = new HashSet<Guid>();
+        while (local is { PrimaryVersionId: { } above } && seen.Add(local.Id)
+            && _library.GetItemById(above) is Video { OwnerId: var owner } film && owner.Equals(Guid.Empty) && !run.IsStub(film))
+        {
+            local = film;
+        }
+
+        return local;
     }
 
     // A file-based alternate of a local film stands for its owner, which Jellyfin shows.
@@ -238,25 +293,39 @@ public sealed class VersionLinker : IVersionLinker
         }
     }
 
-    // Collections follow the primary as MergeVersions does; playlists keep the version that was added (Q79).
-    private async Task MoveCollectionEntriesAsync(IReadOnlyList<Guid> moved, Video primary, Run run, CancellationToken cancellationToken)
+    // Collections follow the primary as MergeVersions does; playlists keep the version that was added (Q79). A collection
+    // whose save fails is put back, so that a later run finds the entry where it still is.
+    private async Task MoveCollectionEntriesAsync(Run run, CancellationToken cancellationToken)
     {
-        var from = moved.ToHashSet();
-        foreach (var collection in run.Collections().Where(collection => collection.LinkedChildren.Any(child => child.ItemId is { } id && from.Contains(id))))
+        if (run.Moves.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var collection in run.Collections().Where(collection => collection.LinkedChildren.Any(child => child.ItemId is { } id && run.Moves.ContainsKey(id))))
         {
             var seen = new HashSet<Guid>();
             var children = new List<LinkedChild>(collection.LinkedChildren.Length);
             foreach (var child in collection.LinkedChildren)
             {
-                var target = child.ItemId is { } id && from.Contains(id) ? LinkedChild.Create(primary) : child;
+                var target = child.ItemId is { } id && run.Moves.TryGetValue(id, out var primary) ? LinkedChild.Create(primary) : child;
                 if (target.ItemId is not { } targetId || seen.Add(targetId))
                 {
                     children.Add(target);
                 }
             }
 
+            var before = collection.LinkedChildren;
             collection.LinkedChildren = children.ToArray();
-            await _updater.SaveAsync(collection, ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _updater.SaveAsync(collection, ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                collection.LinkedChildren = before;
+                _logger.LogError("Cannot move the entries of a collection to the primary version: {Error}", exception.GetType().Name);
+            }
         }
     }
 
@@ -265,6 +334,13 @@ public sealed class VersionLinker : IVersionLinker
     {
         private IndexItemLookup? _lookup;
         private List<BoxSet>? _collections;
+
+        // The primary that each alternate's collection entries move to.
+        public Dictionary<Guid, Video> Moves { get; } = [];
+
+        public bool Thorough => thorough;
+
+        public bool IsStub(BaseItem item) => item.Path is { } path && FederatedPaths.RelativeTo(root, path) is not null;
 
         public Video? FindStub(StubEntry stub)
         {

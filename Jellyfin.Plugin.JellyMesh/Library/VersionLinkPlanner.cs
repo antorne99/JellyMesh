@@ -44,13 +44,14 @@ public static class VersionLinkPlanner
 
     /// <summary>
     /// Plans the saves that link the alternates to the primary and detach any other item linked to them. An item
-    /// already linked as wanted is not saved.
+    /// already linked as wanted is not saved. A link between two films that are not stubs is never changed (§10 row 148).
     /// </summary>
     /// <param name="primary">The primary.</param>
     /// <param name="alternates">The other members, in the order to link them.</param>
     /// <param name="states">The current links of the members and of the items they point to.</param>
+    /// <param name="isFilm">Whether an item is a film or episode that is not a stub; none is when null.</param>
     /// <returns>The plan.</returns>
-    public static VersionLinkPlan Plan(Guid primary, IReadOnlyList<Guid> alternates, IReadOnlyCollection<VersionLinkState> states)
+    public static VersionLinkPlan Plan(Guid primary, IReadOnlyList<Guid> alternates, IReadOnlyCollection<VersionLinkState> states, Func<Guid, bool>? isFilm = null)
     {
         ArgumentNullException.ThrowIfNull(alternates);
         ArgumentNullException.ThrowIfNull(states);
@@ -63,6 +64,8 @@ public static class VersionLinkPlanner
 
         var members = new HashSet<Guid>(alternates) { primary };
         VersionLinkState StateOf(Guid id) => known.GetValueOrDefault(id) ?? new VersionLinkState(id, null, []);
+        bool Kept(Guid from, Guid to) => isFilm is not null && isFilm(from) && isFilm(to);
+        List<Guid> KeptLinks(VersionLinkState state) => state.LinkedIds.Where(id => !members.Contains(id) && Kept(state.ItemId, id)).ToList();
 
         var updates = new List<VersionLinkUpdate>();
         foreach (var outsider in Outsiders(alternates.Append(primary).Select(StateOf), members))
@@ -71,21 +74,23 @@ public static class VersionLinkPlanner
             {
                 var wanted = new VersionLinkUpdate(
                     outsider,
-                    state.PrimaryVersionId is { } id && members.Contains(id) ? null : state.PrimaryVersionId,
-                    state.LinkedIds.Where(linked => !members.Contains(linked)).ToList());
+                    state.PrimaryVersionId is { } id && members.Contains(id) && !Kept(outsider, id) ? null : state.PrimaryVersionId,
+                    state.LinkedIds.Where(linked => !members.Contains(linked) || Kept(outsider, linked)).ToList());
                 AddIfChanged(updates, state, wanted);
             }
         }
 
         foreach (var alternate in alternates)
         {
-            AddIfChanged(updates, StateOf(alternate), new VersionLinkUpdate(alternate, primary, []));
+            AddIfChanged(updates, StateOf(alternate), new VersionLinkUpdate(alternate, primary, KeptLinks(StateOf(alternate))));
         }
 
-        AddIfChanged(updates, StateOf(primary), new VersionLinkUpdate(primary, null, alternates));
+        var current = StateOf(primary);
+        var above = current.PrimaryVersionId is { } over && !members.Contains(over) && Kept(primary, over) ? over : (Guid?)null;
+        AddIfChanged(updates, current, new VersionLinkUpdate(primary, above, [.. alternates, .. KeptLinks(current)]));
 
         var joined = alternates.Where(alternate => StateOf(alternate).PrimaryVersionId != primary).ToList();
-        if (StateOf(primary).PrimaryVersionId is not null)
+        if (current.PrimaryVersionId != above)
         {
             joined.Add(primary);
         }
