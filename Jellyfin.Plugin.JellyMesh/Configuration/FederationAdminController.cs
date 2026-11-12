@@ -37,6 +37,7 @@ public class FederationAdminController : ControllerBase
     private readonly IManualMergeStore _merges;
     private readonly IServerLibraryManager _libraries;
     private readonly ILogger<FederationAdminController> _logger;
+    private readonly ILayoutMigration? _migration;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -51,6 +52,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="merges">The manual merges, which lose the copies of a removed server.</param>
     /// <param name="libraries">The libraries the plugin keeps for each server.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="migration">The manual migration from the flat layout, for the banner.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -61,7 +63,8 @@ public class FederationAdminController : ControllerBase
         ICatalogSyncService sync,
         IManualMergeStore merges,
         IServerLibraryManager libraries,
-        ILogger<FederationAdminController> logger)
+        ILogger<FederationAdminController> logger,
+        ILayoutMigration? migration = null)
     {
         _registry = registry;
         _vault = vault;
@@ -73,6 +76,7 @@ public class FederationAdminController : ControllerBase
         _merges = merges;
         _libraries = libraries;
         _logger = logger;
+        _migration = migration;
     }
 
     /// <summary>
@@ -438,6 +442,9 @@ public class FederationAdminController : ControllerBase
             report.Movies,
             report.Series,
             report.SeriesGroupingOff,
-            PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null);
+            PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null)
+        {
+            Migration = path.Length == 0 ? null : _migration?.GetStatus(path)
+        };
     }
 }

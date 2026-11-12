@@ -29,6 +29,7 @@ public sealed class StubCleanupTaskTests : IDisposable
     private readonly Mock<IUserDataManager> _userData = new();
     private readonly Mock<IProviderManager> _providers = new();
     private readonly Mock<IVersionLinker> _linker = new();
+    private readonly Mock<ILayoutMigration> _migration = new();
     private readonly CapturingLogger<StubCleanupTask> _logger = new();
     private readonly List<string> _calls = [];
     private readonly User _anna = new("anna", "auth", "reset");
@@ -60,7 +61,8 @@ public sealed class StubCleanupTaskTests : IDisposable
         Mock.Of<IFileSystem>(),
         _fixture.Remover,
         _logger,
-        _linker.Object);
+        _linker.Object,
+        _migration.Object);
 
     private Task RunAsync() => Task().Run(new Progress<double>(), CancellationToken.None);
 
@@ -253,6 +255,44 @@ public sealed class StubCleanupTaskTests : IDisposable
         await RunAsync();
 
         Assert.Equal(["False 1"], seen);
+    }
+
+    [Fact]
+    public async Task AfterTheLink_TheMigrationRuns_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("link"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _migration
+            .Setup(migration => migration.RunAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken token) =>
+            {
+                // The migration takes the same lock, so it must be free by now.
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add("migration");
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["link", "migration"], seen);
+    }
+
+    [Fact]
+    public async Task AFailedMigration_IsLoggedByItsTypeOnly()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        _migration
+            .Setup(migration => migration.RunAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("/federata/secret"));
+
+        await RunAsync();
+
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 
     [Fact]

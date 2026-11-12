@@ -69,6 +69,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             provider.GetRequiredService<ILogger<WatchStateCarryLog>>()));
         serviceCollection.AddSingleton<IWatchStateCarrier, WatchStateCarrier>();
         serviceCollection.AddSingleton<IMergeWatchStateCarry, MergeWatchStateCarry>();
+        serviceCollection.AddSingleton<ILayoutMigration, LayoutMigration>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 

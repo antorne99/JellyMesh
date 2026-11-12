@@ -36,7 +36,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -47,7 +47,8 @@ public class FederationAdminControllerTests
             Mock.Of<ICatalogSyncService>(),
             new InMemoryMergeStore(),
             libraries ?? Mock.Of<IServerLibraryManager>(),
-            new CapturingLogger<FederationAdminController>());
+            new CapturingLogger<FederationAdminController>(),
+            migration);
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -724,6 +725,32 @@ public class FederationAdminControllerTests
         Assert.Equal(FederatedFolderLinkState.NotLinked, folder.Link);
         Assert.Equal(["Film"], folder.Movies.Libraries);
         Assert.Equal(["Serie"], folder.SeriesGroupingOff);
+    }
+
+    [Fact]
+    public void TheFolderCarriesTheMigrationOfItsPaths()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var status = new LayoutMigrationStatus(LayoutMigrationStep.AddPaths, [new LayoutMigrationLibrary("Film", ["/federata/Film"], ["/federata/x/Film"])], 3);
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.GetStatus("/federata")).Returns(status);
+
+        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Same(status, folder.Migration);
+    }
+
+    [Fact]
+    public void WithNoFolderThereIsNoMigration()
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+
+        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Null(folder.Migration);
+        migration.Verify(item => item.GetStatus(It.IsAny<string>()), Times.Never);
     }
 
     private sealed class RecordingChecker : IFederatedFolderLinkChecker
