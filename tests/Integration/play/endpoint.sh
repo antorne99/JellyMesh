@@ -33,12 +33,12 @@ check "the viewer can read the signed URL" "$url" "$leaked"
 check "and it opens nothing from where the viewer is" 403 "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT${leaked#http://127.0.0.1:8096}")"
 
 # The key survives a restart.
-before=$(docker exec "$PREFIX-local" sh -c "stat -c %Y \"\$(find /federata/Film -name '*.strm' | grep Tears)\"")
+before=$(docker exec "$PREFIX-local" sh -c "stat -c %Y \"\$(find /federata/*/Film -name '*.strm' | grep Tears)\"")
 docker restart "$PREFIX-local" >/dev/null
 sleep 3
 wait_ready local
 login local
 check "the signature still opens after a restart" 206 "$(inside -H 'Range: bytes=0-99' "http://127.0.0.1:8096$path")"
 sync_now local
-check "a sync after a restart rewrites nothing" "$before" "$(docker exec "$PREFIX-local" sh -c "stat -c %Y \"\$(find /federata/Film -name '*.strm' | grep Tears)\"")"
+check "a sync after a restart rewrites nothing" "$before" "$(docker exec "$PREFIX-local" sh -c "stat -c %Y \"\$(find /federata/*/Film -name '*.strm' | grep Tears)\"")"
 exit $FAILED

@@ -19,7 +19,6 @@ reader=$(user_id local reader)
 [ -n "$reader" ] || reader=$(user local reader)
 req local DELETE "/JellyMesh/Admin/Peers/$reader" >/dev/null
 start peer "$PREFIX-media:/media:ro"
-library peer Film movies /federata/Film
 NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-peer"
 sleep 3
 wait_ready peer
@@ -31,6 +30,7 @@ leaks() { docker exec -i "$PREFIX-peer" sh -c 'grep -rlFf /dev/stdin /config/plu
 
 echo "--- standard mode: local has not connected this server yet"
 id=$(add_remote peer local "http://host.docker.internal:$PORT" reader)
+library peer Film movies "$(server_folder "$id")/Film"
 check "the mode is standard" Standard "$(get peer /JellyMesh/Admin/Status | jq -r --arg i "$id" '.Servers[] | select(.Id == $i) | .Mode')"
 import_all peer "$id"
 sync_now peer
@@ -44,6 +44,7 @@ req local PUT "/JellyMesh/Admin/Peers/$reader" "$share" >/dev/null
 check "the share is saved" 204 "$(status)"
 req peer DELETE "/JellyMesh/Admin/Servers/$id" >/dev/null
 id=$(add_remote peer local "http://host.docker.internal:$PORT" reader)
+check "the folder of the server joins the library" 204 "$(link_folder peer Film "$(server_folder "$id")/Film")"
 check "the mode is JellyMesh" JellyMesh "$(get peer /JellyMesh/Admin/Status | jq -r --arg i "$id" '.Servers[] | select(.Id == $i) | .Mode')"
 import_all peer "$id"
 sync_now peer
