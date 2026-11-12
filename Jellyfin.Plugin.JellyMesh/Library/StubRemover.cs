@@ -114,6 +114,28 @@ public sealed class StubRemover
         return new StubRemoval(next, gone.Count(id => !kept.Contains(id)), failures);
     }
 
+    /// <summary>
+    /// Removes series that no stub uses any more, with their folders and items. A series still used, or whose folder
+    /// cannot be removed, stays in the registry.
+    /// </summary>
+    /// <param name="root">The federated folder.</param>
+    /// <param name="state">The registry.</param>
+    /// <param name="series">The series.</param>
+    /// <returns>The registry without the series, with what failed.</returns>
+    public StubRemoval RemoveSeries(string root, StubState state, IReadOnlyCollection<SeriesStub> series)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(series);
+
+        var failures = new List<Exception>();
+        var used = state.Stubs.Select(entry => entry.SeriesStubId).OfType<string>().ToHashSet(StringComparer.Ordinal);
+        var gone = series
+            .Where(entry => !used.Contains(entry.Id) && Try(failures, () => DeleteFolderAndRow(root, entry.RelativePath)))
+            .Select(entry => entry.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        return new StubRemoval(state with { Series = state.Series.Where(entry => !gone.Contains(entry.Id)).ToList() }, gone.Count, failures);
+    }
+
     private static bool Try(List<Exception> failures, Action action)
     {
         try
