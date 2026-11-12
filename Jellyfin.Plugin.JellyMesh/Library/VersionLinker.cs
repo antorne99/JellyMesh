@@ -167,7 +167,8 @@ public sealed class VersionLinker : IVersionLinker
         var alternates = items.Keys.Where(id => id != primary.ItemId).ToList();
         var plan = await ApplyAsync(primary.ItemId, alternates, items, run, cancellationToken).ConfigureAwait(false);
 
-        foreach (var moved in plan.Joined.Where(id => id != primary.ItemId))
+        // The nightly run also moves entries added to an alternate after it was linked (Q146).
+        foreach (var moved in run.Thorough ? alternates : plan.Joined.Where(id => id != primary.ItemId))
         {
             run.Moves[moved] = items[primary.ItemId];
         }

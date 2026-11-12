@@ -13,7 +13,8 @@ public interface IVersionLinker
     /// </summary>
     /// <param name="thorough">
     /// Whether this is the nightly run, which also looks up by path a stub whose item is not where its path says and
-    /// detaches the stubs left alone in a group or out of every group.
+    /// detaches the stubs left alone in a group or out of every group, and moves to the primary every collection entry of
+    /// an alternate.
     /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>

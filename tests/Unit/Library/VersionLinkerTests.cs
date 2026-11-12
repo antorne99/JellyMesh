@@ -569,6 +569,53 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task ACollectionEntryAddedAfterLinkingMovesOnTheNightlyRun()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        await _linker.LinkAsync(false, CancellationToken.None);
+        var other = Local();
+        var collection = Add(new BoxSet { LinkedChildren = [LinkedChild.Create(itemA), LinkedChild.Create(other)] }, Guid.NewGuid());
+        var both = Add(new BoxSet { LinkedChildren = [LinkedChild.Create(itemB), LinkedChild.Create(itemA)] }, Guid.NewGuid());
+        var playlist = Add(new Playlist { LinkedChildren = [LinkedChild.Create(itemA)] }, Guid.NewGuid());
+        _boxSets.AddRange([collection, both]);
+        _saves.Clear();
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.Empty(_saves);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Equal([itemB.Id, other.Id], ((Folder)collection).LinkedChildren.Select(child => child.ItemId!.Value));
+        Assert.Equal([itemB.Id], ((Folder)both).LinkedChildren.Select(child => child.ItemId!.Value));
+        Assert.Equal([itemA.Id], ((Folder)playlist).LinkedChildren.Select(child => child.ItemId!.Value));
+        Assert.Equal([(collection.Id, ItemUpdateType.MetadataEdit), (both.Id, ItemUpdateType.MetadataEdit)], _saves);
+    }
+
+    [Fact]
+    public async Task ACollectionWhoseMoveFailedMovesOnTheNightlyRun()
+    {
+        var local = Local();
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        var itemA = Scanned(a);
+        var collection = Add(new BoxSet { LinkedChildren = [LinkedChild.Create(itemA)] }, Guid.NewGuid());
+        _boxSets.Add(collection);
+        var failing = true;
+        _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == collection.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .Returns(() => failing ? Task.FromException(new IOException()) : Task.CompletedTask);
+        await _linker.LinkAsync(false, CancellationToken.None);
+        failing = false;
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Equal([local.Id], ((Folder)collection).LinkedChildren.Select(child => child.ItemId!.Value));
+    }
+
+    [Fact]
     public async Task AFailedGroupDoesNotStopTheOthers()
     {
         var a = Stub("sa", _serverA, 1080);
