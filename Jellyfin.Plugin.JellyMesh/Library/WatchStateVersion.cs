@@ -9,4 +9,5 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <param name="ServerId">The server of the stub, null for the local copy.</param>
 /// <param name="IsPrimary">Whether the version is the primary of its title (Q43).</param>
 /// <param name="Data">The user's data on the version, changed in place.</param>
-public sealed record WatchStateVersion(Guid? ServerId, bool IsPrimary, UserItemData Data);
+/// <param name="IsVisible">Whether the user sees the version, in a library open to them (decision 149).</param>
+public sealed record WatchStateVersion(Guid? ServerId, bool IsPrimary, UserItemData Data, bool IsVisible = true);

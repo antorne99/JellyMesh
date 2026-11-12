@@ -1,12 +1,20 @@
+using System.Collections.Generic;
+using System.Linq;
+
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// What a run of the watch state carry did.
+/// What a run of the watch state carry did, move by move, so that the caller knows what to run again.
 /// </summary>
-/// <param name="Carried">The moves done for every user.</param>
-/// <param name="Skipped">
-/// The moves not done: an item not found, versions not linked as one title, or a primary not among them. A later run
-/// does them only once the cause is gone; versions that are never linked, such as episodes of different ranges (D3),
-/// stay skipped.
-/// </param>
-public sealed record WatchStateCarryReport(int Carried, int Skipped);
+/// <param name="Moves">The outcome of each move, in the order given.</param>
+public sealed record WatchStateCarryReport(IReadOnlyList<WatchStateMoveOutcome> Moves)
+{
+    /// <summary>Gets the number of moves done for every user.</summary>
+    public int Carried => Moves.Count(move => move.Status == WatchStateMoveStatus.Carried);
+
+    /// <summary>
+    /// Gets the number of moves not done for every user. Stubs never linked because their ranges differ (D3) are not
+    /// among them: they take the state each on its own.
+    /// </summary>
+    public int Skipped => Moves.Count - Carried;
+}
