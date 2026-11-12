@@ -232,9 +232,8 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Frees every slot of a peer that was removed, those being closed too: their transcodes are closed all the same. What
-    /// is running has been cut by then, and a request of a stream that goes on takes a slot like any other. Its play
-    /// sessions stay its own: they still have transcodes to close.
+    /// Frees every slot of a removed peer, closing ones too, whose transcodes are still closed. Its play sessions stay
+    /// its own until then.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     public void ReleaseAll(Guid peerId)
