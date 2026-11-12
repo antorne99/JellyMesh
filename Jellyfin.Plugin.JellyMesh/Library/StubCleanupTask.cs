@@ -42,6 +42,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     private readonly StubRemover _remover;
     private readonly ILogger<StubCleanupTask> _logger;
     private readonly IVersionLinker? _linker;
+    private readonly ILayoutMigration? _migration;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubCleanupTask"/> class.
@@ -59,6 +60,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     /// <param name="remover">The stub remover.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="linker">The version linker, if any.</param>
+    /// <param name="migration">The manual migration from the flat layout, if any.</param>
     public StubCleanupTask(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -72,7 +74,8 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         IFileSystem fileSystem,
         StubRemover remover,
         ILogger<StubCleanupTask> logger,
-        IVersionLinker? linker = null)
+        IVersionLinker? linker = null,
+        ILayoutMigration? migration = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -87,6 +90,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         _remover = remover;
         _logger = logger;
         _linker = linker;
+        _migration = migration;
     }
 
     /// <inheritdoc />
@@ -116,7 +120,27 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
 
         await LinkAsync(cancellationToken).ConfigureAwait(false);
+        await MigrateAsync(cancellationToken).ConfigureAwait(false);
         progress.Report(100);
+    }
+
+    // After the scan of the new paths and the link of their versions, the old stubs can hand over their state (Q40).
+    private async Task MigrateAsync(CancellationToken cancellationToken)
+    {
+        if (_migration is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _migration.RunAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}", exception.GetType().Name);
+        }
     }
 
     // The linker takes the registry itself, so it runs once the merged stubs are gone and the lock is free.

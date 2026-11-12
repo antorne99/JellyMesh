@@ -272,6 +272,28 @@ public class ServerStubPlannerTests
     }
 
     [Fact]
+    public void AStubOfTheFlatLayoutJoinsNoVersionGroup()
+    {
+        // D12: during the manual migration the old stub keeps its sources on every server and stays out of the groups.
+        var local = Guid.NewGuid();
+        var flat = new StubEntry
+        {
+            Id = "flat",
+            Kind = StubKind.Movie,
+            RelativePath = Path.Combine("Film", "Film (2020)", "Film (2020).strm"),
+            IdentityKey = "k",
+            Sources = [new StubSource(_serverA, "m", "m") { LibraryId = Library }, new StubSource(_serverB, "z", "z") { LibraryId = Library }]
+        };
+
+        var plan = Plan([Local(Title("k", OnA("m"), OnB("z")), local)], [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))], StubState.Empty with { Stubs = [flat] });
+
+        var group = Assert.Single(plan.State.Groups);
+        Assert.Equal(2, group.StubIds.Count);
+        Assert.DoesNotContain("flat", group.StubIds);
+        Assert.Contains(flat, plan.State.Stubs);
+    }
+
+    [Fact]
     public void TheFlatPlanLeavesTheStubsOfTheServerFoldersAsTheyAre()
     {
         var catalogs = new[] { Catalog(_serverA, Film("m")) };

@@ -26,4 +26,8 @@ public sealed record FederatedFolderStatus(
     FederatedPathStatus Movies,
     FederatedPathStatus Series,
     IReadOnlyList<string> SeriesGroupingOff,
-    bool FromEnvironment);
+    bool FromEnvironment)
+{
+    /// <summary>Gets the manual migration from the flat layout, null when there is none to show.</summary>
+    public LayoutMigrationStatus? Migration { get; init; }
+}
