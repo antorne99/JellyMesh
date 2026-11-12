@@ -2,7 +2,10 @@
 # Decision 17, Antonio's choice: a stub opened while its remote is offline and a local copy has arrived plays the local copy.
 # Real jellyfin-web in Chromium, as a user would. Run after fallback.sh. Can be run again.
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# The database helpers of versions/, with the names and ports of the play proofs: linked alternates leave the lists.
+PREFIX=${PREFIX:-jm-play}
+PORT=${PORT:-18430}
+source "$(dirname "${BASH_SOURCE[0]}")/../versions/lib.sh"
 
 FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg
 DIRECT="JM Confronto Bitrate"   # the browser plays this copy as it is: VP9 and Opus
@@ -127,4 +130,14 @@ scan local
 check "the post-scan task keeps the stub" "$stub_direct" "$(stub_item local "$DIRECT")"
 check "the state stays on the stub" "$(echo "$data" | jq -c '{Played, LastPlayedDate}')" "$(user_data "$stub_direct" | jq -c '{Played, LastPlayedDate}')"
 echo "watch state on the copy: $(user_data "$local_direct")"
+
+echo "--- the next sync: the local copy joins the group of the stub as its primary, and only played is aligned (Q43, D4)"
+position=$(user_data "$stub_direct" | jq .PlaybackPositionTicks)
+docker start "$PREFIX-remote" >/dev/null
+wait_ready remote
+sync_now local
+check "the local copy is the primary" "$(vid "/media/film/$DIRECT")" "$(primary_of "$(vid "$(server_folder "$(cat "$WORK/id-remote")")/Film/$DIRECT")")"
+check "the copy is played too" true "$(user_data "$local_direct" | jq .Played)"
+check "the stub keeps its position" "$position" "$(user_data "$stub_direct" | jq .PlaybackPositionTicks)"
+check "and its state" "$(echo "$data" | jq -c '{Played, LastPlayedDate}')" "$(user_data "$stub_direct" | jq -c '{Played, LastPlayedDate}')"
 exit $FAILED
