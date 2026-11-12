@@ -1021,6 +1021,14 @@
                 margin: 0;
             }
 
+            .jmMergeSeries .jmMergeTitle {
+                grid-row: span 6;
+            }
+
+            .jmMergeSeries .jmMergeDetails {
+                grid-row: span 5;
+            }
+
             .jmCompareRow {
                 display: grid;
                 grid-template-columns: 6em minmax(0, 1fr);
@@ -1326,6 +1334,12 @@
                     <h3 class="sectionTitle">Merged films</h3>
                     <div id="jmMerges" class="jmRowList"></div>
 
+                    <h3 class="sectionTitle">Duplicate series</h3>
+                    <p>JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.</p>
+                    <div id="jmSeriesCases"></div>
+                    <h3 class="sectionTitle">Merged series</h3>
+                    <div id="jmSeriesMerges" class="jmRowList"></div>
+
                     <h3 class="sectionTitle">Sync history</h3>
                     <p>The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder, then the totals of the whole folder.</p>
                     <div id="jmHistoryWarning" role="alert" hidden class="jmAlert"></div>
@@ -1542,6 +1556,7 @@
                     "Dismiss": "Chiudi",
                     "Done": "Fatto",
                     "Duplicate films": "Film duplicati",
+                    "Duplicate series": "Serie duplicate",
                     "Duplicates to review": "Duplicati da rivedere",
                     "Duration": "Durata",
                     "Enter a name, a user and an http or https URL with no credentials, query or fragment.": "Inserisci un nome, un utente e un URL http o https senza credenziali, query o frammento.",
@@ -1549,6 +1564,7 @@
                     "Enter a whole number from {min} to {max}.": "Inserisci un numero intero da {min} a {max}.",
                     "Enter a whole number of at least {min}.": "Inserisci un numero intero di almeno {min}.",
                     "Enter an absolute path other than the filesystem root, without \"..\".": "Inserisci un percorso assoluto diverso dalla radice del filesystem, senza \"..\".",
+                    "Episodes": "Episodi",
                     "Error": "Errore",
                     "Failed": "Non riuscita",
                     "Federated folder": "Cartella federata",
@@ -1566,6 +1582,7 @@
                     "Give the dedicated user access on that server, then test the connection.": "Dai accesso all'utente dedicato su quel server, poi prova la connessione.",
                     "HDR unknown": "HDR sconosciuto",
                     "IDs": "ID",
+                    "If merged, each episode plays from its best copy, and a local copy always wins. The others stay as backups.": "Se le unisci, ogni episodio viene riprodotto dalla sua copia migliore, e una copia locale vince sempre. Le altre restano come riserve.",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
                     "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
                     "In total: {created} created, {updated} updated, {removed} removed.": "In totale: {created} creati, {updated} aggiornati, {removed} rimossi.",
@@ -1574,6 +1591,7 @@
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
                     "Its automatic libraries are deleted too: {names}.": "Vengono eliminate anche le sue librerie automatiche: {names}.",
                     "Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai film uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
+                    "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: ogni episodio viene riprodotto dalla sua copia migliore, le altre restano come riserve, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
                     "JellyMesh server": "server JellyMesh",
@@ -1596,9 +1614,12 @@
                     "Merge selected": "Unisci selezionati",
                     "Merge the ones that are one film.": "Unisci quelli che sono un solo film.",
                     "Merge undone. The film list changes after the library scan that was queued.": "Unione annullata. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
+                    "Merge undone. The series list changes after the library scan that was queued.": "Unione annullata. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
                     "Merged films": "Film uniti",
                     "Merged on {date}": "Uniti il {date}",
+                    "Merged series": "Serie unite",
                     "Merged. The film list changes after the library scan that was queued.": "Uniti. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
+                    "Merged. The series list changes after the library scan that was queued.": "Unite. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
                     "Metadata": "Metadati",
                     "Mode": "Modalità",
                     "Most servers can keep these values.": "La maggior parte dei server può tenere questi valori.",
@@ -1609,6 +1630,7 @@
                     "No connected servers": "Nessun server connesso",
                     "No connected servers yet.": "Ancora nessun server connesso.",
                     "No doubtful films.": "Nessun film dubbio.",
+                    "No doubtful series.": "Nessuna serie dubbia.",
                     "No libraries chosen, so nothing is imported from this server yet.": "Nessuna libreria scelta, quindi per ora da questo server non si importa nulla.",
                     "No remote servers yet.": "Ancora nessun server remoto.",
                     "No remote servers.": "Nessun server remoto.",
@@ -1619,6 +1641,7 @@
                     "Not checked": "Non controllata",
                     "Not chosen": "Non scelta",
                     "Not in effect: a copy is missing, or the IDs already make these one film.": "Non attiva: manca una copia, oppure gli ID li rendono già un solo film.",
+                    "Not in effect: a copy is missing, or the IDs already make these one series.": "Non attiva: manca una copia, oppure gli ID le rendono già una sola serie.",
                     "Not known": "Non noto",
                     "Not linked": "Non collegata",
                     "Not read yet": "Non ancora letto",
@@ -1661,8 +1684,12 @@
                     "Save": "Salva",
                     "Save libraries": "Salva le librerie",
                     "Saved {name}.": "{name} è stato salvato.",
+                    "Seasons": "Stagioni",
+                    "season": "stagione",
+                    "seasons": "stagioni",
                     "Select at least two titles of one group.": "Seleziona almeno due titoli di un gruppo.",
                     "Select at least two titles to merge them.": "Seleziona almeno due titoli per unirli.",
+                    "Select at most one series with a local copy: two local series cannot be merged.": "Seleziona al massimo una serie con una copia locale: due serie locali non si possono unire.",
                     "Select at most one title with a local copy: two local films cannot be merged.": "Seleziona al massimo un titolo con una copia locale: due film locali non si possono unire.",
                     "Series library": "Libreria serie",
                     "Server": "Server",
@@ -1705,6 +1732,8 @@
                     "Suspended. Sync and remote playback are stopped until JellyMesh can keep its key file.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché JellyMesh non riesce a tenere il file della chiave.",
                     "Suspended. Sync and remote playback are stopped until the password of each marked server is entered again.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché non inserisci di nuovo la password di ogni server segnato.",
                     "Connecting a server waits until the stored logins can be used. The Overview says what to do.": "Il collegamento di un server attende che gli accessi salvati si possano usare. La Panoramica dice cosa fare.",
+                    "These series are linked by shared provider IDs, but some of those IDs contradict each other.": "Queste serie sono legate da ID provider in comune, ma alcuni di quegli ID si contraddicono.",
+                    "These series have the same name and year, but nothing confirms they are one series.": "Queste serie hanno lo stesso nome e lo stesso anno, ma nulla conferma che siano una sola serie.",
                     "the sync history": "lo storico delle sincronizzazioni",
                     "These libraries are deleted now: {names}.": "Queste librerie vengono eliminate ora: {names}.",
                     "password needed": "password da inserire",
@@ -1785,6 +1814,7 @@
                     "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I film dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
                     "To do": "Da fare",
                     "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.": "Due film locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo un titolo con una copia locale.",
+                    "Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.": "Due serie locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo una serie con una copia locale.",
                     "URL": "URL",
                     "Undo merge": "Annulla unione",
                     "Undo this merge?": "Annullare questa unione?",
@@ -1958,10 +1988,11 @@
                 var stepIcons = { done: 'check_circle', todo: 'radio_button_unchecked', unknown: 'help_outline' };
                 var shownTab = tabNames[0];
                 var compareRows = ['Server', 'Length', 'Resolution', 'Range', 'Bitrate', 'Codec', 'IDs'];
+                var seriesCompareRows = ['Server', 'Episodes', 'Seasons', 'IDs'];
                 var runKinds = { Incremental: t('Incremental'), Reconciliation: t('Reconciliation') };
                 var runOutcomes = { Succeeded: t('Succeeded'), PartlyFailed: t('Partly failed'), Failed: t('Failed'), Cancelled: t('Cancelled') };
                 var runTones = { Succeeded: 'jmToneGood', PartlyFailed: 'jmToneWarn', Failed: 'jmToneBad', Cancelled: 'jmToneQuiet' };
-                var compareLabels = { Server: t('Server'), Length: t('Length'), Resolution: t('Resolution'), Range: t('Range'), Bitrate: t('Bitrate'), Codec: t('Codec'), IDs: t('IDs') };
+                var compareLabels = { Server: t('Server'), Length: t('Length'), Resolution: t('Resolution'), Range: t('Range'), Bitrate: t('Bitrate'), Codec: t('Codec'), IDs: t('IDs'), Episodes: t('Episodes'), Seasons: t('Seasons') };
                 var outcomeKinds = { Done: t('Done'), Error: t('Error') };
                 var reading = t('Reading...');
                 var savedSettings = null;
@@ -3368,6 +3399,35 @@
 
                 var mergeDetails = 0;
 
+                // The words and comparison rows of the titles a merge joins, films or series (decision 51).
+                var mergeKinds = {
+                    films: {
+                        rows: compareRows,
+                        reasons: mergeReasons,
+                        empty: t('No doubtful films.'),
+                        twoLocal: t('Select at most one title with a local copy: two local films cannot be merged.'),
+                        merged: t('Merged. The film list changes after the library scan that was queued.'),
+                        undone: t('Merge undone. The film list changes after the library scan that was queued.'),
+                        unused: t('Not in effect: a copy is missing, or the IDs already make these one film.'),
+                        forecast: describeForecast
+                    },
+                    series: {
+                        rows: seriesCompareRows,
+                        reasons: {
+                            ConflictingProviderIds: t('These series are linked by shared provider IDs, but some of those IDs contradict each other.'),
+                            PossibleDuplicate: t('These series have the same name and year, but nothing confirms they are one series.')
+                        },
+                        empty: t('No doubtful series.'),
+                        twoLocal: t('Select at most one series with a local copy: two local series cannot be merged.'),
+                        merged: t('Merged. The series list changes after the library scan that was queued.'),
+                        undone: t('Merge undone. The series list changes after the library scan that was queued.'),
+                        unused: t('Not in effect: a copy is missing, or the IDs already make these one series.'),
+                        forecast: function () {
+                            return t('If merged, each episode plays from its best copy, and a local copy always wins. The others stay as backups.');
+                        }
+                    }
+                };
+
                 function copyTitle(copy) {
                     return (copy.Copy.Title || t('Untitled')) + (copy.Copy.Year ? ' (' + copy.Copy.Year + ')' : '');
                 }
@@ -3431,11 +3491,20 @@
                     });
                 }
 
-                function renderCopy(copy) {
+                // Says how many episodes and seasons a series copy has, when the catalog knows it.
+                function contentLines(copy) {
+                    if (copy.EpisodeCount == null) {
+                        return [];
+                    }
+
+                    return [count(copy.EpisodeCount, 'episode', 'episodes') + ', ' + count(copy.SeasonCount, 'season', 'seasons')];
+                }
+
+                function renderCopy(copy, kind) {
                     var line = create('div');
                     line.className = 'jmMergeCopy';
                     line.appendChild(create('div', describeCopy(copy)));
-                    qualityLines(copy).forEach(function (quality) {
+                    (kind === mergeKinds.series ? contentLines(copy) : qualityLines(copy)).forEach(function (quality) {
                         var node = create('div', quality);
                         node.className = 'jmMergeQuality';
                         line.appendChild(node);
@@ -3458,6 +3527,10 @@
 
                     if (copy.Copy.Imdb) {
                         ids.push('IMDb ' + copy.Copy.Imdb);
+                    }
+
+                    if (copy.Copy.Tvdb) {
+                        ids.push('TVDB ' + copy.Copy.Tvdb);
                     }
 
                     return ids.length > 0 ? ids : [t('None')];
@@ -3484,11 +3557,13 @@
                 }
 
                 // Gives the lines of each row of the comparison, one per copy or version, in the order of compareRows.
-                function compareValues(title) {
-                    var values = { Server: [], Length: [], Resolution: [], Range: [], Bitrate: [], Codec: [], IDs: [] };
+                function compareValues(title, rows) {
+                    var values = { Server: [], Length: [], Resolution: [], Range: [], Bitrate: [], Codec: [], IDs: [], Episodes: [], Seasons: [] };
                     title.Copies.forEach(function (copy) {
                         values.Server.push(copy.IsFound ? copyPlace(copy) : t('{place}, not in the catalog now', { place: copyPlace(copy) }));
                         values.Length.push(copy.RunTimeTicks ? minutes(copy.RunTimeTicks) : t('Unknown'));
+                        values.Episodes.push(copy.EpisodeCount != null ? String(copy.EpisodeCount) : t('Unknown'));
+                        values.Seasons.push(copy.SeasonCount != null ? String(copy.SeasonCount) : t('Unknown'));
                         values.IDs = values.IDs.concat(idsOf(copy));
                         copy.Versions.forEach(function (version) {
                             values.Resolution.push(resolutionOf(version.Quality));
@@ -3497,15 +3572,15 @@
                             values.Codec.push(codecOf(version.Quality));
                         });
                     });
-                    return compareRows.map(function (name) {
+                    return rows.map(function (name) {
                         return { name: compareLabels[name], lines: values[name].length > 0 ? values[name] : [t('Unknown')] };
                     });
                 }
 
                 // Says what the rows cannot: a merge already made, the order of versions, and quality not read.
-                function compareNotes(title) {
+                function compareNotes(title, kind) {
                     var notes = title.MergeIds.length > 0 ? [t('Already merged.')] : [];
-                    title.Copies.forEach(function (copy) {
+                    (kind === mergeKinds.series ? [] : title.Copies).forEach(function (copy) {
                         if (copy.Versions.length > 1) {
                             notes.push(t('Best version first.'));
                         } else if (copy.Versions.length === 0 && copy.Copy.IsLocal && copy.IsFound) {
@@ -3531,7 +3606,7 @@
                 }
 
                 // A kept row gets new text and keeps its checkbox, so a refresh leaves the selection and the focus alone.
-                function renderMergeTitle(title, changed) {
+                function renderMergeTitle(title, changed, kind) {
                     var row = create('div');
                     row.className = 'jmMergeTitle';
                     var box = addCheckbox(row, title.WorkKey, titleName(title));
@@ -3547,10 +3622,10 @@
                         row.jmTitle = current;
                         setText(name, titleName(current));
                         details.textContent = '';
-                        compareValues(current).forEach(function (line) {
+                        compareValues(current, kind.rows).forEach(function (line) {
                             details.appendChild(renderCompareRow(line));
                         });
-                        var note = create('div', compareNotes(current));
+                        var note = create('div', compareNotes(current, kind));
                         note.className = 'jmCompareNote';
                         details.appendChild(note);
                     };
@@ -3559,11 +3634,11 @@
                 }
 
                 // Marks the rows whose values differ between the titles, without saying which is better: the server decides that.
-                function markDifferences(titles) {
+                function markDifferences(titles, rows) {
                     var columns = Array.prototype.map.call(titles.children, function (title) {
                         return title.querySelectorAll('.jmCompareRow');
                     });
-                    compareRows.forEach(function (name, index) {
+                    rows.forEach(function (name, index) {
                         var shown = columns.map(function (column) {
                             return column[index].textContent;
                         });
@@ -3593,9 +3668,9 @@
                     return t('If merged, {name} plays: {quality}. The others stay as backups.', { name: name, quality: describeQuality(forecast.Version.Quality) });
                 }
 
-                function renderMergeCase(group) {
+                function renderMergeCase(group, kind) {
                     var row = create('div');
-                    row.className = 'jmMergeCase';
+                    row.className = kind === mergeKinds.series ? 'jmMergeCase jmMergeSeries' : 'jmMergeCase';
                     var reason = create('p');
                     reason.className = 'jmMergeReason';
                     row.appendChild(reason);
@@ -3638,7 +3713,7 @@
                         if (chosen.length < 2) {
                             hint = t('Select at least two titles to merge them.');
                         } else if (locals.length > 1) {
-                            hint = t('Select at most one title with a local copy: two local films cannot be merged.');
+                            hint = kind.twoLocal;
                         }
 
                         merge.disabled = hint !== '';
@@ -3652,7 +3727,7 @@
                         showResult(t('Checking which copy would play.'), true);
                         api('POST', 'Merges/Preview', { WorkKeys: keys() }, AbortSignal.timeout(readTimeoutMilliseconds)).then(function (forecast) {
                             if (current === ticket) {
-                                showResult(describeForecast(forecast), false);
+                                showResult(kind.forecast(forecast), false);
                             }
                         }).catch(function (error) {
                             if (current === ticket) {
@@ -3663,24 +3738,24 @@
 
                     var merge = button(t('Merge selected'), function () {
                         act(api('POST', 'Merges', { WorkKeys: keys() }).then(function () {
-                            showMessage(t('Merged. The film list changes after the library scan that was queued.'));
+                            showMessage(kind.merged);
                             return loadMerges();
                         }));
                     }, 'button-submit');
                     foot.appendChild(merge);
                     row.jmUpdate = function (current) {
-                        setText(reason, mergeReasons[current.Kind] || current.Kind);
+                        setText(reason, kind.reasons[current.Kind] || current.Kind);
                         updateRows(titles, current.Titles.map(function (title) {
-                            return { key: title.WorkKey, build: renderMergeTitle, args: [title, selectionChanged] };
+                            return { key: title.WorkKey, build: renderMergeTitle, args: [title, selectionChanged, kind] };
                         }));
-                        markDifferences(titles);
+                        markDifferences(titles, kind.rows);
                         selectionChanged();
                     };
                     row.jmUpdate(group);
                     return row;
                 }
 
-                function renderMerge(merge) {
+                function renderMerge(merge, kind) {
                     var row = create('div');
                     row.className = 'jmMerge';
                     var details = create('div');
@@ -3697,11 +3772,11 @@
                         date.appendChild(document.createTextNode(around[1] || ''));
                         details.appendChild(date);
                         current.Copies.forEach(function (copy) {
-                            details.appendChild(renderCopy(copy));
+                            details.appendChild(renderCopy(copy, kind));
                         });
 
                         if (!current.IsInEffect) {
-                            var unused = create('div', t('Not in effect: a copy is missing, or the IDs already make these one film.'));
+                            var unused = create('div', kind.unused);
                             unused.className = 'jmMergeUnused';
                             details.appendChild(unused);
                         }
@@ -3713,7 +3788,7 @@
                             t('The title that stays keeps its watch state. The others usually get theirs back, but can start again without it. Local files are not changed.')
                         ], function () {
                             act(api('DELETE', 'Merges/' + merge.Id).then(function () {
-                                showMessage(t('Merge undone. The film list changes after the library scan that was queued.'));
+                                showMessage(kind.undone);
                                 return loadMerges();
                             }));
                         });
@@ -3721,29 +3796,49 @@
                     return row;
                 }
 
+                // Keys a case by its first title, which stays while its data changes.
+                function renderCases(container, cases, kind) {
+                    var rows = cases.map(function (group) {
+                        return { key: group.Titles[0].WorkKey, build: renderMergeCase, args: [group, kind] };
+                    });
+                    if (cases.length === 0) {
+                        rows.push({ key: 'none', build: create, args: ['p', kind.empty] });
+                    }
+
+                    updateRows(container, rows);
+                }
+
+                // Keys a merge by its ID, which stays while its data changes.
+                function renderMergeList(container, merges, kind) {
+                    var rows = merges.map(function (merge) {
+                        return { key: merge.Id, build: renderMerge, args: [merge, kind] };
+                    });
+                    if (merges.length === 0) {
+                        rows.push({ key: 'none', build: create, args: ['p', t('Nothing merged.')] });
+                    }
+
+                    updateRows(container, rows);
+                }
+
                 function renderMerges(list) {
                     var warning = el('#jmMergeWarning');
                     warning.textContent = list.IsStoreDamaged ? t('The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.') : '';
                     warning.hidden = !list.IsStoreDamaged;
 
-                    // Keys a case by its first title and a merge by its ID, which stay while their data changes.
-                    var cases = list.Cases.map(function (group) {
-                        return { key: group.Titles[0].WorkKey, build: renderMergeCase, args: [group] };
+                    renderCases(el('#jmMergeCases'), list.Cases, mergeKinds.films);
+                    renderCases(el('#jmSeriesCases'), list.SeriesCases, mergeKinds.series);
+
+                    // A merge of series holds episodes, as the server names the kind of each copy.
+                    var series = list.Merges.filter(function (merge) {
+                        return merge.Copies.some(function (copy) {
+                            return copy.Copy.Kind !== 'Movie';
+                        });
                     });
-                    if (list.Cases.length === 0) {
-                        cases.push({ key: 'none', build: create, args: ['p', t('No doubtful films.')] });
-                    }
-
-                    updateRows(el('#jmMergeCases'), cases);
-
-                    var merges = list.Merges.map(function (merge) {
-                        return { key: merge.Id, build: renderMerge, args: [merge] };
+                    var films = list.Merges.filter(function (merge) {
+                        return series.indexOf(merge) < 0;
                     });
-                    if (list.Merges.length === 0) {
-                        merges.push({ key: 'none', build: create, args: ['p', t('Nothing merged.')] });
-                    }
-
-                    updateRows(el('#jmMerges'), merges);
+                    renderMergeList(el('#jmMerges'), films, mergeKinds.films);
+                    renderMergeList(el('#jmSeriesMerges'), series, mergeKinds.series);
                 }
 
                 // Gives a duration in the largest units that keep it short.

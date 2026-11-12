@@ -33,18 +33,20 @@ public sealed class FederationMergeControllerTests
         return new FederationMergeController(service);
     }
 
-    private void ListTitles(params bool[] localFlags)
+    private void ListTitles(params bool[] localFlags) => ListTitles(ContentKind.Movie, localFlags);
+
+    private void ListTitles(ContentKind kind, params bool[] localFlags)
     {
         var titles = localFlags
             .Select((isLocal, index) => new MergeTitleView(
                 "key" + index,
                 isLocal,
                 [],
-                [new MergeCopyView(new MergedCopy { ServerId = "s", ItemId = "i" + index, IsLocal = isLocal }, "A", null, true)]))
+                [new MergeCopyView(new MergedCopy { ServerId = "s", ItemId = "i" + index, Kind = kind, IsLocal = isLocal }, "A", null, true)]))
             .ToList();
         _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 0, [], [])
         {
-            MergeCases = [new MergeCaseView(DedupIssueKind.PossibleDuplicate, titles)]
+            MergeCases = [new MergeCaseView(DedupIssueKind.PossibleDuplicate, titles) { ContentKind = kind }]
         });
     }
 
@@ -90,6 +92,40 @@ public sealed class FederationMergeControllerTests
 
         var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
         Assert.Contains("local", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TwoLocalFilmsKeepTheMessageThePageTranslates()
+    {
+        ListTitles(true, true);
+
+        var result = await Controller().Merge(new MergeRequest(["key0", "key1"]), CancellationToken.None);
+
+        var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Equal("Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.", failure.Message);
+    }
+
+    [Fact]
+    public async Task TwoLocalSeriesAreRefusedInWordsOfSeries()
+    {
+        ListTitles(ContentKind.Episode, true, true, false);
+
+        var result = await Controller().Merge(new MergeRequest(["key0", "key1"]), CancellationToken.None);
+
+        var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Equal("Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.", failure.Message);
+        Assert.Empty(_store.Merges);
+    }
+
+    [Fact]
+    public void APreviewOfTwoLocalSeriesIsTheSameRefusal()
+    {
+        ListTitles(ContentKind.Episode, true, true);
+
+        var result = Controller().Preview(new MergeRequest(["key0", "key1"])).Result;
+
+        var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Contains("Two local series", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]

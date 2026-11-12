@@ -46,7 +46,9 @@ public sealed class FederationResolver : IFederationResolver
         var catalogs = snapshot.Servers.Where(catalog => names.ContainsKey(catalog.ServerId)).ToList();
 
         var local = _localCatalog.Read();
-        var result = DedupEngine.Resolve(local, catalogs.SelectMany(CatalogItemMapper.ToCatalogItems), _merges.Merges);
+        var remote = catalogs.SelectMany(CatalogItemMapper.ToCatalogItems).ToList();
+        var result = DedupEngine.Resolve(local, remote, _merges.Merges);
+        var episodes = EpisodesBySeries(local, remote);
 
         var details = catalogs
             .SelectMany(catalog => catalog.Items.Select(item => (Catalog: catalog, Item: item)))
@@ -59,11 +61,16 @@ public sealed class FederationResolver : IFederationResolver
         MergeCopyView ToCopyView(WorkCopy copy)
         {
             var merged = MergedCopy.From(copy.Item, copy.IsLocal);
-            return new MergeCopyView(merged, NameOf(merged), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, true) { Versions = BestFirst(FilmOnly(copy.Item)) };
+            return WithEpisodes(new MergeCopyView(merged, NameOf(merged), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, true) { Versions = BestFirst(FilmOnly(copy.Item)) }, copy.Item);
         }
 
         MergeCopyView ToMergedCopyView(AppliedCopy copy) =>
-            new(copy.Copy, NameOf(copy.Copy), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(FilmOnly(copy.Item)) };
+            WithEpisodes(new(copy.Copy, NameOf(copy.Copy), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(FilmOnly(copy.Item)) }, copy.Item);
+
+        MergeCopyView WithEpisodes(MergeCopyView view, CatalogItem? item) =>
+            item is { Kind: not ContentKind.Movie } && episodes.TryGetValue((view.Copy.IsLocal, item.ServerId, WorkResolver.CopyItemOf(item)), out var found)
+                ? view with { EpisodeCount = found.Episodes, SeasonCount = found.Seasons }
+                : view;
 
         ResolvedSource ToSource(RemoteSource source)
         {
@@ -106,6 +113,22 @@ public sealed class FederationResolver : IFederationResolver
                 .Select(merge => new ManualMergeView(merge.Merge.Id, merge.Merge.CreatedUtc, merge.IsInEffect, merge.Copies.Select(ToMergedCopyView).ToList()))
                 .ToList()
         };
+    }
+
+    // The episodes and seasons of each series copy, keyed as a copy names its series.
+    private static Dictionary<(bool IsLocal, string ServerId, string? SeriesId), (int Episodes, int Seasons)> EpisodesBySeries(
+        IReadOnlyList<CatalogItem> local,
+        List<CatalogItem> remote)
+    {
+        return local.Select(item => (IsLocal: true, Item: item))
+            .Concat(remote.Select(item => (IsLocal: false, Item: item)))
+            .Where(entry => entry.Item.Kind != ContentKind.Movie && entry.Item.SeriesId is not null)
+            .GroupBy(entry => (entry.IsLocal, entry.Item.ServerId, (string?)entry.Item.SeriesId))
+            .ToDictionary(
+                group => group.Key,
+                group => (
+                    group.Select(entry => entry.Item.ItemId).Distinct(StringComparer.Ordinal).Count(),
+                    group.Select(entry => entry.Item.SeasonNumber).OfType<int>().Distinct().Count()));
     }
 
     private static List<MediaVersion> BestFirst(CatalogItem? item)

@@ -98,6 +98,7 @@ public class PageTranslationsTests
         yield return "This merge no longer exists.";
         yield return "Select at least two titles of one group.";
         yield return "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.";
+        yield return "Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.";
         yield return "The list changed. Check it again, then merge.";
     }
 

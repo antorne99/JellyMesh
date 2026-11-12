@@ -17,4 +17,10 @@ public sealed record MergeCopyView(MergedCopy Copy, string? ServerName, long? Ru
     /// because it wins anyway, for a series, whose quality is decided per episode, and for a copy that cannot be found.
     /// </summary>
     public IReadOnlyList<MediaVersion> Versions { get; init; } = [];
+
+    /// <summary>Gets the episodes a series copy has in the catalog now, null for a film or a copy that cannot be found.</summary>
+    public int? EpisodeCount { get; init; }
+
+    /// <summary>Gets the seasons those episodes are in, null for a film or a copy that cannot be found.</summary>
+    public int? SeasonCount { get; init; }
 }
