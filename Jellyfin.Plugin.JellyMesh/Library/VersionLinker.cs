@@ -96,6 +96,11 @@ public sealed class VersionLinker : IVersionLinker
                 groups.Add(group with { PrimaryStubId = recorded });
             }
 
+            if (thorough)
+            {
+                await DetachUngroupedAsync(state, run, cancellationToken).ConfigureAwait(false);
+            }
+
             await MoveCollectionEntriesAsync(run, cancellationToken).ConfigureAwait(false);
             if (changed)
             {
@@ -149,6 +154,12 @@ public sealed class VersionLinker : IVersionLinker
 
         if (items.Count < 2)
         {
+            // Only the nightly run detaches, so that an item missing for a moment is not detached and linked again (Q144).
+            if (run.Thorough && items.Count == 1 && items.Values.Single().OwnerId.Equals(Guid.Empty))
+            {
+                await ApplyAsync(items.Keys.Single(), [], items, run, cancellationToken).ConfigureAwait(false);
+            }
+
             return group.PrimaryStubId;
         }
 
@@ -179,7 +190,7 @@ public sealed class VersionLinker : IVersionLinker
         // A version of a local film belongs to its owner: it is never saved.
         var known = resolved.Values.Where(video => members.ContainsKey(video.Id) || video.OwnerId.Equals(Guid.Empty)).ToDictionary(video => video.Id);
         var plan = VersionLinkPlanner.Plan(primary, alternates, known.Values.Select(StateOf).ToList(), id => resolved.TryGetValue(id, out var video) && !run.IsStub(video));
-        if (plan.Joined.Count > 0)
+        if (alternates.Count > 0 && plan.Joined.Count > 0)
         {
             AlignPlayed(members.Values.ToList(), cancellationToken);
         }
@@ -190,6 +201,29 @@ public sealed class VersionLinker : IVersionLinker
         }
 
         return plan;
+    }
+
+    // Detaches each stub that is in no group from every item it is linked to, keeping only links between films (Q144).
+    private async Task DetachUngroupedAsync(StubState state, Run run, CancellationToken cancellationToken)
+    {
+        var grouped = state.Groups.SelectMany(group => group.StubIds).ToHashSet(StringComparer.Ordinal);
+        foreach (var stub in state.Stubs.Where(stub => !grouped.Contains(stub.Id)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (run.FindStub(stub) is { OwnerId: var owner } video && owner.Equals(Guid.Empty)
+                    && (video.PrimaryVersionId is not null || video.LinkedAlternateVersions.Length > 0))
+                {
+                    await ApplyAsync(video.Id, [], new Dictionary<Guid, Video> { [video.Id] = video }, run, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // The type only: a message could hold a remote address.
+                _logger.LogError("Cannot detach a version that left its group: {Error}", exception.GetType().Name);
+            }
+        }
     }
 
     // The cached item is put back if the save fails, or the next run would find it linked already.
@@ -302,6 +336,8 @@ public sealed class VersionLinker : IVersionLinker
 
         // The primary that each alternate's collection entries move to.
         public Dictionary<Guid, Video> Moves { get; } = [];
+
+        public bool Thorough => thorough;
 
         public bool IsStub(BaseItem item) => item.Path is { } path && FederatedPaths.RelativeTo(root, path) is not null;
 

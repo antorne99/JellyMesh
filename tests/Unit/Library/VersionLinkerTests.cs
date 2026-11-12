@@ -224,26 +224,33 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.All(_saves, save => Assert.Equal(ItemUpdateType.MetadataImport, save.Reason));
     }
 
-    [Fact]
-    public async Task ASecondRunChangesNothing()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ASecondRunChangesNothing(bool thorough)
     {
         var local = Local(played: true);
         var a = Stub("sa", _serverA, 1080);
         var b = Stub("sb", _serverB, 1080);
-        await SaveAsync([a, b], Group("g", ["sa", "sb"], [local.Id]));
+        var lone = Stub("sl", _serverC, 1080);
+        await SaveAsync([a, b, lone], Group("g", ["sa", "sb"], [local.Id]));
         Scanned(a);
         Scanned(b);
+        Scanned(lone);
         await _linker.LinkAsync(false, CancellationToken.None);
         _saves.Clear();
         _userData.Invocations.Clear();
         _library.Invocations.Clear();
 
-        await _linker.LinkAsync(true, CancellationToken.None);
+        await _linker.LinkAsync(thorough, CancellationToken.None);
 
         Assert.Empty(_saves);
         _userData.Verify(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()), Times.Never);
         _userData.Verify(data => data.GetUserData(It.IsAny<User>(), It.IsAny<BaseItem>()), Times.Never);
-        _library.Verify(library => library.GetItemList(It.IsAny<InternalItemsQuery>()), Times.Never);
+        if (!thorough)
+        {
+            _library.Verify(library => library.GetItemList(It.IsAny<InternalItemsQuery>()), Times.Never);
+        }
     }
 
     [Fact]
@@ -428,6 +435,137 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal([itemA.Id], ((Folder)failing).LinkedChildren.Select(child => child.ItemId!.Value));
         Assert.Equal([local.Id], ((Folder)other).LinkedChildren.Select(child => child.ItemId!.Value));
         Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ALoneMemberOfAGroupIsDetachedOnlyByTheNightlyRun()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"], primary: "sb"));
+        var itemA = Scanned(a);
+        var film = Local();
+        var other = Local();
+        itemA.SetPrimaryVersionId(film.Id);
+        other.SetPrimaryVersionId(film.Id);
+        film.LinkedAlternateVersions = [Link(itemA.Id), Link(other.Id)];
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.Empty(_saves);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Equal([other.Id], LinkedIds(film));
+        Assert.Equal(film.Id, other.PrimaryVersionId);
+        Assert.DoesNotContain(_saves, save => save.Item == other.Id);
+        Assert.Equal("sb", _registry.State.Groups.Single().PrimaryStubId);
+    }
+
+    [Fact]
+    public async Task ALoneLocalCopyKeepsOnlyItsLinksToOtherFilms()
+    {
+        var local = Local();
+        var other = Local();
+        var a = Stub("sa", _serverA, 1080);
+        var gone = Stub("sg", _serverB, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        var itemGone = Scanned(gone);
+        itemGone.SetPrimaryVersionId(local.Id);
+        other.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(itemGone.Id), Link(other.Id)];
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.Empty(_saves);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Null(itemGone.PrimaryVersionId);
+        Assert.Equal([other.Id], LinkedIds(local));
+        Assert.Equal(local.Id, other.PrimaryVersionId);
+        Assert.DoesNotContain(_saves, save => save.Item == other.Id);
+    }
+
+    [Fact]
+    public async Task StubsInNoGroupAreDetachedOnlyByTheNightlyRun()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b]);
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        itemA.SetPrimaryVersionId(itemB.Id);
+        itemB.LinkedAlternateVersions = [Link(itemA.Id)];
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.Empty(_saves);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Null(itemB.PrimaryVersionId);
+        Assert.Empty(itemB.LinkedAlternateVersions);
+        Assert.All(_saves, save => Assert.Equal(ItemUpdateType.MetadataImport, save.Reason));
+        Assert.Equal(2, _saves.Count);
+    }
+
+    [Fact]
+    public async Task AStubThatLeftEveryGroupLeavesTheLocalCopy()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a]);
+        var itemA = Scanned(a);
+        var local = Local();
+        var other = Local();
+        itemA.SetPrimaryVersionId(local.Id);
+        other.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(itemA.Id), Link(other.Id)];
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Equal([other.Id], LinkedIds(local));
+        Assert.Equal(local.Id, other.PrimaryVersionId);
+        Assert.DoesNotContain(_saves, save => save.Item == other.Id);
+    }
+
+    [Fact]
+    public async Task AStubInNoGroupWithoutLinksIsNotSaved()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a]);
+        Scanned(a);
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Empty(_saves);
+    }
+
+    [Fact]
+    public async Task AFailedDetachDoesNotStopTheOthers()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 1080);
+        var c = Stub("sc", _serverA, 1080);
+        var d = Stub("sd", _serverB, 1080);
+        await SaveAsync([a, b, c, d]);
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        var itemC = Scanned(c);
+        var itemD = Scanned(d);
+        itemA.SetPrimaryVersionId(itemB.Id);
+        itemB.LinkedAlternateVersions = [Link(itemA.Id)];
+        itemC.SetPrimaryVersionId(itemD.Id);
+        itemD.LinkedAlternateVersions = [Link(itemC.Id)];
+        _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == itemA.Id || item.Id == itemB.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(TestValues.Host));
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Null(itemC.PrimaryVersionId);
+        Assert.Empty(itemD.LinkedAlternateVersions);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
     }
 
     [Fact]
