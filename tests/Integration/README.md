@@ -46,7 +46,7 @@ Copy `.env.example` to `.env` to set `BIND_ADDRESS`. Ports bind to loopback by d
 
 - `media/<instance>/film` and `media/<instance>/serie` are mounted read-only at `/media`.
 - `federata/` is mounted writable at `/federata` on `locale` only. It stands in for the federated folder and is empty until something writes to it.
-- On `locale`, the `Film` library has the paths `/media/film` and `/federata/Film`, and `Serie` has `/media/serie` and `/federata/Serie`. These are the two-path libraries the Phase 0 spikes need.
+- On `locale`, the `Film` library has the paths `/media/film` and `/federata/Film`, and `Serie` has `/media/serie` and `/federata/Serie`. These are the two-path libraries the Phase 0 spikes need. The plugin writes stubs only into `/federata/<server id>/Film` and `/Serie`, made when a server is added, so run `provision.sh` again after adding servers: it adds those folders to the libraries.
 
 Default metadata fetchers stay on, as on the real server, so the spikes see normal Jellyfin behaviour. Nothing is locked in the `.nfo` files.
 
@@ -187,6 +187,8 @@ bash playback/final.sh            # the whole proof in order, then final2.sh, fi
 
 To run beside another stack, give every script the same `PREFIX` and `PORT_A`: the servers are `$PREFIX-a` and `$PREFIX-b` on `PORT_A` and `PORT_A+1`, and the gates listen on `PORT_A+2` to `PORT_A+4`. The stock remote is the `remoto-standard` of this stack on `STOCK_PORT` (default 8097). With `STOCK=own`, `up.sh` starts a private one instead, `$PREFIX-s` on `PORT_A+5` unless `STOCK_PORT` says otherwise, and `down.sh` removes it. `down.sh` stops only the gates on this run's ports. `peer-device.sh` makes one server of its own, with defaults `jm-q92` and 8280.
 
+Stubs go to a folder per remote server, `/federata/<server id>/Film` and `/Serie`, so `federate.sh` adds the folders of each server it connects to the libraries, as an admin would. The `Film` library keeps `/media/film` and `/extra/film`, so it holds local copies and stays one a peer can be given.
+
 ```sh
 export MEDIA=<main checkout>/tests/Integration/media WORK=<scratch folder>
 export PREFIX=jm-prov-2 PORT_A=18510 STOCK=own   # optional: anything else that runs at the same time
@@ -221,7 +223,9 @@ MEDIA=<main checkout>/tests/Integration/media OLD=<folder> [PREFIX=jm-play] [POR
 
 It leaves the containers up. `down` in `play/lib.sh` removes them and their volumes.
 
-`removal-series.sh` proves the promise of the removal dialog on a series, with its own `$PREFIX-local` and `$PREFIX-remote` containers (default `jm-rms`) on `PORT` and the next one (default 18470). Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without. The server is removed and added back, and every episode and series row keeps the same item ID and the same watch state. Jellyfin keeps the user data of removed items by key, so the promise holds as long as stub paths and the IDs in the `.nfo` stay the same. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+`up` installs the `OLD` build, which writes the flat layout into `/federata/Film`. `upgrade` checks that the current build keeps and signs those stubs and writes a stub of its own for each film into the folder of the server, `/federata/<server id>/Film`, with the server name in the file name; then it moves the `Film` library from the flat path to that folder, where the later steps play. The other scripts add the folder of each server to their libraries after adding it.
+
+`removal-series.sh` proves the promise of the removal dialog on a series, with its own `$PREFIX-local` and `$PREFIX-remote` containers (default `jm-rms`) on `PORT` and the next one (default 18470). Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without. The server is removed and added back, and every episode and series row keeps the same item ID and the same watch state. Jellyfin keeps the user data of removed items by key, so the promise holds as long as stub paths and the IDs in the `.nfo` stay the same. A server added back gets a new ID, so its stubs come back in a new folder, which the script adds to the library; it compares paths inside the folder. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/removal-series.sh
