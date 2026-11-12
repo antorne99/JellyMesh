@@ -226,19 +226,22 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
             return null;
         }
 
-        KeepDamagedCopy();
-        return [];
+        // Starting from nothing would overwrite the damaged file, so that waits until it is set aside (decision 176).
+        return KeepDamagedCopy() ? [] : null;
     }
 
-    private void KeepDamagedCopy()
+    // Copies the damaged file aside, and tells whether it could.
+    private bool KeepDamagedCopy()
     {
         try
         {
             File.Copy(_path, _path + ".damaged", overwrite: true);
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}. Carries wait for it", exception.GetType().Name);
+            return false;
         }
     }
 

@@ -104,6 +104,26 @@ public sealed class WatchStateCarryLogTests : IDisposable
     }
 
     [Fact]
+    public async Task ABadFileThatCannotBeSetAsideSuspendsTheLogUntilItIs()
+    {
+        Directory.CreateDirectory(FilePath + ".damaged");
+        await File.WriteAllTextAsync(FilePath, "not json");
+
+        using var log = Log();
+
+        Assert.False(log.EnsureLoaded());
+        log.Record(_user, _item, _date);
+        Assert.False(await log.SaveAsync(CancellationToken.None));
+        Assert.Equal("not json", await File.ReadAllTextAsync(FilePath));
+
+        Directory.Delete(FilePath + ".damaged");
+
+        Assert.True(log.EnsureLoaded());
+        Assert.Equal("not json", await File.ReadAllTextAsync(FilePath + ".damaged"));
+        Assert.False(log.TryFind(_user, _item, out _));
+    }
+
+    [Fact]
     public async Task ForgottenCarriesAreGoneAfterARestart()
     {
         using (var log = Log())
