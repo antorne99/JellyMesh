@@ -130,4 +130,90 @@ public class ReconnectionTests
 
         Assert.Contains("/Videos/a1/stream?static=true", _fixture.Client.Opened.Last(), StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task The_third_reconnection_still_plays()
+    {
+        for (var drop = 0; drop < PlaybackLimits.Reconnections; drop++)
+        {
+            await PlayAndDropAsync(_single, _user, _b);
+        }
+
+        var outcome = await OpenAsync(_single, _user, _b);
+
+        Assert.Equal(PlaybackOutcomeKind.Remote, outcome.Kind);
+    }
+
+    [Fact]
+    public async Task The_fourth_reconnection_is_refused_without_asking_a_remote_and_closes_the_session_that_dropped()
+    {
+        PlaybackSession? last = null;
+        for (var drop = 0; drop <= PlaybackLimits.Reconnections; drop++)
+        {
+            last = await PlayAndDropAsync(_single, _user, _b);
+        }
+
+        var outcome = await OpenAsync(_single, _user, _b);
+
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+        Assert.True(outcome.AnyReachable);
+        Assert.False(outcome.AtStreamLimit);
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Contains(last!.RemotePlaySessionId, _fixture.Client.Stopped);
+        Assert.DoesNotContain(last, _fixture.Sessions.All);
+    }
+
+    [Fact]
+    public async Task The_retries_of_a_player_on_one_session_are_one_drop()
+    {
+        var session = await PlayAndDropAsync(_single, _user, _b);
+        for (var retry = 0; retry < PlaybackLimits.Reconnections; retry++)
+        {
+            _fixture.Coordinator.ReportFailure(session);
+        }
+
+        var outcome = await OpenAsync(_single, _user, _b);
+
+        Assert.Equal(PlaybackOutcomeKind.Remote, outcome.Kind);
+    }
+
+    [Fact]
+    public async Task The_drops_of_every_version_of_the_title_count_together()
+    {
+        for (var drop = 0; drop <= PlaybackLimits.Reconnections; drop++)
+        {
+            await PlayAndDropAsync(drop % 2 == 0 ? _single : _b, _user, drop % 2 == 0 ? _b : _single);
+        }
+
+        var outcome = await OpenAsync(_b, _user, _single);
+
+        Assert.Equal(PlaybackOutcomeKind.Unavailable, outcome.Kind);
+    }
+
+    [Fact]
+    public async Task The_drops_of_another_title_or_another_user_do_not_count()
+    {
+        var other = ServerStub("c", _serverA, "c1");
+        for (var drop = 0; drop <= PlaybackLimits.Reconnections; drop++)
+        {
+            await PlayAndDropAsync(other, _user);
+        }
+
+        Assert.Equal(PlaybackOutcomeKind.Remote, (await OpenAsync(_single, _user, _b)).Kind);
+        Assert.Equal(PlaybackOutcomeKind.Remote, (await OpenAsync(other, _otherUser)).Kind);
+    }
+
+    [Fact]
+    public async Task The_title_plays_again_five_minutes_after_the_drops()
+    {
+        for (var drop = 0; drop <= PlaybackLimits.Reconnections; drop++)
+        {
+            await PlayAndDropAsync(_single, _user, _b);
+        }
+
+        _fixture.Clock.Advance(TimeSpan.FromMinutes(5));
+        await _fixture.Coordinator.SweepAsync();
+
+        Assert.Equal(PlaybackOutcomeKind.Remote, (await OpenAsync(_single, _user, _b)).Kind);
+    }
 }

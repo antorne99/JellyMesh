@@ -93,6 +93,16 @@ public sealed class PlaybackCoordinator
         // After a fallback the session is under the version that served, which the same client may ask for again.
         var versions = VersionsOf(request).ToList();
         var previous = versions.Select(version => _sessions.FindSameStream(version.Identity)).FirstOrDefault(session => session is not null);
+
+        // jellyfin-web asks again after every drop and never stops by itself (row 57).
+        var stubIds = versions.Select(version => version.Stub.Id).ToList();
+        if (_failures.Count(request.Identity.UserId, stubIds, _clock.GetUtcNow()) > PlaybackLimits.Reconnections)
+        {
+            _logger.LogInformation("A title dropped more than {Count} times during playback for a user, its playback is refused for now", PlaybackLimits.Reconnections);
+            await ClosePreviousAsync(previous).ConfigureAwait(false);
+            return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable, AnyReachable: true);
+        }
+
         if (!await MakeRoomForAsync(request.Identity.UserId, previous).ConfigureAwait(false))
         {
             _logger.LogInformation("A user has {Count} streams running, the most allowed", PlaybackLimits.SessionsPerUser);
