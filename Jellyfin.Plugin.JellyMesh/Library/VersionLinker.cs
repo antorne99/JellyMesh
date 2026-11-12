@@ -173,12 +173,7 @@ public sealed class VersionLinker : IVersionLinker
 
         foreach (var update in plan.Updates)
         {
-            var video = known[update.ItemId];
-            video.LinkedAlternateVersions = LinksOf(video, update.LinkedIds);
-            video.SetPrimaryVersionId(update.PrimaryVersionId);
-
-            // Not MetadataEdit: Jellyfin would run its savers and write a .nfo next to a local copy (§10 row 93).
-            await _updater.SaveAsync(video, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
+            await SaveLinksAsync(known[update.ItemId], update, cancellationToken).ConfigureAwait(false);
         }
 
         var moved = plan.Joined.Where(id => id != primary.ItemId).ToList();
@@ -188,6 +183,25 @@ public sealed class VersionLinker : IVersionLinker
         }
 
         return primary.PrimaryStubId;
+    }
+
+    // The cached item is put back if the save fails, or the next run would find it linked already.
+    private async Task SaveLinksAsync(Video video, VersionLinkUpdate update, CancellationToken cancellationToken)
+    {
+        var (primary, links) = (video.PrimaryVersionId, video.LinkedAlternateVersions);
+        video.LinkedAlternateVersions = LinksOf(video, update.LinkedIds);
+        video.SetPrimaryVersionId(update.PrimaryVersionId);
+        try
+        {
+            // Not MetadataEdit: Jellyfin would run its savers and write a .nfo next to a local copy (§10 row 93).
+            await _updater.SaveAsync(video, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            video.LinkedAlternateVersions = links;
+            video.SetPrimaryVersionId(primary);
+            throw;
+        }
     }
 
     // A file-based alternate of a local film stands for its owner, which Jellyfin shows.

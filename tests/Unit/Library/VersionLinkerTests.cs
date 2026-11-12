@@ -350,6 +350,29 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFailedSaveIsMadeAgainByTheNextRun()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        var failing = true;
+        _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == itemA.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .Returns(() => failing ? Task.FromException(new IOException()) : Task.CompletedTask)
+            .Callback((BaseItem item, BaseItem _, ItemUpdateType reason, CancellationToken _) => _saves.Add((item.Id, reason)));
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.Null(itemA.PrimaryVersionId);
+        failing = false;
+        _saves.Clear();
+        await _linker.LinkAsync(false, CancellationToken.None);
+
+        Assert.Equal([(itemA.Id, ItemUpdateType.MetadataImport), (itemB.Id, ItemUpdateType.MetadataImport)], _saves);
+        Assert.Equal(itemB.Id, itemA.PrimaryVersionId);
+    }
+
+    [Fact]
     public async Task NothingHappensWithoutAFederatedFolder()
     {
         _store.Configuration.FederatedFolderPath = string.Empty;
