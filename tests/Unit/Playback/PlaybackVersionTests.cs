@@ -530,6 +530,7 @@ public class PlaybackVersionTests
     public async Task A_stub_whose_server_fails_falls_back_to_the_local_copy_with_its_id()
     {
         _fixture.Registry.Offline.Add(_serverA);
+        _fixture.Registry.Offline.Add(_serverB);
         var context = Context(_bItem, ("mediaSourceId", N(_aItem)));
 
         var (passed, response) = await RunAsync(context, StockSource(_localItem));
@@ -537,6 +538,54 @@ public class PlaybackVersionTests
         Assert.True(passed);
         Assert.Equal(_localItem, context.ActionArguments["itemId"]);
         Assert.Equal(N(_localItem), Assert.Single(response!.MediaSources).Id);
+    }
+
+    [Fact]
+    public async Task A_stub_whose_server_fails_falls_back_to_another_version_before_the_local_copy()
+    {
+        _fixture.Registry.Offline.Add(_serverA);
+        var context = Context(_bItem, ("mediaSourceId", N(_aItem)));
+
+        var (passed, response) = await RunAsync(context, StockSource(_localItem));
+
+        Assert.False(passed);
+        Assert.Equal(["item-b"], _fixture.Client.Requests.Select(request => request.ItemId));
+        Assert.Equal(N(_bItem), Assert.Single(response!.MediaSources).Id);
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Equal(_bItem, session.Identity.ItemId);
+        Assert.Equal("b", session.Identity.StubId);
+    }
+
+    [Fact]
+    public async Task The_fallback_never_tries_a_version_the_user_cannot_see()
+    {
+        Hidden(_localItem, _bItem);
+        _fixture.Registry.Offline.Add(_serverA);
+
+        var (passed, response) = await RunAsync(Context(_aItem));
+
+        Assert.False(passed);
+        Assert.NotEqual(N(_bItem), response?.MediaSources.FirstOrDefault()?.Id);
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_local_transcode_after_a_fallback_runs_on_the_version_that_serves()
+    {
+        Hidden(_localItem);
+        _fixture.Registry.Offline.Add(_serverA);
+        _fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError));
+        var transcoded = new MediaSourceInfo { Id = N(_bItem), TranscodingUrl = "/videos/" + N(_bItem) + "/master.m3u8?MediaSourceId=" + N(_bItem), Path = "http://127.0.0.1/strm" };
+        var context = Context(_bItem, ("mediaSourceId", N(_aItem)), ("playbackInfoDto", new PostedBody { DeviceProfile = PlaybackValues.WebProfile }));
+
+        var (passed, response) = await RunAsync(context, transcoded);
+
+        Assert.True(passed);
+        Assert.Equal(_bItem, context.ActionArguments["itemId"]);
+        Assert.Equal(N(_bItem), context.ActionArguments["mediaSourceId"]);
+        Assert.Equal(N(_bItem), Assert.Single(response!.MediaSources).Id);
+        Assert.Equal(_bItem, _fixture.Sessions.LocalItemOf("local-session"));
     }
 
     [Fact]

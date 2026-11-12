@@ -138,6 +138,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         {
             Identity = new PlaybackIdentity(user.Id, deviceId, target, (targetStub ?? routeStub)!.Id),
             Stub = (targetStub ?? routeStub)!,
+            Fallbacks = targetStub is null ? [] : _versions.Fallbacks(target, targetStub, user),
             LocalToken = authorization.Token,
             DeviceProfile = arguments.Body<DeviceProfile>("DeviceProfile"),
             AudioStreamIndex = arguments.Value<int>("audioStreamIndex"),
@@ -167,7 +168,9 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
                 context.Result = new OkObjectResult(outcome.Response);
                 break;
             case PlaybackOutcomeKind.LocalTranscode when request.DeviceProfile is not null:
-                await RunLocalTranscodeAsync(context, next, request, outcome).ConfigureAwait(false);
+                // After a fallback another version serves, and stock must transcode its .strm.
+                var served = outcome.Served is { } identity ? request with { Identity = identity } : request;
+                await RunLocalTranscodeAsync(context, next, served, outcome).ConfigureAwait(false);
                 break;
             default:
                 await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user).ConfigureAwait(false);

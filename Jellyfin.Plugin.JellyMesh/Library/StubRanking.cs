@@ -20,6 +20,18 @@ public static class StubRanking
     /// <returns>The best stub.</returns>
     public static string Best(IReadOnlyList<string> stubIds, Func<string, StubEntry?> find, IndexItemLookup lookup)
     {
+        return Order(stubIds, find, lookup)[0];
+    }
+
+    /// <summary>
+    /// Ranks the stubs best first. A stub the index does not know ranks as one of unknown quality.
+    /// </summary>
+    /// <param name="stubIds">The stubs, at least one.</param>
+    /// <param name="find">Finds a stub in the registry.</param>
+    /// <param name="lookup">The items of the index.</param>
+    /// <returns>The stubs, best first.</returns>
+    public static IReadOnlyList<string> Order(IReadOnlyList<string> stubIds, Func<string, StubEntry?> find, IndexItemLookup lookup)
+    {
         ArgumentNullException.ThrowIfNull(stubIds);
         ArgumentNullException.ThrowIfNull(find);
         ArgumentNullException.ThrowIfNull(lookup);
@@ -37,7 +49,8 @@ public static class StubRanking
             byStub.Add((stubId, new RemoteSource(source?.ServerId.ToString("N") ?? string.Empty, stubId, source?.MediaSourceId ?? string.Empty, quality)));
         }
 
-        var best = QualityRanking.Rank(byStub.Select(entry => entry.Source))[0];
-        return byStub.First(entry => entry.Source == best).StubId;
+        return QualityRanking.Rank(byStub.Select(entry => entry.Source))
+            .Select(ranked => byStub.First(entry => entry.Source == ranked).StubId)
+            .ToList();
     }
 }
