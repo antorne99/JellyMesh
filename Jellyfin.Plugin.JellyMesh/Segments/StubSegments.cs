@@ -182,6 +182,11 @@ public sealed class StubSegments
         {
             return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(RemoteFailure.Timeout);
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogDebug("Reading the media segments of a stub failed: {Error}", exception.GetType().Name);
+            return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(RemoteFailure.ServerError);
+        }
     }
 
     private IndexItemLookup CurrentLookup()
