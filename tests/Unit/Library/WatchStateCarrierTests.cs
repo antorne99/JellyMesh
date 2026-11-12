@@ -693,6 +693,57 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task AMergeLeavesThePositionAndPutsTheRestOnThePrimary()
+    {
+        // Two copies of one library become one entity (decision 172): as Q47, but each version keeps its position.
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        Group(a, b);
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        row.PlaybackPositionTicks = 500;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 8;
+        await Served(_mario, _serverB);
+
+        var report = await CarryAsync(WatchStateMove.OfMerge(oldStub, old.Id, [new WatchStateTarget(a.Id, _serverA), new WatchStateTarget(b.Id, _serverB)]));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.Equal(8, Row(_mario, a).Rating);
+        Assert.Equal(2, Row(_mario, a).PlayCount);
+        Assert.All([a, b], version => Assert.True(Row(_mario, version).Played));
+        Assert.All([a, b], version => Assert.Equal(0, Row(_mario, version).PlaybackPositionTicks));
+        Assert.False(Row(_mario, b).IsFavorite);
+        Assert.Equal(500, Row(_mario, old).PlaybackPositionTicks);
+    }
+
+    [Fact]
+    public async Task AMergedVersionIsNotATargetOfItsOwnMove()
+    {
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        var bStub = _stubs.Last();
+        Group(a, b);
+        var row = Row(_mario, b);
+        row.PlayCount = 3;
+        row.PlaybackPositionTicks = 400;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+
+        var report = await CarryAsync(WatchStateMove.OfMerge(bStub, b.Id, [new WatchStateTarget(a.Id, _serverA), new WatchStateTarget(b.Id, _serverB)]));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.Equal(3, Row(_mario, a).PlayCount);
+        Assert.Equal(0, Row(_mario, a).PlaybackPositionTicks);
+        Assert.Equal(400, Row(_mario, b).PlaybackPositionTicks);
+    }
+
+    [Fact]
     public void TheServersOfAMoveFollowTheSourcesOfTheOldStubBestFirst()
     {
         var stub = new StubEntry

@@ -30,6 +30,11 @@ public sealed record WatchStateMove
     public IReadOnlyList<Guid> Servers { get; private init; } = [];
 
     /// <summary>
+    /// Gets a value indicating whether the resume position is carried. A merge leaves it on each version (decision 172).
+    /// </summary>
+    public bool CarriesPosition { get; private init; } = true;
+
+    /// <summary>
     /// Gets the new items: for a film or an episode the new versions, the local copy included if there is one, and the
     /// new stubs never linked with them (D3); for a series its new series stubs.
     /// </summary>
@@ -57,6 +62,17 @@ public sealed record WatchStateMove
             Targets = targets
         };
     }
+
+    /// <summary>
+    /// Makes the move of a film stub whose title a manual merge joined with another of the same library: favorite, rating
+    /// and play count go to the primary, played to every version, and the position stays (decision 172).
+    /// </summary>
+    /// <param name="from">The stub of the title that joined, which may stay as a version.</param>
+    /// <param name="fromItemId">The Jellyfin item of that stub.</param>
+    /// <param name="targets">The versions of the merged title; the stub itself is left out of them.</param>
+    /// <returns>The move.</returns>
+    public static WatchStateMove OfMerge(StubEntry from, Guid fromItemId, IReadOnlyList<WatchStateTarget> targets)
+        => Of(from, fromItemId, targets) with { CarriesPosition = false };
 
     /// <summary>
     /// Makes the move of an old series stub, whose favorite and rating go to each new series stub (decision 150).

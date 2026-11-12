@@ -247,7 +247,9 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
 
         var targets = new List<(BaseItem Item, Guid? ServerId)>();
-        foreach (var target in move.Targets.DistinctBy(target => target.ItemId))
+
+        // A merged version takes nothing from itself.
+        foreach (var target in move.Targets.Where(target => target.ItemId != move.FromItemId).DistinctBy(target => target.ItemId))
         {
             if (_library.GetItemById(target.ItemId) is not { } item)
             {
@@ -372,7 +374,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             }
 
             seen = true;
-            var rows = WatchStateTransfer.Carry(old, lastServer, move.Servers, versions.Select(version => version.Version).ToList(), mode)
+            var rows = WatchStateTransfer.Carry(old, lastServer, move.Servers, versions.Select(version => version.Version).ToList(), mode, move.CarriesPosition)
                 .ToHashSet(ReferenceEqualityComparer.Instance);
             changed.AddRange(versions.Where(version => rows.Contains(version.Version.Data)).Select(version => (version.Item, version.Version.Data)));
         }
