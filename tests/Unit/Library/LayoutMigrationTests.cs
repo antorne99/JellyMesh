@@ -50,6 +50,7 @@ public sealed class LayoutMigrationTests : IDisposable
     private readonly List<Guid> _configured = [_serverA, _serverB];
     private readonly List<Guid> _synced = [_serverA, _serverB];
     private readonly List<Guid> _removed = [];
+    private readonly List<string> _imported = [];
     private readonly CapturingLogger<LayoutMigration> _logger = new();
     private Func<WatchStateMove, WatchStateMoveOutcome>? _outcome;
     private readonly User _mario = new("mario", "auth", "reset");
@@ -85,7 +86,7 @@ public sealed class LayoutMigrationTests : IDisposable
         _userData.Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
             .Callback((User user, BaseItem item, UserItemData data, UserDataSaveReason _, CancellationToken _) => _rows[(user.Id, item.Id)] = data);
         _servers.Setup(servers => servers.GetServers()).Returns(() =>
-            _configured.Select(server => new RemoteServerInfo(server, "Server", "http://" + server.ToString("N"), RemoteMode.Standard, 0, [], null, null)).ToList());
+            _configured.Select(server => new RemoteServerInfo(server, "Server", "http://" + server.ToString("N"), RemoteMode.Standard, 0, _imported.ToList(), null, null)).ToList());
         _index.Setup(index => index.Snapshot).Returns(() => new IndexSnapshot
         {
             Version = IndexSnapshot.CurrentVersion,
@@ -370,6 +371,52 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task AnImportedLibraryReadEmptyKeepsTheOldStubsWaiting()
+    {
+        _imported.Add("lib");
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+    }
+
+    [Fact]
+    public async Task ATitleGoneFromAnImportedLibraryWithOtherItemsIsGone()
+    {
+        _imported.Add("lib");
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        _indexed.Add((_serverA, "other"));
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+    }
+
+    [Fact]
+    public async Task AnOldSourceWithNoLibraryIsGoneEvenIfTheImportedLibraryReadsEmpty()
+    {
+        _imported.Add("lib");
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _stubs[_stubs.IndexOf(old)] = old with { Sources = [Source((_serverA, "a1"))] };
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+        Assert.False(_items.ContainsKey(oldItem.Id));
+    }
+
+    [Fact]
     public async Task ATitleOnlyOnARemovedServerIsGoneEvenWhileTheIndexStillListsIt()
     {
         var (old, oldItem) = OldFilm("Dune", (_serverB, "b1"));
@@ -569,7 +616,7 @@ public sealed class LayoutMigrationTests : IDisposable
             Kind = StubKind.Movie,
             RelativePath = Path.Combine("Film", title, title + ".strm"),
             IdentityKey = "old:" + title,
-            Sources = sources.Select(Source).ToList()
+            Sources = sources.Select(source => Source(source) with { LibraryId = "lib" }).ToList()
         };
         _stubs.Add(stub);
         _indexed.AddRange(sources);
