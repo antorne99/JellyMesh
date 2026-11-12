@@ -138,8 +138,9 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                 outcomes[index] = outcome with { Status = WatchStateMoveStatus.Failed, SkippedUsers = skipped.ToList() };
             }
         }
-        else
+        else if (run.Users.Count > 0)
         {
+            // With no users nothing was carried for anyone, so no old item may forget its records (decision 203).
             forgettable = ForgettableOf(outcomes);
         }
 

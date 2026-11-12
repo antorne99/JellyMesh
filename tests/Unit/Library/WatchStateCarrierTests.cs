@@ -1098,6 +1098,19 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task ARemovingCarryWithNoUsersIsNotForgettable()
+    {
+        // With no users in the run nothing is carried for anyone, so no old item may forget its records (decision 203).
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        _everyone.Clear();
+
+        var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)));
+
+        Assert.Empty(report.ForgettableOldItemIds);
+    }
+
+    [Fact]
     public async Task ForgettingWhoseSaveFailsKeepsTheRecordsOnDisk()
     {
         var (old, oldStub) = Old();

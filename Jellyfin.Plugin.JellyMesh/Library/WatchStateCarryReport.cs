@@ -20,8 +20,9 @@ public sealed record WatchStateCarryReport(IReadOnlyList<WatchStateMoveOutcome> 
     public int Skipped => Moves.Count - Carried;
 
     /// <summary>
-    /// Gets the old items whose moves all remove them and are done for every user. Once the caller has removed them it
-    /// passes them to <see cref="IWatchStateCarrier.ForgetRemovedAsync"/> (decisions 179, 187).
+    /// Gets the old items whose moves all remove them and are done for every user, and none when the run found no users
+    /// (decision 203). Once the caller has removed them it passes them to <see cref="IWatchStateCarrier.ForgetRemovedAsync"/>
+    /// (decisions 179, 187).
     /// </summary>
     public IReadOnlyList<Guid> ForgettableOldItemIds { get; init; } = [];
 }
