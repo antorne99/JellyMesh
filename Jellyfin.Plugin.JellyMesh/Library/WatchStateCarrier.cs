@@ -110,7 +110,15 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             throw;
         }
 
-        Prune(run);
+        try
+        {
+            Prune(run);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path. The records of this run are saved all the same.
+            _logger.LogError("Cannot clean up the record of the watch state carries: {Error}", exception.GetType().Name);
+        }
 
         // A move done may rest on a record from an earlier run that is still not on disk, so none counts as done.
         if (!await _log.SaveAsync(cancellationToken).ConfigureAwait(false))
