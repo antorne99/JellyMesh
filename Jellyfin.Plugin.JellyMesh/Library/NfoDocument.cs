@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Xml;
+using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -137,6 +138,12 @@ public static class NfoDocument
             WriteOptional(writer, "role", person.Role);
             WriteOptional(writer, "type", person.Type);
             writer.WriteEndElement();
+        }
+
+        // The one form Jellyfin reads from an .nfo; it turns it into a YouTube watch address.
+        foreach (var id in metadata.TrailerIds.Where(YouTubeTrailer.IsId))
+        {
+            writer.WriteElementString("trailer", YouTubeTrailer.KodiPrefix + id);
         }
     }
 

@@ -38,6 +38,9 @@ public sealed record IndexedItem
     /// <summary>Gets the taglines.</summary>
     public IReadOnlyList<string> Taglines { get; init; } = [];
 
+    /// <summary>Gets the YouTube video IDs of the trailers, the only part of a trailer address that is kept.</summary>
+    public IReadOnlyList<string> TrailerIds { get; init; } = [];
+
     /// <summary>Gets the genres.</summary>
     public IReadOnlyList<string> Genres { get; init; } = [];
 

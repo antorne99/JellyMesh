@@ -67,6 +67,11 @@ public sealed class StubItemUpdater
             item.EndDate = metadata.EndDate?.UtcDateTime;
         }
 
+        if (metadata.IsProtected && item is Movie or Series)
+        {
+            item.RemoteTrailers = metadata.TrailerIds.Select(id => new MediaUrl { Url = YouTubeTrailer.WatchPrefix + id }).ToArray();
+        }
+
         // Unprotected films keep a collection the admin may have set; protected ones follow the remote.
         if (item is Movie movie && (metadata.CollectionName is not null || (metadata.WritesCollections && metadata.IsProtected)))
         {

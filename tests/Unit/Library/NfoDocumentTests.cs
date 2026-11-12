@@ -117,6 +117,102 @@ public class NfoDocumentTests
         Assert.Equal(["title", "uniqueid", "year"], names);
     }
 
+    private static readonly IndexedItem _plain = new()
+    {
+        ItemId = "i",
+        Kind = IndexedItemKind.Movie,
+        LibraryId = "l",
+        LastSeenUtc = DateTimeOffset.UnixEpoch,
+        Name = "Title",
+        ProductionYear = 2020,
+        Overview = "Plot",
+        Genres = ["Genre"],
+        People = [new IndexedPerson("Actor", "Role", "Actor")],
+        ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "1" }
+    };
+
+    [Fact]
+    public void AProtectedFilmWithoutTrailersIsWrittenAsBefore()
+    {
+        const string Expected = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
+            + "<movie>\n"
+            + "  <title>Title</title>\n"
+            + "  <year>2020</year>\n"
+            + "  <uniqueid type=\"tmdb\">1</uniqueid>\n"
+            + "  <plot>Plot</plot>\n"
+            + "  <genre>Genre</genre>\n"
+            + "  <actor>\n"
+            + "    <name>Actor</name>\n"
+            + "    <role>Role</role>\n"
+            + "    <type>Actor</type>\n"
+            + "  </actor>\n"
+            + "  <lockdata>true</lockdata>\n"
+            + "</movie>";
+
+        Assert.Equal(Expected, NfoDocument.Movie(StubMetadata.From(_plain, true)).ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void AProtectedSeriesWithoutTrailersIsWrittenAsBefore()
+    {
+        const string Expected = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
+            + "<tvshow>\n"
+            + "  <title>Title</title>\n"
+            + "  <year>2020</year>\n"
+            + "  <uniqueid type=\"tmdb\">1</uniqueid>\n"
+            + "  <plot>Plot</plot>\n"
+            + "  <genre>Genre</genre>\n"
+            + "  <actor>\n"
+            + "    <name>Actor</name>\n"
+            + "    <role>Role</role>\n"
+            + "    <type>Actor</type>\n"
+            + "  </actor>\n"
+            + "  <lockedfields>Cast|Genres|ProductionLocations|Studios|Tags|Name|Overview|OfficialRating</lockedfields>\n"
+            + "</tvshow>";
+
+        Assert.Equal(Expected, NfoDocument.Series(StubMetadata.From(_plain with { Kind = IndexedItemKind.Series }, true)).ReplaceLineEndings("\n"));
+    }
+
+    [Theory]
+    [InlineData(IndexedItemKind.Movie, "lockdata")]
+    [InlineData(IndexedItemKind.Series, "lockedfields")]
+    public void AProtectedFilmOrSeriesHasItsTrailersInTheKodiForm(IndexedItemKind kind, string last)
+    {
+        var item = _plain with { Kind = kind, TrailerIds = ["dQw4w9WgXcQ", "a-b_c123456"] };
+        var metadata = StubMetadata.From(item, true);
+
+        var root = XDocument.Parse(kind == IndexedItemKind.Movie ? NfoDocument.Movie(metadata) : NfoDocument.Series(metadata)).Root!;
+
+        Assert.Equal(
+            ["plugin://plugin.video.youtube/play/?video_id=dQw4w9WgXcQ", "plugin://plugin.video.youtube/play/?video_id=a-b_c123456"],
+            root.Elements("trailer").Select(trailer => trailer.Value));
+        Assert.Equal(last, root.Elements().Last().Name.LocalName);
+    }
+
+    [Fact]
+    public void WithoutProtectionAFilmHasNoTrailer()
+    {
+        var metadata = StubMetadata.From(_plain with { TrailerIds = ["dQw4w9WgXcQ"] }, false);
+
+        Assert.Null(XDocument.Parse(NfoDocument.Movie(metadata)).Root!.Element("trailer"));
+    }
+
+    [Fact]
+    public void AnEpisodeHasNoTrailer()
+    {
+        var metadata = StubMetadata.From(_plain with { Kind = IndexedItemKind.Episode, TrailerIds = ["dQw4w9WgXcQ"] }, true);
+
+        Assert.Null(XDocument.Parse(NfoDocument.Episode(metadata)).Root!.Element("trailer"));
+    }
+
+    [Fact]
+    public void AnIdThatIsNotOneIsNeverWritten()
+    {
+        var metadata = StubMetadata.From(_plain, true) with { TrailerIds = ["x\"><evil/>", "dQw4w9WgXcQ&a=1"] };
+
+        Assert.Null(XDocument.Parse(NfoDocument.Movie(metadata)).Root!.Element("trailer"));
+    }
+
     [Fact]
     public void AFilmWithoutACollectionIsWrittenAsBefore()
     {

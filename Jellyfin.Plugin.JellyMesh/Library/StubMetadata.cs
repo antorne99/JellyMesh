@@ -31,6 +31,9 @@ public sealed record StubMetadata
     /// <summary>Gets the taglines.</summary>
     public IReadOnlyList<string> Taglines { get; init; } = [];
 
+    /// <summary>Gets the YouTube video IDs of the trailers of a film or a series.</summary>
+    public IReadOnlyList<string> TrailerIds { get; init; } = [];
+
     /// <summary>Gets the genres.</summary>
     public IReadOnlyList<string> Genres { get; init; } = [];
 
@@ -111,6 +114,7 @@ public sealed record StubMetadata
             OriginalTitle = item.OriginalTitle,
             Overview = item.Overview,
             Taglines = item.Taglines,
+            TrailerIds = item.Kind is IndexedItemKind.Movie or IndexedItemKind.Series ? item.TrailerIds : [],
             Genres = item.Genres,
             Studios = item.Studios,
             Tags = item.Tags,

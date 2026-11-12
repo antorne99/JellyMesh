@@ -372,6 +372,18 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task ItemsAsksForTheTrailersAndReadsTheirUrls()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"a\",\"RemoteTrailers\":[{\"Url\":\"https://youtu.be/dQw4w9WgXcQ\",\"Name\":\"T\"},null]}],\"TotalRecordCount\":1}"));
+
+        var result = await ItemsAsync(handler);
+
+        Assert.Contains("RemoteTrailers", handler.Requests[0].Uri.Query, StringComparison.Ordinal);
+        var item = Assert.Single(result.Value!.Items);
+        Assert.Equal("https://youtu.be/dQw4w9WgXcQ", item.RemoteTrailers![0]!.Url);
+    }
+
+    [Fact]
     public async Task ItemsNeverAsksForTheWatchStateOfTheRemoteUser()
     {
         var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
