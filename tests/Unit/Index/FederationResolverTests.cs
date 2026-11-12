@@ -108,6 +108,16 @@ public sealed class FederationResolverTests : IDisposable
         Assert.Empty(Resolver().Resolve().Contents);
     }
 
+    [Fact]
+    public void TheLocalFilmsAwaitingARefreshAreNamed()
+    {
+        var waiting = Guid.NewGuid();
+        _local.Items.Add(new CatalogItem { ServerId = "local", ItemId = waiting.ToString("N"), Kind = ContentKind.Movie, Title = "Nuovo", AwaitsRefresh = true });
+        _local.Items.Add(new CatalogItem { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), Kind = ContentKind.Movie, Title = "Vecchio" });
+
+        Assert.Equal([waiting], Resolver().Resolve().LocalItemsAwaitingRefresh);
+    }
+
     private sealed class FakeLocalCatalog : ILocalCatalogReader
     {
         public List<CatalogItem> Items { get; } = [];

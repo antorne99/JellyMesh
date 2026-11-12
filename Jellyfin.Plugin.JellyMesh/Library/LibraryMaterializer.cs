@@ -38,6 +38,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private readonly StubUrlBuilder _urls;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<LibraryMaterializer> _logger;
+    private readonly ILocalRefreshRequester? _refresher;
     private volatile MaterializationReport? _lastReport;
 
     /// <summary>
@@ -56,6 +57,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <param name="urls">The builder of <c>.strm</c> URLs.</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="refresher">What asks Jellyfin to read the metadata of new local films.</param>
     public LibraryMaterializer(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -69,7 +71,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         StubRemover remover,
         StubUrlBuilder urls,
         TimeProvider timeProvider,
-        ILogger<LibraryMaterializer> logger)
+        ILogger<LibraryMaterializer> logger,
+        ILocalRefreshRequester? refresher = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -84,6 +87,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         _urls = urls;
         _timeProvider = timeProvider;
         _logger = logger;
+        _refresher = refresher;
     }
 
     /// <inheritdoc />
@@ -224,6 +228,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
+        _refresher?.Request(view.LocalItemsAwaitingRefresh);
         var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null) { WritesCollections = writesCollections });
 
         WriteServerFolders(root, servers);

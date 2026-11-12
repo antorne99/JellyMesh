@@ -598,6 +598,31 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.True(File.Exists(_fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm")));
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task ANewLocalFilmIsRefreshedAndItsCaseWaits(bool awaitsRefresh, bool logged)
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", "films");
+        var local = Guid.NewGuid();
+        _fixture.LocalCatalog.Items.Add(new CatalogItem
+        {
+            ServerId = "local",
+            ItemId = local.ToString("N"),
+            Kind = ContentKind.Movie,
+            Title = "Film",
+            Year = 2020,
+            Metadata = new ComparableMetadata { Overview = "Altro" },
+            AwaitsRefresh = awaitsRefresh
+        });
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(awaitsRefresh ? [local] : [], _fixture.Refresher.Requested);
+        Assert.Equal(logged, _fixture.Logger.Lines.Exists(line => line.Contains("may be duplicates", StringComparison.Ordinal)));
+    }
+
     [Fact]
     public async Task ACompleteReadOfAnEmptyLibraryHoldsTheStubsAndSaysSo()
     {
