@@ -61,6 +61,7 @@ public sealed class RemoteContent : IDisposable
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The copy.</returns>
     /// <exception cref="TimeoutException">The remote sent nothing for <paramref name="stallLimit"/>.</exception>
+    /// <exception cref="RemoteStreamBrokenException">The connection to the remote broke.</exception>
     public async Task CopyToAsync(Stream target, TimeSpan stallLimit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -85,6 +86,10 @@ public sealed class RemoteContent : IDisposable
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     throw new TimeoutException("The remote stopped sending.");
+                }
+                catch (IOException exception)
+                {
+                    throw new RemoteStreamBrokenException("The remote dropped the stream.", exception);
                 }
 
                 stall.CancelAfter(Timeout.InfiniteTimeSpan);

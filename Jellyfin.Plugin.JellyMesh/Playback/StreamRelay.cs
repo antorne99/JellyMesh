@@ -41,8 +41,8 @@ public static class StreamRelay
     /// <param name="context">The request.</param>
     /// <param name="stallLimit">The longest the remote may send nothing.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task.</returns>
-    public static async Task CopyAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken)
+    /// <returns>Whether the remote stopped sending, by breaking or going silent: not the client, nor the end.</returns>
+    public static async Task<bool> CopyAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(context);
@@ -65,22 +65,25 @@ public static class StreamRelay
         context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
         if (HttpMethods.IsHead(context.Request.Method))
         {
-            return;
+            return false;
         }
 
         try
         {
             await stream.CopyToAsync(response.Body, stallLimit, cancellationToken).ConfigureAwait(false);
+            return false;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The client went away.
+            return false;
         }
         catch (Exception exception) when (exception is IOException or TimeoutException)
         {
             // Either side dropped, or the remote went silent. The headers are gone, so the only signal left is a broken
             // connection.
             context.Abort();
+            return exception is RemoteStreamBrokenException or TimeoutException;
         }
     }
 

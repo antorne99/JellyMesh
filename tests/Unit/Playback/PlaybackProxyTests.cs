@@ -173,6 +173,23 @@ public class PlaybackProxyTests
         Assert.True(session.HasFailed);
     }
 
+    [Fact]
+    public async Task A_remote_that_drops_in_the_middle_of_a_stream_marks_the_session()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(
+            System.Net.HttpStatusCode.OK,
+            new RemoteContentHeaders("video/mp4", null, null, null),
+            new DroppingStream())));
+        await _controller.GetStream(session.Id, CancellationToken.None);
+        _fixture.Client.Opened.Clear();
+
+        var result = await _controller.GetStream(session.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
     [Theory]
     [InlineData(RemoteFailure.Busy)]
     [InlineData(RemoteFailure.StreamLimitReached)]
@@ -201,6 +218,12 @@ public class PlaybackProxyTests
 
         Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
         Assert.False(session.HasFailed);
+    }
+
+    // A remote body whose connection breaks after the headers.
+    private sealed class DroppingStream : System.IO.MemoryStream
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => throw new System.IO.IOException("The remote went away.");
     }
 
     private sealed class CompletionFeature : HttpResponseFeature

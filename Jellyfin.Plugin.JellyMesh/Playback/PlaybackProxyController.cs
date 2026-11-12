@@ -223,7 +223,11 @@ public class PlaybackProxyController : ControllerBase
         }
 
         using var stream = opened.Value!;
-        await StreamRelay.CopyAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false);
+        if (await StreamRelay.CopyAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false) && !IsSubtitle(path))
+        {
+            _coordinator.ReportFailure(session);
+        }
+
         return new EmptyResult();
     }
 
