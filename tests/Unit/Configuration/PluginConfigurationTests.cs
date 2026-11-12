@@ -216,6 +216,17 @@ public class PluginConfigurationTests
         }
     }
 
+    // Decision 211: the intro of the history names the totals line under the server lines.
+    [Fact]
+    public void TheSyncHistoryIntroMentionsTheTotals()
+    {
+        var page = ConfigPage();
+        var intro = Slice(page, "<h3 class=\"sectionTitle\">Sync history</h3>", "id=\"jmHistoryWarning\"");
+
+        Assert.Contains("removed in its folder, then the totals of the whole folder.</p>", intro, StringComparison.Ordinal);
+        Assert.Contains("rimossi nella sua cartella, poi i totali di tutta la cartella.\"", page, StringComparison.Ordinal);
+    }
+
     private static string Slice(string page, string start, string end)
     {
         var from = page.IndexOf(start, StringComparison.Ordinal);
