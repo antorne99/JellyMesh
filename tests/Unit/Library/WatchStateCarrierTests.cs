@@ -831,9 +831,9 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
-    public async Task AnOldItemRemovedRightAfterItsCarryForgetsItsRecordsSoThatThePathCanComeBack()
+    public async Task AnOldItemRemovedAfterItsCarryForgetsItsRecordsSoThatThePathCanComeBack()
     {
-        // A to B, then B to A, then A to B again with no run in between: the last move starts fresh (decision 179).
+        // A to B, then B to A, then A to B again with no run in between: the last move starts fresh (decisions 179, 187).
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
@@ -843,8 +843,12 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(Row(_mario, a).IsFavorite);
-        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
 
+        Assert.True(await ForgetRemovedAsync(report.ForgettableOldItemIds));
+
+        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
         var b = Movie(_serverA);
         report = await CarryAsync(RemovingMove(old, oldStub, (b, _serverA)));
 
@@ -854,23 +858,56 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task AnOldItemWhoseRemovalFailedKeepsItsRecordsAndIsNotCarriedAgain()
+    {
+        // The caller could not remove the old item, so it never forgets: a later run follows decision 155 (decision 187).
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.LastPlayedDate = _older;
+        row.IsFavorite = true;
+        row.Rating = 7;
+        var move = RemovingMove(old, oldStub, (a, _serverA));
+
+        var report = await CarryAsync(move);
+
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+
+        Row(_mario, a).IsFavorite = false;
+        Row(_mario, a).Rating = null;
+        _saves.Clear();
+        report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.Null(Row(_mario, a).Rating);
+    }
+
+    [Fact]
     public async Task AnOldItemThatStaysKeepsItsRecordsAndIsNotCarriedAgain()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
-        await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        var first = await CarryAsync(Move(old, oldStub, (a, _serverA)));
 
         var b = Movie(_serverA);
         var report = await CarryAsync(Move(old, oldStub, (b, _serverA)));
 
+        Assert.Empty(first.ForgettableOldItemIds);
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(report.ForgettableOldItemIds);
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
         Assert.False(Row(_mario, b).IsFavorite);
     }
 
     [Fact]
-    public async Task TheRecordsForgottenAfterARemovingCarryStayForgottenOnDisk()
+    public async Task TheRecordsForgottenAfterARemovalStayForgottenOnDisk()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
@@ -880,16 +917,18 @@ public sealed class WatchStateCarrierTests : IDisposable
         Row(_mario, other).IsFavorite = true;
         await CarryAsync(Move(old, oldStub, (a, _serverA)));
 
-        await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)), Move(other, otherStub, (b, _serverA)));
+        var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)), Move(other, otherStub, (b, _serverA)));
+        await ForgetRemovedAsync(report.ForgettableOldItemIds);
         _log.Dispose();
         _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
 
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
         Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
         Assert.True(_log.TryFind(_mario.Id, other.Id, out _));
     }
 
     [Fact]
-    public async Task ARemovingCarryNotDoneForEveryUserKeepsItsRecords()
+    public async Task ARemovingCarryNotDoneForEveryUserIsNotForgettable()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
@@ -901,10 +940,11 @@ public sealed class WatchStateCarrierTests : IDisposable
         var report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.UsersLeft, report.Moves.Single().Status);
-        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+        Assert.Empty(report.ForgettableOldItemIds);
 
         _hidden.Clear();
         report = await CarryAsync(move);
+        await ForgetRemovedAsync(report.ForgettableOldItemIds);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(Row(_luigi, a).IsFavorite);
@@ -913,7 +953,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
-    public async Task ARemovingCarryToVersionsNotLinkedKeepsTheRecordsOfAnEarlierCarry()
+    public async Task ARemovingCarryToVersionsNotLinkedIsNotForgettable()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
@@ -926,11 +966,12 @@ public sealed class WatchStateCarrierTests : IDisposable
         var report = await CarryAsync(RemovingMove(old, oldStub, (b, _serverA), (c, _serverB)));
 
         Assert.Equal(WatchStateMoveStatus.NotLinked, report.Moves.Single().Status);
+        Assert.Empty(report.ForgettableOldItemIds);
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
     }
 
     [Fact]
-    public async Task AnOldItemWithAMoveThatDoesNotRemoveItKeepsItsRecords()
+    public async Task AnOldItemWithAMoveThatDoesNotRemoveItIsNotForgettable()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
@@ -940,11 +981,12 @@ public sealed class WatchStateCarrierTests : IDisposable
         var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)), Move(old, oldStub, (b, _serverA)));
 
         Assert.Equal((2, 0), (report.Carried, report.Skipped));
+        Assert.Empty(report.ForgettableOldItemIds);
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
     }
 
     [Fact]
-    public async Task ARemovingCarryWhoseRecordCannotBeSavedKeepsItsRecordsInMemory()
+    public async Task ARemovingCarryWhoseRecordCannotBeSavedIsNotForgettable()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
@@ -958,6 +1000,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         var report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
+        Assert.Empty(report.ForgettableOldItemIds);
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
 
         // A run again does not put back the favorite the user took off meanwhile.
@@ -967,13 +1010,123 @@ public sealed class WatchStateCarrierTests : IDisposable
         report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
         Assert.Empty(_saves);
         Assert.False(Row(_mario, a).IsFavorite);
-        Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
     }
 
     [Fact]
-    public async Task ARemovingSeriesCarryForgetsItsRecords()
+    public async Task ACancelledRemovingCarryKeepsItsRecordsAndALaterRunDoesNotPutBackTheFavorite()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var (other, otherStub) = Old();
+        var b = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        Row(_mario, other).IsFavorite = true;
+        _cancellingSaves.Add(b.Id);
+        var move = RemovingMove(old, oldStub, (a, _serverA));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CarryAsync(move, RemovingMove(other, otherStub, (b, _serverA))));
+
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+        Row(_mario, a).IsFavorite = false;
+        _saves.Clear();
+        _cancellingSaves.Clear();
+        var report = await CarryAsync(move);
+
+        Assert.Empty(_saves);
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+    }
+
+    [Fact]
+    public async Task ForgettingWithACancelledTokenKeepsTheRecords()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)));
+        await _cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ForgetRemovedAsync(report.ForgettableOldItemIds));
+
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task ALogThatCannotBeReadForNowForgetsNothing()
+    {
+        var log = new Mock<IWatchStateCarryLog>();
+        log.Setup(item => item.EnsureLoaded()).Returns(false);
+        var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, log.Object, _carrierLogger);
+
+        Assert.False(await carrier.ForgetRemovedAsync([Guid.NewGuid()], CancellationToken.None));
+
+        log.Verify(item => item.Forget(It.IsAny<Func<Guid, Guid, bool>>()), Times.Never);
+        log.Verify(item => item.SaveAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task NothingToForgetIsDoneEvenWithALogThatCannotBeRead()
+    {
+        var log = new Mock<IWatchStateCarryLog>();
+        log.Setup(item => item.EnsureLoaded()).Returns(false);
+        var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, log.Object, _carrierLogger);
+
+        Assert.True(await carrier.ForgetRemovedAsync([], CancellationToken.None));
+
+        log.Verify(item => item.Forget(It.IsAny<Func<Guid, Guid, bool>>()), Times.Never);
+        Assert.Empty(_carrierLogger.Lines);
+    }
+
+    [Fact]
+    public async Task NoUsersForgetsNothing()
+    {
+        // An empty user list may be a moment the users cannot be read; the records wait for a list again.
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        var report = await CarryAsync(RemovingMove(old, oldStub, (a, _serverA)));
+        _everyone.Clear();
+
+        Assert.False(await ForgetRemovedAsync(report.ForgettableOldItemIds));
+
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+    }
+
+    [Fact]
+    public async Task ForgettingWhoseSaveFailsKeepsTheRecordsOnDisk()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).IsFavorite = true;
+        var move = RemovingMove(old, oldStub, (a, _serverA));
+        var report = await CarryAsync(move);
+        var folder = Path.Combine(_data, "log");
+        var blocker = Path.Combine(folder, WatchStateCarryLog.FileName + ".tmp");
+        Directory.CreateDirectory(blocker);
+
+        Assert.False(await ForgetRemovedAsync(report.ForgettableOldItemIds));
+
+        Assert.Contains(_carrierLogger.Lines, line => line.Contains("forgetting", StringComparison.Ordinal));
+        Assert.DoesNotContain(_carrierLogger.Lines, line => line.Contains(_data, StringComparison.Ordinal));
+        Directory.Delete(blocker);
+        _log.Dispose();
+        _log = new WatchStateCarryLog(folder, new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+        Row(_mario, a).IsFavorite = false;
+        _saves.Clear();
+        await CarryAsync(move);
+
+        Assert.Empty(_saves);
+        Assert.False(Row(_mario, a).IsFavorite);
+    }
+
+    [Fact]
+    public async Task ARemovingSeriesCarryIsForgettable()
     {
         var (old, oldStub) = OldSeries();
         var a = Series(_serverA);
@@ -983,6 +1136,11 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(Row(_mario, a).IsFavorite);
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+
+        await ForgetRemovedAsync(report.ForgettableOldItemIds);
+
         Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
     }
 
@@ -1037,6 +1195,13 @@ public sealed class WatchStateCarrierTests : IDisposable
         await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList() }, CancellationToken.None);
         var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, _carrierLogger);
         return await carrier.CarryAsync(moves, _cancellation.Token);
+    }
+
+    // Forgets the records of old items, as the caller does once it has removed them (decision 187).
+    private Task<bool> ForgetRemovedAsync(IReadOnlyCollection<Guid> oldItemIds)
+    {
+        var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, _carrierLogger);
+        return carrier.ForgetRemovedAsync(oldItemIds, _cancellation.Token);
     }
 
     private async Task RestartAsync()
