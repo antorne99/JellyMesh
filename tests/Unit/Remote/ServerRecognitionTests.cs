@@ -223,6 +223,56 @@ public class ServerRecognitionTests
         Assert.Contains(FirstId, fixture.Logger.Lines[index], StringComparison.Ordinal);
     }
 
+    // Decision 128: a Server Id read after the add is stored only if no other configured server holds it.
+    private async Task<(RegistryFixture Fixture, Guid Late)> TwoServersOneWithoutItsIdAsync()
+    {
+        var fixture = new RegistryFixture(Remote());
+        await fixture.AddServerAsync();
+        _serverId = OtherId;
+        var late = await AddAsync(fixture, "Late");
+        fixture.Store.Configuration.Servers.Single(server => server.Id == late.Value!.Id).JellyfinServerId = string.Empty;
+        _serverId = FirstId;
+        fixture.Logger.Lines.Clear();
+        fixture.Logger.Levels.Clear();
+        return (fixture, late.Value!.Id);
+    }
+
+    private static void AssertKeptOutAndLogged(RegistryFixture fixture, Guid late)
+    {
+        Assert.Equal(string.Empty, fixture.Store.Configuration.Servers.Single(server => server.Id == late).JellyfinServerId);
+        var index = Assert.Single(Enumerable.Range(0, fixture.Logger.Lines.Count), i => fixture.Logger.Lines[i].Contains(FirstId, StringComparison.Ordinal));
+        var line = fixture.Logger.Lines[index];
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, fixture.Logger.Levels[index]);
+        Assert.Contains("Late", line, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Token, line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnIdHeldByAnotherServerIsNotStoredAtLogin()
+    {
+        var (fixture, late) = await TwoServersOneWithoutItsIdAsync();
+        using var owned = fixture;
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, fixture.Client, fixture.Logger);
+
+        var result = await restarted.RunWithSessionAsync(late, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        AssertKeptOutAndLogged(fixture, late);
+    }
+
+    [Fact]
+    public async Task AnIdHeldByAnotherServerIsNotStoredWhenTheLoginIsEnteredAgain()
+    {
+        var (fixture, late) = await TwoServersOneWithoutItsIdAsync();
+        using var owned = fixture;
+
+        var result = await fixture.Registry.UpdateCredentialsAsync(late, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Failure.ToString());
+        AssertKeptOutAndLogged(fixture, late);
+    }
+
     [Fact]
     public async Task AnIdThatCannotBeSavedAtLoginLeavesTheCallWorking()
     {
