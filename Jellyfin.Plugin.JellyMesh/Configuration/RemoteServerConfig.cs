@@ -66,6 +66,12 @@ public class RemoteServerConfig
     public Collection<string> PreexistingLibraryIds { get; } = [];
 
     /// <summary>
+    /// Gets the ids of the libraries there at the last check of the registry: none of them is ever taken for a renamed one
+    /// (decision 157).
+    /// </summary>
+    public Collection<string> FollowedLibraryIds { get; } = [];
+
+    /// <summary>
     /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.
     /// </summary>
     public Collection<string> ReleasedAutomaticLibraries { get; } = [];

@@ -171,10 +171,12 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <param name="serverId">The server.</param>
     /// <param name="libraries">The libraries of its registry.</param>
     /// <param name="preexistingIds">The ids of the libraries there when its switch was turned on.</param>
-    public void HoldAutomaticLibraries(Guid serverId, IEnumerable<AutomaticLibraryConfig> libraries, IEnumerable<string> preexistingIds)
+    /// <param name="followedIds">The ids of the libraries there at the last check of its registry.</param>
+    public void HoldAutomaticLibraries(Guid serverId, IEnumerable<AutomaticLibraryConfig> libraries, IEnumerable<string> preexistingIds, IEnumerable<string> followedIds)
     {
         ArgumentNullException.ThrowIfNull(libraries);
         ArgumentNullException.ThrowIfNull(preexistingIds);
+        ArgumentNullException.ThrowIfNull(followedIds);
         var entry = RemovedServerLibraries.FirstOrDefault(candidate => candidate.ServerId == serverId);
         if (entry is null)
         {
@@ -190,6 +192,11 @@ public class PluginConfiguration : BasePluginConfiguration
         foreach (var id in preexistingIds.Where(id => !entry.PreexistingLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase)))
         {
             entry.PreexistingLibraryIds.Add(id);
+        }
+
+        foreach (var id in followedIds.Where(id => !entry.FollowedLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase)))
+        {
+            entry.FollowedLibraryIds.Add(id);
         }
 
         // A server removed twice may have found at switch-on the libraries it left the first time: those stay to delete.

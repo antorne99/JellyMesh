@@ -172,7 +172,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             server.AutomaticLibraryRegistry,
             server.ReleasedAutomaticLibraries,
             IdSet(server.PreexistingLibraryIds),
-            IdSet(HeldOf(config, serverId)?.Libraries.Select(record => record.ItemId) ?? []))
+            IdSet(HeldOf(config, serverId)?.Libraries.Select(record => record.ItemId) ?? []),
+            server.FollowedLibraryIds)
         : null;
 
     // The registry a removed server left. A configured server with the same id wins: its libraries are never seen here.
@@ -182,7 +183,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             held.Libraries,
             null,
             IdSet(held.PreexistingLibraryIds.Concat(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? [])),
-            IdSet([]))
+            IdSet([]),
+            held.FollowedLibraryIds)
         : null;
 
     private static string PathOf(ServerLibraryKind kind, string root, Guid serverId) => kind == ServerLibraryKind.Movies
@@ -368,7 +370,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             }
             else
             {
-                config.HoldAutomaticLibraries(serverId, [record], []);
+                config.HoldAutomaticLibraries(serverId, [record], [], owner.FollowedLibraryIds);
                 held = true;
             }
         });
@@ -587,12 +589,14 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private void Follow(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders) => Follow(config => LiveRegistry(config, serverId), folders);
 
     // Follows a rename where path and type hold, and drops from the registry a library whose path or type changed.
+    // Then records the libraries there now, which a later check never takes for a renamed one (decision 157).
     private void Follow(Func<PluginConfiguration, Registry?> locate, IReadOnlyList<VirtualFolderInfo> folders)
     {
-        var plan = _store.Read(config => locate(config) is { } registry && config.FederatedFolderPath.Length > 0
-            ? PlanFollow(registry, config.FederatedFolderPath, folders)
-            : []);
-        if (plan.Count == 0)
+        var present = IdSet(folders.Select(folder => folder.ItemId ?? string.Empty));
+        var (plan, seenChanged) = _store.Read(config => locate(config) is { } registry
+            ? (config.FederatedFolderPath.Length > 0 ? PlanFollow(registry, config.FederatedFolderPath, folders) : [], !IdSet(registry.Followed).SetEquals(present))
+            : ([], false));
+        if (plan.Count == 0 && !seenChanged)
         {
             return;
         }
@@ -602,6 +606,12 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             if (locate(config) is not { } registry)
             {
                 return;
+            }
+
+            registry.Followed.Clear();
+            foreach (var id in present)
+            {
+                registry.Followed.Add(id);
             }
 
             foreach (var change in plan)
@@ -675,17 +685,21 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
     private sealed record DeletedLibrary(Guid ServerId, ServerLibraryKind Kind, string Name);
 
-    // A registry with the ids it never sees, such as the libraries there at switch-on, and those it sees but never adopts.
+    // A registry with the ids it never sees, such as the libraries there at switch-on, those it sees but never adopts, and
+    // those there at its last check.
     private sealed record Registry(
         Guid ServerId,
         Collection<AutomaticLibraryConfig> Libraries,
         Collection<string>? Released,
         IReadOnlySet<string> Hidden,
-        IReadOnlySet<string> NotAdopted)
+        IReadOnlySet<string> NotAdopted,
+        Collection<string> Followed)
     {
         public List<VirtualFolderInfo> Visible(IReadOnlyList<VirtualFolderInfo> folders) =>
             folders.Where(folder => folder.ItemId is null || !Hidden.Contains(folder.ItemId)).ToList();
 
-        public bool MayAdopt(VirtualFolderInfo folder) => folder.ItemId is null || !NotAdopted.Contains(folder.ItemId);
+        // Only a library new since the last check may be a renamed one, so one with no id never is.
+        public bool MayAdopt(VirtualFolderInfo folder) =>
+            folder.ItemId is { } id && !NotAdopted.Contains(id) && !Followed.Contains(id, StringComparer.OrdinalIgnoreCase);
     }
 }

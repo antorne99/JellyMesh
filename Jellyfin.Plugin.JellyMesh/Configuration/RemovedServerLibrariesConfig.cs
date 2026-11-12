@@ -23,4 +23,9 @@ public class RemovedServerLibrariesConfig
     /// Gets the ids of the libraries there when its switch was last turned on, which are never deleted.
     /// </summary>
     public Collection<string> PreexistingLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets the ids of the libraries there at the last check of its registry, which are never taken for a renamed one.
+    /// </summary>
+    public Collection<string> FollowedLibraryIds { get; } = [];
 }
