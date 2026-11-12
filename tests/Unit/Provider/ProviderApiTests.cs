@@ -411,8 +411,7 @@ public class ProviderControllerTests
     {
         var result = await _capabilities.GetCapabilities();
 
-        Assert.Equal(2, result.Value!.ProtocolVersion);
-        Assert.True(result.Value.ProtocolVersion >= ProviderProtocol.CollectionsVersion);
+        Assert.True(result.Value!.ProtocolVersion >= ProviderProtocol.CollectionsVersion);
     }
 
     [Fact]

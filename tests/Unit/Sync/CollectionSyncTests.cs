@@ -102,6 +102,22 @@ public sealed class CollectionSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task AJellyMeshServerBackOnAnOlderProtocolLosesItsCollectionsAsWithTheOptionOff()
+    {
+        var server = await ServerWithSagaAsync();
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
+        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion - 1);
+        Remote.CollectionReads.Clear();
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Empty(Remote.CollectionReads);
+        Assert.Null(CollectionOf(server, "b"));
+    }
+
+    [Fact]
     public async Task AFailedCollectionReadOfAJellyMeshServerKeepsTheCollectionsKnown()
     {
         var server = await ServerWithSagaAsync();
