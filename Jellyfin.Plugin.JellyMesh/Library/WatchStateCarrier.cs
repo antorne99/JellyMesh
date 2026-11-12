@@ -154,29 +154,38 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     }
 
     /// <inheritdoc />
-    public async Task<bool> ForgetRemovedAsync(IReadOnlyCollection<Guid> oldItemIds, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<Guid>> ForgetRemovedAsync(IReadOnlyCollection<Guid> oldItemIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(oldItemIds);
         cancellationToken.ThrowIfCancellationRequested();
         if (oldItemIds.Count == 0)
         {
-            return true;
+            return [];
         }
 
         // Without the record a later carry would look like the first (decision 176).
         if (!_log.EnsureLoaded())
         {
             _logger.LogWarning("The record of the watch state carries cannot be read for now: the carries of {Count} removed titles are not forgotten", oldItemIds.Count);
-            return false;
+            return [];
         }
 
         // No users may mean they cannot be read for now, as in Prune.
         if (!_users.GetUsers().Any())
         {
-            return false;
+            return [];
         }
 
-        return await ForgetOldAsync(oldItemIds).ConfigureAwait(false);
+        // Only the admin removes the old item, so the caller is not trusted: one still in the library keeps its records
+        // until a later call or Prune finds it gone (decision 204).
+        var asked = oldItemIds.ToHashSet();
+        var gone = asked.Where(IsGone).ToList();
+        if (gone.Count < asked.Count)
+        {
+            _logger.LogInformation("The carries of {Count} titles are kept while they are still in the library", asked.Count - gone.Count);
+        }
+
+        return await ForgetOldAsync(gone).ConfigureAwait(false) ? gone : [];
     }
 
     private static WatchStateMoveOutcome Outcome(WatchStateMove move, WatchStateMoveStatus status) => new(move, status, []);
@@ -511,6 +520,21 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         .Where(moves => moves.All(outcome => outcome.Move.RemovesOldItem && outcome.Status == WatchStateMoveStatus.Carried))
         .Select(moves => moves.Key)
         .ToList();
+
+    // Gone as Prune and the carry see it: Jellyfin no longer has the item. A lookup that fails counts as still there.
+    private bool IsGone(Guid itemId)
+    {
+        try
+        {
+            return _library.GetItemById(itemId) is null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Cannot look up a removed title before forgetting its carries: {Error}", exception.GetType().Name);
+            return false;
+        }
+    }
 
     private async Task<bool> ForgetOldAsync(IReadOnlyCollection<Guid> oldItemIds)
     {
