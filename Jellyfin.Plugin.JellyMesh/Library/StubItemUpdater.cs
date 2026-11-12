@@ -47,6 +47,11 @@ public sealed class StubItemUpdater
         item.Name = metadata.Title ?? item.Name;
         item.ProductionYear = metadata.Year ?? item.ProductionYear;
         item.ProviderIds = new Dictionary<string, string>(metadata.ProviderIds, StringComparer.OrdinalIgnoreCase);
+        if (item is Movie && !string.IsNullOrEmpty(metadata.TmdbCollectionId))
+        {
+            // Jellyfin sets it from tmdbcolid when it first reads the .nfo.
+            item.SetProviderId(MetadataProvider.TmdbCollection, metadata.TmdbCollectionId);
+        }
 
         var isSeries = item is Series;
         item.IsLocked = metadata.IsProtected && !isSeries;

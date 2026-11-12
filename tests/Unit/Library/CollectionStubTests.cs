@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -64,6 +65,19 @@ public sealed class CollectionStubTests : IDisposable
         Assert.Equal("Saga renamed", NfoOf(server).Element("set")?.Element("name")?.Value);
         Assert.Equal("Saga renamed", item.CollectionName);
         _fixture.Library.Verify(library => library.UpdateItemAsync(item, It.IsAny<BaseItem>(), ItemUpdateType.MetadataImport, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TheTmdbIdOfTheCollectionIsKeptOnTheItem()
+    {
+        var (_, item) = await SyncedFilmInSagaAsync();
+        Remote.Collections.Clear();
+        Remote.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = "1241" } }, ["m"]));
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal("1241", item.ProviderIds["TmdbCollection"]);
+        Assert.Equal("1", item.ProviderIds["Tmdb"]);
     }
 
     [Fact]
