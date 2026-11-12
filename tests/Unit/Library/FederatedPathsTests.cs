@@ -167,5 +167,38 @@ public class FederatedPathsTests
         Assert.Equal("Vecchio", labels[_third]);
     }
 
+    [Fact]
+    public void ARenamedServerTakesTheLabelOfItsNewName()
+    {
+        var stored = new Dictionary<Guid, string> { [_server] = "Casa", [_other] = "Ufficio" };
+
+        Assert.Equal("Mare", FederatedPaths.Relabel(_server, "Mare trailer", stored));
+    }
+
+    [Fact]
+    public void ARenamedServerTakesItsGuidWhenAnotherLabelHoldsTheNewName()
+    {
+        var stored = new Dictionary<Guid, string> { [_server] = "Casa", [_other] = "Ufficio" };
+
+        Assert.Equal("ufficio 1a2b3c4d", FederatedPaths.Relabel(_server, "ufficio", stored));
+    }
+
+    [Fact]
+    public void ARenamedServerCanTakeBackTheLabelItHolds()
+    {
+        var stored = new Dictionary<Guid, string> { [_server] = "Casa 1a2b3c4d", [_other] = "Casa" };
+
+        Assert.Equal("Casa 1a2b3c4d", FederatedPaths.Relabel(_server, "Casa", stored));
+        Assert.Equal("Mare", FederatedPaths.Relabel(_server, "Mare", stored));
+    }
+
+    [Fact]
+    public void ARenameThatChangesOnlyTheCaseKeepsTheLabel()
+    {
+        var stored = new Dictionary<Guid, string> { [_server] = "casa" };
+
+        Assert.Equal("casa", FederatedPaths.Relabel(_server, "CASA", stored));
+    }
+
     private static string Label(string name) => FederatedPaths.Labels([(_server, name)], new Dictionary<Guid, string>())[_server];
 }

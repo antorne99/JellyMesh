@@ -190,6 +190,23 @@ public static partial class FederatedPaths
     }
 
     /// <summary>
+    /// The label of a renamed server: the one of its new name, with its GUID when another server holds it (row 84). A
+    /// change of case only keeps the stored label, since one file name would then stand for both.
+    /// </summary>
+    /// <param name="serverId">The renamed server.</param>
+    /// <param name="name">Its new name.</param>
+    /// <param name="stored">The labels saved in the state, its own included.</param>
+    /// <returns>The label its stubs take.</returns>
+    public static string Relabel(Guid serverId, string? name, IReadOnlyDictionary<Guid, string> stored)
+    {
+        ArgumentNullException.ThrowIfNull(stored);
+
+        var others = stored.Where(entry => entry.Key != serverId).ToDictionary(entry => entry.Key, entry => entry.Value);
+        var label = Labels([(serverId, name)], others)[serverId];
+        return stored.TryGetValue(serverId, out var current) && string.Equals(current, label, StringComparison.OrdinalIgnoreCase) ? current : label;
+    }
+
+    /// <summary>
     /// Makes a path relative to the federated folder absolute, refusing one that leaves it.
     /// </summary>
     /// <param name="root">The federated folder.</param>
