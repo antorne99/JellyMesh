@@ -19,6 +19,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed class ServerStubRenamer : IServerStubRenamer
 {
+    private static readonly StringComparer _pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
     private readonly StubRegistry _registry;
     private readonly IPluginConfigurationStore _store;
     private readonly ILibraryManager _library;
@@ -79,7 +81,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
 
             var stubs = state.Stubs.ToList();
             var paths = stubs.Select(stub => stub.ServerId == serverId ? NewPath(stub.RelativePath, old, label) : null).ToList();
-            var live = stubs.Select(stub => stub.RelativePath).Concat(paths.OfType<string>()).ToHashSet(StringComparer.Ordinal);
+            var live = LivePaths(state, paths.OfType<string>());
 
             // The old files of a stub that left go now, so that a file written at their path is not deleted later.
             var renames = state.Renames
@@ -146,7 +148,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             var next = new Dictionary<StubRename, StubRename?>();
             var moves = new List<(StubRename Rename, StubEntry Stub, WatchStateMove Move)>();
             var forget = new List<Guid>();
-            var live = state.Stubs.Select(stub => stub.RelativePath).ToHashSet(StringComparer.Ordinal);
+            var live = LivePaths(state, []);
             foreach (var rename in state.Renames)
             {
                 if (IsTaken(rename, live))
@@ -225,6 +227,13 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             _registry.Exit();
         }
     }
+
+    // The paths of live stubs, the old paths their renames still carry from, and the paths they are about to take.
+    private HashSet<string> LivePaths(StubState state, IEnumerable<string> taking) =>
+        state.Stubs.Select(stub => stub.RelativePath)
+            .Concat(state.Renames.Where(rename => _registry.Find(rename.StubId) is not null).Select(rename => rename.OldPath))
+            .Concat(taking)
+            .ToHashSet(_pathComparer);
 
     // An entry whose stub left, at a path a live stub has or takes: its files and item ID are that stub's now.
     private bool IsTaken(StubRename rename, HashSet<string> live) => _registry.Find(rename.StubId) is null && live.Contains(rename.OldPath);
