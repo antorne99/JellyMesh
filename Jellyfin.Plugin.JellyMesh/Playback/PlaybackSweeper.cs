@@ -88,8 +88,18 @@ public sealed class PlaybackSweeper : BackgroundService
         using var timer = new PeriodicTimer(PlaybackTimeouts.SweepInterval, _clock);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            _sessions.ForgetUnusedLocal(_store.Read(PlaybackTimes.From));
-            await _coordinator.SweepAsync().ConfigureAwait(false);
+            try
+            {
+                _sessions.ForgetUnusedLocal(_store.Read(PlaybackTimes.From));
+                await _coordinator.SweepAsync().ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // One failed pass must not end the sweeps for good.
+            catch (Exception exception) when (exception is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+#pragma warning restore CA1031
+            {
+                // The type only: a message could hold a remote address.
+                _logger.LogError("Could not sweep the playback sessions: {Error}", exception.GetType().Name);
+            }
         }
     }
 
