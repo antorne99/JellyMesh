@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
@@ -43,11 +44,6 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     /// Most collections read from one server, so that a remote cannot keep this server calling it for days.
     /// </summary>
     public const int MaxCollections = 10_000;
-
-    /// <summary>
-    /// Longest collection name kept, after trimming. The name is copied into every film of the collection.
-    /// </summary>
-    public const int MaxCollectionNameLength = 256;
 
     private const int MaxReadAttempts = 3;
     private const string MoviesCollection = "movies";
@@ -172,6 +168,11 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         ArgumentNullException.ThrowIfNull(libraryIds);
         ArgumentNullException.ThrowIfNull(filmIds);
 
+        if (ViaProvider(server))
+        {
+            return await ReadSharedCollectionsAsync(server, libraryIds, filmIds, cancellationToken).ConfigureAwait(false);
+        }
+
         var budget = new ReadBudget();
         var collections = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
         foreach (var library in libraryIds)
@@ -182,9 +183,12 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(read.Failure);
             }
 
-            foreach (var collection in read.Value!.Where(HasUsableName))
+            foreach (var collection in read.Value!)
             {
-                collections.TryAdd(collection.Id, new IndexedBoxSet(collection.Name!, TmdbIdOf(collection)));
+                if (IndexedBoxSet.From(collection.Name, TmdbIdOf(collection)) is { } usable)
+                {
+                    collections.TryAdd(collection.Id, usable);
+                }
             }
 
             if (collections.Count > MaxCollections)
@@ -218,15 +222,65 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
     }
 
-    // A name that is blank or too long is left out with its collection, not truncated.
-    private static bool HasUsableName(RemoteItem collection)
-        => !string.IsNullOrWhiteSpace(collection.Name) && collection.Name.Trim().Length <= MaxCollectionNameLength;
-
-    // Digits only: it goes into an attribute of the .nfo.
     private static string? TmdbIdOf(RemoteItem collection)
+        => collection.ProviderIds?.FirstOrDefault(entry => string.Equals(entry.Key, "Tmdb", StringComparison.OrdinalIgnoreCase)).Value;
+
+    // A JellyMesh remote names the collection of each shared film itself (decision 198). What it says is checked as the
+    // stock answer is, and only films of the catalog are kept.
+    private async Task<RemoteResult<IReadOnlyDictionary<string, IndexedBoxSet>>> ReadSharedCollectionsAsync(
+        RemoteServerInfo server,
+        IReadOnlyCollection<string> libraryIds,
+        IReadOnlySet<string> filmIds,
+        CancellationToken cancellationToken)
     {
-        var id = collection.ProviderIds?.FirstOrDefault(entry => string.Equals(entry.Key, "Tmdb", StringComparison.OrdinalIgnoreCase)).Value;
-        return id is { Length: > 0 and <= 12 } && id.All(char.IsAsciiDigit) ? id : null;
+        var budget = new ReadBudget();
+        var films = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
+        foreach (var library in libraryIds)
+        {
+            var start = 0;
+            int total;
+            do
+            {
+                var from = start;
+                var page = await _registry.RunWithSessionAsync(
+                    server.Id,
+                    (endpoint, session, token) => _client.GetSharedCollectionsAsync(endpoint, session, library, from, ProviderProtocol.MaxItemsPerPage, token),
+                    cancellationToken).ConfigureAwait(false);
+                if (!page.IsSuccess)
+                {
+                    return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(page.Failure);
+                }
+
+                if (!budget.TrySpend(page.Value!.ByteCount))
+                {
+                    return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(RemoteFailure.ResponseTooLarge);
+                }
+
+                total = page.Value.TotalRecordCount;
+                if (total > MaxItemsPerQuery)
+                {
+                    return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(RemoteFailure.InvalidResponse);
+                }
+
+                if (page.Value.Items.Count == 0 && start < total)
+                {
+                    return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(RemoteFailure.CatalogChanged);
+                }
+
+                foreach (var entry in page.Value.Items)
+                {
+                    if (entry.Id is { } id && filmIds.Contains(id) && IndexedBoxSet.From(entry.Name, entry.TmdbId) is { } collection)
+                    {
+                        films.TryAdd(id, collection);
+                    }
+                }
+
+                start += page.Value.Items.Count;
+            }
+            while (start < total);
+        }
+
+        return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
     }
 
     private static void Add(Dictionary<string, IndexedItem> entries, IEnumerable<RemoteItem> items, RemoteItemType type, string libraryId, DateTimeOffset seenUtc)

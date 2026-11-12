@@ -57,15 +57,33 @@ public sealed class CollectionSyncTests : IDisposable
     }
 
     [Fact]
-    public async Task AJellyMeshServerIsNotAskedForCollections()
+    public async Task AJellyMeshServerGivesItsCollectionsByTheProviderApiOnAFullRead()
     {
         var server = await ServerWithSagaAsync();
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
+        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
-        Assert.Empty(Remote.CollectionReads);
+        Assert.Equal(new IndexedBoxSet("Peer saga", "7"), CollectionOf(server, "b"));
         Assert.Null(CollectionOf(server, "a"));
+        Assert.Equal(["peer:films@0"], Remote.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AFailedCollectionReadOfAJellyMeshServerKeepsTheCollectionsKnown()
+    {
+        var server = await ServerWithSagaAsync();
+        Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
+        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", null)));
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        Remote.CollectionFailure = RemoteFailure.ServerError;
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(ServerSyncState.Complete, _fixture.Index.Snapshot.Find(server.Id)!.State);
+        Assert.Equal("Peer saga", CollectionOf(server, "b")!.Name);
+        Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal) || line.Contains(TestValues.Token, StringComparison.Ordinal));
     }
 
     [Fact]

@@ -305,8 +305,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             materialized = await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
-            followed = true;
-            await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
+            followed = await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
             if (servers.Count > 0)
             {
                 WriteActivity(ActivityEntries.SyncCompleted(servers.Count, _runFailures.Values.ToList()));
@@ -445,24 +444,27 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         return materialized;
     }
 
-    private async Task FollowServerLibrariesAsync(CancellationToken cancellationToken)
+    // False when the check failed, so that it counts as skipped. A cancelled one throws and counts as skipped too.
+    private async Task<bool> FollowServerLibrariesAsync(CancellationToken cancellationToken)
     {
         if (_libraries is null)
         {
-            return;
+            return true;
         }
 
         try
         {
             await _libraries.ReconcileAsync(cancellationToken).ConfigureAwait(false);
+            return true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Could not follow the libraries of the servers: {Error}", exception.GetType().Name);
+            return false;
         }
     }
 
-    // A sync that never reaches the library check counts as a skipped one (decisions 173, 185).
+    // A sync that never completes the library check counts as a skipped one (decisions 173, 185).
     private void MarkLibraryFollowSkipped()
     {
         try
@@ -604,11 +606,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             : changed.Select(item => known.TryGetValue(item.ItemId, out var collection) ? item with { Collection = collection } : item).ToList();
     }
 
-    // Only a stock server answers the stock route, and only with the option on. A failed read keeps what was known, so that
-    // the .nfo does not lose its collection for one night.
+    // Only with the option on: a stock server by the stock route, a JellyMesh one by the ProviderApi. A failed read keeps
+    // what was known, so that the .nfo does not lose its collection for one night.
     private async Task<IReadOnlyList<IndexedItem>> WithCollectionsAsync(RemoteServerInfo server, IReadOnlyList<IndexedItem> entries, CancellationToken cancellationToken)
     {
-        if (_store?.Read(config => config.FederateCollections) != true || server.Mode == RemoteMode.JellyMesh)
+        if (_store?.Read(config => config.FederateCollections) != true)
         {
             return entries;
         }

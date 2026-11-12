@@ -6,6 +6,7 @@ using System.Text;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -149,24 +150,39 @@ public sealed class ProviderCatalog
             return new ProviderItemsResponse([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
         }
 
-        var query = new InternalItemsQuery(caller.User)
-        {
-            ParentId = libraryId,
-            Recursive = true,
-            IncludeItemTypes = [KindOf(type)],
-            IsVirtualItem = false,
-            AncestorIds = scope.AncestorIds,
-            ExcludeItemIds = scope.ExcludeItemIds,
-            OrderBy = [(ItemSortBy.DateCreated, SortOrder.Ascending), (ItemSortBy.SortName, SortOrder.Ascending)],
-            StartIndex = startIndex,
-            Limit = limit,
-            EnableTotalRecordCount = true
-        };
-
-        var page = _library.GetItemsResult(query);
+        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, KindOf(type), startIndex, limit));
 
         // Should a stub get past the query, the page comes up short: the read fails and nothing leaks.
         return ToResponse(caller, page.Items.Where(item => !IsFederated(item)).ToList(), page.TotalRecordCount);
+    }
+
+    /// <summary>
+    /// Reads one page of the films of a shared library that are in a collection the peer can see, each with that
+    /// collection. The films are those <see cref="ReadLibrary"/> reads, so a stub never comes up (decision 198).
+    /// </summary>
+    /// <param name="caller">The peer.</param>
+    /// <param name="libraryId">The library, which must be shared with the peer.</param>
+    /// <param name="startIndex">The index of the first film.</param>
+    /// <param name="limit">The most films to return.</param>
+    /// <returns>The page.</returns>
+    public ProviderCollectionsResponse ReadCollections(PeerCaller caller, Guid libraryId, int startIndex, int limit)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        var collections = CollectionsOfFilms(caller);
+        if (collections.Count == 0 || ScopeOf(libraryId) is not { } scope)
+        {
+            return new ProviderCollectionsResponse([], 0);
+        }
+
+        var query = PageQuery(caller, libraryId, scope, BaseItemKind.Movie, startIndex, limit);
+        query.ItemIds = [.. collections.Keys];
+        var page = _library.GetItemsResult(query);
+        var entries = page.Items
+            .Where(item => !IsFederated(item) && collections.ContainsKey(item.Id))
+            .Select(item => new ProviderCollectionEntry(item.Id.ToString("N"), collections[item.Id].Name, collections[item.Id].TmdbId))
+            .ToList();
+        return new ProviderCollectionsResponse(entries, page.TotalRecordCount);
     }
 
     /// <summary>
@@ -204,6 +220,21 @@ public sealed class ProviderCatalog
         RemoteItemType.Season => BaseItemKind.Season,
         RemoteItemType.Episode => BaseItemKind.Episode,
         _ => throw new ArgumentOutOfRangeException(nameof(type))
+    };
+
+    // A page of a library as the peer sees it, under the scope that leaves the federated folder out.
+    private static InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, int startIndex, int limit) => new(caller.User)
+    {
+        ParentId = libraryId,
+        Recursive = true,
+        IncludeItemTypes = [kind],
+        IsVirtualItem = false,
+        AncestorIds = scope.AncestorIds,
+        ExcludeItemIds = scope.ExcludeItemIds,
+        OrderBy = [(ItemSortBy.DateCreated, SortOrder.Ascending), (ItemSortBy.SortName, SortOrder.Ascending)],
+        StartIndex = startIndex,
+        Limit = limit,
+        EnableTotalRecordCount = true
     };
 
     private static RemoteQuality? QualityOf(MediaSourceInfo source)
@@ -249,6 +280,32 @@ public sealed class ProviderCatalog
         }
 
         return new ProviderItemsResponse(dtos, total, quality);
+    }
+
+    // The collections the peer can see, by member. A film in several keeps the first by name, as the stock read does.
+    // A link without an item ID, kept only by the obsolete path, is not followed.
+    private Dictionary<Guid, IndexedBoxSet> CollectionsOfFilms(PeerCaller caller)
+    {
+        var boxSets = _library.GetItemList(new InternalItemsQuery(caller.User) { IncludeItemTypes = [BaseItemKind.BoxSet], Recursive = true })
+            .OfType<BoxSet>()
+            .Select(boxSet => (boxSet, Collection: IndexedBoxSet.From(boxSet.Name, boxSet.GetProviderId(MetadataProvider.Tmdb))))
+            .Where(entry => entry.Collection is not null)
+            .OrderBy(entry => entry.Collection!.Name, StringComparer.Ordinal)
+            .ThenBy(entry => entry.boxSet.Id);
+
+        var members = new Dictionary<Guid, IndexedBoxSet>();
+        foreach (var (boxSet, collection) in boxSets)
+        {
+            foreach (var child in boxSet.LinkedChildren ?? [])
+            {
+                if (child?.ItemId is { } id && id != Guid.Empty)
+                {
+                    members.TryAdd(id, collection!);
+                }
+            }
+        }
+
+        return members;
     }
 
     private static bool IsOnlyFederated(VirtualFolderInfo library, FolderPath root)
