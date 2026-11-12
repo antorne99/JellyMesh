@@ -104,11 +104,11 @@ start() {
   get "$s" /Startup/User >/dev/null
   post "$s" /Startup/User '{"Name":"admin","Password":"jellymesh-test"}' >/dev/null
   post "$s" /Startup/Complete >/dev/null
-  docker exec "$name" sh -c 'mkdir -p /federata/Film /federata/Serie /extra/film && touch /federata/Film/.jellymesh /federata/Serie/.jellymesh /extra/film/.keep'
+  docker exec "$name" sh -c 'mkdir -p /extra/film && touch /extra/film/.keep'
   login "$s"
   local opts='{"LibraryOptions":{"EnableInternetProviders":false}}'
-  post "$s" "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/extra/film&paths=/federata/Film" "$opts" >/dev/null
-  post "$s" "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie&paths=/federata/Serie" "$opts" >/dev/null
+  post "$s" "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/extra/film" "$opts" >/dev/null
+  post "$s" "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie" "$opts" >/dev/null
   post "$s" /Users/New '{"Name":"peer","Password":"jellymesh-test"}' >/dev/null
   post "$s" /Users/New '{"Name":"mario","Password":"jellymesh-test"}' >/dev/null
   scan "$s"
@@ -166,6 +166,19 @@ share() {
 # add_remote <consumer> <name> <url> <user> -> server id. Asks the gate-side URL, which is what the consumer really uses.
 add_remote() {
   post "$1" /JellyMesh/Admin/Servers "$(jq -n --arg n "$2" --arg u "$3" --arg x "$4" '{Name:$n,Url:$u,Username:$x,Password:"jellymesh-test"}')" | jq -r .Id
+}
+
+# dashed <server id>: the ID as the plugin names the folder of that server.
+dashed() { local id=${1//-/}; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+
+# link_server <consumer> <server id>: adds the Film and Serie folders of that server to the libraries, as an admin does.
+link_server() {
+  local s=$1 dir kind
+  dir=/federata/$(dashed "$2")
+  for kind in Film Serie; do
+    post "$s" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$dir/$kind" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
+    [ "$(status)" = 204 ] || { echo "linking $dir/$kind failed: $(status)" >&2; return 1; }
+  done
 }
 
 # import_all <consumer> <server id>: every library the remote offers.
@@ -240,8 +253,12 @@ hls_segments() {
     curl -sS -o /dev/null -w '%{http_code}\n' --max-time 60 "$(folder_of "$variant")$segment"
   done
 }
-# movie_on_b <title>: the stub of a title on b.
-movie_on_b() { get b '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$1" '[.Items[] | select((.Path // "") | contains($t))][0].Id'; }
+# movie_on_b <title> [server id]: the stub of a title on b, in the folder of that server, by default a.
+movie_on_b() {
+  local folder
+  folder=/federata/$(dashed "${2:-$(cat "$WORK/id-b-from-a")}")/
+  get b '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$1" --arg f "$folder" '[.Items[] | select((.Path // "") | (startswith($f) and contains($t)))][0].Id'
+}
 # message_during <device> <seconds> <command...>: runs the command with the device connected, prints what it was told.
 message_during() {
   local device=$1 seconds=$2
