@@ -594,6 +594,10 @@
                 margin-bottom: 0.25em;
             }
 
+            .jmGroup .checkboxContainer + .checkboxContainer {
+                margin-top: 1em;
+            }
+
             @media (max-width: 899.95px) {
                 .jmGroup {
                     grid-template-columns: minmax(0, 1fr);
@@ -1422,19 +1426,21 @@
                         </div>
                         <div class="jmGroup">
                             <h3 class="sectionTitle">Metadata</h3>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
-                                    <span>Protect metadata</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
-                            </div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input id="jmFederateCollections" type="checkbox" is="emby-checkbox" />
-                                    <span>Write remote collections into films</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with "Automatically add to collection" turned on. Turning this off keeps the collections already made.</div>
+                            <div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
+                                        <span>Protect metadata</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input id="jmFederateCollections" type="checkbox" is="emby-checkbox" />
+                                        <span>Write remote collections into films</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with "Automatically add to collection" turned on. Turning this off keeps the collections already made.</div>
+                                </div>
                             </div>
                         </div>
                         <div class="jmGroup">
