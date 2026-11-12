@@ -1,0 +1,54 @@
+name: Jellyfin compatibility
+
+# Builds and unit-tests against the latest Jellyfin 12.x packages (plan §9, decision 56).
+# A probe only: the released build stays on the packages set in Directory.Build.props.
+on:
+  pull_request:
+  schedule:
+    - cron: '23 4 * * 1' # Mondays 04:23 UTC, off the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0
+
+jobs:
+  latest-12x:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # The flat container lists prereleases and malformed tags too, so keep only X.Y.Z and sort.
+      - id: nuget
+        name: Find the latest stable 12.x packages
+        run: |
+          set -euo pipefail
+          base=$(curl -fsSL https://api.nuget.org/v3/index.json \
+            | jq -r '[.resources[] | select(."@type" == "PackageBaseAddress/3.0.0") | ."@id"][0]')
+          latest() {
+            curl -fsSL "${base}$1/index.json" \
+              | jq -r '.versions[] | select(test("^12\\.[0-9]+\\.[0-9]+$"))' | sort -V | tail -n1
+          }
+          controller=$(latest jellyfin.controller)
+          model=$(latest jellyfin.model)
+          if [ -z "$controller" ] || [ "$controller" != "$model" ]; then
+            echo "::error::Jellyfin.Controller '$controller' and Jellyfin.Model '$model' differ"
+            exit 1
+          fi
+          released=$(sed -n 's:.*<JellyfinPackageVersion>\(.*\)</JellyfinPackageVersion>.*:\1:p' Directory.Build.props)
+          echo "version=$controller" >>"$GITHUB_OUTPUT"
+          echo "Latest Jellyfin 12.x packages: \`$controller\` (released build: \`$released\`)" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Build and test against the latest 12.x packages
+        env:
+          PACKAGE: ${{ steps.nuget.outputs.version }}
+        run: |
+          docker run --rm -v "$PWD":/src -v jellymesh-nuget:/root/.nuget/packages -w /src \
+            "$SDK_IMAGE" dotnet test -p:JellyfinPackageVersion="$PACKAGE"
