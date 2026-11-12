@@ -728,6 +728,13 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 // released if a configured server found it at switch-on (177).
                 changes.Add(new FollowChange(record, null, folder.Name, folder.ItemId is { } id && registry.ReleasedWhenHidden.Contains(id)));
             }
+            else if (folder is null && registry.ReleasedWhenHidden.Contains(record.ItemId))
+            {
+                // One a configured server found at switch-on, then renamed: never adopted, and released under its old name
+                // when it is the only library on the folder with the type (decision 202).
+                var only = folders.Count(other => !claimed.Contains(other) && Passes(other, record.Kind, root, registry.ServerId)) == 1;
+                changes.Add(new FollowChange(record, null, record.Name, only));
+            }
             else if (folder is null)
             {
                 // Gone by id and name: renamed if exactly one other library holds the same folder with the same type.

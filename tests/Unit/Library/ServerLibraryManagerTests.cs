@@ -989,6 +989,55 @@ public sealed class ServerLibraryManagerTests
         Assert.Equal(["Altro - Film"], Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).ReleasedLibraries);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_held_library_a_configured_server_found_at_switch_on_and_the_admin_renamed_is_released_under_its_old_name(bool skipped)
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Altro - Film"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            [],
+            [fixture.Libraries.IdOf("Altro - Film")],
+            skipped);
+        fixture.Libraries.RenameFromDashboard("Altro - Film", "Film mio");
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Film mio"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Altro - Film"], held.ReleasedLibraries);
+    }
+
+    [Fact]
+    public async Task A_held_library_a_configured_server_found_at_switch_on_and_the_admin_renamed_is_never_taken_when_another_holds_its_folder()
+    {
+        var fixture = new Fixture();
+        var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+        fixture.Libraries.Add("Altro - Film", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, $"{Root}/{other:D}/Film");
+        fixture.Server.PreexistingLibraryIds.Add(fixture.Libraries.IdOf("Altro - Film"));
+        fixture.Store.Configuration.HoldAutomaticLibraries(
+            other,
+            [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Altro - Film", ItemId = fixture.Libraries.IdOf("Altro - Film") }],
+            [],
+            [fixture.Libraries.IdOf("Altro - Film"), fixture.Libraries.IdOf("Mine")],
+            false);
+        fixture.Libraries.RenameFromDashboard("Altro - Film", "Film mio");
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Film mio", "Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
     [Fact]
     public async Task A_removed_server_never_takes_for_a_renamed_one_a_library_a_configured_server_found_at_switch_on()
     {
