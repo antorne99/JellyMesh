@@ -1287,7 +1287,7 @@
                     <div id="jmMerges" class="jmRowList"></div>
 
                     <h3 class="sectionTitle">Sync history</h3>
-                    <p>The last 50 syncs, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder.</p>
+                    <p>The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder.</p>
                     <div id="jmHistoryWarning" role="alert" hidden class="jmAlert"></div>
                     <div id="jmHistoryFailure" role="alert" hidden class="jmAlert"></div>
                     <div id="jmSyncHistory" class="jmTableWrap" role="region" tabindex="0" aria-label="Sync history"></div>
@@ -1520,6 +1520,7 @@
                     "IDs": "ID",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
                     "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
+                    "In total: {created} created, {updated} updated, {removed} removed.": "In totale: {created} creati, {updated} aggiornati, {removed} rimossi.",
                     "Incremental": "Incrementale",
                     "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
@@ -1645,7 +1646,7 @@
                     "The federation index could not be saved.": "Non è stato possibile salvare l'indice della federazione.",
                     "The file of the sync history could not be read, so earlier syncs are not shown. A copy of the file is kept next to it.": "Non è stato possibile leggere il file dello storico delle sincronizzazioni, quindi le sincronizzazioni precedenti non sono mostrate. Una copia del file è conservata accanto.",
                     "The files in the federated folder stay, and nothing changes on {server}.": "I file nella cartella federata restano e su {server} non cambia nulla.",
-                    "The last 50 syncs, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder.": "Le ultime 50 sincronizzazioni, dalla più recente. Per ogni server: gli elementi del catalogo letti, e i titoli creati, aggiornati e rimossi nella sua cartella.",
+                    "The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder.": "Le ultime 50 sincronizzazioni e le ultime 7 riconciliazioni, dalla più recente. Per ogni server: gli elementi del catalogo letti, e i titoli creati, aggiornati e rimossi nella sua cartella.",
                     "The libraries of this server are being updated. Try again when it is done.": "Le librerie di questo server sono in aggiornamento. Riprova quando ha finito.",
                     "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
                     "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
@@ -3732,6 +3733,20 @@
                     return line;
                 }
 
+                // Says what one sync did in the whole federated folder, with the single folder and the removed servers.
+                function historyTotalsLine(run) {
+                    var line = t('In total: {created} created, {updated} updated, {removed} removed.', {
+                        created: run.Created,
+                        updated: run.Updated,
+                        removed: run.Removed
+                    });
+                    if (run.Failed > 0) {
+                        line += ' ' + t('Titles not written or removed: {count}.', { count: run.Failed });
+                    }
+
+                    return line;
+                }
+
                 function historyRow(run) {
                     var row = create('tr');
                     var started = create('td');
@@ -3739,8 +3754,6 @@
                     time.dateTime = run.StartedUtc;
                     started.appendChild(time);
                     row.appendChild(started);
-                    row.appendChild(create('td', runKinds[run.Kind] || run.Kind));
-                    row.appendChild(create('td', formatDuration(run.DurationMilliseconds)));
 
                     var outcome = create('td');
                     outcome.className = 'jmHistoryOutcome ' + (runTones[run.Outcome] || 'jmToneQuiet');
@@ -3764,6 +3777,8 @@
                         outcome.appendChild(note);
                     });
                     row.appendChild(outcome);
+                    row.appendChild(create('td', runKinds[run.Kind] || run.Kind));
+                    row.appendChild(create('td', formatDuration(run.DurationMilliseconds)));
 
                     var servers = create('td');
                     if (run.Servers.length === 0) {
@@ -3773,6 +3788,7 @@
                     run.Servers.forEach(function (server) {
                         servers.appendChild(create('p', historyServerLine(server)));
                     });
+                    servers.appendChild(create('p', historyTotalsLine(run)));
                     row.appendChild(servers);
                     return row;
                 }
@@ -3795,7 +3811,7 @@
                     caption.className = 'jmHidden';
                     table.appendChild(caption);
                     var head = create('tr');
-                    [t('Started'), t('Type'), t('Duration'), t('Outcome'), t('Servers')].forEach(function (text) {
+                    [t('Started'), t('Outcome'), t('Type'), t('Duration'), t('Servers')].forEach(function (text) {
                         var cell = create('th', text);
                         cell.scope = 'col';
                         head.appendChild(cell);
