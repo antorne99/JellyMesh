@@ -35,7 +35,7 @@ echo "$from_stock" >"$WORK/id-b-from-stock"
 echo "$from_b" >"$WORK/id-a-from-b"
 
 check "b sees a in JellyMesh mode" JellyMesh "$(get b /JellyMesh/Admin/Status | jq -r --arg i "$from_a" '.Servers[] | select(.Id == $i) | .Mode')"
-check "protocol version" 1 "$(get b /JellyMesh/Admin/Status | jq -r --arg i "$from_a" '.Servers[] | select(.Id == $i) | .ProtocolVersion')"
+check "protocol version" 2 "$(get b /JellyMesh/Admin/Status | jq -r --arg i "$from_a" '.Servers[] | select(.Id == $i) | .ProtocolVersion')"
 check "b sees the stock remote in standard mode" Standard "$(get b /JellyMesh/Admin/Status | jq -r --arg i "$from_stock" '.Servers[] | select(.Id == $i) | .Mode')"
 check "a sees b in JellyMesh mode" JellyMesh "$(get a /JellyMesh/Admin/Status | jq -r --arg i "$from_b" '.Servers[] | select(.Id == $i) | .Mode')"
 
