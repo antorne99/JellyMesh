@@ -36,8 +36,8 @@ public sealed record WatchStateMove
 
     /// <summary>
     /// Gets a value indicating whether the old item is removed right after the carry, as a server rename (F14) and the
-    /// automatic migration (F16) do. Once carried for every user and removed, the caller forgets its carry records (decisions
-    /// 179, 187).
+    /// automatic migration (F16) do. Once carried for every user, the caller asks to forget its carry records, which goes
+    /// only once the item is no longer in the library (decisions 179, 187, 204).
     /// </summary>
     public bool RemovesOldItem { get; private init; }
 
@@ -55,7 +55,7 @@ public sealed record WatchStateMove
     /// <param name="targets">The new versions of the title, and the stubs of different ranges (D3).</param>
     /// <param name="removesOldItem">
     /// Whether the old stub is removed right after: true for a server rename (F14) and the automatic migration (F16),
-    /// false for the manual migration, which leaves the old stubs playable (F15, D12). See decisions 179 and 187.
+    /// false for the manual migration, which leaves the old stubs playable (F15, D12). See decisions 179, 187 and 204.
     /// </param>
     /// <returns>The move.</returns>
     public static WatchStateMove Of(StubEntry from, Guid fromItemId, IReadOnlyList<WatchStateTarget> targets, bool removesOldItem = false)
@@ -95,7 +95,7 @@ public sealed record WatchStateMove
     /// <param name="targets">The new series stubs.</param>
     /// <param name="removesOldItem">
     /// Whether the old series stub is removed right after: true for a server rename (F14) and the automatic migration
-    /// (F16), false for the manual migration (F15, D12). See decisions 179 and 187.
+    /// (F16), false for the manual migration (F15, D12). See decisions 179, 187 and 204.
     /// </param>
     /// <returns>The move.</returns>
     public static WatchStateMove OfSeries(SeriesStub from, Guid fromItemId, IReadOnlyList<WatchStateTarget> targets, bool removesOldItem = false)
