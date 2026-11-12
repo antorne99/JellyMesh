@@ -106,7 +106,7 @@ public class PlaybackFiltersTests
         TimeProvider.System,
         NullLogger<StubSegments>.Instance);
 
-    private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null)
+    private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null, Func<string, IReadOnlyList<string>>? listFolder = null)
     {
         return new StockRouteGuardFilter(
             new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
@@ -115,7 +115,8 @@ public class PlaybackFiltersTests
             sessions ?? _fixture.Sessions,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
-            _peerSlots);
+            _peerSlots,
+            listFolder ?? StockRouteGuardFilter.ListFolder);
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
@@ -1468,6 +1469,28 @@ public class PlaybackFiltersTests
         {
             Directory.Delete(folder, true);
         }
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_lists_the_transcode_folder_once_whatever_the_jobs_in_it()
+    {
+        var listings = new List<string>();
+        foreach (var number in new[] { "1", "2", "3" })
+        {
+            var job = new TranscodingJob(NullLogger<TranscodingJob>.Instance) { PlaySessionId = "play-" + number, Path = "/cache/transcodes/" + new string(number[0], 32) + ".m3u8" };
+            _transcodes.Setup(manager => manager.GetTranscodingJob("play-" + number)).Returns(job);
+            _fixture.Sessions.RecordLocal(Guid.NewGuid(), "play-" + number, _itemId);
+        }
+
+        var context = LegacySegment(LocalItem(), "22220.ts", "none");
+        var passed = await RunAsync(GuardFilter(listFolder: folder =>
+        {
+            listings.Add(folder);
+            return [folder + "/" + new string('2', 32) + "0.ts"];
+        }), context);
+
+        AssertReadsAsMissing(context, passed, "playlistId");
+        Assert.Equal(["/cache/transcodes"], listings);
     }
 
     [Fact]
