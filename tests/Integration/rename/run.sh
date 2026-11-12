@@ -69,6 +69,8 @@ played() { get local "/Users/$2/Items/$(dashed "$1")" | jq -r .UserData.Played; 
 position() { get local "/Users/$2/Items/$(dashed "$1")" | jq -r .UserData.PlaybackPositionTicks; }
 film() { vid "$FOLDER/Film/$1%- $2.strm"; }
 episode() { vid "$FOLDER/Serie/JM Serie Divisa%S01E03%- $1.strm"; }
+bare_episode() { vid "$FOLDER/Serie/Serie Senza ID%S01E02%- $1.strm"; }
+home() { get local "/Users/$LIM" | jq -c --arg id "$1" '.Configuration | [(.OrderedViews | index($id) != null), (.MyMediaExcludes | index($id) != null), (.LatestItemsExcludes | index($id) != null)]'; }
 count_as() { as "$1" GET "/Items?ParentId=$(dashed "$2")&Recursive=true&IncludeItemTypes=$3" | jq -r '.TotalRecordCount // 0'; }
 
 echo "--- setup: $PREFIX-local on $PORT, $PREFIX-remote on $((PORT + 1))"
@@ -123,6 +125,15 @@ post local "/UserPlayedItems/$(dashed "$TEARS")?userId=$ADMIN" >/dev/null
 post local "/UserPlayedItems/$(dashed "$TEARS")?userId=$LIM" >/dev/null
 post local "/UserPlayedItems/$(dashed "$EP")?userId=$LIM" >/dev/null
 post local "/UserItems/$(dashed "$EP")/UserData?userId=$ADMIN" '{"PlaybackPositionTicks": 300000000}' >/dev/null
+# Titles with no provider id: only the carrier can bring their state to the new items.
+BARE=$(film "Sonda Senza ID" Casa)
+BARE_EP=$(bare_episode Casa)
+post local "/UserPlayedItems/$(dashed "$BARE")?userId=$LIM" >/dev/null
+post local "/UserPlayedItems/$(dashed "$BARE_EP")?userId=$LIM" >/dev/null
+# The home lists of the limited user name the Film library by its id.
+config=$(get local "/Users/$LIM" | jq -c --arg id "$(dashed "$OLD_FILM_LIB" | tr -d -)" '.Configuration | .OrderedViews = [$id] | .MyMediaExcludes = [$id] | .LatestItemsExcludes = [$id]')
+post local "/Users/Configuration?userId=$LIM" "$config" >/dev/null
+check "the home lists are saved" '[true,true,true]' "$(home "$OLD_FILM_LIB")"
 check "the limited user sees the Film library" 1 "$([ "$(count_as lim "$OLD_FILM_LIB" Movie)" -gt 0 ] && echo 1 || echo 0)"
 
 rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 asks
@@ -150,6 +161,10 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   check "and for the limited user" true "$(played "$tears" "$LIM")"
   check "the episode is played for the limited user" true "$(played "$ep" "$LIM")"
   check "the admin keeps the position of the episode" 300000000 "$(position "$ep" "$ADMIN")"
+  check "a film with no provider id is played for the limited user" true "$(played "$(film "Sonda Senza ID" "$new")" "$LIM")"
+  check "an episode with no provider id is played for the limited user" true "$(played "$(bare_episode "$new")" "$LIM")"
+  check "the home lists name the new Film id" '[true,true,true]' "$(home "$film_lib")"
+  check "and no longer the old one" '[false,false,false]' "$(home "$old_film")"
   check "the stub of the local copy is linked again" "$LOCAL_SONDA" "$(primary_of "$sonda")"
   check "the limited user sees the renamed Film library" 1 "$([ "$(count_as lim "$film_lib" Movie)" -gt 0 ] && echo 1 || echo 0)"
   check "and the renamed Serie library" 1 "$([ "$(count_as lim "$serie_lib" Episode)" -gt 0 ] && echo 1 || echo 0)"
