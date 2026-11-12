@@ -44,6 +44,11 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     /// </summary>
     public const int MaxCollections = 10_000;
 
+    /// <summary>
+    /// Longest collection name kept, after trimming. The name is copied into every film of the collection.
+    /// </summary>
+    public const int MaxCollectionNameLength = 256;
+
     private const int MaxReadAttempts = 3;
     private const string MoviesCollection = "movies";
 
@@ -172,7 +177,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(read.Failure);
             }
 
-            foreach (var collection in read.Value!.Where(collection => !string.IsNullOrWhiteSpace(collection.Name)))
+            foreach (var collection in read.Value!.Where(HasUsableName))
             {
                 collections.TryAdd(collection.Id, new IndexedBoxSet(collection.Name!, TmdbIdOf(collection)));
             }
@@ -201,6 +206,10 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
         return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
     }
+
+    // A name that is blank or too long is left out with its collection, not truncated.
+    private static bool HasUsableName(RemoteItem collection)
+        => !string.IsNullOrWhiteSpace(collection.Name) && collection.Name.Trim().Length <= MaxCollectionNameLength;
 
     // Digits only: it goes into an attribute of the .nfo.
     private static string? TmdbIdOf(RemoteItem collection)

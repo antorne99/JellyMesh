@@ -73,6 +73,19 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task ACollectionWithANameLongerThan256CharactersIsLeftOut()
+    {
+        _fixture.Client.AddCollection("films", "long", new string('x', 257), "m1");
+        _fixture.Client.AddCollection("films", "edge", " " + new string('y', 256) + " ", "m2");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.False(result.Value!.ContainsKey("m1"));
+        Assert.Equal(" " + new string('y', 256) + " ", result.Value["m2"].Name);
+    }
+
+    [Fact]
     public async Task CollectionsAndTheirFilmsAreReadPageByPage()
     {
         for (var index = 0; index < RemoteCatalogReader.PageSize + 1; index++)
