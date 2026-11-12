@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using System.Reflection;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using Xunit;
@@ -210,6 +212,136 @@ public class WatchStateTransferTests
         var b = new WatchStateVersion(_serverB, false, Data());
 
         Assert.Throws<ArgumentException>(() => WatchStateTransfer.Carry(Data(), null, [], [a, b]));
+    }
+
+    [Fact]
+    public void AVersionTheUserCannotSeeGetsNeitherThePositionNorTheCount()
+    {
+        var old = Data(lastPlayed: _newer, position: 600, playCount: 2);
+        old.IsFavorite = true;
+        old.Rating = 7;
+        var local = new WatchStateVersion(null, true, Data(), IsVisible: false);
+        var a = new WatchStateVersion(_serverA, false, Data(), IsVisible: false);
+        var b = new WatchStateVersion(_serverB, false, Data());
+        var c = new WatchStateVersion(_serverC, false, Data());
+
+        WatchStateTransfer.Carry(old, _serverA, [_serverA, _serverC, _serverB], [local, a, b, c]);
+
+        Assert.Equal(600, c.Data.PlaybackPositionTicks);
+        Assert.Equal(2, c.Data.PlayCount);
+        Assert.Equal(_newer, c.Data.LastPlayedDate);
+        Assert.True(c.Data.IsFavorite);
+        Assert.Equal(7, c.Data.Rating);
+        Assert.All([local, a, b], version => Assert.Equal(0, version.Data.PlaybackPositionTicks));
+        Assert.All([local, a, b], version => Assert.Equal(0, version.Data.PlayCount));
+        Assert.All([local, a, b], version => Assert.False(version.Data.IsFavorite));
+        Assert.All([local, a, b], version => Assert.Null(version.Data.Rating));
+    }
+
+    [Fact]
+    public void AVisiblePrimaryTakesTheCountWhenTheLastServerIsHidden()
+    {
+        var old = Data(lastPlayed: _newer, position: 600, playCount: 2);
+        var local = new WatchStateVersion(null, true, Data());
+        var a = new WatchStateVersion(_serverA, false, Data(), IsVisible: false);
+        var b = new WatchStateVersion(_serverB, false, Data());
+
+        WatchStateTransfer.Carry(old, _serverA, [_serverA, _serverB], [local, a, b]);
+
+        Assert.Equal(600, b.Data.PlaybackPositionTicks);
+        Assert.Equal(2, local.Data.PlayCount);
+        Assert.Equal(0, a.Data.PlaybackPositionTicks);
+    }
+
+    [Fact]
+    public void PlayedReachesAlsoTheVersionsTheUserCannotSee()
+    {
+        var old = Data(played: true, lastPlayed: _newer, playCount: 1);
+        var local = new WatchStateVersion(null, true, Data(), IsVisible: false);
+        var a = new WatchStateVersion(_serverA, false, Data());
+
+        WatchStateTransfer.Carry(old, _serverA, [_serverA], [local, a]);
+
+        Assert.True(local.Data.Played);
+        Assert.True(a.Data.Played);
+        Assert.Equal(0, local.Data.PlayCount);
+        Assert.Equal(1, a.Data.PlayCount);
+    }
+
+    [Fact]
+    public void NothingChangesWhenTheUserSeesNoVersion()
+    {
+        var old = Data(played: true, lastPlayed: _newer, position: 600, playCount: 1);
+        old.IsFavorite = true;
+        var local = new WatchStateVersion(null, true, Data(), IsVisible: false);
+        var a = new WatchStateVersion(_serverA, false, Data(), IsVisible: false);
+
+        Assert.Empty(WatchStateTransfer.Carry(old, _serverA, [_serverA], [local, a]));
+        Assert.False(local.Data.Played);
+        Assert.False(a.Data.Played);
+    }
+
+    [Fact]
+    public void ARepeatedCarryLeavesFavoriteAndRatingAlone()
+    {
+        var old = Data(played: true, lastPlayed: _newer, position: 0, playCount: 3);
+        old.IsFavorite = true;
+        old.Rating = 9;
+        var a = new WatchStateVersion(_serverA, true, Data(lastPlayed: _older, position: 400, playCount: 2));
+
+        var changed = WatchStateTransfer.Carry(old, _serverA, [_serverA], [a], WatchStateCarryMode.Repeat);
+
+        Assert.Equal(3, a.Data.PlayCount);
+        Assert.Equal(0, a.Data.PlaybackPositionTicks);
+        Assert.True(a.Data.Played);
+        Assert.False(a.Data.IsFavorite);
+        Assert.Null(a.Data.Rating);
+        Assert.Single(changed);
+    }
+
+    [Fact]
+    public void ASeriesFavoriteAndRatingGoToEverySeries()
+    {
+        var old = Data();
+        old.IsFavorite = true;
+        old.Rating = 8;
+        var a = Data();
+        var b = Data();
+        b.Rating = 4;
+
+        var changed = WatchStateTransfer.CarrySeries(old, [a, b]);
+
+        Assert.True(a.IsFavorite);
+        Assert.True(b.IsFavorite);
+        Assert.Equal(8, a.Rating);
+        Assert.Equal(4, b.Rating);
+        Assert.Equal(2, changed.Count);
+        Assert.Empty(WatchStateTransfer.CarrySeries(old, [a, b]));
+    }
+
+    [Fact]
+    public void ACopyKeepsEveryField()
+    {
+        var data = new UserItemData
+        {
+            Key = "key",
+            Rating = 7,
+            PlaybackPositionTicks = 600,
+            PlayCount = 2,
+            IsFavorite = true,
+            LastPlayedDate = _newer,
+            Played = true,
+            AudioStreamIndex = 1,
+            SubtitleStreamIndex = 2
+        };
+
+        var copy = WatchStateTransfer.Copy(data);
+
+        Assert.NotSame(data, copy);
+        foreach (var property in typeof(UserItemData).GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(property => property.CanRead && property.CanWrite))
+        {
+            Assert.Equal(property.GetValue(data), property.GetValue(copy));
+        }
     }
 
     [Fact]
