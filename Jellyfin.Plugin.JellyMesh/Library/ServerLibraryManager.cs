@@ -239,7 +239,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         && Path.GetDirectoryName(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(location))) is { Length: > 0 } other
         && Passes(folder, kind, other, serverId);
 
-    private static LibraryOptions OptionsFor(string path) => new()
+    // Films go into collections only when the plugin federates them (decision 196); libraries already there keep theirs.
+    private static LibraryOptions OptionsFor(string path, bool addsToCollections) => new()
     {
         PathInfos = [new MediaPathInfo(path)],
         MetadataSavers = [],
@@ -250,7 +251,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         EnableChapterImageExtraction = false,
         EnableTrickplayImageExtraction = false,
         EnableLUFSScan = false,
-        AutomaticallyAddToCollection = false,
+        AutomaticallyAddToCollection = addsToCollections,
         TypeOptions = []
     };
 
@@ -364,7 +365,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private async Task<bool> CreateAsync(Guid serverId, RemoteServerConfig owner, ServerLibraryKind kind)
     {
         var folders = ReadFolders();
-        var (root, serverName) = _store.Read(config => (config.FederatedFolderPath, Owned(config, owner)?.Name));
+        var (root, serverName, addsToCollections) = _store.Read(config => (config.FederatedFolderPath, Owned(config, owner)?.Name, config.FederateCollections));
         if (serverName is null)
         {
             // Removed meanwhile: nothing more is made for it, and a server added back is not told of this job.
@@ -388,7 +389,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var path = PathOf(kind, root, serverId);
         try
         {
-            await _libraries.AddVirtualFolder(name, TypeOf(kind), OptionsFor(path), false).ConfigureAwait(false);
+            await _libraries.AddVirtualFolder(name, TypeOf(kind), OptionsFor(path, addsToCollections), false).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

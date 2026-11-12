@@ -59,6 +59,18 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task With_collections_federated_the_libraries_are_created_adding_films_to_collections()
+    {
+        var fixture = new Fixture();
+        fixture.Store.Configuration.FederateCollections = true;
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Equal(2, fixture.Libraries.Created.Count);
+        Assert.All(fixture.Libraries.Created, call => Assert.True(call.Options.AutomaticallyAddToCollection));
+    }
+
+    [Fact]
     public async Task Both_libraries_are_created_before_one_scan_is_queued_after_the_running_one()
     {
         var fixture = new Fixture();
