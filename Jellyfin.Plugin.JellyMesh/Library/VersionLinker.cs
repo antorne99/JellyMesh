@@ -340,7 +340,7 @@ public sealed class VersionLinker : IVersionLinker
 
         public bool Thorough => thorough;
 
-        public bool IsStub(BaseItem item) => item.Path is { } path && FederatedPaths.RelativeTo(root, path) is not null;
+        public bool IsStub(BaseItem item) => FederatedPaths.IsInside(root, item.Path);
 
         public Video? FindStub(StubEntry stub)
         {

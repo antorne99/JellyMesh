@@ -226,6 +226,15 @@ public static partial class FederatedPaths
         return path.StartsWith(folder, _pathComparison) ? path[folder.Length..] : null;
     }
 
+    /// <summary>
+    /// Tells whether a path is inside the federated folder, as only a stub is.
+    /// </summary>
+    /// <param name="root">The federated folder, empty or null if none is set.</param>
+    /// <param name="path">The path.</param>
+    /// <returns>True inside the folder.</returns>
+    public static bool IsInside(string? root, string? path)
+        => !string.IsNullOrEmpty(root) && path is not null && RelativeTo(root, path) is not null;
+
     /// <summary>Gives the first digits of a server GUID, as appended to a label that is taken.</summary>
     /// <param name="serverId">The server.</param>
     /// <returns>The digits.</returns>

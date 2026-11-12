@@ -81,7 +81,7 @@ public class PlaybackFiltersTests
     private PlaybackInfoFilter InfoFilter()
     {
         return new PlaybackInfoFilter(
-            new StubLookup(_library.Object, _stubs.Object),
+            new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
             _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
@@ -92,7 +92,7 @@ public class PlaybackFiltersTests
     private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null)
     {
         return new StockRouteGuardFilter(
-            new StubLookup(_library.Object, _stubs.Object),
+            new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
             _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
