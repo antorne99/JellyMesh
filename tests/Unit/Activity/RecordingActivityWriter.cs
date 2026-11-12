@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Activity;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Activity;
@@ -15,9 +14,5 @@ internal sealed class RecordingActivityWriter : IActivityWriter
 
     public IReadOnlyList<ActivityEntry> OfType(string type) => Entries.Where(entry => entry.Type == type).ToList();
 
-    public Task WriteAsync(ActivityEntry entry)
-    {
-        _entries.Enqueue(entry);
-        return Task.CompletedTask;
-    }
+    public void Write(ActivityEntry entry) => _entries.Enqueue(entry);
 }

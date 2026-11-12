@@ -44,6 +44,20 @@ public class SyncActivityTests
         Assert.Equal("1 of 1 servers read", activity.Entries[0].ShortOverview);
     }
 
+    // Decision 129: with no server configured a completed sync writes nothing.
+    [Fact]
+    public async Task A_sync_with_no_server_writes_nothing()
+    {
+        using var fixture = new SyncFixture();
+        var activity = new RecordingActivityWriter();
+        using var sync = NewSync(fixture, activity);
+
+        await sync.RunIncrementalAsync(CancellationToken.None);
+        await sync.RunAsync(CancellationToken.None);
+
+        Assert.Empty(activity.Entries);
+    }
+
     [Fact]
     public async Task A_failing_server_is_written_once_and_named_in_each_completed_sync()
     {

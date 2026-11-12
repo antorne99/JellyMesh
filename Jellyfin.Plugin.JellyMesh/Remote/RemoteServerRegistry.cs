@@ -152,7 +152,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var runtime = RuntimeOf(serverId);
         runtime.Session = login.Value;
-        await RecordAsync(runtime, server.Name, RemoteFailure.None).ConfigureAwait(false);
+        Record(runtime, server.Name, RemoteFailure.None, countsForActivity: true);
 
         if (recognizedAs is null)
         {
@@ -232,7 +232,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var runtime = RuntimeOf(serverId);
         runtime.Session = login.Value;
-        await RecordAsync(runtime, stored.Name, RemoteFailure.None).ConfigureAwait(false);
+        Record(runtime, stored.Name, RemoteFailure.None, countsForActivity: true);
         _logger.LogInformation("Updated the credentials of remote server {ServerName}", stored.Name);
         return RemoteResult.Success(_store.Read(config => ToInfo(config.Servers.First(server => server.Id == serverId))));
     }
@@ -365,9 +365,24 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<T>> RunWithSessionAsync<T>(
+    public Task<RemoteResult<T>> RunWithSessionAsync<T>(
         Guid serverId,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken)
+        => RunCallAsync(serverId, call, countsForActivity: true, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<RemoteResult<T>> RunPlaybackCallAsync<T>(
+        Guid serverId,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken)
+        => RunCallAsync(serverId, call, countsForActivity: false, cancellationToken);
+
+    // Runs a call with a session; only sync and admin calls tell the activity log the server went offline or came back (130).
+    private async Task<RemoteResult<T>> RunCallAsync<T>(
+        Guid serverId,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        bool countsForActivity,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(call);
@@ -395,7 +410,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             result = await CallOnceAsync(server, endpoint, runtime, result.Session, call, cancellationToken).ConfigureAwait(false);
         }
 
-        await RecordAsync(runtime, server.Name, result.Attempt.Failure).ConfigureAwait(false);
+        Record(runtime, server.Name, result.Attempt.Failure, countsForActivity);
         if (!result.Attempt.IsSuccess)
         {
             _logger.LogWarning("Call to remote server {ServerName} failed: {Failure}", server.Name, result.Attempt.Failure);
@@ -626,16 +641,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Records the outcome of a call, and writes to the activity log when the server goes offline or answers again (49).
-    private async Task RecordAsync(ServerRuntime runtime, string serverName, RemoteFailure failure)
+    // Records the outcome of a call, and writes to the activity log when the server goes offline or answers again (49, 130).
+    private void Record(ServerRuntime runtime, string serverName, RemoteFailure failure, bool countsForActivity)
     {
-        var reachable = runtime.Record(failure);
-        if (reachable is null || _activity is null)
-        {
-            return;
-        }
-
-        await _activity.WriteAsync(reachable.Value ? ActivityEntries.ServerReachable(serverName) : ActivityEntries.ServerOffline(serverName, failure)).ConfigureAwait(false);
+        var activity = _activity;
+        runtime.Record(
+            failure,
+            countsForActivity && activity is not null
+                ? reachable => activity.Write(reachable ? ActivityEntries.ServerReachable(serverName) : ActivityEntries.ServerOffline(serverName, failure))
+                : null);
     }
 
     private RemoteServerInfo ToInfo(RemoteServerConfig server)
@@ -678,24 +692,27 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         public DateTimeOffset? LastCheckedUtc { get; private set; }
 
-        // Records an outcome. Returns whether the server is now reachable when that changed, null otherwise; an answer
-        // first seen since start is no change, as nothing was known before.
-        public bool? Record(RemoteFailure failure)
+        // Records an outcome. When it changes whether the server is reachable, tells onChange under the lock, so entries keep
+        // their order; an answer first seen since start is no change. A call without onChange leaves reachability alone.
+        public void Record(RemoteFailure failure, Action<bool>? onChange)
         {
             lock (_gate)
             {
                 LastFailure = failure;
                 LastCheckedUtc = DateTimeOffset.UtcNow;
 
-                var reachable = ReachabilityOf(failure);
+                var reachable = onChange is null ? null : ReachabilityOf(failure);
                 if (reachable is null || reachable == _reachable)
                 {
-                    return null;
+                    return;
                 }
 
                 var known = _reachable is not null;
                 _reachable = reachable;
-                return known || !reachable.Value ? reachable : null;
+                if (known || !reachable.Value)
+                {
+                    onChange!(reachable.Value);
+                }
             }
         }
 

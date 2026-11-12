@@ -109,7 +109,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <inheritdoc />
     public async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)
     {
-        await ReportUnreadablePasswordsAsync().ConfigureAwait(false);
+        ReportUnreadablePasswords();
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
@@ -123,7 +123,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <inheritdoc />
     public async Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken)
     {
-        await ReportUnreadablePasswordsAsync().ConfigureAwait(false);
+        ReportUnreadablePasswords();
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
@@ -280,7 +280,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
-            await WriteActivityAsync(ActivityEntries.SyncCompleted(servers.Count, _runFailures.Values.ToList())).ConfigureAwait(false);
+            if (servers.Count > 0)
+            {
+                WriteActivity(ActivityEntries.SyncCompleted(servers.Count, _runFailures.Values.ToList()));
+            }
         }
         finally
         {
@@ -478,13 +481,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         TrackSave(await _index.MarkServerFailedAsync(server.Id, failure, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false));
         if (!wasFailing)
         {
-            await WriteActivityAsync(ActivityEntries.SyncFailed(server.Name, failure)).ConfigureAwait(false);
+            WriteActivity(ActivityEntries.SyncFailed(server.Name, failure));
         }
     }
 
     // A scheduled sync, before it claims the run, writes once each stored password that no longer decrypts (49). A missing
     // key is not that.
-    private async Task ReportUnreadablePasswordsAsync()
+    private void ReportUnreadablePasswords()
     {
         if (_activity is null || _vault.GetKeyState() == KeyState.Missing)
         {
@@ -493,11 +496,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         foreach (var server in _unreadablePasswords.Update(_registry.GetServers()))
         {
-            await WriteActivityAsync(ActivityEntries.PasswordUnreadable(server.Name)).ConfigureAwait(false);
+            WriteActivity(ActivityEntries.PasswordUnreadable(server.Name));
         }
     }
 
-    private Task WriteActivityAsync(ActivityEntry entry) => _activity?.WriteAsync(entry) ?? Task.CompletedTask;
+    private void WriteActivity(ActivityEntry entry) => _activity?.Write(entry);
 
     private void TrackSave(bool saved)
     {

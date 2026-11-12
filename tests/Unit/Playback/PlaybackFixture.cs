@@ -130,6 +130,9 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
             ? Task.FromResult(RemoteResult.Fail<T>(OfflineFailure))
             : call(_endpoint, _session, cancellationToken);
     }
+
+    public Task<RemoteResult<T>> RunPlaybackCallAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
+        => RunWithSessionAsync(serverId, call, cancellationToken);
 }
 
 /// <summary>A remote scripted per test. Records what is asked of it, per item path.</summary>
