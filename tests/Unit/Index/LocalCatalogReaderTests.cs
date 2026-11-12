@@ -95,6 +95,7 @@ public class LocalCatalogReaderTests
         Assert.Equal(2019, item.Year);
         Assert.Equal("7", item.Ids.Tvdb);
         Assert.Equal((2, 3), (item.SeasonNumber, item.EpisodeNumber));
+        Assert.Equal(series.Id.ToString("N"), item.SeriesId);
     }
 
     [Fact]

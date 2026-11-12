@@ -36,6 +36,7 @@ public class CatalogItemMapperTests
         Assert.Equal(new ContentIds("72", "tt71", "71"), item.Ids);
         Assert.Equal((2, 3), (item.SeasonNumber, item.EpisodeNumber));
         Assert.Equal(_serverId.ToString("N"), item.ServerId);
+        Assert.Equal("s", item.SeriesId);
     }
 
     [Theory]

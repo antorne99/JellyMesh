@@ -30,6 +30,12 @@ public sealed record CatalogItem
     public required ContentKind Kind { get; init; }
 
     /// <summary>
+    /// Gets the item ID of an episode's series on its server, which names a series copy in a manual merge (decision 51).
+    /// Null for a film, and for an episode whose series is not known.
+    /// </summary>
+    public string? SeriesId { get; init; }
+
+    /// <summary>
     /// Gets the film's <c>Name</c>, or the series' <c>Name</c> for an episode. A trailing <c>(year)</c> may remain, since
     /// Jellyfin leaves it there without a <c>.nfo</c>, and the normalization deals with it.
     /// </summary>
