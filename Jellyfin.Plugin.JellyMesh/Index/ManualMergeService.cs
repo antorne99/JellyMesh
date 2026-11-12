@@ -201,8 +201,8 @@ public sealed class ManualMergeService
         return (titles.Count(title => title.HasLocalCopy) > 1 ? ManualMergeOutcome.TwoLocalTitles : ManualMergeOutcome.Merged, titles);
     }
 
-    // The choice is saved by now, so a failure here only delays it to the next sync. Only the thorough link of an undo
-    // detaches the copies of the group it dissolved (D5, Q144).
+    // The choice is saved by now, so a failure only delays it: to the next sync, or to the nightly run for the copies
+    // that an undo detaches with its thorough link (D5, Q144).
     private async Task ApplyAsync(bool thorough, CancellationToken cancellationToken)
     {
         try
@@ -216,7 +216,7 @@ public sealed class ManualMergeService
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The type only: a message could hold a remote address.
-            _logger.LogError("Could not apply a manual merge yet, the next sync does: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not apply a manual merge yet, a later sync or the nightly run does: {Error}", exception.GetType().Name);
         }
     }
 }
