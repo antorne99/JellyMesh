@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -1392,6 +1393,39 @@ public class PlaybackFiltersTests
 
         Assert.True(await RunAsync(GuardFilter(), context));
         Assert.Equal("9f", context.ActionArguments["playlistId"]);
+    }
+
+    [Theory]
+    [InlineData("f0.ts", true)]
+    [InlineData("ef12", true)]
+    [InlineData("f9.ts", false)]
+    public async Task A_playlist_id_that_runs_into_a_segment_name_of_the_job_of_another_user_reads_as_one_of_no_file(string playlistId, bool refused)
+    {
+        var folder = Directory.CreateTempSubdirectory("jellymesh-transcodes-").FullName;
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, JobHash + "0.ts"), string.Empty);
+            await File.WriteAllTextAsync(Path.Combine(folder, JobHash + "12.ts"), string.Empty);
+            JobOf("local-play").Path = Path.Combine(folder, JobHash + ".m3u8");
+            _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+            var context = LegacySegment(LocalItem(), playlistId, "none");
+
+            var passed = await RunAsync(GuardFilter(), context);
+
+            if (refused)
+            {
+                AssertReadsAsMissing(context, passed, "playlistId");
+            }
+            else
+            {
+                Assert.True(passed);
+                Assert.Equal(playlistId, context.ActionArguments["playlistId"]);
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
     }
 
     [Fact]

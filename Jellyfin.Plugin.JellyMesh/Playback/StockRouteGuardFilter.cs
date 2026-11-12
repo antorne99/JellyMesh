@@ -282,7 +282,33 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     {
         var prefix = Path.GetFileNameWithoutExtension(jobPath);
         return (!string.IsNullOrEmpty(prefix) && !string.IsNullOrEmpty(segmentId) && Path.GetFileName(segmentId).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            || (!string.IsNullOrEmpty(playlistId) && jobPath.Contains(playlistId, StringComparison.OrdinalIgnoreCase));
+            || (!string.IsNullOrEmpty(playlistId) && FilesOfJob(jobPath, prefix).Any(path => path.Contains(playlistId, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    // The path of the job and of the files of its folder that start with the name of its playlist, such as its segments.
+    private static IEnumerable<string> FilesOfJob(string jobPath, string prefix)
+    {
+        yield return jobPath;
+        var folder = Path.GetDirectoryName(jobPath);
+        if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+        {
+            yield break;
+        }
+
+        IEnumerable<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(folder, prefix + "*").ToList();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            yield break;
+        }
+
+        foreach (var file in files)
+        {
+            yield return file;
+        }
     }
 
     // Q54: when an item the action names has linked versions, its user must see every item it names. A Playstate report
