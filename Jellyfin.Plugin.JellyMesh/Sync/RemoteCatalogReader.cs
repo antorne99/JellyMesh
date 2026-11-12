@@ -162,10 +162,15 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server, IReadOnlyCollection<string> libraryIds, CancellationToken cancellationToken)
+    public async Task<RemoteResult<IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(
+        RemoteServerInfo server,
+        IReadOnlyCollection<string> libraryIds,
+        IReadOnlySet<string> filmIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(libraryIds);
+        ArgumentNullException.ThrowIfNull(filmIds);
 
         var budget = new ReadBudget();
         var collections = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
@@ -189,16 +194,22 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         }
 
         // A film in several collections keeps the first by name, so that the choice does not depend on the order of a read.
+        // Only films of the catalog are kept, so the result is never larger than it.
         var films = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
         foreach (var (id, collection) in collections.OrderBy(entry => entry.Value.Name, StringComparer.Ordinal).ThenBy(entry => entry.Key, StringComparer.Ordinal))
         {
+            if (films.Count >= filmIds.Count)
+            {
+                break;
+            }
+
             var read = await ReadBriefAsync(server, (endpoint, session, start, limit, token) => _client.GetCollectionFilmsAsync(endpoint, session, id, start, limit, token), MaxItemsPerQuery, budget, cancellationToken).ConfigureAwait(false);
             if (!read.IsSuccess)
             {
                 return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(read.Failure);
             }
 
-            foreach (var film in read.Value!)
+            foreach (var film in read.Value!.Where(film => filmIds.Contains(film.Id)))
             {
                 films.TryAdd(film.Id, collection);
             }
