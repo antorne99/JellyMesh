@@ -61,6 +61,12 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
             groupingOff);
     }
 
+    /// <summary>Tells whether a library location is the given folder, as the link check compares them.</summary>
+    /// <param name="location">The library location.</param>
+    /// <param name="path">The folder.</param>
+    /// <returns>Whether they are the same folder.</returns>
+    internal static bool IsSamePath(string location, string path) => Holds(new VirtualFolderInfo { Locations = [location] }, path, _pathComparison);
+
     private static FederatedPathStatus StatusOf(List<VirtualFolderInfo> libraries, string path, CollectionTypeOptions expected)
     {
         var holding = libraries.Where(library => Holds(library, path, _pathComparison)).ToList();

@@ -106,6 +106,25 @@ public sealed class PluginSaveTests : IDisposable
     }
 
     [Fact]
+    public void TheXmlRoundTripsTheAutomaticLibraries()
+    {
+        _plugin.ChangeConfiguration(config =>
+        {
+            var server = config.Servers.Single();
+            server.AutomaticLibraries = true;
+            server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Friend - Serie", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" });
+            server.ReleasedAutomaticLibraries.Add("Friend - Film");
+        });
+
+        var loaded = Assert.Single(((PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!).Servers);
+
+        Assert.True(loaded.AutomaticLibraries);
+        var record = Assert.Single(loaded.AutomaticLibraryRegistry);
+        Assert.Equal((ServerLibraryKind.Series, "Friend - Serie", "0f1e2d3c4b5a69788796a5b4c3d2e1f0"), (record.Kind, record.Name, record.ItemId));
+        Assert.Equal(["Friend - Film"], loaded.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
     public void TheXmlRoundTripsTheServerIdsAndTheRemovedServers()
     {
         var formerId = Guid.NewGuid();
