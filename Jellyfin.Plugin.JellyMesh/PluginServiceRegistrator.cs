@@ -64,6 +64,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
         serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
         serviceCollection.AddSingleton<IVersionLinker, VersionLinker>();
+        serviceCollection.AddSingleton<IWatchStateCarrier, WatchStateCarrier>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 

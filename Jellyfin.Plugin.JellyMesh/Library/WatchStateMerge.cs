@@ -66,6 +66,20 @@ public static class WatchStateMerge
         return true;
     }
 
+    /// <summary>
+    /// Tells whether one row's watch state is newer than another's, by the rule of <see cref="Merge"/>.
+    /// </summary>
+    /// <param name="from">The row that would hand its state over.</param>
+    /// <param name="to">The row that would take it.</param>
+    /// <returns>Whether <paramref name="from"/> has watch state and it is newer.</returns>
+    public static bool IsNewer(UserItemData from, UserItemData to)
+    {
+        ArgumentNullException.ThrowIfNull(from);
+        ArgumentNullException.ThrowIfNull(to);
+
+        return StubIsNewer(from, to);
+    }
+
     private static bool HasWatchState(UserItemData data)
     {
         return data.Played || data.PlayCount > 0 || data.PlaybackPositionTicks > 0 || data.LastPlayedDate is not null;
