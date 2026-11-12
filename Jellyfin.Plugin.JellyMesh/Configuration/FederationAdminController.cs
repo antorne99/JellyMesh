@@ -348,7 +348,7 @@ public class FederationAdminController : ControllerBase
         };
     }
 
-    private static string RefusalMessage(AutomaticLibrariesOutcome outcome)
+    internal static string RefusalMessage(AutomaticLibrariesOutcome outcome)
     {
         return outcome switch
         {
