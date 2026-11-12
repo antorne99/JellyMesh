@@ -93,6 +93,66 @@ public sealed class SyncHistoryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task TheLastSevenReconciliationsAreKept_PastTheLastFifty()
+    {
+        using (var store = Store())
+        {
+            for (var minute = 0; minute < 8; minute++)
+            {
+                await store.AddAsync(Reconciliation(minute), CancellationToken.None);
+            }
+
+            for (var minute = 8; minute < 58; minute++)
+            {
+                await store.AddAsync(Run(minute), CancellationToken.None);
+            }
+
+            AssertKept(store, [.. Enumerable.Range(8, 50).Reverse(), .. Enumerable.Range(1, 7).Reverse()]);
+        }
+
+        using var reloaded = Store();
+        AssertKept(reloaded, [.. Enumerable.Range(8, 50).Reverse(), .. Enumerable.Range(1, 7).Reverse()]);
+    }
+
+    [Fact]
+    public async Task AReconciliationAmongTheLastFifty_CountsTowardTheSeven_AndShowsOnce()
+    {
+        using var store = Store();
+        for (var minute = 0; minute < 8; minute++)
+        {
+            await store.AddAsync(Reconciliation(minute), CancellationToken.None);
+        }
+
+        for (var minute = 8; minute < 58; minute++)
+        {
+            await store.AddAsync(minute == 53 ? Reconciliation(minute) : Run(minute), CancellationToken.None);
+        }
+
+        AssertKept(store, [.. Enumerable.Range(8, 50).Reverse(), .. Enumerable.Range(2, 6).Reverse()]);
+    }
+
+    [Fact]
+    public void AFileWrittenBeforeTheTotals_StillLoads()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            FilePath,
+            "{\"Version\":1,\"Runs\":[{\"StartedUtc\":\"2026-11-12T03:00:00+00:00\",\"DurationMilliseconds\":5,\"Kind\":\"Reconciliation\",\"Outcome\":\"Succeeded\",\"Servers\":[]}]}");
+
+        using var store = Store();
+
+        var run = Assert.Single(store.Runs);
+        Assert.Equal(SyncRunKind.Reconciliation, run.Kind);
+        Assert.Equal(0, run.Created);
+        Assert.False(store.IsDamaged);
+    }
+
+    private static SyncRun Reconciliation(int minute) => Run(minute) with { Kind = SyncRunKind.Reconciliation };
+
+    private static void AssertKept(SyncHistoryStore store, int[] minutes) =>
+        Assert.Equal(minutes.Select(minute => Start.AddMinutes(minute)), store.Runs.Select(run => run.StartedUtc));
+
+    [Fact]
     public async Task NoTemporaryFileStays()
     {
         using var store = Store();
