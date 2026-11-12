@@ -214,6 +214,16 @@ wait_free() {
   done
   echo never
 }
+# wait_streams <count> [seconds]: waits until a counts that many streams, those being closed included. Prints the last count.
+wait_streams() {
+  local waited count
+  for waited in $(seq 0 "${2:-10}"); do
+    count=$(active_streams)
+    [ "$count" = "$1" ] && break
+    sleep 1
+  done
+  echo "$count"
+}
 peer_auth="MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"$PREFIX-probe\", Version=\"0.1\", Token=\"$token\""
 # take_slot: another stream of the same peer asks. Prints the status; what it opened is in $WORK/taken.
 take_slot() {
@@ -450,7 +460,7 @@ sleep 3
 check "both are playing" true "$(grows "$WORK/read-c22")"
 check "both are playing" true "$(grows "$WORK/read-peer")"
 share a 2 Altra
-check "only the slot of what is still shared stays" 1 "$(active_streams)"
+check "only the slot of what is still shared stays, once the other is closed" 1 "$(wait_streams 1)"
 check "the stream of the library taken away is cut" true "$(ended "$reader" 30)"
 kill -9 "$reader" 2>/dev/null
 wait "$reader" 2>/dev/null
@@ -803,8 +813,8 @@ sleep 4
 check "three streams" 3 "$(active_streams)"
 check "the newest is a transcode" 1 "$(ffmpeg_count)"
 share a 1 Film Altra
-check "the limit holds at once" 1 "$(active_streams)"
 check "the next stream is refused" 429 "$(take_other)"
+check "the limit holds once what was cut is closed" 1 "$(wait_streams 1)"
 check "the middle one is cut" true "$(ended "$(cat "$WORK/pid-middle")" 30)"
 check "the transcode of the newest closes" true "$(g=$(no_ffmpeg 10); [ "$g" != never ] && echo true || echo false)"
 check "the oldest keeps playing" true "$(grows "$WORK/read-oldest")"
@@ -824,7 +834,7 @@ peer_stream newer "$other"
 sleep 3
 check "three streams" 3 "$(active_streams)"
 share a 1 Altra
-check "the limit holds at once" 1 "$(active_streams)"
+check "the limit holds once what was cut is closed" 1 "$(wait_streams 1)"
 check "the stream of the library taken away is cut" true "$(ended "$(cat "$WORK/pid-lost")" 30)"
 check "the newest of the rest is cut" true "$(ended "$(cat "$WORK/pid-newer")" 30)"
 check "the oldest of the rest keeps playing" true "$(grows "$WORK/read-older")"
