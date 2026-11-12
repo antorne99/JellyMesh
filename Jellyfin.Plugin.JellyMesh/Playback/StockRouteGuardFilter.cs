@@ -40,7 +40,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         "UniversalAudio",
         "Subtitle",
         "VideoAttachments",
-        "Trickplay"
+        "Trickplay",
+        "MediaSegments"
     };
 
     private readonly StubLookup _stubs;

@@ -222,6 +222,7 @@ public class PlaybackFiltersTests
     [InlineData("Subtitle", "GetSubtitle", "routeItemId")]
     [InlineData("VideoAttachments", "GetAttachment", "videoId")]
     [InlineData("Trickplay", "GetTrickplayHlsPlaylist", "itemId")]
+    [InlineData("MediaSegments", "GetItemSegments", "itemId")]
     [InlineData("Library", "GetDownload", "itemId")]
     public async Task A_stock_media_route_refuses_a_stub_without_a_user(string controller, string action, string argument)
     {
@@ -239,6 +240,34 @@ public class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(), context));
         Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_stub_are_not_found_for_a_user_who_cannot_see_it()
+    {
+        var context = Context("MediaSegments", "GetItemSegments", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_stub_in_no_library_are_not_found()
+    {
+        CanSeeItem();
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = Context("MediaSegments", "GetItemSegments", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_stub_reach_a_user_who_can_see_it()
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(GuardFilter(), Context("MediaSegments", "GetItemSegments", ("itemId", _itemId))));
     }
 
     [Fact]
