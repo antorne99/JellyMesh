@@ -116,22 +116,22 @@ public sealed class ManualMergeService
     /// <returns>Whether the merge existed.</returns>
     public async Task<bool> UndoAsync(Guid mergeId, CancellationToken cancellationToken)
     {
-        var found = false;
+        ManualMerge? undone = null;
         await _store.UpdateAsync(
             current =>
             {
-                found = current.Any(merge => merge.Id == mergeId);
+                undone = current.FirstOrDefault(merge => merge.Id == mergeId);
                 return current.Where(merge => merge.Id != mergeId).ToList();
             },
             cancellationToken).ConfigureAwait(false);
 
-        if (found)
+        if (undone is not null)
         {
             _logger.LogInformation("Undid a manual merge of film titles");
-            await ApplyAsync(true, cancellationToken).ConfigureAwait(false);
+            await ApplyUndoAsync(undone, cancellationToken).ConfigureAwait(false);
         }
 
-        return found;
+        return undone is not null;
     }
 
     /// <summary>
@@ -201,8 +201,28 @@ public sealed class ManualMergeService
         return (titles.Count(title => title.HasLocalCopy) > 1 ? ManualMergeOutcome.TwoLocalTitles : ManualMergeOutcome.Merged, titles);
     }
 
-    // The choice is saved by now, so a failure only delays it: to the next sync, or to the nightly run for the copies
-    // that an undo detaches with its thorough link (D5, Q144).
+    // The undo is saved by now. The stubs of the group it dissolves are read before the materializer changes the groups,
+    // and detached at once (D5, Q171); a failure leaves them to the nightly run (Q144).
+    private async Task ApplyUndoAsync(ManualMerge undone, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dissolved = _linker?.GroupedStubsOf(undone.Copies) ?? [];
+            await _materializer.MaterializeAsync(cancellationToken).ConfigureAwait(false);
+            if (_linker is not null)
+            {
+                await _linker.LinkAsync(false, cancellationToken).ConfigureAwait(false);
+                await _linker.DetachAsync(dissolved, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Could not apply the undo of a manual merge yet, a later sync or the nightly run does: {Error}", exception.GetType().Name);
+        }
+    }
+
+    // The choice is saved by now, so a failure only delays it to the next sync.
     private async Task ApplyAsync(bool thorough, CancellationToken cancellationToken)
     {
         try
