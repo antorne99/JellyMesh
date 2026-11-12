@@ -1133,6 +1133,46 @@
                         <span class="jmDot" aria-hidden="true"></span>
                         <p id="jmStatus" class="jmHeadline"></p>
                     </div>
+                    <div id="jmMigration" hidden>
+                        <style>
+                            #jmMigration .jmBanner {
+                                align-items: flex-start;
+                            }
+
+                            #jmMigration .jmDot {
+                                margin-top: 0.4em;
+                            }
+
+                            #jmMigration p,
+                            #jmMigration ul {
+                                margin: 0.35em 0 0;
+                            }
+
+                            #jmMigration ul {
+                                padding-left: 1.2em;
+                            }
+
+                            #jmMigrationTitle {
+                                margin-top: 0;
+                                font-weight: 600;
+                            }
+
+                            .jmMigrationPath {
+                                display: block;
+                                color: var(--jm-text);
+                                overflow-wrap: anywhere;
+                            }
+                        </style>
+                        <div id="jmMigrationBanner" class="jmBanner jmToneWarn">
+                            <span class="jmDot" aria-hidden="true"></span>
+                            <div role="status">
+                                <p id="jmMigrationTitle"></p>
+                                <p id="jmMigrationText"></p>
+                                <ul id="jmMigrationLibraries"></ul>
+                                <p id="jmMigrationProgress"></p>
+                            </div>
+                        </div>
+                    </div>
                     <div class="jmColumns">
                         <dl id="jmSummary" class="jmFacts jmPanel"></dl>
                         <div id="jmSetup" hidden>
@@ -1339,6 +1379,14 @@
         <script type="application/json" id="jmTranslations">
             {
                 "it": {
+                    "Add the folders of each server to the libraries": "Aggiungi alle librerie le cartelle di ogni server",
+                    "The federated folder now has a folder for each server. Until these folders are in the libraries and scanned, the old titles stay as they are.": "La cartella federata ora ha una cartella per ogni server. Finché queste cartelle non sono nelle librerie e analizzate, i vecchi titoli restano come sono.",
+                    "Moving the watch state to the folders of each server": "Spostamento dello stato di visione nelle cartelle di ogni server",
+                    "The watch state of the old titles moves to the new ones as the libraries are scanned.": "Lo stato di visione dei vecchi titoli passa ai nuovi man mano che le librerie vengono analizzate.",
+                    "Old titles left: {count}.": "Vecchi titoli rimasti: {count}.",
+                    "Waiting for a scan: {count}.": "In attesa di una scansione: {count}.",
+                    "Remove the old folders from the libraries": "Rimuovi le vecchie cartelle dalle librerie",
+                    "The watch state has moved to the new titles and the old folders are empty.": "Lo stato di visione è passato ai nuovi titoli e le vecchie cartelle sono vuote.",
                     "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Librerie e salva di nuovo la selezione.",
                     "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
                     "A dedicated non-admin user on the remote. API keys are not used.": "Un utente dedicato non amministratore sul remoto. Le chiavi API non vengono usate.",
@@ -4448,6 +4496,146 @@
                     }, function (error) {
                         throw new Error(settingsFailure(error));
                     }));
+                });
+            })();
+        </script>
+        <script type="text/javascript">
+            (function () {
+                var page = document.querySelector('#JellyMeshConfigPage');
+                var translations = JSON.parse(page.querySelector('#jmTranslations').textContent);
+                var strings = translations[languageOf(document.documentElement.lang)] || {};
+                var pollMilliseconds = 15000;
+                var timer = null;
+                var shown = false;
+                var steps = {
+                    AddPaths: {
+                        title: t('Add the folders of each server to the libraries'),
+                        text: t('The federated folder now has a folder for each server. Until these folders are in the libraries and scanned, the old titles stay as they are.')
+                    },
+                    Carrying: {
+                        title: t('Moving the watch state to the folders of each server'),
+                        text: t('The watch state of the old titles moves to the new ones as the libraries are scanned.')
+                    },
+                    RemoveOldPaths: {
+                        title: t('Remove the old folders from the libraries'),
+                        text: t('The watch state has moved to the new titles and the old folders are empty.')
+                    }
+                };
+
+                // Picks the translations of a language tag, or of its base language.
+                function languageOf(tag) {
+                    var name = (tag || '').toLowerCase();
+                    return [name, name.split('-')[0]].filter(function (candidate) {
+                        return Object.prototype.hasOwnProperty.call(translations, candidate);
+                    })[0] || '';
+                }
+
+                // Translates an English text, or keeps it when it has no translation, and fills its {names}.
+                function t(text, values) {
+                    var shownText = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text;
+                    return shownText.replace(/\{(\w+)\}/g, function (whole, name) {
+                        return values && values[name] !== undefined ? values[name] : whole;
+                    });
+                }
+
+                // Lists each library with the folders it has to gain or lose.
+                function renderLibraries(libraries, pathsOf) {
+                    var list = page.querySelector('#jmMigrationLibraries');
+                    list.replaceChildren();
+                    libraries.forEach(function (library) {
+                        var paths = pathsOf(library);
+                        if (paths.length === 0) {
+                            return;
+                        }
+
+                        var item = document.createElement('li');
+                        var name = document.createElement('strong');
+                        name.textContent = library.Name;
+                        item.appendChild(name);
+                        paths.forEach(function (path) {
+                            var line = document.createElement('span');
+                            line.className = 'jmMigrationPath';
+                            line.textContent = path;
+                            item.appendChild(line);
+                        });
+                        list.appendChild(item);
+                    });
+                    list.hidden = list.childElementCount === 0;
+                }
+
+                // Shows the step of the move to the folders of each server, or hides the banner when there is none.
+                function render(migration) {
+                    var step = migration && steps[migration.Step];
+                    page.querySelector('#jmMigration').hidden = !step;
+                    if (!step) {
+                        return;
+                    }
+
+                    var banner = page.querySelector('#jmMigrationBanner');
+                    banner.classList.toggle('jmToneWarn', migration.Step !== 'Carrying');
+                    banner.classList.toggle('jmToneQuiet', migration.Step === 'Carrying');
+                    page.querySelector('#jmMigrationTitle').textContent = step.title;
+                    page.querySelector('#jmMigrationText').textContent = step.text;
+                    renderLibraries(migration.Libraries || [], function (library) {
+                        if (migration.Step === 'AddPaths') {
+                            return library.MissingPaths || [];
+                        }
+
+                        return migration.Step === 'RemoveOldPaths' ? library.OldPaths || [] : [];
+                    });
+                    var progress = migration.Step === 'Carrying' ? [t('Old titles left: {count}.', { count: migration.OldTitles })] : [];
+                    if (migration.Step === 'Carrying' && migration.Waiting) {
+                        progress.push(t('Waiting for a scan: {count}.', { count: migration.Waiting }));
+                    }
+
+                    var progressNode = page.querySelector('#jmMigrationProgress');
+                    progressNode.textContent = progress.join(' ');
+                    progressNode.hidden = progress.length === 0;
+                }
+
+                // Reads the migration from the status, keeps the banner as it is on a failed read, and plans the next one.
+                function poll() {
+                    window.clearTimeout(timer);
+                    timer = null;
+                    if (!shown || document.hidden) {
+                        return;
+                    }
+
+                    fetch(ApiClient.getUrl('JellyMesh/Admin/Status'), {
+                        headers: {
+                            Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
+                            Accept: 'application/json; profile="PascalCase"'
+                        },
+                        signal: AbortSignal.timeout(pollMilliseconds)
+                    }).then(function (response) {
+                        return response.ok ? response.json() : null;
+                    }).then(function (status) {
+                        if (status) {
+                            render(status.FederatedFolder && status.FederatedFolder.Migration);
+                        }
+                    }).catch(function () {
+                        return null;
+                    }).then(function () {
+                        window.clearTimeout(timer);
+                        timer = shown ? window.setTimeout(poll, pollMilliseconds) : null;
+                    });
+                }
+
+                page.addEventListener('pageshow', function () {
+                    shown = true;
+                    poll();
+                });
+
+                page.addEventListener('pagehide', function () {
+                    shown = false;
+                    window.clearTimeout(timer);
+                    timer = null;
+                });
+
+                document.addEventListener('visibilitychange', function () {
+                    if (shown && !document.hidden) {
+                        poll();
+                    }
                 });
             })();
         </script>
