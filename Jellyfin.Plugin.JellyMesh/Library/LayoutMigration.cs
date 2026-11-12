@@ -72,8 +72,8 @@ public sealed class LayoutMigration : ILayoutMigration
             return;
         }
 
-        // Until every library on an old path holds the new ones, the old layout stays as it is (Q49).
-        if (LibrariesOf(root) is not { } libraries || libraries.Any(library => library.MissingPaths.Count > 0))
+        // Until every library on an old path holds the new ones, and each server folder is in a library, the old layout stays (Q49, Q215).
+        if (LibrariesOf(root) is not { } libraries || !libraries.ServerFoldersLinked || libraries.OnOldPaths.Any(library => library.MissingPaths.Count > 0))
         {
             return;
         }
@@ -88,9 +88,10 @@ public sealed class LayoutMigration : ILayoutMigration
                 return;
             }
 
-            var catalog = IndexItemLookup.Build(snapshot);
+            var catalog = new Catalog(IndexItemLookup.Build(snapshot), _servers.GetServers().Select(server => server.Id).ToHashSet(), state.RemovedServers.ToHashSet());
             var moves = new List<WatchStateMove>();
             var waiting = 0;
+            var blocked = 0;
             foreach (var stub in state.Stubs.Where(stub => stub.ServerId is null))
             {
                 Add(TitleMoveOf(root, state, stub, catalog), moves, ref waiting);
@@ -104,13 +105,19 @@ public sealed class LayoutMigration : ILayoutMigration
             if (moves.Count > 0)
             {
                 var report = await _carrier.CarryAsync(moves, cancellationToken).ConfigureAwait(false);
-                waiting += report.Moves.Count(outcome => !IsDone(outcome));
+                blocked = report.Moves.Count(IsBlocked);
+                waiting += report.Moves.Count(outcome => !IsDone(outcome) && !IsBlocked(outcome));
+                var refused = report.Moves.Count(outcome => outcome.Status == WatchStateMoveStatus.Refused);
+                if (refused > 0)
+                {
+                    _logger.LogWarning("Migration to the server folders: the watch state carry refused {Refused} old titles, which go without it", refused);
+                }
             }
 
-            _lastRun = new LastRun(waiting);
-            if (waiting > 0)
+            _lastRun = new LastRun(waiting, blocked);
+            if (waiting + blocked > 0)
             {
-                _logger.LogInformation("Migration to the server folders: {Waiting} old titles wait for a later run", waiting);
+                _logger.LogInformation("Migration to the server folders: {Waiting} old titles wait for a scan and {Blocked} are blocked", waiting, blocked);
                 return;
             }
 
@@ -133,7 +140,8 @@ public sealed class LayoutMigration : ILayoutMigration
 
         var state = _registry.State;
         var old = state.Stubs.Count(stub => stub.ServerId is null) + state.Series.Count(series => series.ServerId is null);
-        var libraries = LibrariesOf(root) ?? [];
+        var read = LibrariesOf(root);
+        var libraries = read?.OnOldPaths ?? [];
         if (old == 0 && libraries.Count == 0)
         {
             return null;
@@ -141,17 +149,22 @@ public sealed class LayoutMigration : ILayoutMigration
 
         var step = old == 0
             ? LayoutMigrationStep.RemoveOldPaths
-            : libraries.Any(library => library.MissingPaths.Count > 0) ? LayoutMigrationStep.AddPaths : LayoutMigrationStep.Carrying;
-        return new LayoutMigrationStatus(step, libraries, old) { Waiting = old == 0 ? null : _lastRun?.Waiting };
+            : read is { ServerFoldersLinked: false } || libraries.Any(library => library.MissingPaths.Count > 0) ? LayoutMigrationStep.AddPaths : LayoutMigrationStep.Carrying;
+        return new LayoutMigrationStatus(step, libraries, old) { Waiting = old == 0 ? null : _lastRun?.Waiting, Blocked = old == 0 ? null : _lastRun?.Blocked };
     }
 
     private static bool HasOldTitles(StubState state) =>
         state.Stubs.Any(stub => stub.ServerId is null) || state.Series.Any(series => series.ServerId is null);
 
-    // Done for every user, or left only for users who see none of the new items (decision 166).
+    // Done for every user, left only for users who see none of the new items (decision 166), or refused as not valid (Q216).
     private static bool IsDone(WatchStateMoveOutcome outcome) =>
-        outcome.Status == WatchStateMoveStatus.Carried
+        outcome.Status is WatchStateMoveStatus.Carried or WatchStateMoveStatus.Refused
         || (outcome.Status == WatchStateMoveStatus.UsersLeft && outcome.SkippedUsers.All(user => user.Reason == WatchStateUserSkipReason.NoVisibleVersion));
+
+    // Not done for a reason a scan does not fix: a failed move, or a user row missing or not saved (Q216).
+    private static bool IsBlocked(WatchStateMoveOutcome outcome) =>
+        outcome.Status == WatchStateMoveStatus.Failed
+        || (outcome.Status == WatchStateMoveStatus.UsersLeft && !IsDone(outcome));
 
     private static void Add((WatchStateMove? Move, bool Waits) step, List<WatchStateMove> moves, ref int waiting)
     {
@@ -165,10 +178,19 @@ public sealed class LayoutMigration : ILayoutMigration
         }
     }
 
-    // Gone when no server that still has the item in the index, or could still send it, holds any of its remote items.
-    private static bool IsGone(IReadOnlyList<StubSource> sources, IndexItemLookup catalog) => sources.All(source =>
-        catalog.Find(source.ServerId, source.ItemId) is null
-        && (catalog.Snapshot.Find(source.ServerId) is null || catalog.Snapshot.IsAuthoritativeFor(source.ServerId)));
+    // Gone as the stub planner decides (decision 44): sources only on unconfigured servers go if the admin removed them all,
+    // otherwise each configured server must be read in full and lack the item, since a lost index proves nothing.
+    private static bool IsGone(IReadOnlyList<StubSource> sources, Catalog catalog)
+    {
+        if (sources.Count > 0 && sources.All(source => !catalog.Configured.Contains(source.ServerId)))
+        {
+            return sources.All(source => catalog.Removed.Contains(source.ServerId));
+        }
+
+        var snapshot = catalog.Items.Snapshot;
+        return snapshot.Health == IndexHealth.Ok && sources.Where(source => catalog.Configured.Contains(source.ServerId)).All(source =>
+            snapshot.IsAuthoritativeFor(source.ServerId) && catalog.Items.Find(source.ServerId, source.ItemId) is null);
+    }
 
     private static HashSet<(Guid ServerId, string ItemId)> ItemsOf(IReadOnlyList<StubSource> sources) =>
         sources.Select(source => (source.ServerId, source.ItemId)).ToHashSet();
@@ -203,7 +225,7 @@ public sealed class LayoutMigration : ILayoutMigration
 
     // The move of an old film or episode, or whether it still waits: an old stub with no item, or whose title is gone, has
     // nothing to carry.
-    private (WatchStateMove? Move, bool Waits) TitleMoveOf(string root, StubState state, StubEntry old, IndexItemLookup catalog)
+    private (WatchStateMove? Move, bool Waits) TitleMoveOf(string root, StubState state, StubEntry old, Catalog catalog)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), false) is not Video item)
         {
@@ -219,7 +241,7 @@ public sealed class LayoutMigration : ILayoutMigration
         return TargetsOf(root, news) is { } targets ? (WatchStateMove.Of(old, item.Id, targets), false) : (null, true);
     }
 
-    private (WatchStateMove? Move, bool Waits) SeriesMoveOf(string root, StubState state, SeriesStub old, IndexItemLookup catalog)
+    private (WatchStateMove? Move, bool Waits) SeriesMoveOf(string root, StubState state, SeriesStub old, Catalog catalog)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), true) is not Series item)
         {
@@ -272,8 +294,9 @@ public sealed class LayoutMigration : ILayoutMigration
 
         foreach (var group in groups.Where(group => group.LocalItemIds.Count > 0))
         {
-            // A local copy is a version only as the primary of its group (Q43, decision 148).
-            var local = group.LocalItemIds.FirstOrDefault(primaries.Contains);
+            // The local version is the primary of the group: a local copy, or the film the admin merged it into (Q43, Q220).
+            var head = LocalVersionHead.Of(group.LocalItemIds, _library, item => FederatedPaths.IsInside(root, item.Path));
+            var local = group.LocalItemIds.Append(head?.Id ?? Guid.Empty).FirstOrDefault(primaries.Contains);
             if (local == Guid.Empty || _library.GetItemById(local) is not Video)
             {
                 return null;
@@ -304,8 +327,9 @@ public sealed class LayoutMigration : ILayoutMigration
         }
     }
 
-    // The libraries on an old path, with the server folders of the same kind they lack; null when they cannot be read.
-    private List<LayoutMigrationLibrary>? LibrariesOf(string root)
+    // The libraries on an old path, with the server folders of the same kind they lack, and whether every server folder is
+    // in some library; null when they cannot be read.
+    private Libraries? LibrariesOf(string root)
     {
         List<VirtualFolderInfo> folders;
         try
@@ -325,6 +349,9 @@ public sealed class LayoutMigration : ILayoutMigration
             (FederatedFolderLayout.SeriesPath(root), server => FederatedFolderLayout.ServerSeriesPath(root, server))
         };
         var libraries = new List<LayoutMigrationLibrary>();
+        var linked = servers
+            .SelectMany(server => kinds.Select(kind => kind.New(server.Id)))
+            .All(path => folders.Any(folder => (folder.Locations ?? []).Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))));
         foreach (var folder in folders)
         {
             var locations = folder.Locations ?? [];
@@ -338,8 +365,13 @@ public sealed class LayoutMigration : ILayoutMigration
             }
         }
 
-        return libraries;
+        return new Libraries(libraries, linked);
     }
 
-    private sealed record LastRun(int Waiting);
+    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked);
+
+    private sealed record LastRun(int Waiting, int Blocked);
+
+    // The index with the configured servers and the ones the admin removed, read once per run.
+    private sealed record Catalog(IndexItemLookup Items, HashSet<Guid> Configured, HashSet<Guid> Removed);
 }

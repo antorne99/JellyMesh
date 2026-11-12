@@ -201,7 +201,7 @@ public sealed class VersionLinker : IVersionLinker
         // Only the first local copy found is linked: two local films are never merged (decision 20). A film an earlier
         // group links to stays out, and this group links its stubs among themselves (Q170).
         var locals = new List<Guid>();
-        if (PrimaryLocal(group, run) is { } local && run.ClaimedLocals.Add(local.Id) && items.TryAdd(local.Id, local))
+        if (LocalVersionHead.Of(group.LocalItemIds, _library, run.IsStub) is { } local && run.ClaimedLocals.Add(local.Id) && items.TryAdd(local.Id, local))
         {
             locals.Add(local.Id);
         }
@@ -298,31 +298,6 @@ public sealed class VersionLinker : IVersionLinker
             video.SetPrimaryVersionId(primary);
             throw;
         }
-    }
-
-    // The first local copy found, or the film the administrator merged it into as a version (§10 row 148).
-    private Video? PrimaryLocal(VersionGroup group, Run run)
-    {
-        var local = group.LocalItemIds.Select(FindLocal).OfType<Video>().FirstOrDefault();
-        var seen = new HashSet<Guid>();
-        while (local is { PrimaryVersionId: { } above } && seen.Add(local.Id)
-            && _library.GetItemById(above) is Video { OwnerId: var owner } film && owner.Equals(Guid.Empty) && !run.IsStub(film))
-        {
-            local = film;
-        }
-
-        return local;
-    }
-
-    // A file-based alternate of a local film stands for its owner, which Jellyfin shows.
-    private Video? FindLocal(Guid id)
-    {
-        if (_library.GetItemById(id) is not Video video)
-        {
-            return null;
-        }
-
-        return !video.OwnerId.Equals(Guid.Empty) && _library.GetItemById(video.OwnerId) is Video owner ? owner : video;
     }
 
     // D4: the version played last sets the played flag of the others. The position stays with each version.

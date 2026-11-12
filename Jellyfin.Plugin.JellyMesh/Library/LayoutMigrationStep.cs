@@ -5,7 +5,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public enum LayoutMigrationStep
 {
-    /// <summary>The libraries on the old paths lack some new paths: the admin adds them (Q49 holds until then).</summary>
+    /// <summary>The libraries on the old paths lack some new paths, or a server folder is in no library: the admin adds them (Q49, Q215).</summary>
     AddPaths,
 
     /// <summary>The new paths are linked: the plugin carries the state after their scan and then empties the old folders.</summary>
