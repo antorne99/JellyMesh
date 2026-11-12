@@ -45,4 +45,10 @@ public interface IServerLibraryManager
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task that completes when done, or at once when a creation or a deletion is running.</returns>
     Task ReconcileAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records that a check of the libraries could not start, for every configured and removed server, so that the next
+    /// one only records the libraries there and takes none for a renamed one (decision 185).
+    /// </summary>
+    void MarkFollowSkipped();
 }
