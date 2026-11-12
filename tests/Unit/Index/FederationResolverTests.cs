@@ -96,6 +96,50 @@ public sealed class FederationResolverTests : IDisposable
         Assert.Equal("Show S1E1", content.Winner!.Title);
     }
 
+    // Decision 51: what helps an administrator tell two series apart.
+    [Fact]
+    public async Task ASeriesCopyToMergeCountsItsEpisodesAndSeasons()
+    {
+        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
+        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e2", "s", 1, 2));
+        await _fixture.AddServerAsync("A", "shows");
+        await SyncAsync();
+        _local.Items.AddRange(new[] { (1, 1), (1, 2), (2, 1) }.Select(episode => new CatalogItem
+        {
+            ServerId = "local",
+            ItemId = "l" + episode.Item1 + episode.Item2,
+            Kind = ContentKind.Episode,
+            SeriesId = "ls",
+            Title = "Show",
+            Year = 2020,
+            Ids = new ContentIds("99"),
+            SeasonNumber = episode.Item1,
+            EpisodeNumber = episode.Item2
+        }));
+
+        var copies = Assert.Single(Resolver().Resolve().MergeCases).Titles.SelectMany(title => title.Copies).ToList();
+
+        var local = Assert.Single(copies, copy => copy.Copy.IsLocal);
+        Assert.Equal((3, 2), (local.EpisodeCount, local.SeasonCount));
+        var remote = Assert.Single(copies, copy => !copy.Copy.IsLocal);
+        Assert.Equal((2, 1), (remote.EpisodeCount, remote.SeasonCount));
+    }
+
+    [Fact]
+    public async Task AFilmCopyToMergeHasNoEpisodeCount()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m", tmdb: "1"));
+        await _fixture.AddServerAsync("A", "films");
+        await SyncAsync();
+        _local.Items.Add(new CatalogItem { ServerId = "local", ItemId = "x", Kind = ContentKind.Movie, Title = "Film", Year = 2020, Ids = new ContentIds("2") });
+
+        var copies = Resolver().Resolve().MergeCases.SelectMany(entry => entry.Titles).SelectMany(title => title.Copies).ToList();
+
+        Assert.Equal(2, copies.Count);
+        Assert.All(copies, copy => Assert.Equal(((int?)null, (int?)null), (copy.EpisodeCount, copy.SeasonCount)));
+    }
+
     [Fact]
     public async Task ARemovedServerNoLongerGivesSources()
     {
