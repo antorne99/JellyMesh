@@ -213,6 +213,27 @@ check "the same reports of both, who sees the local copy, are served" "204 204 2
   "$(on_version both /Sessions/Playing) $(on_version both /Sessions/Playing/Progress) $(on_version both /Sessions/Playing/Stopped)"
 check "and write the watch state of the local copy" 1 "$(watched both)"
 
+# Q168, Q169: the group leaves the registry while Jellyfin still links its versions, which only the nightly run detaches
+# (Q144). The admin gives the local copy another title and no ids, so that it no longer matches the stub.
+grouped() { # grouped: how many times the registry names the local copy
+  docker exec "$PREFIX-local" sh -c 'cat "$(find /config -name federated-stubs.json | head -1)"' |
+    grep -ci "$linked_n\|${linked_n:0:8}-${linked_n:8:4}-${linked_n:12:4}-${linked_n:16:4}-${linked_n:20:12}" || true
+}
+check "before, the registry groups the local copy with the stub" 1 "$([ "$(grouped)" -gt 0 ] && echo 1 || echo 0)"
+get local "/Items/$linked?userId=$(user_id local both)" |
+  jq -c '.Name = "JM Sciolto" | .OriginalTitle = "JM Sciolto" | .ProductionYear = 1999 | .PremiereDate = null | .ProviderIds = {}' >"$WORK/dissolved.json"
+check "the admin renames the local copy and drops its ids" 204 "$(post local "/Items/$linked" "$(cat "$WORK/dissolved.json")" >/dev/null; status)"
+sync_now local
+check "after a sync the registry no longer groups the local copy" 0 "$(grouped)"
+check "while Jellyfin still links the two versions" 2 \
+  "$(get local "/Items/$linked?userId=$(user_id local both)" | jq '.MediaSources | length')"
+hidden "after the group left, a stream of the stub with the local version" "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n"
+hidden "after the group left, a stream of the local copy alone" "/Videos/$linked_n/stream?static=true&mediaSourceId=$linked_n"
+check "after the group left, a stream of the stub with its own version is served to viewer" 206 \
+  "$(as viewer "/Videos/$b_n/stream?static=true&mediaSourceId=$b_n" -H 'Range: bytes=0-99')"
+check "and a stream of the stub with the local version is served to both" 206 \
+  "$(as both "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n" -H 'Range: bytes=0-99')"
+
 # Integration test 5: the play session of a local transcode of the stub, used by another user over a real socket.
 open_local() { # open_local <user>: opens the stub through the local transcode, prints its play session
   as "$1" "/Items/$stub/PlaybackInfo?userId=$(user_id local "$1")" -X POST -H "$ACCEPT" -H 'Content-Type: application/json' \

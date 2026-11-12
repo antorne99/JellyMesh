@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -40,16 +41,19 @@ public sealed class StubLookup
 
     private readonly ILibraryManager _libraryManager;
     private readonly IStubRegistry _stubs;
+    private readonly IPluginConfigurationStore _store;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubLookup"/> class.
     /// </summary>
     /// <param name="libraryManager">The library manager.</param>
     /// <param name="stubs">The stubs.</param>
-    public StubLookup(ILibraryManager libraryManager, IStubRegistry stubs)
+    /// <param name="store">The configuration, for the federated folder.</param>
+    public StubLookup(ILibraryManager libraryManager, IStubRegistry stubs, IPluginConfigurationStore store)
     {
         _libraryManager = libraryManager;
         _stubs = stubs;
+        _store = store;
     }
 
     /// <summary>
@@ -154,15 +158,15 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Tells whether an item has linked versions, as the version groups of the registry have it: a stub or a local copy in
-    /// a group with another member.
+    /// Tells whether an item has linked versions: a stub or a local copy in a group of the registry with another member,
+    /// or an item Jellyfin links to a stub, since its links outlive a group until the nightly run (Q168, Q169).
     /// </summary>
     /// <param name="itemId">The item.</param>
-    /// <returns>True for a member of such a group.</returns>
+    /// <returns>True for a member of such a group or link.</returns>
     public bool HasVersions(Guid itemId)
     {
         var group = Find(itemId) is { } stub ? _stubs.FindGroup(stub.Id) : _stubs.FindGroupOfLocal(itemId);
-        return group is not null && group.StubIds.Count + group.LocalItemIds.Count > 1;
+        return (group is not null && group.StubIds.Count + group.LocalItemIds.Count > 1) || IsLinkedToStub(itemId);
     }
 
     /// <summary>
@@ -175,6 +179,56 @@ public sealed class StubLookup
         return _libraryManager.GetItemById(itemId) is Video video && PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId)
             ? _stubs.Find(stubId)
             : null;
+    }
+
+    // Looks at the item, its primary or owner, and the alternates of both; a link only between local films stays stock.
+    private bool IsLinkedToStub(Guid itemId)
+    {
+        if (_libraryManager.GetItemById(itemId) is not Video video)
+        {
+            return false;
+        }
+
+        var above = video.PrimaryVersionId ?? (video.OwnerId.Equals(Guid.Empty) ? null : video.OwnerId);
+        if (above is null && video.LinkedAlternateVersions.Length == 0)
+        {
+            return false;
+        }
+
+        var members = new Dictionary<Guid, Video> { [itemId] = video };
+        AddAlternates(members, video);
+        if (above is { } primaryId && primaryId != itemId && _libraryManager.GetItemById(primaryId) is Video primary)
+        {
+            members[primaryId] = primary;
+            AddAlternates(members, primary);
+        }
+
+        if (members.Count < 2)
+        {
+            return false;
+        }
+
+        var root = _store.Read(config => config.FederatedFolderPath);
+        foreach (var member in members.Values)
+        {
+            if (FederatedPaths.IsInside(root, member.Path) || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && _stubs.Find(stubId) is not null))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void AddAlternates(Dictionary<Guid, Video> members, Video video)
+    {
+        foreach (var child in video.LinkedAlternateVersions)
+        {
+            if (child.ItemId is { } id && !members.ContainsKey(id) && _libraryManager.GetItemById(id) is Video alternate)
+            {
+                members[id] = alternate;
+            }
+        }
     }
 
     // Adds an item named as a Guid or as text, as stock binds a version.

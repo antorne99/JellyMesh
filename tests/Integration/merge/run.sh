@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Manual merges on the per-server layout (decision 20, Q23): copies of one server keep one stub, which takes the state of
 # the other; copies of different servers and a local copy become versions of one group, linked at once; an undo
-# dissolves the group. Also a new stub linked right after the scan that makes its item (Q145). Needs up.sh. Run once.
+# dissolves the group at once, detaching only its stubs (Q171). Also a new stub linked right after the scan that makes its
+# item (Q145). Needs up.sh. Run once.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 login local
@@ -123,7 +124,7 @@ check "and keeps all the watch state" '{"Played":true,"PlayCount":1,"Favorite":t
 # Jellyfin's doing: the stub is back on its old path, so it is the same item and the rows left under the placeholder return.
 check "the stub of Tre is back as the same item, with its state" "$tre {\"Played\":true,\"PlayCount\":1,\"Favorite\":true}" "$tre2 $(state "$tre2")"
 check "the chain is listed again" 3 "$(list local | jq '[.Cases[].Titles[].Copies[] | select(.Copy.Title | startswith("JM Catena"))] | length')"
-check "the group is dissolved at once (D5)" ":" "$(primary_of "$uno")$(primary_of "$due"):$(alternates_of "$uno")$(alternates_of "$due")"
+check "the group is dissolved at once, by detaching its stubs (D5, Q171)" ":" "$(primary_of "$uno")$(primary_of "$due"):$(alternates_of "$uno")$(alternates_of "$due")"
 sync_now local
 check "and stays dissolved after a sync" ":" "$(primary_of "$uno")$(primary_of "$due"):$(alternates_of "$uno")$(alternates_of "$due")"
 

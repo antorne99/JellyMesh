@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -22,6 +23,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
 
@@ -38,12 +40,18 @@ public class VersionGuardTests
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StreamSlots _peerSlots = new(TimeProvider.System, new InMemoryConfigurationStore());
+    private readonly InMemoryConfigurationStore _store = new();
+    private readonly Dictionary<Guid, BaseItem> _items = [];
+    private readonly Movie _stub;
+    private readonly Movie _local;
 
     public VersionGuardTests()
     {
         var stub = PlaybackValues.Stub(PlaybackValues.Source()) with { Id = "b" };
-        _library.Setup(library => library.GetItemById(_stubItem)).Returns(new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "b", "signature") });
-        _library.Setup(library => library.GetItemById(_localItem)).Returns(new Movie());
+        _store.Configuration.FederatedFolderPath = "/federata";
+        _stub = Item(new Movie { Path = "/federata/server/Film/b/b.strm", ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "b", "signature") }, _stubItem);
+        _local = Item(new Movie { Path = "/media/privata/film.mkv" }, _localItem);
+        _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _stubs.Setup(stubs => stubs.Find("b")).Returns(stub);
         Linked(new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["b"], LocalItemIds = [_localItem] });
         _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
@@ -52,6 +60,28 @@ public class VersionGuardTests
     }
 
     private static string N(Guid id) => id.ToString("N");
+
+    private static LinkedChild Link(Guid id) => new() { ItemId = id, Type = LinkedChildType.LinkedAlternateVersion };
+
+    private T Item<T>(T item, Guid id)
+        where T : BaseItem
+    {
+        item.Id = id;
+        _items[id] = item;
+        return item;
+    }
+
+    // Jellyfin links the alternates to the primary, as MergeVersions or the linker leave them.
+    private static void Merged(Video primary, params Video[] alternates)
+    {
+        primary.LinkedAlternateVersions = alternates.Select(alternate => Link(alternate.Id)).ToArray();
+        foreach (var alternate in alternates)
+        {
+            alternate.SetPrimaryVersionId(primary.Id);
+        }
+    }
+
+    private Movie LocalFilm() => Item(new Movie { Path = "/media/privata/" + Guid.NewGuid().ToString("N") + ".mkv" }, Guid.NewGuid());
 
     private void Linked(VersionGroup? group)
     {
@@ -72,7 +102,7 @@ public class VersionGuardTests
     private StockRouteGuardFilter Guard()
     {
         return new StockRouteGuardFilter(
-            new StubLookup(_library.Object, _stubs.Object),
+            new StubLookup(_library.Object, _stubs.Object, _store),
             _library.Object,
             _authorization.Object,
             _fixture.Coordinator,
@@ -286,5 +316,118 @@ public class VersionGuardTests
         var report = new PlaybackProgressInfo { ItemId = _stubItem, MediaSourceId = N(_localItem) };
 
         Assert.True(await RunAsync(Guard(), Context("Playstate", "ReportPlaybackProgress", ("playbackProgressInfo", report))));
+    }
+
+    // Q168: the group left the registry, while Jellyfin keeps the link until the nightly run detaches it (Q144).
+    [Theory]
+    [MemberData(nameof(RoutesThatNameAVersion))]
+    public async Task A_hidden_local_version_still_linked_after_its_group_left_the_registry_is_not_found(string controller, string action, string item, string version, bool asText)
+    {
+        Linked(null);
+        Merged(_local, _stub);
+        var context = Context(controller, action, (item, _stubItem), (version, asText ? N(_localItem) : _localItem), ("playSessionId", "play"));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_local_copy_still_linked_after_its_group_left_wants_a_user_who_sees_it()
+    {
+        Linked(null);
+        Merged(_local, _stub);
+        var hidden = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+        Anonymous();
+        var anonymous = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+
+        Assert.False(await RunAsync(Guard(), anonymous));
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(anonymous));
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .ReturnsAsync(new AuthorizationInfo { User = _user, Token = PlaybackValues.LocalToken, DeviceId = "device" });
+        Assert.False(await RunAsync(Guard(), hidden));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(hidden));
+    }
+
+    [Fact]
+    public async Task A_user_who_sees_both_still_linked_versions_goes_to_stock()
+    {
+        Linked(null);
+        Merged(_local, _stub);
+        Sees(_localItem);
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _stubItem), ("mediaSourceId", N(_localItem)))));
+    }
+
+    [Fact]
+    public async Task A_playstate_report_on_a_hidden_version_still_linked_is_answered_without_effect()
+    {
+        Linked(null);
+        Merged(_local, _stub);
+        var context = Context("Playstate", "ReportPlaybackProgress", ("playbackProgressInfo", new PlaybackProgressInfo { ItemId = _stubItem, MediaSourceId = N(_localItem) }));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task A_stub_out_of_the_registry_still_linked_under_the_federated_folder_counts()
+    {
+        Linked(null);
+        var gone = Item(new Movie { Path = "/federata/server/Film/gone/gone.strm" }, Guid.NewGuid());
+        Merged(_local, gone);
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    // Q169: the film the admin merged the local copy into, which the stubs follow (Q162), is not in the group.
+    [Fact]
+    public async Task The_film_the_admin_merged_the_local_copy_into_named_alone_wants_a_user_who_sees_it()
+    {
+        var film = LocalFilm();
+        Merged(film, _local, _stub);
+        var context = Context("Videos", "GetVideoStream", ("itemId", film.Id), ("mediaSourceId", N(film.Id)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task Another_local_version_of_that_film_named_alone_wants_a_user_who_sees_it()
+    {
+        var film = LocalFilm();
+        var other = LocalFilm();
+        Merged(film, _local, other, _stub);
+        var context = Context("Videos", "GetVideoStream", ("itemId", other.Id), ("mediaSourceId", N(other.Id)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task The_owner_of_a_file_version_in_the_group_named_alone_wants_a_user_who_sees_it()
+    {
+        var owner = LocalFilm();
+        _local.OwnerId = owner.Id;
+        _local.SetPrimaryVersionId(owner.Id);
+        owner.LinkedAlternateVersions = [Link(_stubItem)];
+        _stub.SetPrimaryVersionId(owner.Id);
+        var context = Context("Videos", "GetVideoStream", ("itemId", owner.Id), ("mediaSourceId", N(owner.Id)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Fact]
+    public async Task A_merge_of_the_admin_between_local_films_stays_stock()
+    {
+        Linked(null);
+        Anonymous();
+        var film = LocalFilm();
+        Merged(film, _local);
+
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", film.Id), ("mediaSourceId", N(_localItem)))));
+        Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)))));
     }
 }

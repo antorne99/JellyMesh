@@ -76,9 +76,11 @@ public sealed class VersionLinker : IVersionLinker
         {
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
-            var groups = new List<VersionGroup>(state.Groups.Count);
+            var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
             var changed = false;
-            foreach (var group in state.Groups)
+
+            // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
+            foreach (var group in state.Groups.OrderBy(group => group.Id, StringComparer.Ordinal))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var recorded = group.PrimaryStubId;
@@ -93,12 +95,14 @@ public sealed class VersionLinker : IVersionLinker
                 }
 
                 changed |= !string.Equals(recorded, group.PrimaryStubId, StringComparison.Ordinal);
-                groups.Add(group with { PrimaryStubId = recorded });
+                recordedById[group.Id] = recorded;
             }
+
+            var groups = state.Groups.Select(group => group with { PrimaryStubId = recordedById.GetValueOrDefault(group.Id, group.PrimaryStubId) }).ToList();
 
             if (thorough)
             {
-                await DetachUngroupedAsync(state, run, cancellationToken).ConfigureAwait(false);
+                await DetachUngroupedAsync(state, state.Stubs, run, cancellationToken).ConfigureAwait(false);
             }
 
             await MoveCollectionEntriesAsync(run, cancellationToken).ConfigureAwait(false);
@@ -106,6 +110,50 @@ public sealed class VersionLinker : IVersionLinker
             {
                 await _registry.SaveAsync(state with { Groups = groups }, cancellationToken).ConfigureAwait(false);
             }
+        }
+        finally
+        {
+            _registry.Exit();
+        }
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyCollection<string> GroupedStubsOf(IReadOnlyCollection<MergedCopy> copies)
+    {
+        ArgumentNullException.ThrowIfNull(copies);
+
+        var remote = copies.Where(copy => !copy.IsLocal)
+            .Select(copy => (Server: Guid.TryParse(copy.ServerId, out var server) ? server : Guid.Empty, copy.ItemId))
+            .ToList();
+        var local = copies.Where(copy => copy.IsLocal)
+            .Select(copy => Guid.TryParse(copy.ItemId, out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty)
+            .ToHashSet();
+        bool Holds(StubEntry stub) => stub.Sources.Any(source => remote.Exists(copy => copy.Server == source.ServerId && string.Equals(copy.ItemId, source.ItemId, StringComparison.OrdinalIgnoreCase)));
+
+        return _registry.State.Groups
+            .Where(group => group.LocalItemIds.Any(local.Contains) || group.StubIds.Select(_registry.Find).OfType<StubEntry>().Any(Holds))
+            .SelectMany(group => group.StubIds)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <inheritdoc />
+    public async Task DetachAsync(IReadOnlyCollection<string> stubIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stubIds);
+
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (string.IsNullOrEmpty(root) || stubIds.Count == 0)
+        {
+            return;
+        }
+
+        await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = _registry.State;
+            var named = stubIds.ToHashSet(StringComparer.Ordinal);
+            await DetachUngroupedAsync(state, state.Stubs.Where(stub => named.Contains(stub.Id)), new Run(root, false, _index, _library), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -145,9 +193,10 @@ public sealed class VersionLinker : IVersionLinker
             }
         }
 
-        // Only the first local copy found is linked: two local films are never merged (decision 20).
+        // Only the first local copy found is linked: two local films are never merged (decision 20). A film an earlier
+        // group links to stays out, and this group links its stubs among themselves (Q170).
         var locals = new List<Guid>();
-        if (PrimaryLocal(group, run) is { } local && items.TryAdd(local.Id, local))
+        if (PrimaryLocal(group, run) is { } local && run.ClaimedLocals.Add(local.Id) && items.TryAdd(local.Id, local))
         {
             locals.Add(local.Id);
         }
@@ -204,11 +253,11 @@ public sealed class VersionLinker : IVersionLinker
         return plan;
     }
 
-    // Detaches each stub that is in no group from every item it is linked to, keeping only links between films (Q144).
-    private async Task DetachUngroupedAsync(StubState state, Run run, CancellationToken cancellationToken)
+    // Detaches each of the stubs that is in no group from every item it is linked to, keeping only links between films (Q144).
+    private async Task DetachUngroupedAsync(StubState state, IEnumerable<StubEntry> stubs, Run run, CancellationToken cancellationToken)
     {
         var grouped = state.Groups.SelectMany(group => group.StubIds).ToHashSet(StringComparer.Ordinal);
-        foreach (var stub in state.Stubs.Where(stub => !grouped.Contains(stub.Id)))
+        foreach (var stub in stubs.Where(stub => !grouped.Contains(stub.Id)))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -338,9 +387,12 @@ public sealed class VersionLinker : IVersionLinker
         // The primary that each alternate's collection entries move to.
         public Dictionary<Guid, Video> Moves { get; } = [];
 
+        // The local films a group already links to in this run.
+        public HashSet<Guid> ClaimedLocals { get; } = [];
+
         public bool Thorough => thorough;
 
-        public bool IsStub(BaseItem item) => item.Path is { } path && FederatedPaths.RelativeTo(root, path) is not null;
+        public bool IsStub(BaseItem item) => FederatedPaths.IsInside(root, item.Path);
 
         public Video? FindStub(StubEntry stub)
         {

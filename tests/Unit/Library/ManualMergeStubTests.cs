@@ -167,15 +167,41 @@ public sealed class ManualMergeStubTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUndo_RunsTheThoroughLink_ThatDetachesTheCopiesOfTheGroupItDissolved()
+    public async Task AnUndo_DetachesAtOnceOnlyTheStubsOfTheGroupItDissolved()
     {
         await ChainAsync();
         await MergeAllAsync();
+        var merge = Assert.Single(_fixture.Merges.Merges);
+        var group = Assert.Single(_fixture.Registry.State.Groups).StubIds.ToList();
         _links.Clear();
+        _linker
+            .Setup(linker => linker.GroupedStubsOf(It.IsAny<IReadOnlyCollection<MergedCopy>>()))
+            .Returns((IReadOnlyCollection<MergedCopy> copies) =>
+            {
+                _links.Add("grouped " + copies.Count + " " + _fixture.Registry.State.Groups.Count);
+                return group;
+            });
+        _linker
+            .Setup(linker => linker.DetachAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<IReadOnlyCollection<string>, CancellationToken>((stubs, _) => _links.Add("detach " + string.Join(',', stubs.Order(StringComparer.Ordinal)) + " " + _fixture.Registry.State.Groups.Count))
+            .Returns(Task.CompletedTask);
 
-        await _service.UndoAsync(Assert.Single(_service.GetList().Merges).Id, CancellationToken.None);
+        await _service.UndoAsync(merge.Id, CancellationToken.None);
 
-        Assert.Equal(["True 0"], _links);
+        Assert.Equal(["grouped 3 1", "False 0", "detach " + string.Join(',', group.Order(StringComparer.Ordinal)) + " 0"], _links);
+        Assert.Equal(merge.Copies, (IEnumerable<MergedCopy>)_linker.Invocations.Single(call => call.Method.Name == nameof(IVersionLinker.GroupedStubsOf)).Arguments[0]);
+    }
+
+    [Fact]
+    public async Task AnUndoOfAMergeThatIsGone_DetachesNothing()
+    {
+        await ChainAsync();
+        await MergeAllAsync();
+        _linker.Invocations.Clear();
+
+        Assert.False(await _service.UndoAsync(Guid.NewGuid(), CancellationToken.None));
+
+        _linker.Verify(linker => linker.DetachAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

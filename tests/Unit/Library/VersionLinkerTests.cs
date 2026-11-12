@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
@@ -190,6 +191,42 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal(new[] { itemA.Id, local.Id }.Order(), LinkedIds(other).Order());
         Assert.Equal(other.Id, local.PrimaryVersionId);
         Assert.DoesNotContain(_saves, save => save.Item == local.Id);
+    }
+
+    // Q170: two groups whose local copies the admin merged into one film; the first by group ID links to it.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task OnlyTheFirstGroupLinksToAFilmTwoGroupsShare(bool thorough, bool reversed)
+    {
+        var film = Local();
+        var first = Local();
+        var second = Local();
+        first.SetPrimaryVersionId(film.Id);
+        second.SetPrimaryVersionId(film.Id);
+        film.LinkedAlternateVersions = [Link(first.Id), Link(second.Id)];
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        var c = Stub("sc", _serverC, 720);
+        VersionGroup[] groups = [Group("g1", ["sa"], [first.Id]), Group("g2", ["sb", "sc"], [second.Id])];
+        await SaveAsync([a, b, c], reversed ? [.. groups.Reverse()] : groups);
+        var (itemA, itemB, itemC) = (Scanned(a), Scanned(b), Scanned(c));
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+        _saves.Clear();
+        _userData.Invocations.Clear();
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        Assert.Equal(film.Id, itemA.PrimaryVersionId);
+        Assert.Equal(new[] { first.Id, second.Id, itemA.Id }.Order(), LinkedIds(film).Order());
+        Assert.Null(itemB.PrimaryVersionId);
+        Assert.Equal(itemB.Id, itemC.PrimaryVersionId);
+        Assert.Equal([itemC.Id], LinkedIds(itemB));
+        Assert.Equal(film.Id, second.PrimaryVersionId);
+        Assert.Empty(_saves);
+        _userData.Verify(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -527,6 +564,65 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal([other.Id], LinkedIds(local));
         Assert.Equal(local.Id, other.PrimaryVersionId);
         Assert.DoesNotContain(_saves, save => save.Item == other.Id);
+    }
+
+    // Q171: an undo detaches at once the stubs of the group it dissolved, and no other stub out of every group (Q144).
+    [Fact]
+    public async Task ADetachAfterAnUndoTouchesOnlyTheStubsItNames()
+    {
+        var (a, b, c, d, e, f) = (Stub("sa", _serverA, 1080), Stub("sb", _serverB, 2160), Stub("sc", _serverA, 720), Stub("sd", _serverB, 720), Stub("se", _serverA, 480), Stub("sf", _serverB, 480));
+        await SaveAsync([a, b, c, d, e, f], Group("g", ["se", "sf"]));
+        var (itemA, itemB, itemC, itemD, itemE, itemF) = (Scanned(a), Scanned(b), Scanned(c), Scanned(d), Scanned(e), Scanned(f));
+        foreach (var (primary, alternate) in new[] { (itemB, itemA), (itemD, itemC), (itemF, itemE) })
+        {
+            alternate.SetPrimaryVersionId(primary.Id);
+            primary.LinkedAlternateVersions = [Link(alternate.Id)];
+        }
+
+        await _linker.DetachAsync(["sa", "sb", "se", "sf"], CancellationToken.None);
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Empty(itemB.LinkedAlternateVersions);
+        Assert.Equal(itemD.Id, itemC.PrimaryVersionId);
+        Assert.Equal([itemC.Id], LinkedIds(itemD));
+        Assert.Equal(itemF.Id, itemE.PrimaryVersionId);
+        Assert.Equal([itemE.Id], LinkedIds(itemF));
+        Assert.Equal(new[] { itemA.Id, itemB.Id }.Order(), _saves.Select(save => save.Item).Order());
+    }
+
+    [Fact]
+    public async Task ADetachAfterAnUndoLeavesALinkBetweenLocalFilms()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a]);
+        var itemA = Scanned(a);
+        var local = Local();
+        var other = Local();
+        itemA.SetPrimaryVersionId(local.Id);
+        other.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(itemA.Id), Link(other.Id)];
+
+        await _linker.DetachAsync(["sa"], CancellationToken.None);
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Equal([other.Id], LinkedIds(local));
+        Assert.Equal(local.Id, other.PrimaryVersionId);
+    }
+
+    [Fact]
+    public async Task TheStubsGroupedWithSomeCopiesAreTheStubsOfTheirGroups()
+    {
+        var local = Local();
+        var (a, b, c, d, e) = (Stub("sa", _serverA, 1080), Stub("sb", _serverB, 2160), Stub("sc", _serverA, 720), Stub("sd", _serverB, 720), Stub("se", _serverC, 720));
+        await SaveAsync([a, b, c, d, e], Group("g1", ["sa", "sb"]), Group("g2", ["sc", "sd"], [local.Id]), Group("g3", ["se"], [Local().Id]));
+        MergedCopy[] copies =
+        [
+            new() { ServerId = _serverA.ToString("N"), ItemId = "ITEM-SA" },
+            new() { ServerId = "local", ItemId = local.Id.ToString("N"), IsLocal = true },
+            new() { ServerId = _serverC.ToString("N"), ItemId = "item-gone" }
+        ];
+
+        Assert.Equal(["sa", "sb", "sc", "sd"], _linker.GroupedStubsOf(copies).Order(StringComparer.Ordinal));
     }
 
     [Fact]
