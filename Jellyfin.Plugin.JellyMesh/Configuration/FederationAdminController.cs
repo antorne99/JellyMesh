@@ -88,14 +88,16 @@ public class FederationAdminController : ControllerBase
     public ActionResult<FederationStatus> GetStatus()
     {
         var keyState = _vault.GetKeyState();
+        var servers = _registry.GetServers();
         return new FederationStatus(
             keyState,
             keyState != KeyState.Ok,
             KeyWarning(keyState),
-            GetFederatedFolder(),
-            _registry.GetServers().Select(ToStatus).ToList())
+            GetFederatedFolder(servers),
+            servers.Select(ToStatus).ToList())
         {
-            LegacyKeySet = _vault.IsLegacyKeySet
+            LegacyKeySet = _vault.IsLegacyKeySet,
+            ReleasedLibraries = _store.Read(config => config.RemovedServerLibraries.SelectMany(held => held.ReleasedLibraries).ToList())
         };
     }
 
@@ -430,21 +432,38 @@ public class FederationAdminController : ControllerBase
         }
     }
 
-    private FederatedFolderStatus GetFederatedFolder()
+    private FederatedFolderStatus GetFederatedFolder(IReadOnlyList<RemoteServerInfo> servers)
     {
         var path = _store.Read(config => config.FederatedFolderPath);
-        var report = path.Length == 0 ? FederatedFolderLinkReport.NotChecked : _linkChecker.Check(path);
+        var report = path.Length == 0 ? FederatedFolderLinkReport.NotChecked : _linkChecker.Check(path, servers.Select(server => server.Id).ToList());
+        var names = servers.ToDictionary(server => server.Id, server => server.Name);
         return new FederatedFolderStatus(
             path,
-            path.Length == 0 ? string.Empty : FederatedFolderLayout.MoviesPath(path),
-            path.Length == 0 ? string.Empty : FederatedFolderLayout.SeriesPath(path),
             report.State,
-            report.Movies,
-            report.Series,
-            report.SeriesGroupingOff,
+            report.Servers.Select(link => ToFolderStatus(link, names[link.ServerId])).ToList(),
+            report.Covering,
+            report.SeriesSplit,
             PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null)
         {
             Migration = path.Length == 0 ? null : _migration?.GetStatus(path)
         };
+    }
+
+    private ServerFolderStatus ToFolderStatus(ServerFolderLink link, string name)
+    {
+        var automatic = _libraries.GetState(link.ServerId);
+        var unregistered = automatic is { Enabled: true }
+            ? link.OnlyOnItsFolders.Where(library => !automatic.Libraries.Any(own => string.Equals(own.Name, library, StringComparison.Ordinal))).ToList()
+            : [];
+        return new ServerFolderStatus(
+            link.ServerId,
+            name,
+            link.MoviesPath,
+            link.SeriesPath,
+            link.Movies,
+            link.Series,
+            link.SeriesGroupingOff,
+            link.SeriesLibraries,
+            unregistered);
     }
 }
