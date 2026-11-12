@@ -38,6 +38,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     private readonly Dictionary<Guid, BaseItem> _items = [];
     private readonly HashSet<(Guid User, Guid Item)> _hidden = [];
     private readonly HashSet<Guid> _failingSaves = [];
+    private readonly HashSet<Guid> _cancellingSaves = [];
     private readonly Dictionary<(Guid User, Guid Item), UserItemData> _rows = [];
     private readonly List<(Guid User, Guid Item, UserDataSaveReason Reason)> _saves = [];
     private readonly List<StubEntry> _stubs = [];
@@ -77,6 +78,11 @@ public sealed class WatchStateCarrierTests : IDisposable
                 if (_failingSaves.Contains(item.Id))
                 {
                     throw new IOException("disk full");
+                }
+
+                if (_cancellingSaves.Contains(item.Id))
+                {
+                    throw new OperationCanceledException();
                 }
 
                 // Like Jellyfin, the saved row replaces the cached one.
@@ -685,6 +691,37 @@ public sealed class WatchStateCarrierTests : IDisposable
         _failingSaves.Clear();
         await RestartAsync();
         report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_mario, b).Played);
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.Null(Row(_mario, a).Rating);
+    }
+
+    [Fact]
+    public async Task AFavoriteSavedBeforeTheRunWasCancelledIsNotPutBackByTheNextRun()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        var b = Movie(_serverB, primary: a);
+        Group(a, b);
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 6;
+        _cancellingSaves.Add(b.Id);
+        var move = Move(old, oldStub, (a, _serverA), (b, _serverB));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CarryAsync(move));
+        Assert.True(Row(_mario, a).IsFavorite);
+
+        Row(_mario, a).IsFavorite = false;
+        Row(_mario, a).Rating = null;
+        _cancellingSaves.Clear();
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        var report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(Row(_mario, b).Played);

@@ -308,15 +308,10 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                 continue;
             }
 
-            var (saved, favoriteSaved) = Save(user, changed, cancellationToken);
-            if (!saved)
+            // A favorite or rating already written is not written again, even if a later row fails or the run is cancelled:
+            // a later run carries only the watch (decision 155).
+            if (!Save(user, changed, () => RecordFavorite(user, from, mode), cancellationToken))
             {
-                // A favorite or rating already written is not written again: a later run carries only the watch (decision 155).
-                if (favoriteSaved && mode == WatchStateCarryMode.First)
-                {
-                    _log.Record(user.Id, from.Id, null);
-                }
-
                 skipped.Add(new WatchStateUserSkip(user.Id, WatchStateUserSkipReason.NotSaved));
                 continue;
             }
@@ -326,6 +321,15 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
 
         return new WatchStateMoveOutcome(move, skipped.Count == 0 ? WatchStateMoveStatus.Carried : WatchStateMoveStatus.UsersLeft, skipped);
+    }
+
+    // Records a first carry with no date once its favorite or rating is saved, so it is not carried again (decision 155).
+    private void RecordFavorite(User user, BaseItem from, WatchStateCarryMode mode)
+    {
+        if (mode == WatchStateCarryMode.First)
+        {
+            _log.Record(user.Id, from.Id, null);
+        }
     }
 
     // Null when there is nothing to carry: an empty row, or a carry done with no newer watch since (decision 155).
@@ -410,30 +414,33 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         return (visible.Where(series => rows.Contains(series.Data)).ToList(), default);
     }
 
-    // Saves the rows with a new favorite or rating first, and tells whether one of those was saved.
-    private (bool Saved, bool FavoriteSaved) Save(User user, List<(BaseItem Item, UserItemData Data)> rows, CancellationToken cancellationToken)
+    // Saves the rows with a new favorite or rating first, calling favoriteSaved as soon as one of those is saved.
+    private bool Save(User user, List<(BaseItem Item, UserItemData Data)> rows, Action favoriteSaved, CancellationToken cancellationToken)
     {
         var ordered = rows
             .Select(row => (row.Item, row.Data, Favorite: ChangesFavoriteOrRating(_userData.GetUserData(user, row.Item), row.Data)))
             .OrderByDescending(row => row.Favorite)
             .ToList();
-        var favoriteSaved = false;
         foreach (var (item, data, favorite) in ordered)
         {
             try
             {
                 _userData.SaveUserData(user, item, data, UserDataSaveReason.Import, cancellationToken);
-                favoriteSaved |= favorite;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 // The type only: a message could hold a path.
                 _logger.LogError("Cannot save the watch state carried to a title: {Error}", exception.GetType().Name);
-                return (false, favoriteSaved);
+                return false;
+            }
+
+            if (favorite)
+            {
+                favoriteSaved();
             }
         }
 
-        return (true, favoriteSaved);
+        return true;
     }
 
     // Drops the records of users who are gone and of old items no longer in the library (decision 165).
