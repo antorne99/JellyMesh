@@ -30,6 +30,9 @@ public static class NfoDocument
         MetadataField.OfficialRating
     ];
 
+    /// <summary>The fields locked on a season, a parent of episodes like a series (decisions 1 and 50).</summary>
+    public static readonly IReadOnlyList<MetadataField> SeasonLockedFields = [MetadataField.Name, MetadataField.Overview];
+
     /// <summary>
     /// Writes the document of a film.
     /// </summary>
@@ -82,6 +85,20 @@ public static class NfoDocument
         WriteOptional(writer, "enddate", FormatDate(value.EndDate));
         WriteOptional(writer, "status", value.Status);
         writer.WriteElementString("lockedfields", string.Join('|', SeriesLockedFields));
+    });
+
+    /// <summary>
+    /// Writes the <c>season.nfo</c> of a season: its name, its plot with protection on, and its number.
+    /// </summary>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>The XML.</returns>
+    public static string Season(StubMetadata metadata) => Write("season", metadata, static (writer, value) =>
+    {
+        WriteOptional(writer, "seasonnumber", value.SeasonNumber?.ToString(CultureInfo.InvariantCulture));
+        if (value.IsProtected)
+        {
+            writer.WriteElementString("lockedfields", string.Join('|', SeasonLockedFields));
+        }
     });
 
     private static string Write(string root, StubMetadata metadata, Action<XmlWriter, StubMetadata> writeSpecific)

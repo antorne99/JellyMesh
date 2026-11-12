@@ -36,6 +36,20 @@ public sealed class LibraryMaterializerTests : IDisposable
         Overview = "Plot"
     };
 
+    private static RemoteItem Season(string id, int number, string seriesId = "s") => TestItems.Season(id, seriesId, number) with
+    {
+        Name = number == 1 ? "The Beginning" : "Season " + number,
+        Overview = "Season plot",
+        ImageTags = new Dictionary<string, string> { ["Primary"] = id + "p" }
+    };
+
+    private void AddSeasonedShow()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss1", 1));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" });
+    }
+
     private static Dictionary<string, string> AllArt(string prefix) => new()
     {
         ["Primary"] = prefix + "p",
@@ -125,6 +139,205 @@ public sealed class LibraryMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Equal(_fixture.Path_(a, "Film", "Film (2020)", "logo.jpg"), item.GetImagePath(ImageType.Logo, 0));
+    }
+
+    [Fact]
+    public async Task ASeasonGetsItsNfoAndPosterInItsFolder()
+    {
+        AddSeasonedShow();
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var nfo = StubFixture.Text(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo"));
+        Assert.Contains("<title>The Beginning</title>", nfo, StringComparison.Ordinal);
+        Assert.Contains("<plot>Season plot</plot>", nfo, StringComparison.Ordinal);
+        Assert.Contains("<seasonnumber>1</seasonnumber>", nfo, StringComparison.Ordinal);
+        Assert.Contains("<lockedfields>Name|Overview</lockedfields>", nfo, StringComparison.Ordinal);
+        Assert.DoesNotContain("<lockdata>", nfo, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Token, nfo, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Host, nfo, StringComparison.Ordinal);
+        Assert.True(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "poster.jpg")));
+        Assert.Contains("ss1/Primary/0", _fixture.Sync.Client.ImageReads);
+    }
+
+    [Fact]
+    public async Task WithoutProtectionASeasonNfoHasItsNameAndNumberOnly()
+    {
+        _fixture.Sync.Store.Configuration.MetadataProtection = false;
+        AddSeasonedShow();
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var nfo = StubFixture.Text(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo"));
+        Assert.Contains("<title>The Beginning</title>", nfo, StringComparison.Ordinal);
+        Assert.DoesNotContain("<plot>", nfo, StringComparison.Ordinal);
+        Assert.DoesNotContain("<lockedfields>", nfo, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ASeasonWithoutEpisodesGetsNoFolder()
+    {
+        AddSeasonedShow();
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss2", 2));
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(Directory.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "Season 02")));
+        Assert.DoesNotContain("ss2/Primary/0", _fixture.Sync.Client.ImageReads);
+    }
+
+    [Fact]
+    public async Task AnEpisodeWithoutItsSeasonIdFindsTheSeasonOfItsSeriesByNumber()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss1", 1));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Contains("<title>The Beginning</title>", StubFixture.Text(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ASeasonTheIndexDoesNotHaveGetsNoNfo()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "missing" });
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.True(Directory.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01")));
+        Assert.False(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo")));
+    }
+
+    [Fact]
+    public async Task ASecondRunLeavesTheSeasonAlone()
+    {
+        AddSeasonedShow();
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        var nfo = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo");
+        var written = File.GetLastWriteTimeUtc(nfo);
+        var images = _fixture.Sync.Client.ImageReads.Count;
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(images, _fixture.Sync.Client.ImageReads.Count);
+        Assert.Equal(written, File.GetLastWriteTimeUtc(nfo));
+        _fixture.Library.Verify(library => library.FindByPath(It.IsAny<string>(), true), Times.Never);
+    }
+
+    [Fact]
+    public async Task ALostSeasonNfoIsWrittenAgain()
+    {
+        AddSeasonedShow();
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        var nfo = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo");
+        File.Delete(nfo);
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(nfo));
+    }
+
+    [Fact]
+    public async Task AChangedSeasonReachesItsIndexedItem()
+    {
+        AddSeasonedShow();
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        var folder = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01");
+        var item = new Season { Id = Guid.NewGuid(), Path = folder, Name = "Season 1", IndexNumber = 1 };
+        _fixture.Library.Setup(library => library.FindByPath(folder, true)).Returns(item);
+        _fixture.Sync.Client.Items[("shows", RemoteItemType.Season)][0] = Season("ss1", 1) with
+        {
+            Name = "New Name",
+            Overview = "New plot",
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "sp2" }
+        };
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal("New Name", item.Name);
+        Assert.Equal("New plot", item.Overview);
+        Assert.Equal([MetadataField.Name, MetadataField.Overview], item.LockedFields);
+        Assert.False(item.IsLocked);
+        Assert.Equal(Path.Combine(folder, "poster.jpg"), item.GetImagePath(ImageType.Primary, 0));
+    }
+
+    [Fact]
+    public async Task AnIndexedSeasonGetsItsNameAndPosterOnTheFirstRunThatKnowsIt()
+    {
+        AddSeasonedShow();
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        var series = Assert.Single(_fixture.Registry.State.Series);
+        await _fixture.Registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await _fixture.Registry.SaveAsync(_fixture.Registry.State with { Series = [series with { Seasons = [] }] }, CancellationToken.None);
+        }
+        finally
+        {
+            _fixture.Registry.Exit();
+        }
+
+        var folder = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01");
+        var item = new Season { Id = Guid.NewGuid(), Path = folder, Name = "Season 1", IndexNumber = 1 };
+        _fixture.Library.Setup(library => library.FindByPath(folder, true)).Returns(item);
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal("The Beginning", item.Name);
+        Assert.Equal(Path.Combine(folder, "poster.jpg"), item.GetImagePath(ImageType.Primary, 0));
+    }
+
+    [Fact]
+    public async Task ASeasonThatGoesAndComesBackGetsItsFilesAgain()
+    {
+        AddSeasonedShow();
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss2", 2) with { Name = "Second" });
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e2", "s", 2, 1) with { SeasonId = "ss2" });
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        var second = _fixture.Path_(a, "Serie", "Show (2020)", "Season 02");
+        Assert.True(File.Exists(Path.Combine(second, "season.nfo")));
+        var episodes = _fixture.Sync.Client.Items[("shows", RemoteItemType.Episode)];
+        var gone = episodes[1];
+        episodes.RemoveAt(1);
+
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.False(Directory.Exists(second));
+        Assert.Equal([StubFixture.In(a, "Serie", "Show (2020)", "Season 01")], Assert.Single(_fixture.Registry.State.Series).Seasons.Select(season => season.RelativePath));
+
+        episodes.Add(gone);
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.True(File.Exists(Path.Combine(second, "season.nfo")));
+        Assert.True(File.Exists(Path.Combine(second, "poster.jpg")));
+    }
+
+    [Fact]
+    public async Task AServerFolderGetsTheSeasonOfItsOwnServer()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-b", "Serie B", "tvshows"));
+        AddSeasonedShow();
+        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Series, TestItems.Series("sb"));
+        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Season, Season("sb1", 1, "sb") with { Name = "Name on B" });
+        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Episode, TestItems.Episode("eb", "sb", 1, 2) with { SeasonId = "sb1" });
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var b = await _fixture.Sync.AddServerAsync("B", "shows-b");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Contains("<title>The Beginning</title>", StubFixture.Text(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo")), StringComparison.Ordinal);
+        Assert.Contains("<title>Name on B</title>", StubFixture.Text(_fixture.Path_(b, "Serie", "Show (2020)", "Season 01", "season.nfo")), StringComparison.Ordinal);
     }
 
     [Fact]

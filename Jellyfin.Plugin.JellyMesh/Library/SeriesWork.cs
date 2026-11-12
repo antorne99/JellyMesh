@@ -21,4 +21,8 @@ public sealed record SeriesWork(
     string NfoPath,
     string ContentHash,
     IReadOnlyList<StubImage> Images,
-    string ImageTag);
+    string ImageTag)
+{
+    /// <summary>Gets the season folders of the episodes that have work, each with its own files.</summary>
+    public IReadOnlyList<SeasonWork> Seasons { get; init; } = [];
+}

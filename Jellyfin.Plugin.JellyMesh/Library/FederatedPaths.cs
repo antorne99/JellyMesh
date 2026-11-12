@@ -142,12 +142,17 @@ public static partial class FederatedPaths
     /// <returns>The relative path of the <c>.strm</c>.</returns>
     public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null, string? label = null)
     {
-        var folder = string.Create(CultureInfo.InvariantCulture, $"Season {season:00}");
+        var folder = SeasonFolder(season);
         var range = lastEpisode is { } last ? string.Create(CultureInfo.InvariantCulture, $"-E{last:00}") : string.Empty;
         var suffix = label is null ? string.Empty : " - " + label;
         var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}{suffix}.strm");
         return Path.Combine(seriesFolder, folder, file);
     }
+
+    /// <summary>Builds the name of the folder of a season, as Jellyfin reads its number.</summary>
+    /// <param name="season">The season.</param>
+    /// <returns>The folder name.</returns>
+    public static string SeasonFolder(int season) => string.Create(CultureInfo.InvariantCulture, $"Season {season:00}");
 
     /// <summary>
     /// Builds the label of each server, the text after <c> - </c> in its stub names that clients show as the version

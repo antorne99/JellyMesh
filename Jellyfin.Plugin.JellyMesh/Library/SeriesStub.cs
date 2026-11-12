@@ -31,4 +31,7 @@ public sealed record SeriesStub
 
     /// <summary>Gets a value indicating whether the item still needs its first refresh (Phase 0, V17).</summary>
     public bool NeedsRefresh { get; init; }
+
+    /// <summary>Gets the season folders written for the series, as of the last run that had work for it.</summary>
+    public IReadOnlyList<SeasonStub> Seasons { get; init; } = [];
 }

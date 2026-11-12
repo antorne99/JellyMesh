@@ -11,11 +11,20 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public sealed class IndexItemLookup
 {
     private readonly Dictionary<(Guid ServerId, string ItemId), IndexedItem> _items;
+    private readonly Dictionary<(Guid ServerId, string SeriesId, int Number), IndexedItem> _seasons;
 
     private IndexItemLookup(Dictionary<(Guid ServerId, string ItemId), IndexedItem> items, IndexSnapshot snapshot)
     {
         _items = items;
         Snapshot = snapshot;
+        _seasons = [];
+        foreach (var ((serverId, _), item) in items)
+        {
+            if (item is { Kind: IndexedItemKind.Season, SeriesId: { } seriesId, IndexNumber: { } number })
+            {
+                _seasons.TryAdd((serverId, seriesId, number), item);
+            }
+        }
     }
 
     /// <summary>
@@ -48,4 +57,13 @@ public sealed class IndexItemLookup
     /// <param name="itemId">The item on the server.</param>
     /// <returns>The entry, null if the index does not have it.</returns>
     public IndexedItem? Find(Guid serverId, string itemId) => _items.GetValueOrDefault((serverId, itemId));
+
+    /// <summary>
+    /// Finds a season of a series by its number.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="seriesId">The series on the server.</param>
+    /// <param name="number">The season number.</param>
+    /// <returns>The season, null if the index does not have it.</returns>
+    public IndexedItem? FindSeason(Guid serverId, string seriesId, int number) => _seasons.GetValueOrDefault((serverId, seriesId, number));
 }
