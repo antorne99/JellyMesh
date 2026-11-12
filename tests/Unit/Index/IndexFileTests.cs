@@ -86,6 +86,7 @@ public sealed class IndexFileTests : IDisposable
         SeasonName = "Season 1",
         ImageTags = new System.Collections.Generic.Dictionary<string, string> { ["Primary"] = "tag" },
         BackdropImageTags = ["backdrop"],
+        Collection = new IndexedBoxSet("Saga", "10"),
         Versions =
         [
             new IndexedVersion
