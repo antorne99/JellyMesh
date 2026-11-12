@@ -612,13 +612,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             return entries;
         }
 
-        var libraries = entries.Where(item => item.Kind == IndexedItemKind.Movie).Select(item => item.LibraryId).Distinct(StringComparer.Ordinal).ToList();
+        var films = entries.Where(item => item.Kind == IndexedItemKind.Movie).ToList();
+        var libraries = films.Select(item => item.LibraryId).Distinct(StringComparer.Ordinal).ToList();
         if (libraries.Count == 0)
         {
             return entries;
         }
 
-        var read = await _reader.ReadCollectionsAsync(server, libraries, cancellationToken).ConfigureAwait(false);
+        var filmIds = films.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
+        var read = await _reader.ReadCollectionsAsync(server, libraries, filmIds, cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
             _logger.LogWarning("Could not read the collections of remote server {ServerName}: {Failure}. The ones known are kept", server.Name, read.Failure);

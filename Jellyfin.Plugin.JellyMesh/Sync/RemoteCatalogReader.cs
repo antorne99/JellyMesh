@@ -44,6 +44,11 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     /// </summary>
     public const int MaxCollections = 10_000;
 
+    /// <summary>
+    /// Longest collection name kept, after trimming. The name is copied into every film of the collection.
+    /// </summary>
+    public const int MaxCollectionNameLength = 256;
+
     private const int MaxReadAttempts = 3;
     private const string MoviesCollection = "movies";
 
@@ -157,10 +162,15 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server, IReadOnlyCollection<string> libraryIds, CancellationToken cancellationToken)
+    public async Task<RemoteResult<IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(
+        RemoteServerInfo server,
+        IReadOnlyCollection<string> libraryIds,
+        IReadOnlySet<string> filmIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(libraryIds);
+        ArgumentNullException.ThrowIfNull(filmIds);
 
         var budget = new ReadBudget();
         var collections = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
@@ -172,7 +182,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(read.Failure);
             }
 
-            foreach (var collection in read.Value!.Where(collection => !string.IsNullOrWhiteSpace(collection.Name)))
+            foreach (var collection in read.Value!.Where(HasUsableName))
             {
                 collections.TryAdd(collection.Id, new IndexedBoxSet(collection.Name!, TmdbIdOf(collection)));
             }
@@ -184,16 +194,22 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         }
 
         // A film in several collections keeps the first by name, so that the choice does not depend on the order of a read.
+        // Only films of the catalog are kept, so the result is never larger than it.
         var films = new Dictionary<string, IndexedBoxSet>(StringComparer.Ordinal);
         foreach (var (id, collection) in collections.OrderBy(entry => entry.Value.Name, StringComparer.Ordinal).ThenBy(entry => entry.Key, StringComparer.Ordinal))
         {
+            if (films.Count >= filmIds.Count)
+            {
+                break;
+            }
+
             var read = await ReadBriefAsync(server, (endpoint, session, start, limit, token) => _client.GetCollectionFilmsAsync(endpoint, session, id, start, limit, token), MaxItemsPerQuery, budget, cancellationToken).ConfigureAwait(false);
             if (!read.IsSuccess)
             {
                 return RemoteResult.Fail<IReadOnlyDictionary<string, IndexedBoxSet>>(read.Failure);
             }
 
-            foreach (var film in read.Value!)
+            foreach (var film in read.Value!.Where(film => filmIds.Contains(film.Id)))
             {
                 films.TryAdd(film.Id, collection);
             }
@@ -201,6 +217,10 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
         return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
     }
+
+    // A name that is blank or too long is left out with its collection, not truncated.
+    private static bool HasUsableName(RemoteItem collection)
+        => !string.IsNullOrWhiteSpace(collection.Name) && collection.Name.Trim().Length <= MaxCollectionNameLength;
 
     // Digits only: it goes into an attribute of the .nfo.
     private static string? TmdbIdOf(RemoteItem collection)
