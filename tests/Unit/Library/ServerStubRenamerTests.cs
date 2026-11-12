@@ -213,12 +213,25 @@ public sealed class ServerStubRenamerTests : IDisposable
     public async Task AnOldItemNeverScannedHasNothingToCarry()
     {
         await RenamedFilmAsync();
+        Scanned(FilmPath("Mare"), new Movie());
 
         await _renamer.FinishAsync(CancellationToken.None);
 
         Assert.Empty(_carries);
         Assert.False(File.Exists(Full(FilmPath("Casa"))));
         Assert.Empty(_registry.State.Renames);
+    }
+
+    [Fact]
+    public async Task WithNeitherItemInALibrary_TheOldFileStaysForTheScanThatBringsItBack()
+    {
+        await RenamedFilmAsync();
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Empty(_carries);
+        Assert.True(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
     }
 
     [Theory]

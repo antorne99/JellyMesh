@@ -150,9 +150,10 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 }
 
                 var old = stub is null ? null : ItemAt(root, rename.OldPath, stub.Kind);
-                if (stub is null || old is null)
+                var renamed = stub is null ? null : ItemAt(root, stub.RelativePath, stub.Kind);
+                if (stub is null || (old is null && renamed is not null))
                 {
-                    // Nothing to carry: the stub left the registry, or its old item was never scanned.
+                    // Nothing to carry: the stub left the registry, or a scan made the new item but never the old one.
                     if (TryDeleteOld(root, rename, stub))
                     {
                         next[rename] = null;
@@ -161,7 +162,8 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                     continue;
                 }
 
-                if (ItemAt(root, stub.RelativePath, stub.Kind) is { } renamed)
+                // Neither item, as with the folder in no library: the old file keeps its state for the scan that brings it back.
+                if (old is not null && renamed is not null)
                 {
                     var from = stub with { RelativePath = rename.OldPath };
                     moves.Add((rename, stub, WatchStateMove.Of(from, old.Id, [new WatchStateTarget(renamed.Id, stub.ServerId)], removesOldItem: true)));
