@@ -172,7 +172,8 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <param name="libraries">The libraries of its registry.</param>
     /// <param name="preexistingIds">The ids of the libraries there when its switch was turned on.</param>
     /// <param name="followedIds">The ids of the libraries there at the last check of its registry.</param>
-    public void HoldAutomaticLibraries(Guid serverId, IEnumerable<AutomaticLibraryConfig> libraries, IEnumerable<string> preexistingIds, IEnumerable<string> followedIds)
+    /// <param name="followSkipped">Whether a check of its registry was skipped or failed since those ids were recorded.</param>
+    public void HoldAutomaticLibraries(Guid serverId, IEnumerable<AutomaticLibraryConfig> libraries, IEnumerable<string> preexistingIds, IEnumerable<string> followedIds, bool followSkipped)
     {
         ArgumentNullException.ThrowIfNull(libraries);
         ArgumentNullException.ThrowIfNull(preexistingIds);
@@ -188,6 +189,8 @@ public class PluginConfiguration : BasePluginConfiguration
         {
             entry.Libraries.Add(library);
         }
+
+        entry.FollowSkipped |= followSkipped;
 
         foreach (var id in preexistingIds.Where(id => !entry.PreexistingLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase)))
         {
