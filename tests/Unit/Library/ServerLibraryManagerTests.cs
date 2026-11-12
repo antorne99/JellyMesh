@@ -354,6 +354,31 @@ public sealed class ServerLibraryManagerTests
         Assert.Empty(fixture.Manager.GetState(_serverId).Released);
     }
 
+    [Fact]
+    public async Task While_a_job_runs_another_request_is_busy_and_the_sync_skips_the_follow()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var off = fixture.Manager.Disable(_serverId, true);
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+
+        Assert.Equal(AutomaticLibrariesOutcome.Busy, fixture.Manager.Enable(_serverId).Outcome);
+        Assert.Equal(AutomaticLibrariesOutcome.Busy, fixture.Manager.Disable(_serverId, true).Outcome);
+        Assert.True(fixture.Manager.GetState(_serverId).Busy);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Contains(fixture.Server.AutomaticLibraryRegistry, entry => entry.Name == "Casa - Film");
+
+        release.SetResult();
+        await off.Job.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(fixture.Manager.GetState(_serverId).Busy);
+        Assert.Empty(fixture.Libraries.Folders);
+    }
+
     private sealed class Fixture
     {
         public Fixture(string root = Root, string serverName = "Casa")
@@ -474,6 +499,10 @@ public sealed class ServerLibraryManagerTests
     {
         public List<string> Steps { get; } = [];
 
+        public TaskCompletionSource Entered { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Block { get; set; } = Task.CompletedTask;
+
         public Task WaitIdleAsync(CancellationToken cancellationToken)
         {
             if (Steps.LastOrDefault() != "wait")
@@ -481,7 +510,8 @@ public sealed class ServerLibraryManagerTests
                 Steps.Add("wait");
             }
 
-            return Task.CompletedTask;
+            Entered.TrySetResult();
+            return Block;
         }
 
         public Task QueueAndWaitAsync(CancellationToken cancellationToken)
