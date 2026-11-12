@@ -1,5 +1,7 @@
 using System;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Segments;
+using MediaBrowser.Controller.MediaSegments;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -19,7 +21,9 @@ public static class PlaybackServices
     public static void AddPlayback(this IServiceCollection services)
     {
         services.TryAddSingleton(TimeProvider.System);
-        services.AddSingleton<IRemotePlaybackClient, RemotePlaybackClient>();
+        services.AddSingleton<RemotePlaybackClient>();
+        services.AddSingleton<IRemotePlaybackClient>(provider => provider.GetRequiredService<RemotePlaybackClient>());
+        services.AddSingleton<IRemoteSegmentClient>(provider => provider.GetRequiredService<RemotePlaybackClient>());
         services.AddSingleton<PlaybackSessionStore>();
         services.AddSingleton<ILastServedSourceStore>(provider => new LastServedSourceStore(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
@@ -31,6 +35,8 @@ public static class PlaybackServices
         services.AddSingleton<PlaybackVersions>();
         services.AddSingleton<PlaybackInfoFilter>();
         services.AddSingleton<StockRouteGuardFilter>();
+        services.AddSingleton<StubSegments>();
+        services.AddSingleton<IMediaSegmentProvider, StubSegmentProvider>();
         services.AddHostedService<PlaybackSweeper>();
 
         services.Configure<MvcOptions>(options =>
