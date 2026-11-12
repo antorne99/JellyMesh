@@ -925,6 +925,25 @@ public sealed class ServerLibraryManagerTests
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
 
+    [Fact]
+    public async Task A_removed_server_whose_library_another_server_found_at_switch_on_never_takes_an_admin_library_on_that_folder()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        fixture.Store.Update(config => config.Servers.Add(other));
+        await fixture.Manager.Enable(other.Id).Job;
+        Assert.Contains(fixture.Libraries.IdOf("Casa - Film"), other.PreexistingLibraryIds);
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Casa - Film", "Casa - Serie", "Altro - Film", "Altro - Serie", "Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
     // Switched on, then an admin library made on the server Film folder and seen by one check.
     private static async Task<Fixture> AdminLibraryAfterAQuietCheck()
     {
