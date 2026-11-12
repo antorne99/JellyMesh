@@ -373,6 +373,26 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task AVersionOfALocalFilmIsNeverDetached()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        var owner = Local();
+        var version = Add(new Movie { Path = "/media/films/x - 720p.mkv", OwnerId = owner.Id }, Guid.NewGuid());
+        version.SetPrimaryVersionId(itemB.Id);
+        itemB.LinkedAlternateVersions = [Link(version.Id)];
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+
+        Assert.Equal(itemB.Id, version.PrimaryVersionId);
+        Assert.DoesNotContain(_saves, save => save.Item == version.Id);
+        Assert.Equal([itemA.Id], LinkedIds(itemB));
+    }
+
+    [Fact]
     public async Task NothingHappensWithoutAFederatedFolder()
     {
         _store.Configuration.FederatedFolderPath = string.Empty;

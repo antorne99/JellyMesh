@@ -159,7 +159,8 @@ public sealed class VersionLinker : IVersionLinker
         var known = new Dictionary<Guid, Video>(items);
         foreach (var id in items.Values.SelectMany(video => StateOf(video).LinkedIds.Append(video.PrimaryVersionId ?? Guid.Empty)))
         {
-            if (id != Guid.Empty && !known.ContainsKey(id) && _library.GetItemById(id) is Video other)
+            // A version of a local film belongs to its owner: it is never detached.
+            if (id != Guid.Empty && !known.ContainsKey(id) && _library.GetItemById(id) is Video { OwnerId: var owner } other && owner.Equals(Guid.Empty))
             {
                 known[id] = other;
             }
