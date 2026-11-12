@@ -104,7 +104,13 @@ internal sealed class StubFixture : IDisposable
 
     public static string Text(string path) => File.ReadAllText(path);
 
+    /// <summary>Builds a path relative to the root, inside the folder of a server.</summary>
+    public static string In(RemoteServerInfo server, params string[] parts) => Path.Combine(FederatedPaths.ServerFolder(server.Id), Path.Combine(parts));
+
     public string Path_(params string[] parts) => Path.Combine(Root, Path.Combine(parts));
+
+    /// <summary>Builds an absolute path inside the folder of a server.</summary>
+    public string Path_(RemoteServerInfo server, params string[] parts) => Path.Combine(Root, In(server, parts));
 
     public async Task SyncAndMaterializeAsync()
     {

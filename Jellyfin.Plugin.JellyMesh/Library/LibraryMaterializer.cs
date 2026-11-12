@@ -11,9 +11,7 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -118,6 +116,37 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
+    /// <inheritdoc />
+    public void PrepareServerFolders()
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (root.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            WriteServerFolders(root, _servers.GetServers());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Cannot write the folders of the servers in the federated folder: {Error}", ex.Message);
+        }
+    }
+
+    // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty.
+    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers)
+    {
+        WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
+        WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
+        foreach (var server in servers)
+        {
+            WriteHiddenFile(root, FederatedPaths.MovieFolder(server.Id, string.Empty));
+            WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(server.Id, string.Empty));
+        }
+    }
+
     private static string ExtensionOf(string contentType) => contentType.ToUpperInvariant() switch
     {
         "IMAGE/PNG" => ".png",
@@ -195,17 +224,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
-        var plan = StubPlanner.Plan(new StubPlanInput(
-            view,
-            snapshot,
-            _registry.State,
-            servers,
-            isProtected,
-            _urls.Build,
-            workKey => LocalSeriesOf(view, workKey)));
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null));
 
-        WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
-        WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
+        WriteServerFolders(root, servers);
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 
@@ -221,7 +242,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             await WriteStubAsync(run, stub, cancellationToken).ConfigureAwait(false);
         }
 
-        // A stub with no work, such as one waiting for the post-scan task after its local copy arrived, can still be opened.
+        // A stub with no work, of the flat layout or merged and waiting for the post-scan task, can still be opened.
         var handled = plan.Stubs.Select(work => work.Entry).Concat(plan.Removals).Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var stub in plan.State.Stubs.Where(stub => !handled.Contains(stub.Id)))
         {
@@ -261,29 +282,6 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             Unconfigured = plan.Unconfigured
         };
-    }
-
-    private LocalSeries? LocalSeriesOf(FederationView view, string workKey)
-    {
-        if (!view.LocalItemByWork.TryGetValue(workKey, out var itemId)
-            || _library.GetItemById(itemId) is not Episode episode
-            || _library.GetItemById(episode.SeriesId) is not Series series)
-        {
-            return null;
-        }
-
-        return new LocalSeries(
-            series.Name,
-            series.ProductionYear,
-            series.Overview,
-            series.ProviderIds,
-            LocalImage(series, ImageType.Primary),
-            LocalImage(series, ImageType.Backdrop));
-    }
-
-    private string? LocalImage(BaseItem item, ImageType type)
-    {
-        return item.GetImageInfo(type, 0) is { IsLocalFile: true } image && File.Exists(image.Path) ? image.Path : null;
     }
 
     private async Task WriteSeriesAsync(Run run, SeriesWork work, CancellationToken cancellationToken)

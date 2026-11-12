@@ -92,7 +92,7 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Adds a server after logging in on it.
+    /// Adds a server after logging in on it, and writes its folders in the federated folder.
     /// </summary>
     /// <param name="request">The server and the dedicated user.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -108,7 +108,13 @@ public class FederationAdminController : ControllerBase
 
         var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
         var result = await _registry.AddAsync(request.Name, request.Url, credentials, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
+        if (!result.IsSuccess)
+        {
+            return Failed(result.Failure);
+        }
+
+        _sync.PrepareServerFolders();
+        return ToStatus(result.Value!);
     }
 
     /// <summary>

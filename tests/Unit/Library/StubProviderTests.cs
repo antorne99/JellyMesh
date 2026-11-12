@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -55,9 +56,9 @@ public sealed class StubProviderTests : IDisposable
             Chapters = [new RemoteChapter("Uno", 0), new RemoteChapter("Due", 300_000_000)]
         };
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        await _fixture.Sync.AddServerAsync("A", "films");
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
         await _fixture.SyncAndMaterializeAsync();
-        return _fixture.Path_("Film", "Film (2020)", "Film (2020).strm");
+        return _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
     }
 
     [Fact]
@@ -95,6 +96,18 @@ public sealed class StubProviderTests : IDisposable
                 It.Is<IReadOnlyList<MediaStream>>(list => list.Select(stream => stream.Index).SequenceEqual(new[] { 0, 2, 3 })),
                 It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task AStubWhoseTitleHasALocalCopyGetsItsRuntimeToo()
+    {
+        _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), Kind = ContentKind.Movie, Ids = new ContentIds("1") });
+        var path = await FilmStubAsync();
+        var item = new Movie { Id = Guid.NewGuid(), Path = path };
+
+        await Before().FetchAsync(item, Options(), CancellationToken.None);
+
+        Assert.Equal(1_234_567_890, item.RunTimeTicks);
     }
 
     [Fact]
@@ -193,9 +206,9 @@ public sealed class StubProviderTests : IDisposable
     {
         _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
         _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 2, 3));
-        await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
         await _fixture.SyncAndMaterializeAsync();
-        var path = _fixture.Path_("Serie", "Show (2020)", "Season 02", "Show S02E03.strm");
+        var path = _fixture.Path_(a, "Serie", "Show (2020)", "Season 02", "Show S02E03 - A.strm");
 
         var early = new Episode { Id = Guid.NewGuid(), Path = path };
         await Before().FetchAsync(early, Options(), CancellationToken.None);
