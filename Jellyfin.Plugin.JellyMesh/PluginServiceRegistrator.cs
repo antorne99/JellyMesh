@@ -65,6 +65,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
         serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
         serviceCollection.AddSingleton<RetiredLibraryIds>();
+        serviceCollection.AddSingleton<ILibraryViewIds, LibraryViewIds>();
+        serviceCollection.AddSingleton<ILibraryRenamer, LibraryRenamer>();
         serviceCollection.AddSingleton<RetiredLibraryFilter>();
         serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<RetiredLibraryFilter>());
         serviceCollection.AddSingleton<IVersionLinker, VersionLinker>();
