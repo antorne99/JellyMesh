@@ -242,6 +242,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     {
         if (_vault.GetKeyState() != KeyState.Ok)
         {
+            MarkLibraryFollowSkipped();
             return SyncStartResult.Suspended;
         }
 
@@ -291,6 +292,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         IReadOnlyList<RemoteServerInfo> servers = [];
         var materialized = new Materialized(null, false);
         SyncRunOutcome? stopped = null;
+        var followed = false;
         try
         {
             _runFailures.Clear();
@@ -303,6 +305,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
             materialized = await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            followed = true;
             await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
             if (servers.Count > 0)
             {
@@ -321,6 +324,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         finally
         {
+            if (!followed)
+            {
+                MarkLibraryFollowSkipped();
+            }
+
             // Before the run shows finished: the page reads the history again when it sees a new end.
             await RecordAsync(kind, started, servers, materialized, stopped).ConfigureAwait(false);
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
@@ -450,6 +458,19 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Could not follow the libraries of the servers: {Error}", exception.GetType().Name);
+        }
+    }
+
+    // A sync that never reaches the library check counts as a skipped one (decisions 173, 185).
+    private void MarkLibraryFollowSkipped()
+    {
+        try
+        {
+            _libraries?.MarkFollowSkipped();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError("Could not mark the check of the server libraries as skipped: {Error}", exception.GetType().Name);
         }
     }
 
@@ -591,13 +612,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             return entries;
         }
 
-        var libraries = entries.Where(item => item.Kind == IndexedItemKind.Movie).Select(item => item.LibraryId).Distinct(StringComparer.Ordinal).ToList();
+        var films = entries.Where(item => item.Kind == IndexedItemKind.Movie).ToList();
+        var libraries = films.Select(item => item.LibraryId).Distinct(StringComparer.Ordinal).ToList();
         if (libraries.Count == 0)
         {
             return entries;
         }
 
-        var read = await _reader.ReadCollectionsAsync(server, libraries, cancellationToken).ConfigureAwait(false);
+        var filmIds = films.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
+        var read = await _reader.ReadCollectionsAsync(server, libraries, filmIds, cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
             _logger.LogWarning("Could not read the collections of remote server {ServerName}: {Failure}. The ones known are kept", server.Name, read.Failure);

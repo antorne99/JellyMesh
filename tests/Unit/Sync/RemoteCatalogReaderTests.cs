@@ -18,8 +18,13 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     private Task<RemoteResult<System.Collections.Generic.IReadOnlyList<IndexedItem>>> ReadAsync(RemoteServerInfo server)
         => _fixture.Reader.ReadAsync(server, SyncFixture.Start, CancellationToken.None);
 
-    private Task<RemoteResult<System.Collections.Generic.IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server)
-        => _fixture.Reader.ReadCollectionsAsync(server, ["films"], CancellationToken.None);
+    // By default every film of the fake collections is in the catalog.
+    private Task<RemoteResult<System.Collections.Generic.IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server, params string[] filmIds)
+        => _fixture.Reader.ReadCollectionsAsync(
+            server,
+            ["films"],
+            (filmIds.Length > 0 ? filmIds : _fixture.Client.Collections.SelectMany(entry => entry.Films)).ToHashSet(StringComparer.Ordinal),
+            CancellationToken.None);
 
     [Fact]
     public async Task EachFilmOfACollectionGetsItsNameAndTmdbId()
@@ -70,6 +75,45 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         var result = await ReadCollectionsAsync(server);
 
         Assert.Empty(result.Value!);
+    }
+
+    [Fact]
+    public async Task ACollectionWithANameLongerThan256CharactersIsLeftOut()
+    {
+        _fixture.Client.AddCollection("films", "long", new string('x', 257), "m1");
+        _fixture.Client.AddCollection("films", "edge", " " + new string('y', 256) + " ", "m2");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.False(result.Value!.ContainsKey("m1"));
+        Assert.Equal(" " + new string('y', 256) + " ", result.Value["m2"].Name);
+    }
+
+    [Fact]
+    public async Task AMemberThatIsNotAFilmOfTheCatalogIsLeftOut()
+    {
+        _fixture.Client.AddCollection("films", "box", "Saga", "m1", "ghost1", "ghost2");
+        _fixture.Client.AddCollection("films", "other", "Zeta", "ghost3");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server, "m1");
+
+        Assert.Equal(["m1"], result.Value!.Keys);
+    }
+
+    [Fact]
+    public async Task NoMoreCollectionsAreReadOnceEveryFilmOfTheCatalogHasOne()
+    {
+        _fixture.Client.AddCollection("films", "a", "Saga A", "m1");
+        _fixture.Client.AddCollection("films", "b", "Saga B", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server, "m1");
+
+        Assert.Equal("Saga A", result.Value!["m1"].Name);
+        Assert.Contains("a@0", _fixture.Client.CollectionReads);
+        Assert.DoesNotContain("b@0", _fixture.Client.CollectionReads);
     }
 
     [Fact]

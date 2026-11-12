@@ -93,6 +93,6 @@ public static partial class YouTubeTrailer
         return null;
     }
 
-    [GeneratedRegex("^[A-Za-z0-9_-]{11}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^[A-Za-z0-9_-]{11}\z", RegexOptions.CultureInvariant)]
     private static partial Regex IdPattern();
 }

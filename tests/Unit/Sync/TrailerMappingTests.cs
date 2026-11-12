@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Xunit;
@@ -44,6 +45,14 @@ public class TrailerMappingTests
     public void AnythingElseIsLeftOut(string url)
     {
         Assert.Empty(IdsOf(url));
+    }
+
+    [Theory]
+    [InlineData("dQw4w9WgXcQ\n")]
+    [InlineData("dQw4w9WgXcQ\r\n")]
+    public void AnIdWithATrailingNewLineIsNotAnId(string id)
+    {
+        Assert.False(YouTubeTrailer.IsId(id));
     }
 
     [Fact]
