@@ -1,0 +1,320 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.JellyMesh.Library;
+
+/// <summary>
+/// Moves the stubs of a renamed server to its new label with the mechanism of the migration (Q38): the new files are
+/// written next to the old ones, and once a scan has made the new items the watch state is carried and the old files go.
+/// </summary>
+public sealed class ServerStubRenamer
+{
+    private readonly StubRegistry _registry;
+    private readonly IPluginConfigurationStore _store;
+    private readonly ILibraryManager _library;
+    private readonly IWatchStateCarrier _carrier;
+    private readonly ILogger<ServerStubRenamer> _logger;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ServerStubRenamer"/> class.
+    /// </summary>
+    /// <param name="registry">The stub registry.</param>
+    /// <param name="store">The configuration store.</param>
+    /// <param name="library">The library manager.</param>
+    /// <param name="carrier">The watch state carrier.</param>
+    /// <param name="logger">The logger.</param>
+    public ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, ILogger<ServerStubRenamer> logger)
+    {
+        _registry = registry;
+        _store = store;
+        _library = library;
+        _carrier = carrier;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Tells whether stubs of a server still wait for their old items to go.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>True while a rename of the server is not done.</returns>
+    public bool IsPending(Guid serverId)
+    {
+        var state = _registry.State;
+        return state.Renames.Any(rename => _registry.Find(rename.StubId) is not { } stub || stub.ServerId == serverId);
+    }
+
+    /// <summary>
+    /// Writes the stubs of a server under the label of its new name, and saves their new and old paths with the label
+    /// in one step. A change of case keeps the label (row 84).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="name">Its new name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many stubs moved.</returns>
+    /// <exception cref="IOException">A file or the registry could not be written; the new files are taken back.</exception>
+    public async Task<int> RelabelAsync(Guid serverId, string name, CancellationToken cancellationToken)
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = _registry.State;
+            if (!state.Labels.TryGetValue(serverId, out var old))
+            {
+                // No stub was ever planned: the planner gives the label from the new name.
+                return 0;
+            }
+
+            var label = FederatedPaths.Relabel(serverId, name, state.Labels);
+            if (string.Equals(label, old, StringComparison.Ordinal))
+            {
+                return 0;
+            }
+
+            var stubs = state.Stubs.ToList();
+            var renames = state.Renames.ToList();
+            var written = new List<string>();
+            var moved = 0;
+            try
+            {
+                for (var index = 0; index < stubs.Count; index++)
+                {
+                    var stub = stubs[index];
+                    if (stub.ServerId != serverId || NewPath(stub.RelativePath, old, label) is not { } path)
+                    {
+                        continue;
+                    }
+
+                    if (root.Length > 0 && CopyFiles(root, stub.RelativePath, path, written))
+                    {
+                        renames.Add(new StubRename(stub.Id, stub.RelativePath));
+                    }
+
+                    // The new item has no URL or technical data yet: the next sync applies them.
+                    stubs[index] = stub with { RelativePath = path, UrlTag = null, StrmWrittenUtc = null, TechnicalTag = null };
+                    moved++;
+                }
+
+                var labels = new Dictionary<Guid, string>(state.Labels) { [serverId] = label };
+                await _registry.SaveAsync(state with { Stubs = stubs, Renames = renames, Labels = labels }, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                foreach (var file in written)
+                {
+                    TryDelete(file);
+                }
+
+                throw;
+            }
+
+            _logger.LogInformation("Moved {Count} stubs to the new label of a renamed server", moved);
+            return moved;
+        }
+        finally
+        {
+            _registry.Exit();
+        }
+    }
+
+    /// <summary>
+    /// Carries the watch state of each renamed stub whose new item a scan has made, deletes its old files, and forgets
+    /// the old items once the library no longer has them. Safe to run again: what is left waits for the next scan.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public async Task FinishAsync(CancellationToken cancellationToken)
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (root.Length == 0 || _registry.State.Renames.Count == 0)
+        {
+            return;
+        }
+
+        await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = _registry.State;
+            var next = new Dictionary<StubRename, StubRename?>();
+            var moves = new List<(StubRename Rename, StubEntry Stub, WatchStateMove Move)>();
+            var forget = new List<Guid>();
+            foreach (var rename in state.Renames)
+            {
+                var stub = _registry.Find(rename.StubId);
+                if (rename.RemovedItemId is { } removed)
+                {
+                    // Gone after a scan: the linker may link the new item, and Prune forgets what this call could not.
+                    if (_library.GetItemById(removed) is null)
+                    {
+                        next[rename] = null;
+                        if (rename.Forgets)
+                        {
+                            forget.Add(removed);
+                        }
+                    }
+
+                    continue;
+                }
+
+                var old = stub is null ? null : ItemAt(root, rename.OldPath, stub.Kind);
+                if (stub is null || old is null)
+                {
+                    // Nothing to carry: the stub left the registry, or its old item was never scanned.
+                    if (TryDeleteOld(root, rename, stub))
+                    {
+                        next[rename] = null;
+                    }
+
+                    continue;
+                }
+
+                if (ItemAt(root, stub.RelativePath, stub.Kind) is { } renamed)
+                {
+                    var from = stub with { RelativePath = rename.OldPath };
+                    moves.Add((rename, stub, WatchStateMove.Of(from, old.Id, [new WatchStateTarget(renamed.Id, stub.ServerId)], removesOldItem: true)));
+                }
+            }
+
+            if (moves.Count > 0)
+            {
+                var report = await _carrier.CarryAsync(moves.Select(entry => entry.Move).ToList(), cancellationToken).ConfigureAwait(false);
+                var forgettable = report.ForgettableOldItemIds.ToHashSet();
+                foreach (var outcome in report.Moves.Where(IsDone))
+                {
+                    var (rename, stub, move) = moves.First(entry => ReferenceEquals(entry.Move, outcome.Move));
+                    if (TryDeleteOld(root, rename, stub))
+                    {
+                        next[rename] = rename with { RemovedItemId = move.FromItemId, Forgets = forgettable.Contains(move.FromItemId) };
+                    }
+                }
+            }
+
+            if (forget.Count > 0)
+            {
+                await _carrier.ForgetRemovedAsync(forget, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (next.Count > 0)
+            {
+                var renames = state.Renames
+                    .Select(rename => next.TryGetValue(rename, out var changed) ? changed : rename)
+                    .OfType<StubRename>()
+                    .ToList();
+                await _registry.SaveAsync(state with { Renames = renames }, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _registry.Exit();
+        }
+    }
+
+    // As the migration: done for every user, or left only for users who see no version (row 166).
+    private static bool IsDone(WatchStateMoveOutcome outcome) =>
+        outcome.Status == WatchStateMoveStatus.Carried
+        || (outcome.Status == WatchStateMoveStatus.UsersLeft && outcome.SkippedUsers.All(user => user.Reason == WatchStateUserSkipReason.NoVisibleVersion));
+
+    // The path with the new label, null for a stub whose name does not end with the old one.
+    private static string? NewPath(string relative, string old, string label)
+    {
+        var suffix = " - " + old + ".strm";
+        var name = Path.GetFileName(relative);
+        return name.EndsWith(suffix, StringComparison.Ordinal)
+            ? Path.Combine(Path.GetDirectoryName(relative) ?? string.Empty, name[..^suffix.Length] + " - " + label + ".strm")
+            : null;
+    }
+
+    // The files of a stub: the .strm, and for an episode its .nfo and thumbnail, which share its stem.
+    private static List<string> FilesOf(string strm, bool onlyStrm)
+    {
+        if (onlyStrm)
+        {
+            return File.Exists(strm) ? [strm] : [];
+        }
+
+        var folder = Path.GetDirectoryName(strm)!;
+        if (!Directory.Exists(folder))
+        {
+            return [];
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(strm);
+        return Directory.EnumerateFiles(folder)
+            .Where(file => Path.GetFileName(file) is var name
+                && (name.StartsWith(stem + ".", StringComparison.Ordinal) || name.StartsWith(stem + "-thumb.", StringComparison.Ordinal)))
+            .ToList();
+    }
+
+    // Copies the files of a stub to its new stem. False when the old .strm is not on disk, so nothing waits for it.
+    private static bool CopyFiles(string root, string oldPath, string newPath, List<string> written)
+    {
+        var from = FederatedPaths.Resolve(root, oldPath);
+        if (!File.Exists(from))
+        {
+            return false;
+        }
+
+        var to = FederatedPaths.Resolve(root, newPath);
+        var oldStem = Path.GetFileNameWithoutExtension(from);
+        var newStem = Path.GetFileNameWithoutExtension(to);
+        var folder = Path.GetDirectoryName(to)!;
+        foreach (var file in FilesOf(from, false))
+        {
+            var target = Path.Combine(folder, newStem + Path.GetFileName(file)[oldStem.Length..]);
+            File.Copy(file, target, overwrite: true);
+            written.Add(target);
+        }
+
+        return true;
+    }
+
+    private static void TryDelete(string file)
+    {
+        try
+        {
+            File.Delete(file);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Left behind: a later rename writes over it.
+        }
+    }
+
+    // Like the version linker, by the ID Jellyfin gives the path, which finds an owned version too.
+    private Video? ItemAt(string root, string relative, StubKind kind)
+    {
+        var path = FederatedPaths.Resolve(root, relative);
+        var type = kind == StubKind.Episode ? typeof(Episode) : typeof(Movie);
+        return _library.GetItemById(_library.GetNewItemId(path, type)) as Video
+            ?? _library.GetItemById(_library.GetNewItemId(path, typeof(Video))) as Video;
+    }
+
+    // A film shares its folder, .nfo and images with nothing else of the old stub, so only its .strm goes.
+    private bool TryDeleteOld(string root, StubRename rename, StubEntry? stub)
+    {
+        try
+        {
+            foreach (var file in FilesOf(FederatedPaths.Resolve(root, rename.OldPath), stub?.Kind == StubKind.Movie))
+            {
+                File.Delete(file);
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Cannot delete the old file of a renamed stub: {Error}", exception.GetType().Name);
+            return false;
+        }
+    }
+}
