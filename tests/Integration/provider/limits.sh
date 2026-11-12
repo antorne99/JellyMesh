@@ -560,7 +560,10 @@ kill_reader
 gone=$(no_ffmpeg 15)
 echo "ffmpeg of the dropped stream gone after: $gone s"
 check "gone with the grace" true "$([ "$gone" != never ] && [ "$gone" -le 8 ] && echo true || echo false)"
-check "and the slot" 0 "$(wait_free 3)"
+# The slot goes once stock has closed the job, which waits 1.5 s after ffmpeg before it deletes the segments.
+freed=$(wait_free 8)
+echo "slot freed after its ffmpeg: $freed s"
+check "and the slot, once the job is closed" true "$([ "$freed" != never ] && [ "$freed" -le 5 ] && echo true || echo false)"
 
 echo "--- the consumer that comes back: over the limit it is told so, with a slot free it plays from there"
 check "another stream has the slot" 200 "$(take_slot)"
@@ -716,7 +719,10 @@ give_up a "$segment"
 gone=$(no_ffmpeg 12)
 echo "ffmpeg of the client that left gone after: $gone s"
 check "ffmpeg goes with the grace, not with the sweep" true "$([ "$gone" != never ] && echo true || echo false)"
-check "and the slot" 0 "$(wait_free 3)"
+# The slot goes once stock has closed the job, which waits 1.5 s after ffmpeg before it deletes the segments.
+freed=$(wait_free 8)
+echo "slot freed after its ffmpeg: $freed s"
+check "and the slot, once the job is closed" true "$([ "$freed" != never ] && [ "$freed" -le 5 ] && echo true || echo false)"
 check "the session stays: the client plays again" 200 "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 "$segment")"
 check "holding a slot" 1 "$(active_streams)"
 close_stream c30

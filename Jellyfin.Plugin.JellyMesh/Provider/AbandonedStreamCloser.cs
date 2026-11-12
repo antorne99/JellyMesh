@@ -40,14 +40,21 @@ public sealed class AbandonedStreamCloser : BackgroundService
     }
 
     /// <summary>
-    /// Closes what has been let go of so far.
+    /// Closes what has been let go of so far, and only then frees its slot.
     /// </summary>
     /// <returns>A task.</returns>
     public async Task CloseAbandonedAsync()
     {
         foreach (var playSessionId in _slots.TakeClosing())
         {
-            await CloseAsync(playSessionId).ConfigureAwait(false);
+            try
+            {
+                await CloseAsync(playSessionId).ConfigureAwait(false);
+            }
+            finally
+            {
+                _slots.Closed(playSessionId);
+            }
         }
     }
 

@@ -150,7 +150,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        using var request = _slots.TryEnter(caller.Grant.UserId, caller.Grant.MaxStreams, hasSession ? playSession : null, itemId, http.Abort);
+        using var request = await EnterAsync(caller, hasSession ? playSession : null, itemId, http).ConfigureAwait(false);
         if (request is null)
         {
             context.Result = RefuseOverLimit(http);
@@ -171,6 +171,19 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         {
             await _closer.CloseAsync(playSession).ConfigureAwait(false);
         }
+    }
+
+    // Takes a slot for a stream. At the limit it first closes what waits to be closed, whose slot that frees, and tries once more.
+    private async Task<StreamRequest?> EnterAsync(PeerCaller caller, string? playSession, Guid itemId, HttpContext http)
+    {
+        var grant = caller.Grant;
+        if (_slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort) is { } request)
+        {
+            return request;
+        }
+
+        await _closer.CloseAbandonedAsync().ConfigureAwait(false);
+        return _slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort);
     }
 
     // One answer for all of them, the same for a play session that exists and one that does not. The joined values of a

@@ -23,16 +23,19 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
 
     private readonly PeerDirectory _peers;
     private readonly StreamSlots _slots;
+    private readonly AbandonedStreamCloser _closer;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PeerPlaybackInfoFilter"/> class.
     /// </summary>
     /// <param name="peers">The peers.</param>
     /// <param name="slots">The stream slots.</param>
-    public PeerPlaybackInfoFilter(PeerDirectory peers, StreamSlots slots)
+    /// <param name="closer">The closer of abandoned transcodes.</param>
+    public PeerPlaybackInfoFilter(PeerDirectory peers, StreamSlots slots, AbandonedStreamCloser closer)
     {
         _peers = peers;
         _slots = slots;
+        _closer = closer;
     }
 
     /// <inheritdoc />
@@ -58,7 +61,7 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
 
         var peerId = caller.Grant.UserId;
         var replaces = http.Request.Headers[ProviderProtocol.ReplacesHeader].ToString();
-        var reservation = _slots.TryReserve(peerId, caller.Grant.MaxStreams, string.IsNullOrEmpty(replaces) ? null : replaces);
+        var reservation = await ReserveAsync(peerId, caller.Grant.MaxStreams, string.IsNullOrEmpty(replaces) ? null : replaces).ConfigureAwait(false);
         if (reservation is null)
         {
             context.Result = PeerGuardFilter.RefuseOverLimit(http);
@@ -88,6 +91,18 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
                 _slots.Release(peerId, reservation);
             }
         }
+    }
+
+    // Holds a slot. At the limit it first closes what waits to be closed, whose slot that frees, and tries once more.
+    private async Task<string?> ReserveAsync(Guid peerId, int limit, string? replaces)
+    {
+        if (_slots.TryReserve(peerId, limit, replaces) is { } reservation)
+        {
+            return reservation;
+        }
+
+        await _closer.CloseAbandonedAsync().ConfigureAwait(false);
+        return _slots.TryReserve(peerId, limit, replaces);
     }
 
     // Stock takes the live stream from the query, else from the posted body, whose type is not in a NuGet package.
