@@ -37,7 +37,8 @@ check "the stub of the lowest key stayed, as the same item" "$uno" "$(film_of re
 check "the merged stub is gone" "" "$(film_of remote "JM Catena Tre")"
 check "the stub that stayed has the state of the merged one (decision 2)" '{"Played":true,"PlayCount":1,"Favorite":true}' "$(state "$uno")"
 check "the group is still the two versions" "$due:$uno" "$(group "$uno")"
-check "the version of peer keeps its own favorite (Q23, Q42)" true "$(state "$due" | jq .Favorite)"
+# Both server folders are in one library, so Q23 asks for a transfer here; what moves besides played is still open.
+check "today the version of peer keeps its own favorite, and nothing moves to it" true "$(state "$due" | jq .Favorite)"
 check "played is one for the title (Q42)" true "$(state "$due" | jq .Played)"
 check "one row for the client" 1 "$(rows 'JM Catena')"
 check "the decision is manual" Manual "$(get local /JellyMesh/Admin/Index/Decisions | jq -r '[.Contents[] | select(.Identity.Key | contains("999100001")) | .Identity.Match] | first')"
@@ -67,6 +68,41 @@ sync_now local; scan local; sync_now local
 check "the merged stub did not come back" 2 "$(strm_count 'JM Catena')"
 check "the groups hold" "$due:$uno $mob_b:$mob_a" "$(group "$uno") $(group "$mob_a")"
 check "the watch state stayed" '{"Played":true,"PlayCount":1,"Favorite":true}' "$(state "$uno")"
+
+echo "--- a copy gains IDs"
+peer_admin=$(get peer /Users/Me | jq -r .Id)
+peer_item=$(get peer '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '.Items[] | select(.Path | contains("JM Sonda Mobile")) | .Id')
+docker exec "$PREFIX-peer" sh -c "sed -i 's#</movie>#<uniqueid type=\"tmdb\" default=\"true\">999100021</uniqueid></movie>#' '/extra/film/JM Sonda Mobile (2026)/movie.nfo'"
+post peer "/Items/$peer_item/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=None&replaceAllMetadata=false&replaceAllImages=false" >/dev/null
+sleep 5
+check "the remote has the ID" 999100021 "$(get peer "/Users/$peer_admin/Items/$peer_item" | jq -r .ProviderIds.Tmdb)"
+sync_now local; settle local; scan local
+check "the merge holds" true "$(list local | jq --arg i "$(merge_id local '^JM Sonda Mobile$')" '.Merges[] | select(.Id == $i) | .IsInEffect')"
+check "and so does the group" "$mob_b:$mob_a" "$(group "$mob_a")"
+
+echo "--- a copy loses its year: \"Replace all metadata\" on a remote does that"
+post peer "/Items/$peer_item/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=None&replaceAllMetadata=true&replaceAllImages=false" >/dev/null
+sleep 5
+check "the remote has no year" null "$(get peer "/Users/$peer_admin/Items/$peer_item" | jq -r .ProductionYear)"
+sync_now local; settle local; scan local
+check "the merge holds" true "$(list local | jq --arg i "$(merge_id local '^JM Sonda Mobile$')" '.Merges[] | select(.Id == $i) | .IsInEffect')"
+check "both stubs stay" 2 "$(strm_count 'JM Sonda Mobile')"
+mob_b=$(film_of peer "JM Sonda Mobile")
+check "and the group holds" "$mob_b:$mob_a" "$(group "$mob_a")"
+
+echo "--- a copy disappears, and comes back"
+docker exec "$PREFIX-remote" mv '/extra/film/JM Sonda Mobile (2026)' /extra/parked
+scan remote
+sync_now local; settle local; scan local
+check "the merge waits" false "$(list local | jq --arg i "$(merge_id local '^JM Sonda Mobile$')" '.Merges[] | select(.Id == $i) | .IsInEffect')"
+check "for the copy that is missing" 1 "$(list local | jq --arg i "$(merge_id local '^JM Sonda Mobile$')" '[.Merges[] | select(.Id == $i) | .Copies[] | select(.IsFound | not)] | length')"
+check "the title stays, with the stub of peer" "1 1" "$(rows 'JM Sonda Mobile') $(strm_count 'JM Sonda Mobile')"
+docker exec "$PREFIX-remote" mv /extra/parked '/extra/film/JM Sonda Mobile (2026)'
+scan remote
+sync_now local; settle local; scan local
+check "the merge applies again" true "$(list local | jq --arg i "$(merge_id local '^JM Sonda Mobile$')" '.Merges[] | select(.Id == $i) | .IsInEffect')"
+check "both stubs again, as the items they were" "2 $mob_a" "$(strm_count 'JM Sonda Mobile') $(film_of remote "JM Sonda Mobile")"
+check "linked again" "$mob_b:$mob_a" "$(group "$mob_a")"
 
 echo "--- Q145: a new title on both servers is linked by the scan that makes its items"
 add_clip remote "$MEDIA/remoto-standard/film/Sonda Senza ID (2026)/Sonda Senza ID (2026).mkv" "JM Nuovo (2026)" "JM Nuovo" 999100031 "" "Nuovo."
@@ -139,7 +175,7 @@ applied local
 check "the decision is local and manual" 1 "$(get local /JellyMesh/Admin/Index/Decisions | jq '[.Contents[] | select(.Identity.Match == "Manual" and .IsLocal)] | length')"
 check "the stub stays" 1 "$(strm_count 'JM Sonda Locale')"
 check "one row for the client" 1 "$(rows 'JM Sonda Locale')"
-check "played is aligned on the local copy, nothing else moves" '{"Played":true,"Favorite":false}' "$(state "$local_id" | jq -c '{Played, Favorite}')"
+check "played is aligned on the local copy; today nothing else moves, pending Q23 for one library" '{"Played":true,"Favorite":false}' "$(state "$local_id" | jq -c '{Played, Favorite}')"
 check "the stub keeps its position" 300000000 "$(get local "/Users/$uid/Items/$(dashed "$strm")" | jq .UserData.PlaybackPositionTicks)"
 check "the local files did not change" "$sum" "$(docker exec "$PREFIX-local" sh -c "cd '$LOCAL_DIR' && ls -la --time-style=full-iso . && sha256sum *")"
 check "the undo is accepted" 204 "$(undo local '^JM Sonda Locale$')"
