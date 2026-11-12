@@ -46,6 +46,7 @@ only() { # only <user> <library>...: the user sees those libraries alone
 }
 lib_id() { get local /Library/VirtualFolders | jq -r --arg n "$1" '.[] | select(.Name == $n) | .ItemId // ""' | tr -d -; }
 lib_names() { get local /Library/VirtualFolders | jq -c '[.[].Name] | sort'; }
+changes() { get local /JellyMesh/Admin/Status | jq -c .FederatedFolder.Changes; }
 rename_state() { get local /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" '.Servers[] | select(.Id == $id) | .Rename'; }
 wait_rename() {
   local i
@@ -135,6 +136,7 @@ config=$(get local "/Users/$LIM" | jq -c --arg id "$(dashed "$OLD_FILM_LIB" | tr
 post local "/Users/Configuration?userId=$LIM" "$config" >/dev/null
 check "the home lists are saved" '[true,true,true]' "$(home "$OLD_FILM_LIB")"
 check "the limited user sees the Film library" 1 "$([ "$(count_as lim "$OLD_FILM_LIB" Movie)" -gt 0 ] && echo 1 || echo 0)"
+check "no library change since the sync" '{"Added":[],"Removed":[]}' "$(changes)"
 
 rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 asks
   local old=$1 new=$2 answer
@@ -145,8 +147,10 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   check "listing the libraries it renames" "[\"$old - Film\",\"$old - Serie\"]" "$(echo "$answer" | jq -c .Libraries)"
   post local "/JellyMesh/Admin/Servers/$SERVER/Rename" "{\"Name\":\"$new\",\"Confirmed\":true}" >/dev/null
   check "confirmed: 202" 202 "$(status)"
+  check "the rename running is no library change" '{"Added":[],"Removed":[]}' "$(changes)"
   wait_rename
   check "the rename is done" '{"Busy":false,"Pending":false,"Failed":false}' "$(rename_state)"
+  check "the renamed libraries are no library change" '{"Added":[],"Removed":[]}' "$(changes)"
   check "the libraries follow the server" "$(jq -nc --arg n "$new" '["Film", "\($n) - Film", "\($n) - Serie"] | sort')" "$(lib_names)"
   check "no stub has the old label" 0 "$(strms "$old")"
   check "every stub has the new label" "$CASA_STRMS" "$(strms "$new")"
