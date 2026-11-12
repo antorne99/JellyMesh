@@ -178,8 +178,7 @@ public class FederationAdminController : ControllerBase
         }
 
         await RemoveFromMergesAsync(serverId).ConfigureAwait(false);
-        _sync.StartRemovalCleanup();
-        _ = _libraries.DeleteRemovedServerLibraries();
+        _ = DeleteLibrariesAfterAsync(_sync.StartRemovalCleanup());
         return NoContent();
     }
 
@@ -206,7 +205,7 @@ public class FederationAdminController : ControllerBase
 
         if (forgotten > 0)
         {
-            _sync.StartRemovalCleanup();
+            _ = _sync.StartRemovalCleanup();
         }
 
         return new ForgetResponse(forgotten);
@@ -428,6 +427,13 @@ public class FederationAdminController : ControllerBase
             // The type only: a message could hold a path or an address.
             _logger.LogError("Could not take the removed server out of the manual merges: {Error}", exception.GetType().Name);
         }
+    }
+
+    // The stubs go first: Jellyfin hands a primary version over to the others only when its item is deleted alone.
+    private async Task DeleteLibrariesAfterAsync(Task cleanup)
+    {
+        await cleanup.ConfigureAwait(false);
+        await _libraries.DeleteRemovedServerLibraries().ConfigureAwait(false);
     }
 
     private FederatedFolderStatus GetFederatedFolder()

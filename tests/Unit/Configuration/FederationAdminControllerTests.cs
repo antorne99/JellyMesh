@@ -274,6 +274,29 @@ public class FederationAdminControllerTests
         libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
     }
 
+    // Jellyfin hands a primary version over only when its item alone is deleted, not with its library.
+    [Fact]
+    public async Task The_automatic_libraries_of_a_removed_server_go_after_its_stubs()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var cleanup = new TaskCompletionSource();
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sync = RemovingSync(server.Id);
+        sync.Setup(service => service.StartRemovalCleanup()).Returns(cleanup.Task);
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.DeleteRemovedServerLibraries())
+            .Callback(() => deleted.SetResult())
+            .Returns(Task.CompletedTask);
+        var controller = CreateController(fixture, sync.Object, libraries: libraries.Object);
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Never);
+        cleanup.SetResult();
+        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     [Fact]
     public async Task A_removal_that_fails_deletes_no_automatic_library()
     {

@@ -56,7 +56,8 @@ public interface ICatalogSyncService
     /// Starts deleting in the background what removed servers left: their catalogs and the stubs only they served. Titles
     /// that another server also has stay, and move to that server.
     /// </summary>
-    void StartRemovalCleanup();
+    /// <returns>The cleanup, which never fails.</returns>
+    Task StartRemovalCleanup();
 
     /// <summary>
     /// Writes the folders of every configured server in the federated folder, so that a library can point at them before
