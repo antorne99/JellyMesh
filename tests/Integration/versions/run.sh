@@ -14,6 +14,21 @@ BIT="JM Confronto Bitrate"       # 2.8 on remote, 5.9 on peer
 COD="JM Confronto Codec"         # H.264 on remote, AV1 on peer within the bitrate tolerance
 LONE="Tears of Steel"            # on remote only
 
+# settled <condition>: waits until no library scan has run for 3 seconds and the condition holds. up.sh can return while
+# its scan runs, the first collection starts one more, and the post-scan task links new stubs (Q145).
+settled() {
+  local i j idle
+  for i in $(seq 1 180); do
+    idle=0
+    for j in 1 2 3; do
+      [ "$(get local /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary") | .State')" = Idle ] && idle=$((idle + 1))
+      sleep 1
+    done
+    [ "$idle" = 3 ] && eval "$1" && return 0
+  done
+  return 1
+}
+settled '[ -n "$(stub_of "$A" "$RES")" ] && [ -n "$(stub_of "$B" "$RES")" ] && [ -n "$(stub_of "$A" "$COD")" ] && [ -n "$(stub_of "$A" "$LONE")" ]' || true
 res_a=$(stub_of "$A" "$RES"); res_b=$(stub_of "$B" "$RES")
 cod_a=$(stub_of "$A" "$COD"); lone=$(stub_of "$A" "$LONE")
 check "the stubs are in the library" 1 "$([ -n "$res_a" ] && [ -n "$res_b" ] && [ -n "$cod_a" ] && [ -n "$lone" ] && echo 1 || echo 0)"
@@ -21,6 +36,12 @@ check "the stubs are in the library" 1 "$([ -n "$res_a" ] && [ -n "$res_b" ] && 
 echo "--- before the link: a collection and a playlist on the copies of remote"
 raccolta=$(post local "/Collections?name=JM%20Raccolta" | jq -r .Id)
 post local /Playlists "$(jq -n --arg u "$uid" --arg i "$(dashed "$cod_a")" '{Name: "JM Scaletta", Ids: [$i], UserId: $u, MediaType: "Video"}')" >/dev/null
+# Once the stubs are linked and the scans are over, the 720p stub is split off, as an admin does, for the sync below to
+# link it again with its collection entry.
+settled '[ "$(primary_of "$res_a")" = "$res_b" ]' || true
+check "the post-scan task linked the stubs" "$res_b" "$(primary_of "$res_a")"
+req local DELETE "/Videos/$(dashed "$res_b")/AlternateSources" >/dev/null
+check "the 720p stub is split off" 204 "$(status)"
 # 12.4 can lose the items of a new collection to a race on its collection.xml, so they go in afterwards, until they stay.
 for i in $(seq 1 30); do
   [ -n "$(children_of 'JM Raccolta')" ] && break
@@ -28,6 +49,7 @@ for i in $(seq 1 30); do
   sleep 1
 done
 check "the collection holds the 720p stub" "$res_a" "$(children_of 'JM Raccolta')"
+check "and that stub is not linked yet" "" "$(primary_of "$res_a")"
 check "the playlist holds the H.264 stub" "$cod_a" "$(children_of 'JM Scaletta')"
 nfo_sums >"$WORK/nfo-before"
 
