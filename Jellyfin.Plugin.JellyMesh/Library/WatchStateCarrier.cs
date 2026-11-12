@@ -121,7 +121,8 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
 
         // A move done may rest on a record from an earlier run that is still not on disk, so none counts as done.
-        if (!await _log.SaveAsync(cancellationToken).ConfigureAwait(false))
+        // Rows are saved by now, so a late cancellation must not leave their records only in memory.
+        if (!await _log.SaveAsync(CancellationToken.None).ConfigureAwait(false))
         {
             for (var index = 0; index < outcomes.Count; index++)
             {

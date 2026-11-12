@@ -41,6 +41,8 @@ public sealed class WatchStateCarrierTests : IDisposable
     private readonly HashSet<Guid> _cancellingSaves = [];
     private readonly HashSet<Guid> _failingLookups = [];
     private readonly CapturingLogger<WatchStateCarrier> _carrierLogger = new();
+    private readonly CancellationTokenSource _cancellation = new();
+    private Guid? _cancelOnSave;
     private readonly Dictionary<(Guid User, Guid Item), UserItemData> _rows = [];
     private readonly List<(Guid User, Guid Item, UserDataSaveReason Reason)> _saves = [];
     private readonly List<StubEntry> _stubs = [];
@@ -90,6 +92,10 @@ public sealed class WatchStateCarrierTests : IDisposable
                 // Like Jellyfin, the saved row replaces the cached one.
                 _rows[(user.Id, item.Id)] = data;
                 _saves.Add((user.Id, item.Id, reason));
+                if (_cancelOnSave == item.Id)
+                {
+                    _cancellation.Cancel();
+                }
             });
     }
 
@@ -99,6 +105,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     {
         _registry.Dispose();
         _log.Dispose();
+        _cancellation.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);
@@ -755,6 +762,24 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task ARunCancelledAfterItsLastSaveStillRecordsItsCarries()
+    {
+        // Nothing in the run checks the token after the last row, so only the save of the record could notice it.
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_luigi, old).IsFavorite = true;
+        _cancelOnSave = a.Id;
+
+        var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.True(Row(_luigi, a).IsFavorite);
+        _log.Dispose();
+        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.TryFind(_luigi.Id, old.Id, out _));
+    }
+
+    [Fact]
     public async Task AMergeLeavesThePositionAndPutsTheRestOnThePrimary()
     {
         // Two copies of one library become one entity (decision 172): as Q47, but each version keeps its position.
@@ -837,7 +862,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     {
         await _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList() }, CancellationToken.None);
         var carrier = new WatchStateCarrier(_registry, _store, _library.Object, _users.Object, _userData.Object, _lastServed, _log, _carrierLogger);
-        return await carrier.CarryAsync(moves, CancellationToken.None);
+        return await carrier.CarryAsync(moves, _cancellation.Token);
     }
 
     private async Task RestartAsync()
