@@ -75,6 +75,16 @@ public sealed class MergeWatchStateCarry : IMergeWatchStateCarry
                 continue;
             }
 
+            // A series names one head per episode entity: the groups are joined episode by episode (decision 51).
+            if (copy.Kind != ContentKind.Movie)
+            {
+                heads.AddRange(_registry.FindEpisodesOfSeries(server, copy.ItemId)
+                    .Select(episode => (Stub: episode, Item: FindStub(root, episode)))
+                    .Where(pair => pair.Item is { PrimaryVersionId: null })
+                    .Select(pair => new MergeHead(pair.Item!.Id, pair.Stub)));
+                continue;
+            }
+
             var stub = stubs.FirstOrDefault(entry => entry.ServerId == server
                 && entry.Sources.Any(source => string.Equals(source.ItemId, copy.ItemId, StringComparison.Ordinal)));
             if (stub is not null && FindStub(root, stub) is { PrimaryVersionId: null } item)
@@ -122,18 +132,29 @@ public sealed class MergeWatchStateCarry : IMergeWatchStateCarry
 
     private List<WatchStateMove> MovesOf(string root, IReadOnlyList<MergeHead> heads)
     {
-        var groups = heads
-            .Select(head => head.Stub is { } stub ? _registry.FindGroup(stub.Id) : _registry.FindGroupOfLocal(head.ItemId))
-            .OfType<VersionGroup>()
-            .DistinctBy(group => group.Id)
+        var grouped = heads
+            .Select(head => (Head: head, Group: head.Stub is { } stub ? _registry.FindGroup(stub.Id) : _registry.FindGroupOfLocal(head.ItemId)))
+            .Where(pair => pair.Group is not null)
+            .GroupBy(pair => pair.Group!.Id, StringComparer.Ordinal)
             .ToList();
-        if (groups.Count != 1)
+
+        // Episodes of merged series join only where they cover the same interval (D3); the others carry nothing.
+        if (heads.Any(head => head.Stub?.Kind == StubKind.Episode))
+        {
+            return grouped.SelectMany(group => MovesOfGroup(root, group.First().Group!, group.Select(pair => pair.Head).ToList())).ToList();
+        }
+
+        if (grouped.Count != 1)
         {
             _logger.LogWarning("Cannot carry the watch state of a manual merge: its copies are not linked as one title");
             return [];
         }
 
-        var group = groups[0];
+        return MovesOfGroup(root, grouped[0].First().Group!, heads);
+    }
+
+    private List<WatchStateMove> MovesOfGroup(string root, VersionGroup group, IReadOnlyList<MergeHead> heads)
+    {
         var members = new List<(Video Item, Guid? ServerId)>();
         foreach (var stub in group.StubIds.Select(_registry.Find).OfType<StubEntry>())
         {
