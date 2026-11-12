@@ -62,6 +62,7 @@ public static class PlaybackResponseBuilder
             MediaAttachments = [],
             DefaultAudioStreamIndex = remote.DefaultAudioStreamIndex,
             DefaultSubtitleStreamIndex = remote.DefaultSubtitleStreamIndex,
+            HasSegments = remote.HasSegments,
             SupportsDirectPlay = false,
             SupportsDirectStream = false,
             SupportsTranscoding = true,
