@@ -35,7 +35,7 @@ public sealed class PlaybackCoordinator
     private readonly ILastServedSourceStore _lastServed;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
-    private readonly ConcurrentDictionary<string, StubSource> _workingSources = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
@@ -79,7 +79,8 @@ public sealed class PlaybackCoordinator
     private PlaybackTimes Times => _store.Read(PlaybackTimes.From);
 
     /// <summary>
-    /// Finds how to serve a <c>PlaybackInfo</c>.
+    /// Finds how to serve a <c>PlaybackInfo</c>: the sources of its stub, then those of the other versions the user sees
+    /// (D22), then the local transcode of any of them. The outcome names the version that serves.
     /// </summary>
     /// <param name="request">The request.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -88,46 +89,53 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var previous = _sessions.FindSameStream(request.Identity);
+        // After a fallback the session is under the version that served, which the same client may ask for again.
+        var versions = VersionsOf(request).ToList();
+        var previous = versions.Select(version => _sessions.FindSameStream(version.Identity)).FirstOrDefault(session => session is not null);
         if (!await MakeRoomForAsync(request.Identity.UserId, previous).ConfigureAwait(false))
         {
             _logger.LogInformation("A user has {Count} streams running, the most allowed", PlaybackLimits.SessionsPerUser);
             return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable, AnyReachable: true);
         }
 
-        var reachable = new List<StubSource>();
+        // Stream indexes are in the numbering of the source the client was told about for the version it asks.
+        var told = _sessions.FindSameStream(request.Identity)?.Source ?? request.Stub.Sources[0];
+        var reachable = new List<(PlaybackOpenRequest Version, StubSource Source)>();
         var refused = 0;
-        foreach (var source in Ordered(request.Stub.Sources, previous?.Source))
+        var tried = 0;
+        foreach (var version in versions)
         {
-            // Stream indexes are in the numbering of the source the client was told about.
-            var keepIndexes = source == (previous?.Source ?? request.Stub.Sources[0]);
-            var attempt = await TryRemoteAsync(request, source, keepIndexes, previous, cancellationToken).ConfigureAwait(false);
-            if (attempt.Response is not null)
+            foreach (var source in Ordered(version.Stub.Sources, previous?.Source))
             {
-                _workingSources[request.Stub.Id] = source;
-                await ClosePreviousAsync(previous).ConfigureAwait(false);
-                await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
-                await RecordServedAsync(request, source).ConfigureAwait(false);
-                return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response);
-            }
+                tried++;
+                var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
+                if (attempt.Response is not null)
+                {
+                    Remember(version, source);
+                    await ClosePreviousAsync(previous).ConfigureAwait(false);
+                    await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
+                    await RecordServedAsync(version, source).ConfigureAwait(false);
+                    return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
+                }
 
-            _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
-            if (attempt.Reachable)
-            {
-                reachable.Add(source);
-            }
+                _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
+                if (attempt.Reachable)
+                {
+                    reachable.Add((version, source));
+                }
 
-            refused += attempt.AtLimit ? 1 : 0;
+                refused += attempt.AtLimit ? 1 : 0;
+            }
         }
 
-        foreach (var source in reachable)
+        foreach (var (version, source) in reachable)
         {
             if (await CanReadFileAsync(source, cancellationToken).ConfigureAwait(false))
             {
-                _workingSources[request.Stub.Id] = source;
+                Remember(version, source);
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
-                await RecordServedAsync(request, source).ConfigureAwait(false);
-                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true);
+                await RecordServedAsync(version, source).ConfigureAwait(false);
+                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true, Served: version.Identity);
             }
         }
 
@@ -136,7 +144,7 @@ public sealed class PlaybackCoordinator
         // Only when the limit is the whole story: with any source down or broken, trying later may not help.
         return new PlaybackOutcome(
             PlaybackOutcomeKind.Unavailable,
-            AtStreamLimit: refused > 0 && refused == request.Stub.Sources.Count,
+            AtStreamLimit: refused > 0 && refused == tried,
             AnyReachable: refused > 0 || reachable.Count > 0);
     }
 
@@ -170,7 +178,8 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Opens the remote file of a stub for the server's own reader: the local ffmpeg of the fallback.
+    /// Opens the remote file of a stub for the server's own reader: the local ffmpeg of the fallback. It has no user, so it
+    /// stays on its stub, first the source <c>OpenAsync</c> chose, and a stub of one server never reads another (D22).
     /// </summary>
     /// <param name="stub">The stub.</param>
     /// <param name="method">GET or HEAD.</param>
@@ -181,22 +190,26 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(stub);
 
-        _workingSources.TryGetValue(stub.Id, out var working);
+        var chosen = ChosenFor(stub);
+        IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
         var refused = 0;
-        foreach (var source in Ordered(stub.Sources, working))
+        var tried = 0;
+        foreach (var source in Ordered(sources, chosen?.Working.Source))
         {
+            tried++;
             var request = new RemoteStreamRequest(method, FilePath(source), range);
             var stream = await OpenAsync(source.ServerId, request, cancellationToken).ConfigureAwait(false);
             if (stream.IsSuccess)
             {
-                _workingSources[stub.Id] = source;
+                // Without a playback that chose, the source is kept for the next read, as a source of no user.
+                _workingSources[chosen?.Key ?? (Guid.Empty, stub.Id)] = new WorkingSource(source, _clock.GetUtcNow());
                 return stream.Value;
             }
 
             refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
         }
 
-        if (refused == stub.Sources.Count)
+        if (tried > 0 && refused == tried)
         {
             _filesAtLimit[stub.Id] = _clock.GetUtcNow();
         }
@@ -369,6 +382,11 @@ public sealed class PlaybackCoordinator
                 await CloseRemoteAsync(session).ConfigureAwait(false);
             }
         }
+
+        foreach (var entry in _workingSources.Where(entry => now - entry.Value.At >= times.SessionRetention))
+        {
+            _workingSources.TryRemove(entry);
+        }
     }
 
     /// <summary>
@@ -383,6 +401,21 @@ public sealed class PlaybackCoordinator
         return Task.WhenAll(_sessions.All
             .Where(session => session.IsAbandoned(now, StreamSlots.AbandonGrace) && session.RemotePlaySessionId is not null && IsJellyMesh(session.Source.ServerId) && session.TryPark())
             .Select(CloseRemoteAsync));
+    }
+
+    // The request itself, then one request per other version the user sees, in their order.
+    private static IEnumerable<PlaybackOpenRequest> VersionsOf(PlaybackOpenRequest request)
+    {
+        yield return request;
+        foreach (var fallback in request.Fallbacks)
+        {
+            yield return request with
+            {
+                Identity = request.Identity with { ItemId = fallback.ItemId, StubId = fallback.Stub.Id },
+                Stub = fallback.Stub,
+                Fallbacks = []
+            };
+        }
     }
 
     private static IEnumerable<StubSource> Ordered(IReadOnlyList<StubSource> sources, StubSource? first)
@@ -458,6 +491,32 @@ public sealed class PlaybackCoordinator
     private Task RecordServedAsync(PlaybackOpenRequest request, StubSource source)
     {
         return _lastServed.RecordAsync(request.Identity.UserId, request.Stub.Id, source.ServerId, CancellationToken.None);
+    }
+
+    // Kept per user and stub (D22): the choice of one user never carries another to a server they do not see.
+    private void Remember(PlaybackOpenRequest version, StubSource source)
+    {
+        _workingSources[(version.Identity.UserId, version.Stub.Id)] = new WorkingSource(source, _clock.GetUtcNow());
+    }
+
+    // The source a playback of this stub last chose, by any user: the .strm names none. A stub stays on its server.
+    private ((Guid UserId, string StubId) Key, WorkingSource Working)? ChosenFor(StubEntry stub)
+    {
+        var now = _clock.GetUtcNow();
+        var retention = Times.SessionRetention;
+        ((Guid UserId, string StubId) Key, WorkingSource Working)? chosen = null;
+        foreach (var (key, working) in _workingSources)
+        {
+            if (string.Equals(key.StubId, stub.Id, StringComparison.Ordinal)
+                && now - working.At < retention
+                && stub.Sources.Contains(working.Source)
+                && (chosen is null || working.At > chosen.Value.Working.At))
+            {
+                chosen = (key, working);
+            }
+        }
+
+        return chosen;
     }
 
     private async Task ClosePreviousAsync(PlaybackSession? previous)
@@ -774,6 +833,8 @@ public sealed class PlaybackCoordinator
     }
 
     private sealed record Attempt(PlaybackInfoResponse? Response, bool Reachable, bool AtLimit = false);
+
+    private sealed record WorkingSource(StubSource Source, DateTimeOffset At);
 
     private sealed record CachedPolicy(RemoteTranscodePolicy Policy, DateTimeOffset ReadAt);
 }

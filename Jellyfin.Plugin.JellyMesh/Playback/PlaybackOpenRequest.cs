@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Model.Dlna;
 
@@ -13,6 +14,9 @@ public sealed record PlaybackOpenRequest
 
     /// <summary>Gets the stub.</summary>
     public required StubEntry Stub { get; init; }
+
+    /// <summary>Gets the other versions the user sees, best first, tried when the stub cannot serve (D22).</summary>
+    public IReadOnlyList<PlaybackCandidate> Fallbacks { get; init; } = [];
 
     /// <summary>Gets the local token of the caller.</summary>
     public required string LocalToken { get; init; }

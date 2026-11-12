@@ -60,8 +60,9 @@ public sealed class PlaybackVersions
         }
 
         // The other files of a local film link up to it and not down from it, so the two climbs must meet.
-        var linked = _stubs.LinkedVersionsOf(itemId);
-        return linked.ContainsKey(versionId) || _stubs.LinkedVersionsOf(versionId).Keys.Any(linked.ContainsKey);
+        var linked = CopiesOf(itemId);
+        var copies = CopiesOf(versionId);
+        return linked.ContainsKey(itemId) && copies.ContainsKey(versionId) && (linked.ContainsKey(versionId) || copies.Keys.Any(linked.ContainsKey));
     }
 
     /// <summary>
@@ -78,7 +79,7 @@ public sealed class PlaybackVersions
         ArgumentNullException.ThrowIfNull(user);
 
         var group = _registry.FindGroup(stub.Id);
-        var linked = _stubs.LinkedVersionsOf(itemId);
+        var linked = CopiesOf(itemId);
         if (group is null && linked.Count < 2)
         {
             return itemId;
@@ -95,7 +96,46 @@ public sealed class PlaybackVersions
             }
         }
 
-        // Only the stubs Jellyfin links here can be served under this item: the client reports the version on it.
+        var items = VisibleStubs(itemId, stub, group, linked, user);
+        return items.Count == 1 ? itemId : items[StubRanking.Best([.. items.Keys], _registry.Find, CurrentLookup())];
+    }
+
+    /// <summary>
+    /// Lists the other stubs of the title the user sees, best first by §4.3: where a playback goes when its version cannot
+    /// serve (Q44, D22). Each one is checked with the same rule as a named version, classification included.
+    /// </summary>
+    /// <param name="itemId">The item of the version that starts.</param>
+    /// <param name="stub">Its stub.</param>
+    /// <param name="user">The user.</param>
+    /// <returns>The other versions, empty when the title has none the user sees.</returns>
+    public IReadOnlyList<PlaybackCandidate> Fallbacks(Guid itemId, StubEntry stub, User user)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+        ArgumentNullException.ThrowIfNull(user);
+
+        var group = _registry.FindGroup(stub.Id);
+        var linked = CopiesOf(itemId);
+        if (group is null && linked.Count < 2)
+        {
+            return [];
+        }
+
+        var items = VisibleStubs(itemId, stub, group, linked, user);
+        items.Remove(stub.Id);
+        if (items.Count == 0)
+        {
+            return [];
+        }
+
+        return StubRanking.Order([.. items.Keys], _registry.Find, CurrentLookup())
+            .Select(stubId => _registry.Find(stubId) is { } entry ? new PlaybackCandidate(items[stubId], entry) : null)
+            .OfType<PlaybackCandidate>()
+            .ToList();
+    }
+
+    // Only the stubs Jellyfin links here can be served under this item: the client reports the version on it.
+    private Dictionary<string, Guid> VisibleStubs(Guid itemId, StubEntry stub, VersionGroup? group, Dictionary<Guid, Video> linked, User user)
+    {
         var items = new Dictionary<string, Guid>(StringComparer.Ordinal) { [stub.Id] = itemId };
         foreach (var video in linked.Values)
         {
@@ -109,7 +149,15 @@ public sealed class PlaybackVersions
             }
         }
 
-        return items.Count == 1 ? itemId : items[StubRanking.Best([.. items.Keys], _registry.Find, CurrentLookup())];
+        return items;
+    }
+
+    // The items Jellyfin links with an item, without extras: a trailer is owned by its film but is no copy of it.
+    private Dictionary<Guid, Video> CopiesOf(Guid itemId)
+    {
+        return _stubs.LinkedVersionsOf(itemId)
+            .Where(entry => entry.Value.ExtraType is null)
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
     }
 
     private VersionGroup? GroupOf(Guid itemId)
