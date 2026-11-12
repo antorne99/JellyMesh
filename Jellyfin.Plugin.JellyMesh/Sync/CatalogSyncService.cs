@@ -171,10 +171,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
-    public void StartRemovalCleanup()
+    public Task StartRemovalCleanup()
     {
         var cancellationToken = _shutdown.Token;
-        _ = Task.Run(() => CleanUpAfterRemovalAsync(cancellationToken), CancellationToken.None);
+        return Task.Run(() => CleanUpAfterRemovalAsync(cancellationToken), CancellationToken.None);
     }
 
     /// <inheritdoc />

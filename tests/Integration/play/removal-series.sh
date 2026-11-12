@@ -124,6 +124,12 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 check "its stubs left the federated folder" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Serie -name "*.strm" | wc -l')"
+# F19: the folder of the server goes once its stubs are gone, while the library keeps its path.
+for _ in $(seq 1 60); do
+  docker exec "$PREFIX-local" test -e "$(server_folder "$id")" || break
+  sleep 1
+done
+check "its folder left the federated folder" gone "$(docker exec "$PREFIX-local" test -e "$(server_folder "$id")" && echo kept || echo gone)"
 scan local
 check "no federated episode is left in the library" 0 "$(episodes | wc -l | tr -d ' ')"
 check "no series is left in the library" 0 "$(series_rows | wc -l | tr -d ' ')"
@@ -158,6 +164,7 @@ check "adding it a second time is refused" 409 "$(status)"
 check "the refusal names the server" "AlreadyConfigured remote" "$(jq -r '"\(.Failure) \(.ServerName)"' "$WORK/body")"
 import_all local "$id"
 sync_now local
+check "its folder is written again" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$id")/Serie/.jellymesh"; echo $?)"
 scan local
 episodes | tee "$WORK/episodes-after"
 series_rows | tee "$WORK/series-after"

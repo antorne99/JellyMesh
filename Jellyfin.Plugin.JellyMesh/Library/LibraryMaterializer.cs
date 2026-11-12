@@ -256,6 +256,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         run.Commit();
         RemoveGone(run, plan.Removals);
+        RemoveServerFolders(run, plan.State.RemovedServers);
 
         await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
 
@@ -600,6 +601,23 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 var kept = left.Contains(stub.Id);
                 run.CountServer(serverId, removed: kept ? 0 : 1, failed: kept ? 1 : 0);
             }
+        }
+    }
+
+    // A server added back during the run keeps its folder (decision 116).
+    private void RemoveServerFolders(Run run, IReadOnlyList<Guid> removedServers)
+    {
+        var configured = _servers.GetServers().Select(server => server.Id).ToHashSet();
+        var removal = _remover.RemoveServerFolders(run.Root, run.State, removedServers.Where(serverId => !configured.Contains(serverId)).ToList());
+        run.State = removal.State;
+        foreach (var failure in removal.Failures)
+        {
+            _logger.LogError("Cannot remove the folder of a removed server: {Error}", failure.GetType().Name);
+        }
+
+        if (removal.Removed > 0)
+        {
+            _logger.LogInformation("Removed the folders of {Count} removed servers", removal.Removed);
         }
     }
 
