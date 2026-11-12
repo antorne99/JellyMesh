@@ -123,13 +123,18 @@ public sealed class VersionLinker : IVersionLinker
         ArgumentNullException.ThrowIfNull(copies);
 
         var remote = copies.Where(copy => !copy.IsLocal)
-            .Select(copy => (Server: Guid.TryParse(copy.ServerId, out var server) ? server : Guid.Empty, copy.ItemId))
+            .Select(copy => (Server: Guid.TryParse(copy.ServerId, out var server) ? server : Guid.Empty, copy.ItemId, copy.Kind))
             .ToList();
+        var episodes = remote.Where(copy => copy.Kind != ContentKind.Movie)
+            .SelectMany(copy => _registry.FindEpisodesOfSeries(copy.Server, copy.ItemId))
+            .Select(stub => stub.Id)
+            .ToHashSet(StringComparer.Ordinal);
         var local = copies.Where(copy => copy.IsLocal)
             .Select(copy => Guid.TryParse(copy.ItemId, out var id) ? id : Guid.Empty)
             .Where(id => id != Guid.Empty)
             .ToHashSet();
-        bool Holds(StubEntry stub) => stub.Sources.Any(source => remote.Exists(copy => copy.Server == source.ServerId && string.Equals(copy.ItemId, source.ItemId, StringComparison.OrdinalIgnoreCase)));
+        bool Holds(StubEntry stub) => episodes.Contains(stub.Id) || (stub.Kind == StubKind.Movie && stub.Sources.Any(source => remote.Exists(copy =>
+            copy.Kind == ContentKind.Movie && copy.Server == source.ServerId && string.Equals(copy.ItemId, source.ItemId, StringComparison.OrdinalIgnoreCase))));
 
         return _registry.State.Groups
             .Where(group => group.LocalItemIds.Any(local.Contains) || group.StubIds.Select(_registry.Find).OfType<StubEntry>().Any(Holds))

@@ -67,6 +67,7 @@ public static class CatalogItemMapper
             ServerId = serverId,
             ItemId = item.ItemId,
             Kind = ContentKind.Episode,
+            SeriesId = item.SeriesId,
             Title = parent?.Name ?? item.SeriesName,
             Year = parent?.ProductionYear,
             Ids = ContentIds.FromProviderIds(parent?.ProviderIds),

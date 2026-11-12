@@ -59,11 +59,11 @@ public sealed class FederationResolver : IFederationResolver
         MergeCopyView ToCopyView(WorkCopy copy)
         {
             var merged = MergedCopy.From(copy.Item, copy.IsLocal);
-            return new MergeCopyView(merged, NameOf(merged), copy.Item.Metadata.RunTimeTicks, true) { Versions = BestFirst(copy.Item) };
+            return new MergeCopyView(merged, NameOf(merged), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, true) { Versions = BestFirst(FilmOnly(copy.Item)) };
         }
 
         MergeCopyView ToMergedCopyView(AppliedCopy copy) =>
-            new(copy.Copy, NameOf(copy.Copy), copy.Item?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(copy.Item) };
+            new(copy.Copy, NameOf(copy.Copy), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(FilmOnly(copy.Item)) };
 
         ResolvedSource ToSource(RemoteSource source)
         {
@@ -97,7 +97,10 @@ public sealed class FederationResolver : IFederationResolver
             MergeCases = result.MergeCases
                 .Select(entry => new MergeCaseView(
                     entry.Kind,
-                    entry.Works.Select(work => new MergeTitleView(work.WorkKey, work.HasLocalCopy, work.MergeIds, work.Copies.Select(ToCopyView).ToList())).ToList()))
+                    entry.Works.Select(work => new MergeTitleView(work.WorkKey, work.HasLocalCopy, work.MergeIds, work.Copies.Select(ToCopyView).ToList())).ToList())
+                {
+                    ContentKind = entry.ContentKind
+                })
                 .ToList(),
             ManualMerges = result.Merges
                 .Select(merge => new ManualMergeView(merge.Merge.Id, merge.Merge.CreatedUtc, merge.IsInEffect, merge.Copies.Select(ToMergedCopyView).ToList()))
@@ -111,6 +114,9 @@ public sealed class FederationResolver : IFederationResolver
             ? []
             : QualityRanking.Rank(item.ToSources()).Select(source => new MediaVersion(source.MediaSourceId, source.Quality)).ToList();
     }
+
+    // A series copy is shown by one of its episodes, whose duration and versions say nothing of the series.
+    private static CatalogItem? FilmOnly(CatalogItem? item) => item?.Kind == ContentKind.Movie ? item : null;
 
     private static Guid ToLocalId(string itemId) => Guid.TryParse(itemId, out var id) ? id : Guid.Empty;
 

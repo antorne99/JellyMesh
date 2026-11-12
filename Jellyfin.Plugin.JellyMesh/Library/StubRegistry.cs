@@ -62,6 +62,25 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <inheritdoc />
     public VersionGroup? FindGroupOfLocal(Guid itemId) => _lookup.GroupsByLocal.TryGetValue(itemId, out var group) ? group : null;
 
+    /// <summary>
+    /// Finds the episode stubs of a remote series on one server, through the series stubs it is a source of (decision 51).
+    /// </summary>
+    /// <param name="serverId">The remote server.</param>
+    /// <param name="seriesItemId">The series item on that server.</param>
+    /// <returns>The episode stubs, empty if the series has none.</returns>
+    public IReadOnlyList<StubEntry> FindEpisodesOfSeries(Guid serverId, string seriesItemId)
+    {
+        var state = _lookup.State;
+        var series = state.Series
+            .Where(entry => entry.ServerId == serverId && entry.Sources.Any(source => source.ServerId == serverId
+                && string.Equals(source.ItemId, seriesItemId, StringComparison.OrdinalIgnoreCase)))
+            .Select(entry => entry.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        return state.Stubs
+            .Where(stub => stub.Kind == StubKind.Episode && stub.ServerId == serverId && stub.SeriesStubId is { } id && series.Contains(id))
+            .ToList();
+    }
+
     /// <inheritdoc />
     public StubEntry? FindByPath(string? path)
     {

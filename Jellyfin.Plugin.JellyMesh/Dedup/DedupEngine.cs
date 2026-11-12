@@ -56,12 +56,13 @@ public static class DedupEngine
     }
 
     // Issues that share a title become one case, or a title would show twice and could be merged two ways. A case needs a
-    // title with no local copy: two local films cannot become one, because a local item is never touched.
+    // title with no local copy: two local films or series cannot become one, because a local item is never touched. An
+    // episode whose series is not known names no copy, so its work is in no case unless another copy names it.
     private static List<MergeCase> MergeCases(List<CatalogItem> local, List<CatalogItem> remote, WorkResolver works)
     {
         var films = local.Select(item => new WorkCopy(item, true))
             .Concat(remote.Select(item => new WorkCopy(item, false)))
-            .Where(copy => copy.Item.Kind == ContentKind.Movie)
+            .Where(copy => WorkResolver.CopyItemOf(copy.Item) is not null)
             .Select(copy => (Copy: copy, works.Find(copy.Item)?.Key))
             .Where(film => film.Key is not null)
             .ToLookup(film => film.Key!, film => film.Copy, StringComparer.Ordinal);
@@ -78,7 +79,10 @@ public static class DedupEngine
         }
 
         return cases
-            .Select(entry => new MergeCase(entry.Kind, entry.Keys.Select(key => CaseWork(key, films[key], works)).ToList()))
+            .Select(entry => new MergeCase(entry.Kind, entry.Keys.Select(key => CaseWork(key, films[key], works)).ToList())
+            {
+                ContentKind = films[entry.Keys.Min!].First().Item.Kind
+            })
             .Where(entry => entry.Works.Any(work => !work.HasLocalCopy))
             .OrderBy(entry => entry.Works[0].WorkKey, StringComparer.Ordinal)
             .ToList();
@@ -90,10 +94,12 @@ public static class DedupEngine
             .Where(merge => string.Equals(merge.WorkKey, key, StringComparison.Ordinal))
             .Select(merge => merge.Merge.Id)
             .ToList();
+        // A series is one copy, shown by its lowest episode.
         var sorted = copies
-            .DistinctBy(copy => (copy.Item.ServerId, copy.Item.ItemId))
             .OrderBy(copy => copy.Item.ServerId, StringComparer.Ordinal)
+            .ThenBy(copy => WorkResolver.CopyItemOf(copy.Item), StringComparer.Ordinal)
             .ThenBy(copy => copy.Item.ItemId, StringComparer.Ordinal)
+            .DistinctBy(copy => (copy.Item.ServerId, WorkResolver.CopyItemOf(copy.Item)))
             .ToList();
         return new MergeCaseWork(key, mergeIds, sorted);
     }

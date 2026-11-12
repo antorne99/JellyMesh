@@ -40,6 +40,7 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     private readonly Dictionary<Guid, Guid> _libraryOf = [];
     private readonly Dictionary<(Guid User, Guid Item), UserItemData> _rows = [];
     private readonly List<StubEntry> _stubs = [];
+    private readonly List<SeriesStub> _series = [];
     private readonly List<VersionGroup> _groups = [];
     private readonly User _mario = new("mario", "auth", "reset");
 
@@ -199,6 +200,137 @@ public sealed class MergeWatchStateCarryTests : IDisposable
         Assert.False(Row(b).IsFavorite);
     }
 
+    [Fact]
+    public async Task MergedSeriesCarryEpisodeByEpisode_EachGroupToItsPrimary()
+    {
+        var aCopy = Series(_serverA, "sa");
+        var bCopy = Series(_serverB, "sb");
+        var a1 = Episode(_serverA, "sa", 1);
+        var a2 = Episode(_serverA, "sa", 2);
+        var b1 = Episode(_serverB, "sb", 1);
+        var b2 = Episode(_serverB, "sb", 2);
+        Row(a1).IsFavorite = true;
+        Row(a1).PlayCount = 3;
+        Row(a2).Rating = 8;
+        Row(a2).PlaybackPositionTicks = 900;
+        var carry = await SaveAsync();
+        var heads = carry.FindHeads([aCopy, bCopy]);
+
+        Assert.Equal(4, heads.Count);
+        await LinkAsync(b1, a1);
+        await LinkAsync(b2, a2);
+        var report = await carry.CarryAsync(heads, CancellationToken.None);
+
+        Assert.Equal(2, report!.Moves.Count);
+        Assert.All(report.Moves, move => Assert.Equal(WatchStateMoveStatus.Carried, move.Status));
+        Assert.True(Row(b1).IsFavorite);
+        Assert.Equal(3, Row(b1).PlayCount);
+        Assert.Equal(8, Row(b2).Rating);
+        Assert.Equal(0, Row(b2).PlaybackPositionTicks);
+        Assert.Equal(900, Row(a2).PlaybackPositionTicks);
+    }
+
+    [Fact]
+    public async Task AnEpisodeOfAMergedSeriesThatJoinsNoGroupCarriesNothing()
+    {
+        // Different ranges stay separate episodes (D3), so no two entities became one.
+        var aCopy = Series(_serverA, "sa");
+        var bCopy = Series(_serverB, "sb");
+        var a1 = Episode(_serverA, "sa", 1);
+        var a2 = Episode(_serverA, "sa", 2);
+        var b1 = Episode(_serverB, "sb", 1);
+        var b3 = Episode(_serverB, "sb", 3);
+        Row(a2).IsFavorite = true;
+        Row(a1).IsFavorite = true;
+        var carry = await SaveAsync();
+        var heads = carry.FindHeads([aCopy, bCopy]);
+
+        await LinkAsync(b1, a1);
+        var report = await carry.CarryAsync(heads, CancellationToken.None);
+
+        Assert.Single(report!.Moves);
+        Assert.True(Row(b1).IsFavorite);
+        Assert.False(Row(b3).IsFavorite);
+    }
+
+    [Fact]
+    public async Task EpisodesOfMergedSeriesInDifferentLibrariesCarryNothing()
+    {
+        var aCopy = Series(_serverA, "sa");
+        var bCopy = Series(_serverB, "sb");
+        var a1 = Episode(_serverA, "sa", 1, _otherFilms);
+        var b1 = Episode(_serverB, "sb", 1);
+        Row(a1).IsFavorite = true;
+        var carry = await SaveAsync();
+        var heads = carry.FindHeads([aCopy, bCopy]);
+
+        await LinkAsync(b1, a1);
+
+        Assert.Null(await carry.CarryAsync(heads, CancellationToken.None));
+        Assert.False(Row(b1).IsFavorite);
+    }
+
+    [Fact]
+    public async Task ALocalSeriesMergedWithAOneEpisodeSeriesTakesTheStateOfThatEpisode()
+    {
+        // The local series names no head, so the one remote episode is the only head.
+        var local = Add(new MediaBrowser.Controller.Entities.TV.Episode { Path = "/media/serie/local S01E01.mkv" }, _films);
+        var localCopy = new MergedCopy { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), IsLocal = true, Kind = ContentKind.Episode };
+        var aCopy = Series(_serverA, "sa");
+        var a1 = Episode(_serverA, "sa", 1);
+        Row(a1).IsFavorite = true;
+        var carry = await SaveAsync();
+        var heads = carry.FindHeads([localCopy, aCopy]);
+
+        await LinkAsync(local, a1);
+        var report = await carry.CarryAsync(heads, CancellationToken.None);
+
+        Assert.Single(report!.Moves);
+        Assert.True(Row(local).IsFavorite);
+    }
+
+    [Fact]
+    public void ALocalSeriesNamesNoHead_ItsEpisodesAreFoundThroughTheirGroups()
+    {
+        var local = new MergedCopy { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), IsLocal = true, Kind = ContentKind.Episode };
+        var carry = new MergeWatchStateCarry(_registry, _store, _library.Object, Mock.Of<IWatchStateCarrier>(), new CapturingLogger<MergeWatchStateCarry>());
+
+        Assert.Empty(carry.FindHeads([local]));
+    }
+
+    private MergedCopy Series(Guid server, string remoteId)
+    {
+        var name = Guid.NewGuid().ToString("N");
+        _series.Add(new SeriesStub
+        {
+            Id = remoteId + "-stub",
+            ServerId = server,
+            RelativePath = Path.Combine(FederatedPaths.ServerFolder(server), "Serie", name),
+            WorkKey = "series|" + remoteId,
+            Sources = [new StubSource(server, remoteId, string.Empty)]
+        });
+        return new MergedCopy { ServerId = server.ToString("N"), ItemId = remoteId, Kind = ContentKind.Episode };
+    }
+
+    private MediaBrowser.Controller.Entities.TV.Episode Episode(Guid server, string seriesId, int number, Guid? library = null)
+    {
+        var series = _series.Single(entry => entry.Id == seriesId + "-stub");
+        var stub = new StubEntry
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            ServerId = server,
+            Kind = StubKind.Episode,
+            RelativePath = Path.Combine(series.RelativePath, "Season 01", $"S01E{number:00}.strm"),
+            IdentityKey = "key|S1E" + number,
+            SeriesStubId = series.Id,
+            SeasonNumber = 1,
+            EpisodeNumber = number,
+            Sources = [new StubSource(server, seriesId + "-e" + number, "ms")]
+        };
+        _stubs.Add(stub);
+        return Add(new MediaBrowser.Controller.Entities.TV.Episode { Path = FederatedPaths.Resolve(Root, stub.RelativePath) }, library ?? _films);
+    }
+
     private (Movie Item, MergedCopy Copy) Stub(Guid server, string remoteId, Guid? library = null)
     {
         var name = Guid.NewGuid().ToString("N");
@@ -248,7 +380,7 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     }
 
     private Task SaveStateAsync() =>
-        _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Groups = _groups.ToList() }, CancellationToken.None);
+        _registry.SaveAsync(StubState.Empty with { Stubs = _stubs.ToList(), Series = _series.ToList(), Groups = _groups.ToList() }, CancellationToken.None);
 
     private async Task<MergeWatchStateCarry> SaveAsync()
     {

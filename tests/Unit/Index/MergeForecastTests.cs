@@ -50,6 +50,8 @@ public sealed class MergeForecastTests : IDisposable
 
     private static RemoteMediaSource NoVideo(string id) => new() { Id = id, Name = "Version", MediaStreams = [] };
 
+    private FederationResolver Resolver() => new(_fixture.Index, new LocalCatalog(_local), _fixture.Registry, _store);
+
     private MergeCaseView Case() => Assert.Single(Service().GetList().Cases);
 
     private string KeyOf(string itemId) => Case().Titles.Single(title => title.Copies.Any(copy => copy.Copy.ItemId == itemId)).WorkKey;
@@ -181,6 +183,41 @@ public sealed class MergeForecastTests : IDisposable
 
         Assert.Null(forecast.Copy);
         Assert.False(forecast.IsCertain);
+    }
+
+    [Fact]
+    public async Task TwoSeriesKeptApartAreASeriesCase_AndMergeAndUndoAsOne()
+    {
+        // The same title with IDs that differ: two works that only the administrator can join (decision 51).
+        RemoteItem Show(string id, string tmdb) => TestItems.Series(id) with { ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = tmdb } };
+        _fixture.Client.Add("shows", RemoteItemType.Series, Show("s1", "1"), Show("s2", "2"));
+        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s1", 1, 1), TestItems.Episode("e2", "s2", 1, 2));
+        await _fixture.AddServerAsync("Friend", "shows");
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        var service = Service();
+
+        var list = service.GetList();
+        Assert.Empty(list.Cases);
+        var seriesCase = Assert.Single(list.SeriesCases);
+        Assert.Equal(ContentKind.Episode, seriesCase.ContentKind);
+        Assert.Equal(["s1", "s2"], seriesCase.Titles.SelectMany(title => title.Copies).Select(copy => copy.Copy.ItemId).Order(StringComparer.Ordinal));
+        var keys = seriesCase.Titles.Select(title => title.WorkKey).ToList();
+        var forecast = service.Preview(keys).Forecast!;
+        Assert.Null(forecast.Copy);
+        Assert.False(forecast.IsCertain);
+
+        Assert.Equal(ManualMergeOutcome.Merged, await service.MergeAsync(keys, CancellationToken.None));
+
+        var merge = Assert.Single(_store.Merges);
+        Assert.All(merge.Copies, copy => Assert.Equal(ContentKind.Episode, copy.Kind));
+        var merged = Resolver().Resolve().Contents;
+        Assert.Equal(2, merged.Count);
+        Assert.All(merged, content => Assert.Equal(MatchKind.Manual, content.Identity.Match));
+        Assert.Single(merged.Select(content => content.Identity.WorkKey).Distinct());
+
+        Assert.True(await service.UndoAsync(merge.Id, CancellationToken.None));
+        Assert.Equal(2, Resolver().Resolve().Contents.Select(content => content.Identity.WorkKey).Distinct().Count());
+        Assert.Single(service.GetList().SeriesCases);
     }
 
     [Fact]
