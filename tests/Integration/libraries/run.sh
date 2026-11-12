@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Integration 7 of the per-server spec: the libraries JellyMesh keeps for a server (D6, D7, D16, D20).
+# Integration 7 of the per-server spec: the libraries JellyMesh keeps for a server (D6, D7, D16, D20, decisions 131 and 140).
 # Starts a private instance with the plugin and a stock remote, checks, then removes both with their volumes.
 # usage: run.sh   (PREFIX and PORT pick the private containers, KEEP=1 leaves them running)
 set -euo pipefail
@@ -236,6 +236,42 @@ FILM_ID=$(folder "$FILM" | jq -r .ItemId)
 check "Film created again" only_path "$FILM" "$FILM_PATH" movies
 check "the film is in it once the scans ended" [ "$(movies_in "$FILM_ID")" = 1 ]
 check "the old notices are cleared" [ "$(state | jq -c .Released)" = '[]' ]
+
+held_none() { ! docker exec "$LOCAL" sh -c 'grep -qs "<RemovedServerLibrariesConfig>" /config/plugins/configurations/*.xml'; }
+
+wait_missing() { # <library name>
+  local i
+  for i in $(seq 1 300); do
+    missing "$1" && return
+    sleep 1
+  done
+  echo "$1 was not deleted" >&2; return 1
+}
+
+echo "== an admin library on the server folder before the switch-on is never taken [131]"
+code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false,"Confirmed":true}' | head -1)
+check "the confirmed switch off answers 202" [ "$code" = 202 ]
+wait_libraries
+post "/Library/VirtualFolders?name=$(urlencode 'Mine on the folder')&collectionType=movies&refreshLibrary=false&paths=$(urlencode "$FILM_PATH")" '{"LibraryOptions":{}}'
+code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' | head -1)
+check "switching on answers 202" [ "$code" = 202 ]
+wait_libraries
+scan_idle
+check "Film is created next to the admin library" only_path "$FILM" "$FILM_PATH" movies
+delete "/Library/VirtualFolders?name=$(urlencode "$FILM")&refreshLibrary=false"
+scan_idle
+sync_full
+check "the admin library is not taken for the deleted Film" [ "$(registry)" = "$(jq -nc --arg s "$SERIE" '[$s]')" ]
+check "the deleted Film is listed as gone" [ "$(released)" = "$(jq -nc --arg f "$FILM" '[$f]')" ]
+
+echo "== removing the server deletes its libraries with no confirmation [140]"
+delete "/JellyMesh/Admin/Servers/$SERVER"
+wait_missing "$SERIE"
+echo "   libraries: $(folders | jq -c '[.[].Name]')"
+check "the registry library is deleted" missing "$SERIE"
+check "the admin library on the server folder stays" only_path 'Mine on the folder' "$FILM_PATH" movies
+check "the admin library elsewhere stays" only_path "NAS  Casa - Film" /other movies
+check "nothing is left to delete" held_none
 
 echo "passed $PASSED, failed $FAILED"
 [ "$FAILED" = 0 ]
