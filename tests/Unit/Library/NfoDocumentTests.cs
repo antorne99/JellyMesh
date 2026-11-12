@@ -51,6 +51,32 @@ public class NfoDocumentTests
     }
 
     [Fact]
+    public void AProtectedSeasonHasItsNameAndPlotWithLockedFieldsNotLockdata()
+    {
+        var metadata = new StubMetadata { IsProtected = true, Title = "The Beginning", Overview = "Season plot", SeasonNumber = 2 };
+
+        var root = XDocument.Parse(NfoDocument.Season(metadata)).Root!;
+
+        Assert.Equal("season", root.Name.LocalName);
+        Assert.Equal("The Beginning", root.Element("title")?.Value);
+        Assert.Equal("Season plot", root.Element("plot")?.Value);
+        Assert.Equal("2", root.Element("seasonnumber")?.Value);
+        Assert.Equal("Name|Overview", root.Element("lockedfields")?.Value);
+        Assert.Null(root.Element("lockdata"));
+    }
+
+    [Fact]
+    public void AnUnprotectedSeasonHasItsNameAndNumberOnly()
+    {
+        var metadata = new StubMetadata { IsProtected = false, Title = "The Beginning", SeasonNumber = 0 };
+
+        var root = XDocument.Parse(NfoDocument.Season(metadata)).Root!;
+
+        Assert.Equal(["title", "seasonnumber"], root.Elements().Select(element => element.Name.LocalName));
+        Assert.Equal("0", root.Element("seasonnumber")?.Value);
+    }
+
+    [Fact]
     public void AStubOfSeveralEpisodesSaysWhereItEnds()
     {
         var root = XDocument.Parse(NfoDocument.Episode(Protected() with { SeasonNumber = 1, EpisodeNumber = 2, EpisodeNumberEnd = 3 })).Root!;

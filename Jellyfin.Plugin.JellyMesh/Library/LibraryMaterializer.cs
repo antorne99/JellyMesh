@@ -312,13 +312,54 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
                 entry = entry with { ImageTag = work.ImageTag };
             }
 
-            run.Put(entry);
+            var seasons = new List<SeasonStub>(work.Seasons.Count);
+            foreach (var season in work.Seasons)
+            {
+                seasons.Add(await WriteSeasonAsync(run, season, work.IsNew, entry.ServerId, cancellationToken).ConfigureAwait(false));
+            }
+
+            run.Put(entry with { Seasons = seasons });
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(entry.ServerId);
             _logger.LogError("Cannot write a stub series: {Error}", exception.GetType().Name);
         }
+    }
+
+    // Returns the season as now on disk. A season of a series that exists may already have its item, made from the folder
+    // name before this version: Jellyfin does not read the new season.nfo for it, so name, plot and poster go to the item.
+    private async Task<SeasonStub> WriteSeasonAsync(Run run, SeasonWork work, bool seriesIsNew, Guid? serverId, CancellationToken cancellationToken)
+    {
+        var entry = work.Entry;
+        var nfo = FederatedPaths.Resolve(run.Root, work.NfoPath);
+        try
+        {
+            var existing = new LazyItem(_library, Path.GetDirectoryName(nfo)!, true, seriesIsNew);
+            if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(nfo))
+            {
+                await WriteTextAsync(nfo, work.Nfo, cancellationToken).ConfigureAwait(false);
+                if (existing.Value is { } item)
+                {
+                    await _updater.ApplySeasonAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
+                }
+
+                entry = entry with { ContentHash = work.ContentHash };
+            }
+
+            if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
+                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
+            {
+                entry = entry with { ImageTag = work.ImageTag };
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            run.Fail(serverId);
+            _logger.LogError("Cannot write a stub season: {Error}", exception.GetType().Name);
+        }
+
+        return entry;
     }
 
     private async Task WriteStubAsync(Run run, StubWork work, CancellationToken cancellationToken)
@@ -476,6 +517,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var wanted = plan.Series
             .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
             .SelectMany(work => work.Images)
+            .Concat(plan.Series
+                .SelectMany(work => work.Seasons)
+                .Where(season => !string.Equals(season.Entry.ImageTag, season.ImageTag, StringComparison.Ordinal))
+                .SelectMany(season => season.Images))
             .Concat(plan.Stubs
                 .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
                 .SelectMany(work => work.Images))

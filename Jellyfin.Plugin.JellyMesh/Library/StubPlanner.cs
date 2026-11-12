@@ -23,6 +23,16 @@ public static class StubPlanner
 {
     private static readonly string[] _seriesKeyProviders = ["Custom", "Tvdb", "Imdb"];
 
+    // The images of a film or a series, under the names Jellyfin reads in a title folder. An episode keeps one (decision 50).
+    private static readonly (ImageType Type, string Stem)[] _titleImages =
+    [
+        (ImageType.Primary, "poster"),
+        (ImageType.Backdrop, "fanart"),
+        (ImageType.Logo, "logo"),
+        (ImageType.Banner, "banner"),
+        (ImageType.Thumb, "landscape")
+    ];
+
     /// <summary>
     /// Makes the plan.
     /// </summary>
@@ -70,7 +80,7 @@ public static class StubPlanner
             }
         }
 
-        var seriesWorks = seriesPlans.Values.Select(plan => plan.Work).ToList();
+        var seriesWorks = seriesPlans.Values.Select(plan => WithSeasons(input, plan, catalog)).ToList();
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = flat.Where(stub => !matcher.IsClaimed(stub)).ToList();
 
@@ -154,7 +164,7 @@ public static class StubPlanner
                 }
             }
 
-            seriesWorks.AddRange(seriesPlans.Values.Select(plan => plan.Work));
+            seriesWorks.AddRange(seriesPlans.Values.Select(plan => WithSeasons(input, plan, catalog)));
             works.AddRange(placed.Skip(works.Count).Select(entry => entry.Work));
             claimed.UnionWith(own.Where(matcher.IsClaimed).Select(stub => stub.Id));
             merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
@@ -487,8 +497,11 @@ public static class StubPlanner
         var nfo = NfoDocument.Movie(metadata);
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();
-        AddRemote(images, winner, content.Winner!.ServerId, ImageType.Primary, Path.Combine(folder, "poster"));
-        AddRemote(images, winner, content.Winner.ServerId, ImageType.Backdrop, Path.Combine(folder, "fanart"));
+        foreach (var (type, stem) in _titleImages)
+        {
+            AddRemote(images, winner, content.Winner!.ServerId, type, Path.Combine(folder, stem));
+        }
+
         return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
     }
 
@@ -500,6 +513,13 @@ public static class StubPlanner
         var id = stub?.Id ?? NewId();
         var relative = stub?.RelativePath ?? FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last, label);
         var stem = Path.ChangeExtension(relative, null);
+
+        // A stub that stays in the folder of another season number gets no season files there.
+        var folder = Path.GetDirectoryName(relative)!;
+        if (string.Equals(Path.GetFileName(folder), FederatedPaths.SeasonFolder(season), StringComparison.Ordinal))
+        {
+            series.Episodes.Add(new SeasonEpisode(folder, season, content.Winner!.ServerId, winner));
+        }
 
         var entry = (stub ?? NewEntry(id, StubKind.Episode, relative)) with
         {
@@ -575,9 +595,66 @@ public static class StubPlanner
             Sources = known.Select(item => new StubSource(item.ServerId, item.Item.ItemId, string.Empty)).ToList()
         };
 
-        plan = new SeriesPlan(entry, name ?? string.Empty, new SeriesWork(entry, stub is null, metadata, nfo, Path.Combine(relative, "tvshow.nfo"), Hash(nfo), images, imageTag));
+        var work = new SeriesWork(entry, stub is null, metadata, nfo, Path.Combine(relative, "tvshow.nfo"), Hash(nfo), images, imageTag);
+        plan = new SeriesPlan(entry, name ?? string.Empty, work, source.Item is null ? null : (source.ServerId, source.Item.ItemId));
         plans[workKey] = plan;
         return plan;
+    }
+
+    // One season work per season folder that gets episode work. A season that has none now is forgotten, so that it is
+    // written again if it comes back.
+    private static SeriesWork WithSeasons(StubPlanInput input, SeriesPlan plan, IndexItemLookup catalog)
+    {
+        var written = new Dictionary<string, SeasonStub>(StringComparer.Ordinal);
+        foreach (var season in plan.Entry.Seasons)
+        {
+            written.TryAdd(season.RelativePath, season);
+        }
+
+        var seasons = new List<SeasonWork>();
+        foreach (var folder in plan.Episodes.GroupBy(episode => episode.Folder, StringComparer.Ordinal).OrderBy(folder => folder.Key, StringComparer.Ordinal))
+        {
+            var number = folder.First().Season;
+            if (SeasonOf(plan, folder, number, catalog) is not { } found)
+            {
+                continue;
+            }
+
+            var metadata = new StubMetadata
+            {
+                IsProtected = input.IsProtected,
+                Title = found.Season.Name,
+                Overview = input.IsProtected ? found.Season.Overview : null,
+                SeasonNumber = number
+            };
+            var nfo = NfoDocument.Season(metadata);
+            var images = new List<StubImage>();
+            AddRemote(images, found.Season, found.ServerId, ImageType.Primary, Path.Combine(folder.Key, "poster"));
+            var entry = written.GetValueOrDefault(folder.Key) ?? new SeasonStub { RelativePath = folder.Key };
+            seasons.Add(new SeasonWork(entry, metadata, nfo, Path.Combine(folder.Key, "season.nfo"), Hash(nfo), images, ImageTagOf(found.Season, images)));
+        }
+
+        return plan.Work with { Seasons = seasons };
+    }
+
+    // The remote season of a folder: the one of the series the metadata comes from, else the season its episodes name,
+    // those of the same server first. Null if the index has none.
+    private static (Guid ServerId, IndexedItem Season)? SeasonOf(SeriesPlan plan, IEnumerable<SeasonEpisode> episodes, int number, IndexItemLookup catalog)
+    {
+        if (plan.Source is { } source && catalog.FindSeason(source.ServerId, source.ItemId, number) is { } season)
+        {
+            return (source.ServerId, season);
+        }
+
+        return episodes
+            .OrderBy(episode => episode.ServerId == plan.Source?.ServerId ? 0 : 1)
+            .ThenBy(episode => episode.Episode.IndexNumber)
+            .ThenBy(episode => episode.ServerId)
+            .ThenBy(episode => episode.Episode.ItemId, StringComparer.Ordinal)
+            .Select(episode => (episode.ServerId, Season: episode.Episode.SeasonId is { } id ? catalog.Find(episode.ServerId, id) : null))
+            .Where(entry => entry.Season is { Kind: IndexedItemKind.Season } found && found.IndexNumber == number)
+            .Select(entry => ((Guid, IndexedItem)?)(entry.ServerId, entry.Season!))
+            .FirstOrDefault();
     }
 
     // Every remote row of the series, in a fixed order, so that a first choice does not depend on the order of a read.
@@ -639,6 +716,13 @@ public static class StubPlanner
 
         Add(ImageType.Primary, "poster", local?.PosterPath);
         Add(ImageType.Backdrop, "fanart", local?.BackdropPath);
+
+        // A series merged with a local one shows its images (decision 3), so these come only without one.
+        foreach (var (type, stem) in local is null ? _titleImages.Skip(2) : [])
+        {
+            Add(type, stem, null);
+        }
+
         return tag.ToString();
     }
 
@@ -679,7 +763,13 @@ public static class StubPlanner
 
     private static string NewId() => Guid.NewGuid().ToString("N");
 
-    private sealed record SeriesPlan(SeriesStub Entry, string FileName, SeriesWork Work);
+    // The remote series the metadata comes from, if the index has it, and the episodes placed in its season folders.
+    private sealed record SeriesPlan(SeriesStub Entry, string FileName, SeriesWork Work, (Guid ServerId, string ItemId)? Source)
+    {
+        public List<SeasonEpisode> Episodes { get; } = [];
+    }
+
+    private sealed record SeasonEpisode(string Folder, int Season, Guid ServerId, IndexedItem Episode);
 
     /// <summary>
     /// Where the series of a plan live: the flat layout, or the folder of one server, whose series come from that server

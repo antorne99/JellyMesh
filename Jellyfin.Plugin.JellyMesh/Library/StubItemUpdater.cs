@@ -94,6 +94,28 @@ public sealed class StubItemUpdater
     }
 
     /// <summary>
+    /// Applies the name and plot of a <c>season.nfo</c> to a season that exists. Its provider IDs stay the fetchers'.
+    /// </summary>
+    /// <param name="item">The season.</param>
+    /// <param name="metadata">The metadata.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public Task ApplySeasonAsync(BaseItem item, StubMetadata metadata, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        item.Name = metadata.Title ?? item.Name;
+        if (metadata.IsProtected)
+        {
+            item.Overview = metadata.Overview;
+        }
+
+        item.LockedFields = metadata.IsProtected ? NfoDocument.SeasonLockedFields.ToArray() : [];
+        return SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken);
+    }
+
+    /// <summary>
     /// Points an item to the URL of its <c>.strm</c>. Jellyfin reads the file only when it refreshes the item, and until
     /// then it keeps opening the old URL.
     /// </summary>
