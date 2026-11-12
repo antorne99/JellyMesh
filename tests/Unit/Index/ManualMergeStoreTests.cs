@@ -64,6 +64,27 @@ public sealed class ManualMergeStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ASeriesCopyKeepsItsKindAndTvdb_AndAnOlderCopyReadsAsAFilm()
+    {
+        var series = new MergedCopy { ServerId = "a", ItemId = "s", Kind = ContentKind.Episode, Tvdb = "71", Title = "Show" };
+        using (var store = Store())
+        {
+            await store.UpdateAsync(_ => [Merge() with { Copies = [series, Merge().Copies[0]] }], CancellationToken.None);
+        }
+
+        var text = await File.ReadAllTextAsync(FilePath);
+        Assert.Contains("\"Kind\": \"Movie\",", text, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(FilePath, text.Replace("\"Kind\": \"Movie\",", string.Empty, StringComparison.Ordinal));
+        using var reloaded = Store();
+
+        var copies = Assert.Single(reloaded.Merges).Copies;
+        Assert.Contains("\"Kind\": \"Episode\"", text, StringComparison.Ordinal);
+        Assert.Equal(series, copies[0]);
+        Assert.Equal(ContentKind.Movie, copies[1].Kind);
+        Assert.Null(copies[1].Tvdb);
+    }
+
+    [Fact]
     public async Task NoTemporaryFileStays()
     {
         using var store = Store();
