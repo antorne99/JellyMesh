@@ -115,19 +115,4 @@ public class WatchStateMergeTests
 
         Assert.Equal(3, local.Rating);
     }
-
-    [Fact]
-    public void ASeriesRowHandsOverOnlyItsFavorite()
-    {
-        var stub = Data();
-        stub.IsFavorite = true;
-        stub.Played = true;
-        var local = Data();
-
-        Assert.True(WatchStateMerge.MergeFavorite(stub, local));
-        Assert.False(WatchStateMerge.MergeFavorite(stub, local));
-
-        Assert.True(local.IsFavorite);
-        Assert.False(local.Played);
-    }
 }

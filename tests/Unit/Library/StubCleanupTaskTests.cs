@@ -28,6 +28,8 @@ public sealed class StubCleanupTaskTests : IDisposable
     private readonly Mock<IUserManager> _users = new();
     private readonly Mock<IUserDataManager> _userData = new();
     private readonly Mock<IProviderManager> _providers = new();
+    private readonly Mock<IVersionLinker> _linker = new();
+    private readonly CapturingLogger<StubCleanupTask> _logger = new();
     private readonly List<string> _calls = [];
     private readonly User _anna = new("anna", "auth", "reset");
     private readonly User _bruno = new("bruno", "auth", "reset");
@@ -57,7 +59,8 @@ public sealed class StubCleanupTaskTests : IDisposable
         _providers.Object,
         Mock.Of<IFileSystem>(),
         _fixture.Remover,
-        new CapturingLogger<StubCleanupTask>());
+        _logger,
+        _linker.Object);
 
     private Task RunAsync() => Task().Run(new Progress<double>(), CancellationToken.None);
 
@@ -230,6 +233,41 @@ public sealed class StubCleanupTaskTests : IDisposable
 
         Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
         Assert.True(File.Exists(merged.Path));
+    }
+
+    [Fact]
+    public async Task AfterTheScan_TheVersionsAreLinked_OnceTheMergedStubIsGone_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(async (bool thorough, CancellationToken token) =>
+            {
+                // The linker takes the same lock, so it must be free by now.
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add(thorough + " " + _fixture.Registry.State.Stubs.Count);
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["False 1"], seen);
+    }
+
+    [Fact]
+    public async Task AFailedLink_IsLoggedByItsTypeOnly_AndTheScanGoesOn()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("http://secret"));
+
+        await RunAsync();
+
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Single(_fixture.Registry.State.Stubs);
     }
 
     [Fact]

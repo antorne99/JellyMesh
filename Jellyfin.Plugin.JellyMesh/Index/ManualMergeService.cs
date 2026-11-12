@@ -11,8 +11,8 @@ namespace Jellyfin.Plugin.JellyMesh.Index;
 
 /// <summary>
 /// Merges film titles by hand and undoes it (decision 20). A merge only changes what the resolver returns, so everything
-/// after it is the path of any two copies that became one title: the materializer updates the stub that stays, and the
-/// post-scan task hands the watch state of the other over and removes it (decision 2).
+/// after it is the path of any two copies that became one title: copies of one server keep one stub, whose post-scan task
+/// hands the state of the other over (decision 2), and copies of different servers or a local one become versions (Q23).
 /// </summary>
 public sealed class ManualMergeService
 {
@@ -21,6 +21,7 @@ public sealed class ManualMergeService
     private readonly ILibraryMaterializer _materializer;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ManualMergeService> _logger;
+    private readonly IVersionLinker? _linker;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ManualMergeService"/> class.
@@ -30,18 +31,21 @@ public sealed class ManualMergeService
     /// <param name="materializer">The materializer.</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="linker">The version linker, if any.</param>
     public ManualMergeService(
         IFederationResolver resolver,
         IManualMergeStore store,
         ILibraryMaterializer materializer,
         TimeProvider timeProvider,
-        ILogger<ManualMergeService> logger)
+        ILogger<ManualMergeService> logger,
+        IVersionLinker? linker = null)
     {
         _resolver = resolver;
         _store = store;
         _materializer = materializer;
         _timeProvider = timeProvider;
         _logger = logger;
+        _linker = linker;
     }
 
     /// <summary>
@@ -100,7 +104,7 @@ public sealed class ManualMergeService
             cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation("Merged {Count} film titles by hand", titles.Count);
-        await ApplyAsync(cancellationToken).ConfigureAwait(false);
+        await ApplyAsync(false, cancellationToken).ConfigureAwait(false);
         return ManualMergeOutcome.Merged;
     }
 
@@ -124,7 +128,7 @@ public sealed class ManualMergeService
         if (found)
         {
             _logger.LogInformation("Undid a manual merge of film titles");
-            await ApplyAsync(cancellationToken).ConfigureAwait(false);
+            await ApplyAsync(true, cancellationToken).ConfigureAwait(false);
         }
 
         return found;
@@ -197,17 +201,22 @@ public sealed class ManualMergeService
         return (titles.Count(title => title.HasLocalCopy) > 1 ? ManualMergeOutcome.TwoLocalTitles : ManualMergeOutcome.Merged, titles);
     }
 
-    // The choice is saved by now, so a failure here only delays it to the next sync.
-    private async Task ApplyAsync(CancellationToken cancellationToken)
+    // The choice is saved by now, so a failure only delays it: to the next sync, or to the nightly run for the copies
+    // that an undo detaches with its thorough link (D5, Q144).
+    private async Task ApplyAsync(bool thorough, CancellationToken cancellationToken)
     {
         try
         {
             await _materializer.MaterializeAsync(cancellationToken).ConfigureAwait(false);
+            if (_linker is not null)
+            {
+                await _linker.LinkAsync(thorough, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The type only: a message could hold a remote address.
-            _logger.LogError("Could not apply a manual merge yet, the next sync does: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not apply a manual merge yet, a later sync or the nightly run does: {Error}", exception.GetType().Name);
         }
     }
 }

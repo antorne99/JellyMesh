@@ -33,6 +33,8 @@ public sealed class ManualMergeStubTests : IDisposable
     private readonly Mock<IUserManager> _users = new();
     private readonly Mock<IUserDataManager> _userData = new();
     private readonly List<string> _calls = [];
+    private readonly Mock<IVersionLinker> _linker = new();
+    private readonly List<string> _links = [];
     private readonly User _anna = new("anna", "auth", "reset");
     private readonly ManualMergeService _service;
 
@@ -45,7 +47,11 @@ public sealed class ManualMergeStubTests : IDisposable
         _userData
             .Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()))
             .Callback<User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken>((_, item, _, _, _) => _calls.Add("save " + item.Path));
-        _service = new ManualMergeService(_fixture.Resolver, _fixture.Merges, _fixture.Materializer, _fixture.Sync.Clock, new CapturingLogger<ManualMergeService>());
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<bool, CancellationToken>((thorough, _) => _links.Add(thorough + " " + _fixture.Registry.State.Groups.Count))
+            .Returns(Task.CompletedTask);
+        _service = new ManualMergeService(_fixture.Resolver, _fixture.Merges, _fixture.Materializer, _fixture.Sync.Clock, new CapturingLogger<ManualMergeService>(), _linker.Object);
     }
 
     public void Dispose()
@@ -146,6 +152,47 @@ public sealed class ManualMergeStubTests : IDisposable
         Assert.Equal(before, _fixture.Registry.State.Stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal));
         Assert.Equal(before, Assert.Single(_fixture.Registry.State.Groups).StubIds.Order(StringComparer.Ordinal));
         Assert.Empty(_calls);
+    }
+
+    [Fact]
+    public async Task AMergeAcrossServers_LinksTheVersionsAtOnce_WithNoScanToWaitFor()
+    {
+        await ChainAsync();
+        _fixture.Library.Invocations.Clear();
+
+        await MergeAllAsync();
+
+        Assert.Equal(["False 1"], _links);
+        _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Never);
+    }
+
+    [Fact]
+    public async Task AnUndo_RunsTheThoroughLink_ThatDetachesTheCopiesOfTheGroupItDissolved()
+    {
+        await ChainAsync();
+        await MergeAllAsync();
+        _links.Clear();
+
+        await _service.UndoAsync(Assert.Single(_service.GetList().Merges).Id, CancellationToken.None);
+
+        Assert.Equal(["True 0"], _links);
+    }
+
+    [Fact]
+    public async Task AFailedLink_KeepsTheMerge_AndIsLoggedByItsTypeOnly()
+    {
+        await ChainAsync();
+        var linker = new Mock<IVersionLinker>();
+        linker.Setup(item => item.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("no space on http://secret"));
+        var logger = new CapturingLogger<ManualMergeService>();
+        var service = new ManualMergeService(_fixture.Resolver, _fixture.Merges, _fixture.Materializer, _fixture.Sync.Clock, logger, linker.Object);
+        var keys = Assert.Single(service.GetList().Cases).Titles.Select(title => title.WorkKey).ToList();
+
+        Assert.Equal(ManualMergeOutcome.Merged, await service.MergeAsync(keys, CancellationToken.None));
+
+        Assert.Single(_fixture.Merges.Merges);
+        Assert.Contains(logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 
     [Fact]
