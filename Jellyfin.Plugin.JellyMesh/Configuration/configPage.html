@@ -1731,7 +1731,6 @@
                     "The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.": "Il nome compare nell'elenco delle versioni e nei nomi delle sue librerie automatiche. La sua cartella resta la stessa.",
                     "Rename": "Rinomina",
                     "Enter a name.": "Inserisci un nome.",
-                    "Enter a name different from the current one.": "Inserisci un nome diverso da quello attuale.",
                     "{server} becomes {name}. Its titles move to the new name, with the watch state of each user.": "{server} diventa {name}. I suoi titoli passano al nuovo nome, con lo stato di visione di ogni utente.",
                     "Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.": "Vengono rinominate anche le sue librerie automatiche: {names}. Ognuna si svuota e si riempie di nuovo, e ordinamento e vista ripartono da capo.",
                     "The libraries are scanned twice. Until then the titles of this server may show twice among the versions.": "Le librerie vengono analizzate due volte. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
@@ -2736,13 +2735,7 @@
                             return;
                         }
 
-                        var state = renameState(server);
-                        if (wanted === server.Name && !state.Failed) {
-                            markField(name, t('Enter a name different from the current one.'));
-                            focusField(name);
-                            return;
-                        }
-
+                        // The same name runs the steps again, which finishes a rename that stopped halfway.
                         var paragraphs = [
                             t('{server} becomes {name}. Its titles move to the new name, with the watch state of each user.', { server: escapeHtml(server.Name), name: escapeHtml(wanted) })
                         ];
