@@ -5403,7 +5403,8 @@
                         };
                     }
 
-                    if (migration.Mode === 'Automatic') {
+                    // A finished run that finds old paths again shows the step left, and offers a new run.
+                    if (migration.Mode === 'Automatic' && migration.AutomaticStep !== 'Done') {
                         return { title: t('Migrating to the folders of each server'), text: automaticSteps[migration.AutomaticStep] || '' };
                     }
 
@@ -5417,7 +5418,7 @@
                     automatic.textContent = failed ? t('Try again') : t('Migrate automatically');
                     manual.textContent = t('I\'ll do it by hand');
                     manual.hidden = migration.Mode !== 'None';
-                    automatic.hidden = migration.Running || (migration.Mode === 'Automatic' && !failed);
+                    automatic.hidden = migration.Running || (migration.Mode === 'Automatic' && !failed && migration.AutomaticStep !== 'Done');
                     page.querySelector('#jmMigrationActions').hidden = automatic.hidden && manual.hidden;
                 }
 
@@ -5433,7 +5434,8 @@
                     var mode = migration.Mode || 'None';
                     migration.Mode = mode;
                     var failed = mode === 'Automatic' && !!migration.Error && migration.Error !== 'None';
-                    var quiet = mode === 'Automatic' ? !failed : mode === 'Manual' && migration.Step === 'Carrying';
+                    var ended = mode === 'Automatic' && migration.AutomaticStep === 'Done' && !migration.Running;
+                    var quiet = mode === 'Automatic' ? !failed && !ended : mode === 'Manual' && migration.Step === 'Carrying';
                     var banner = page.querySelector('#jmMigrationBanner');
                     banner.classList.toggle('jmToneWarn', !quiet);
                     banner.classList.toggle('jmToneQuiet', quiet);
@@ -5446,7 +5448,7 @@
                     renderActions(migration, failed);
 
                     // The folders to add or remove are the admin's to do in manual mode, or left by hand after an error.
-                    var byHand = mode === 'Manual' || failed;
+                    var byHand = mode === 'Manual' || failed || ended;
                     var libraries = byHand ? (migration.Libraries || []).slice() : [];
                     if (byHand && migration.Step === 'AddPaths' && (migration.UnlinkedFolders || []).length > 0) {
                         libraries.push({ Name: t('In no library yet'), MissingPaths: migration.UnlinkedFolders });

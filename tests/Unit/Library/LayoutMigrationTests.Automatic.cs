@@ -357,6 +357,28 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task AnOldPathAddedAfterTheEndIsShownAndANewRunRemovesIt()
+    {
+        OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
+        var migration = await MigrationAsync();
+        await migration.Choose(LayoutMigrationMode.Automatic).Job;
+        var film = _libraries.Single(library => library.Name == "Film");
+        film.Locations = [.. film.Locations, OldFilms];
+
+        var status = migration.GetStatus(Root)!;
+        var again = migration.Choose(LayoutMigrationMode.Automatic);
+        await again.Job;
+
+        Assert.Equal(AutomaticMigrationStep.Done, status.AutomaticStep);
+        Assert.False(status.Running);
+        Assert.Equal(LayoutMigrationChoiceOutcome.Started, again.Outcome);
+        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Null(migration.GetStatus(Root));
+    }
+
+    [Fact]
     public async Task ChoosingManualRunsTheManualMigrationAndChangesNoLibrary()
     {
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.None;
