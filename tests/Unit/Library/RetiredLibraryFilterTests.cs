@@ -33,13 +33,19 @@ public class RetiredLibraryFilterTests
             .ReturnsAsync(() => new AuthorizationInfo { User = _caller });
     }
 
-    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(string query)
+    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(string query, string? routeKey = null, string? routeValue = null)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = "GET";
         http.Request.QueryString = new QueryString(query);
         var action = new ControllerActionDescriptor { ControllerName = "Items", ActionName = "GetItems" };
-        var context = new ResourceExecutingContext(new ActionContext(http, new RouteData(), action), new List<IFilterMetadata>(), new List<IValueProviderFactory>());
+        var route = new RouteData();
+        if (routeKey is not null)
+        {
+            route.Values[routeKey] = routeValue;
+        }
+
+        var context = new ResourceExecutingContext(new ActionContext(http, route, action), new List<IFilterMetadata>(), new List<IValueProviderFactory>());
         var ran = false;
         await new RetiredLibraryFilter(_retired, _authorization.Object).OnResourceExecutionAsync(context, () =>
         {
@@ -61,6 +67,39 @@ public class RetiredLibraryFilterTests
 
         Assert.False(ran);
         Assert.Equal(StatusCodes.Status404NotFound, (context.Result as StatusCodeResult)?.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("itemId", "{0:D}")]
+    [InlineData("itemId", "{0:N}")]
+    [InlineData("ItemId", "{0:D}")]
+    public async Task A_user_who_opens_a_retired_library_by_its_id_gets_404(string key, string value)
+    {
+        _retired.Retire(_old);
+
+        var (context, ran) = await RunAsync(string.Empty, key, string.Format(System.Globalization.CultureInfo.InvariantCulture, value, _old));
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, (context.Result as StatusCodeResult)?.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_administrator_still_opens_the_old_id()
+    {
+        _retired.Retire(_old);
+        _caller!.Permissions.Add(new Permission(PermissionKind.IsAdministrator, true));
+
+        Assert.True((await RunAsync(string.Empty, "itemId", _old.ToString("D"))).Ran);
+    }
+
+    [Fact]
+    public async Task Other_items_and_other_route_values_pass()
+    {
+        _retired.Retire(_old);
+
+        Assert.True((await RunAsync(string.Empty, "itemId", _other.ToString("D"))).Ran);
+        Assert.True((await RunAsync(string.Empty, "userId", _old.ToString("D"))).Ran);
+        Assert.True((await RunAsync(string.Empty, "itemId", "not-a-guid")).Ran);
     }
 
     [Fact]

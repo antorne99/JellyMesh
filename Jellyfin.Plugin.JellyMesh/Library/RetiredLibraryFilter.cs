@@ -7,16 +7,19 @@ using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// Answers 404 to a user who is not an administrator and names, as <c>ParentId</c>, the old id of a library the plugin
-/// renamed: stock still lists it under that id until a restart, past the user's blocked list (§10 row 86).
+/// Answers 404 to a user who is not an administrator and names, as <c>ParentId</c> or as the item of the route, the old
+/// id of a library the plugin renamed: stock still serves it under that id until a restart, past the user's blocked list
+/// (§10 rows 86 and 291).
 /// </summary>
 public sealed class RetiredLibraryFilter : IAsyncResourceFilter
 {
     private const string ParentParameter = "parentId";
+    private const string ItemRouteValue = "itemId";
 
     private readonly RetiredLibraryIds _retired;
     private readonly IAuthorizationContext _authorization;
@@ -38,7 +41,7 @@ public sealed class RetiredLibraryFilter : IAsyncResourceFilter
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(next);
 
-        if (!_retired.IsEmpty && NamesRetired(context.HttpContext.Request.Query))
+        if (!_retired.IsEmpty && (NamesRetired(context.HttpContext.Request.Query) || OpensRetired(context.RouteData.Values)))
         {
             var user = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User;
             if (user is not null && !user.HasPermission(PermissionKind.IsAdministrator))
@@ -56,4 +59,9 @@ public sealed class RetiredLibraryFilter : IAsyncResourceFilter
         .Where(pair => string.Equals(pair.Key, ParentParameter, StringComparison.OrdinalIgnoreCase))
         .SelectMany(pair => pair.Value)
         .Any(value => Guid.TryParse(value, out var id) && _retired.Contains(id));
+
+    // On 12.4 the item routes, such as /Items/{itemId} and its images, still open the old library (row 291).
+    private bool OpensRetired(RouteValueDictionary values) => values
+        .Where(pair => string.Equals(pair.Key, ItemRouteValue, StringComparison.OrdinalIgnoreCase))
+        .Any(pair => Guid.TryParse(pair.Value?.ToString(), out var id) && _retired.Contains(id));
 }
