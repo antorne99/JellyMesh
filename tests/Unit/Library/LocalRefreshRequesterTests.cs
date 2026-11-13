@@ -122,4 +122,35 @@ public class LocalRefreshRequesterTests
 
         Assert.True(requester.IsOverdue(item));
     }
+
+    [Fact]
+    public void TheRefreshOfAnItemAskedForArrivesOnce()
+    {
+        var item = Guid.NewGuid();
+        var requester = Requester();
+        requester.Request([item]);
+
+        Assert.True(requester.TryTakeArrival(item));
+        Assert.False(requester.TryTakeArrival(item));
+    }
+
+    [Fact]
+    public void AnItemNotAskedForHasNoArrival()
+    {
+        Assert.False(Requester().TryTakeArrival(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void AnItemAskedForAgainAfterItsArrivalIsNotQueuedAgain()
+    {
+        var item = Guid.NewGuid();
+        var requester = Requester();
+        requester.Request([item]);
+        requester.TryTakeArrival(item);
+
+        requester.Request([item]);
+
+        VerifyQueued(item, Times.Once());
+        Assert.False(requester.TryTakeArrival(item));
+    }
 }

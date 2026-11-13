@@ -22,4 +22,11 @@ public interface ILocalRefreshRequester
     /// <param name="itemId">The local item.</param>
     /// <returns>True when the wait is over.</returns>
     bool IsOverdue(Guid itemId);
+
+    /// <summary>
+    /// Takes the item out of the refreshes still to arrive, so that its arrival is handled once (Q245).
+    /// </summary>
+    /// <param name="itemId">The local item.</param>
+    /// <returns>True when the item was asked for and its refresh had not arrived yet.</returns>
+    bool TryTakeArrival(Guid itemId);
 }

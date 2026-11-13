@@ -160,6 +160,8 @@ internal sealed class StubFixture : IDisposable
         public void Request(IReadOnlyCollection<Guid> itemIds) => Requested.AddRange(itemIds);
 
         public bool IsOverdue(Guid itemId) => false;
+
+        public bool TryTakeArrival(Guid itemId) => false;
     }
 
     internal sealed class FakeCatalog : ILocalCatalogReader

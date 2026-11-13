@@ -21,6 +21,7 @@ public sealed class LocalRefreshRequester : ILocalRefreshRequester
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<LocalRefreshRequester> _logger;
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _requested = new();
+    private readonly ConcurrentDictionary<Guid, byte> _arriving = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LocalRefreshRequester"/> class.
@@ -52,6 +53,7 @@ public sealed class LocalRefreshRequester : ILocalRefreshRequester
 
         foreach (var itemId in fresh)
         {
+            _arriving.TryAdd(itemId, 0);
             var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
             {
                 MetadataRefreshMode = MetadataRefreshMode.Default,
@@ -76,4 +78,7 @@ public sealed class LocalRefreshRequester : ILocalRefreshRequester
         var seconds = Math.Max(_store.Read(config => config.SyncIntervalSeconds), PluginConfiguration.MinSyncIntervalSeconds);
         return _timeProvider.GetUtcNow() - asked >= TimeSpan.FromSeconds(seconds);
     }
+
+    /// <inheritdoc />
+    public bool TryTakeArrival(Guid itemId) => _arriving.TryRemove(itemId, out _);
 }
