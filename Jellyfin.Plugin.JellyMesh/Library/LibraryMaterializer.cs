@@ -275,7 +275,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             _logger.LogWarning(
                 "A complete read of a library of remote server {ServerName} came back empty. {Count} stubs are kept until it has items again, or it is deselected",
-                held.ServerName,
+                LogText.Clean(held.ServerName),
                 held.Stubs);
         }
 

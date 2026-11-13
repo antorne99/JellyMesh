@@ -145,7 +145,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
             CollectionFolder.OnCollectionFolderChange();
         }
 
-        _logger.LogInformation("Renamed the library {Library} to {NewName}", name, newName);
+        _logger.LogInformation("Renamed the library {Library} to {NewName}", LogText.Clean(name), LogText.Clean(newName));
         return newId;
     }
 
@@ -279,7 +279,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
         {
             if (names.Contains(record.NewName))
             {
-                _logger.LogWarning("Cannot finish the rename of the library {Library}: its new name is taken", record.OldName);
+                _logger.LogWarning("Cannot finish the rename of the library {Library}: its new name is taken", LogText.Clean(record.OldName));
                 return;
             }
 

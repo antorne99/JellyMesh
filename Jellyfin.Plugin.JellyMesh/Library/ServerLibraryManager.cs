@@ -468,7 +468,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var name = ChooseName(serverName, serverId, kind, folders);
         if (name is null)
         {
-            _logger.LogWarning("Cannot create the {Kind} library of {Server}: its names are taken", kind, serverName);
+            _logger.LogWarning("Cannot create the {Kind} library of {Server}: its names are taken", kind, LogText.Clean(serverName));
             _errors[serverId] = AutomaticLibrariesError.NameTaken;
             return false;
         }
@@ -480,7 +480,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot create the {Kind} library of {Server}: {Error}", kind, serverName, exception.GetType().Name);
+            _logger.LogError("Cannot create the {Kind} library of {Server}: {Error}", kind, LogText.Clean(serverName), exception.GetType().Name);
             _errors[serverId] = AutomaticLibrariesError.CreateFailed;
             return false;
         }
@@ -503,7 +503,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 held = true;
             }
         });
-        _logger.LogInformation("Created the library {Library} for {Server}", record.Name, serverName);
+        _logger.LogInformation("Created the library {Library} for {Server}", LogText.Clean(record.Name), LogText.Clean(serverName));
         if (held)
         {
             _ = DeleteRemovedServerLibraries();
@@ -556,7 +556,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             var newName = ChooseName(serverName, serverId, kind, folders.Where(other => !ReferenceEquals(other, folder)).ToList());
             if (newName is null)
             {
-                _logger.LogWarning("Cannot rename the library {Library}: its new names are taken", folder.Name);
+                _logger.LogWarning("Cannot rename the library {Library}: its new names are taken", LogText.Clean(folder.Name));
                 _errors[serverId] = AutomaticLibrariesError.NameTaken;
                 done = false;
                 continue;
@@ -582,7 +582,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                     live.ItemId = newId.ToString("N");
                 }
             });
-            _logger.LogInformation("Renamed the library {Library} to {NewName}", folder.Name, newName);
+            _logger.LogInformation("Renamed the library {Library} to {NewName}", LogText.Clean(folder.Name), LogText.Clean(newName));
             folders = ReadFolders() ?? folders;
         }
 
@@ -598,7 +598,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot rename the library {Library}: {Error}", folder.Name, exception.GetType().Name);
+            _logger.LogError("Cannot rename the library {Library}: {Error}", LogText.Clean(folder.Name), exception.GetType().Name);
             return null;
         }
     }
@@ -717,7 +717,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot delete the library {Library}: {Error}", next.Name, exception.GetType().Name);
+                _logger.LogError("Cannot delete the library {Library}: {Error}", LogText.Clean(next.Name), exception.GetType().Name);
                 SetError(errorKey, AutomaticLibrariesError.RemoveFailed);
                 return false;
             }
@@ -733,7 +733,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                     }
                 }
             });
-            _logger.LogInformation("Deleted the library {Library}", next.Name);
+            _logger.LogInformation("Deleted the library {Library}", LogText.Clean(next.Name));
         }
 
         return true;
@@ -890,7 +890,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
         foreach (var change in plan.Where(change => change.Found is null))
         {
-            _logger.LogWarning("The library {Library} changed or is gone, so it is left to the admin", change.ReleasedName);
+            _logger.LogWarning("The library {Library} changed or is gone, so it is left to the admin", LogText.Clean(change.ReleasedName));
         }
     }
 
