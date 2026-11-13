@@ -74,6 +74,21 @@ public sealed class VersionLinkingSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task TheSyncFollowsTheServerLibrariesBeforeTheMigrationPlacesNewServers()
+    {
+        // Placement then sees the automatic libraries under their current names (§10 row 385).
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(run => run.RunAsync(It.IsAny<CancellationToken>())).Callback(() => _calls.Add("migrate")).Returns(Task.CompletedTask);
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.ReconcileAsync(It.IsAny<CancellationToken>())).Callback(() => _calls.Add("follow")).Returns(Task.CompletedTask);
+        using var sync = NewSync(migration.Object, libraries: libraries.Object);
+
+        await sync.RunIncrementalAsync(CancellationToken.None);
+
+        Assert.Equal(["materialize False", "link False", "follow", "migrate"], _calls);
+    }
+
+    [Fact]
     public async Task AFailureInTheMigrationDoesNotFailTheSync()
     {
         var migration = new Mock<ILayoutMigration>();
@@ -111,7 +126,7 @@ public sealed class VersionLinkingSyncTests : IDisposable
         Assert.Contains(_fixture.Logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
     }
 
-    private CatalogSyncService NewSync(ILayoutMigration? migration, ILibraryChangeTracker? changes = null) => new(
+    private CatalogSyncService NewSync(ILayoutMigration? migration, ILibraryChangeTracker? changes = null, IServerLibraryManager? libraries = null) => new(
         _fixture.Registry,
         _fixture.Reader,
         _fixture.Index,
@@ -121,6 +136,7 @@ public sealed class VersionLinkingSyncTests : IDisposable
         _materializer.Object,
         _fixture.Stubs,
         linker: _linker.Object,
+        libraries: libraries,
         migration: migration,
         changes: changes);
 }

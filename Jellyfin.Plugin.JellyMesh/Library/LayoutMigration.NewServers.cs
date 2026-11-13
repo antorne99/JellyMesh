@@ -102,19 +102,16 @@ public sealed partial class LayoutMigration
 
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
         _materializer.PrepareServerFolders();
-        if (ReadFolders() is not { } folders)
+
+        // The follow first, so a renamed automatic library is known as one (§10 row 385); busy is checked after the read,
+        // so that a job started before it is seen (row 384).
+        if (_automaticLibraries.FollowForPlacement() is not { } libraries || _automaticLibraries.IsBusy)
         {
+            _logger.LogInformation("Migration to the server folders: the libraries are changing or not ready, so the new servers wait for the next sync");
             return;
         }
 
-        // Checked after the read, so that a library made before it already has its record (§10 row 77, D24).
-        if (AutomaticLibrariesUnsettled())
-        {
-            _logger.LogInformation("Migration to the server folders: the automatic libraries are changing, so the new servers wait for the next sync");
-            return;
-        }
-
-        var automatic = AutomaticLibraries(folders);
+        var (folders, automatic) = (libraries.Folders, libraries.Automatic);
         var kinds = new Func<Guid, string>[]
         {
             server => FederatedFolderLayout.ServerMoviesPath(root, server),
@@ -153,26 +150,6 @@ public sealed partial class LayoutMigration
         {
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    // True while a library may lack its record: the manager works, or a server with the switch on misses a kind.
-    private bool AutomaticLibrariesUnsettled() =>
-        _automaticLibraries.IsBusy
-        || _store.Read(config => config.Servers.Any(server => server.AutomaticLibraries
-            && Enum.GetValues<ServerLibraryKind>().Any(kind => server.AutomaticLibraryRegistry.All(record => record.Kind != kind))));
-
-    // The libraries the plugin made for a server, kept or still to delete, found by id first and then by name.
-    private HashSet<VirtualFolderInfo> AutomaticLibraries(IReadOnlyList<VirtualFolderInfo> folders)
-    {
-        var records = _store.Read(config => config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
-            .Concat(config.RemovedServerLibraries.SelectMany(removed => removed.Libraries))
-            .Select(record => (Id: record.ItemId ?? string.Empty, Name: record.Name ?? string.Empty))
-            .ToList());
-        return records
-            .Select(record => (record.Id.Length > 0 ? folders.FirstOrDefault(folder => string.Equals(folder.ItemId, record.Id, StringComparison.OrdinalIgnoreCase)) : null)
-                ?? folders.FirstOrDefault(folder => string.Equals(folder.Name, record.Name, StringComparison.Ordinal)))
-            .OfType<VirtualFolderInfo>()
-            .ToHashSet();
     }
 
     // Keeps the placed servers still configured, with those just placed.

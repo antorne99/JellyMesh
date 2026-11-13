@@ -20,7 +20,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// Keeps a Film and a Serie library for each server whose switch is on, and acts only on the libraries in its registry
 /// whose only path is still the server folder and whose type is still the expected one.
 /// </summary>
-public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
+public sealed partial class ServerLibraryManager : IServerLibraryManager, IDisposable
 {
     /// <summary>
     /// The longest a sync waits for the libraries to be ready before it starts (decision 213).
