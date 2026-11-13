@@ -1826,6 +1826,8 @@
                     "Being renamed. The libraries are scanned twice before it is done.": "Rinomina in corso. Le librerie vengono analizzate due volte prima che finisca.",
                     "The rename finishes with the next library scan. Until then the titles of this server may show twice among the versions.": "La rinomina finisce con la prossima analisi delle librerie. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
                     "The rename did not finish. Rename this server again with the same name to finish it.": "La rinomina non è finita. Rinomina di nuovo questo server con lo stesso nome per completarla.",
+                    "The rename is held up: an old title of this server cannot leave the versions it was grouped with. JellyMesh tries again after every library scan. Until then the server cannot be renamed again, and its titles may show twice among the versions.": "La rinomina è bloccata: un vecchio titolo di questo server non riesce a uscire dalle versioni con cui era raggruppato. JellyMesh riprova dopo ogni analisi delle librerie. Fino ad allora il server non si può rinominare di nuovo e i suoi titoli possono comparire due volte tra le versioni.",
+                    "{server}: its rename is held up because an old title cannot leave the versions it was grouped with. JellyMesh tries again after every library scan.": "{server}: la sua rinomina è bloccata perché un vecchio titolo non riesce a uscire dalle versioni con cui era raggruppato. JellyMesh riprova dopo ogni analisi delle librerie.",
                     "Rename {server}": "Rinomina {server}",
                     "The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.": "Il nome compare nell'elenco delle versioni e nei nomi delle sue librerie automatiche. La sua cartella resta la stessa.",
                     "Rename": "Rinomina",
@@ -2799,13 +2801,17 @@
 
                 // The rename of a server, as an older server that sends none would have it.
                 function renameState(server) {
-                    return server.Rename || { Busy: false, Pending: false, Failed: false };
+                    return server.Rename || { Busy: false, Pending: false, Failed: false, Stuck: false };
                 }
 
                 // Says where the rename of a server stands, or returns an empty text.
                 function renameProblem(state) {
                     if (state.Busy) {
                         return t('Being renamed. The libraries are scanned twice before it is done.');
+                    }
+
+                    if (state.Stuck) {
+                        return t('The rename is held up: an old title of this server cannot leave the versions it was grouped with. JellyMesh tries again after every library scan. Until then the server cannot be renamed again, and its titles may show twice among the versions.');
                     }
 
                     if (state.Pending) {
@@ -4575,6 +4581,11 @@
                         return { key: server.Id, text: serverProblem(server), tab: 'servers' };
                     }).filter(function (note) {
                         return note.text;
+                    });
+                    (status ? status.Servers : []).forEach(function (server) {
+                        if (renameState(server).Stuck && !renameState(server).Busy) {
+                            notes.push({ key: 'renameStuck' + server.Id, text: t('{server}: its rename is held up because an old title cannot leave the versions it was grouped with. JellyMesh tries again after every library scan.', { server: server.Name }), tab: 'servers' });
+                        }
                     });
                     if (status && status.RenamedLibrariesNeedRestart) {
                         notes.push({ key: 'renamedLibraries', text: t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.'), tab: 'servers' });

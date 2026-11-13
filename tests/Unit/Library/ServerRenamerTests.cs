@@ -114,6 +114,16 @@ public sealed class ServerRenamerTests : IDisposable
         Assert.Empty(_steps);
     }
 
+    // Q359: a rename held up by a detach that keeps failing shows as stuck.
+    [Fact]
+    public void ARenameHeldUpByADetachShowsAsStuck()
+    {
+        _pending = true;
+        _stubs.Setup(stubs => stubs.IsStuck(_server)).Returns(true);
+
+        Assert.Equal(new ServerRenameState(false, true, false) { Stuck = true }, _renamer.GetState(_server));
+    }
+
     [Fact]
     public async Task TheServer_ThenItsStubs_ThenItsLibraries_AreRenamed_ThenAScanRuns_AndTheVersionsAreLinked()
     {

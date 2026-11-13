@@ -29,6 +29,9 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     private readonly ILogger<ServerStubRenamer> _logger;
     private readonly Action<string> _delete;
 
+    // The moves whose old item could not leave its version group in the last finish, swapped whole so reads need no lock.
+    private volatile HashSet<StubRename> _stuck = [];
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ServerStubRenamer"/> class.
     /// </summary>
@@ -60,6 +63,14 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     {
         // An entry whose stub left the registry waits for no scan, and a relabel settles it first.
         return _registry.State.Renames.Any(rename => _registry.Find(rename.StubId) is { } stub && stub.ServerId == serverId);
+    }
+
+    /// <inheritdoc />
+    public bool IsStuck(Guid serverId)
+    {
+        var stuck = _stuck;
+        return stuck.Count > 0
+            && _registry.State.Renames.Any(rename => stuck.Contains(rename) && _registry.Find(rename.StubId) is { } stub && stub.ServerId == serverId);
     }
 
     /// <inheritdoc />
@@ -162,6 +173,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         var root = _store.Read(config => config.FederatedFolderPath);
         if (root.Length == 0 || _registry.State.Renames.Count == 0)
         {
+            _stuck = [];
             return;
         }
 
@@ -174,6 +186,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             var forget = new List<Guid>();
             var leaving = new List<(StubRename Rename, StubEntry? Stub)>();
             var live = LivePaths(state, []);
+            var held = new HashSet<StubRename>();
             foreach (var rename in state.Renames)
             {
                 if (IsTaken(rename, live))
@@ -219,6 +232,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             {
                 // The old item may still be in its version group, so it leaves first, or its files wait (Q351).
                 var stuck = await StuckInGroupsAsync(leaving.Select(entry => entry.Rename).ToList(), cancellationToken).ConfigureAwait(false);
+                held.UnionWith(stuck);
                 foreach (var (rename, stub) in leaving.Where(entry => !stuck.Contains(entry.Rename)))
                 {
                     if (TryDeleteOld(root, rename, stub))
@@ -234,6 +248,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 var forgettable = report.ForgettableOldItemIds.ToHashSet();
                 var done = report.Moves.Where(IsDone).Select(outcome => moves.First(entry => ReferenceEquals(entry.Move, outcome.Move))).ToList();
                 var stuck = await StuckInGroupsAsync(done.Select(entry => entry.Rename).ToList(), cancellationToken).ConfigureAwait(false);
+                held.UnionWith(stuck);
                 foreach (var (rename, stub, move) in done.Where(entry => !stuck.Contains(entry.Rename)))
                 {
                     if (TryDeleteOld(root, rename, stub))
@@ -243,6 +258,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 }
             }
 
+            _stuck = held;
             if (forget.Count > 0)
             {
                 await _carrier.ForgetRemovedAsync(forget, cancellationToken).ConfigureAwait(false);

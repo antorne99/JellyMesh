@@ -411,6 +411,78 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    // Q359: a detach that keeps failing holds up the rename of the server, and the page warns while it does.
+    [Fact]
+    public async Task ARenameHeldUpByAnOldItemThatCannotLeaveItsVersionGroupIsStuckUntilItLeaves()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Casa"), new Movie());
+        Scanned(FilmPath("Mare"), new Movie());
+        _detachFails = true;
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.True(_renamer.IsStuck(_server));
+        Assert.False(_renamer.IsStuck(_other));
+
+        _detachFails = false;
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.True(_renamer.IsPending(_server));
+        Assert.False(_renamer.IsStuck(_server));
+    }
+
+    [Fact]
+    public async Task AnOldItemNeverScannedThatCannotLeaveItsVersionGroupHoldsUpTheRename()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Mare"), new Movie());
+        _detachFails = true;
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.True(_renamer.IsStuck(_server));
+    }
+
+    [Fact]
+    public async Task ARenameWaitingForItsScanIsNotStuck()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Casa"), new Movie());
+        _detachFails = true;
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.True(_renamer.IsPending(_server));
+        Assert.False(_renamer.IsStuck(_server));
+    }
+
+    [Fact]
+    public async Task AStubThatLeftWhoseOldItemCannotLeaveItsVersionGroupHoldsUpNoRename()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [] });
+        _detachFails = true;
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.False(_renamer.IsStuck(_server));
+    }
+
+    [Fact]
+    public async Task ACancelledRenameIsNoLongerStuck()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Mare"), new Movie());
+        _detachFails = true;
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        _detachFails = false;
+        Assert.True(await _renamer.CancelAsync(_server, CancellationToken.None));
+
+        Assert.False(_renamer.IsStuck(_server));
+    }
+
     // Q351: a new rename also deletes the old files of a stub that left, so their item leaves its version group first.
     [Fact]
     public async Task ARenameDetachesTheOldItemOfAStubThatLeftBeforeItsFilesGo()

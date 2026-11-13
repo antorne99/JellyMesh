@@ -17,6 +17,14 @@ public interface IServerStubRenamer
     bool IsPending(Guid serverId);
 
     /// <summary>
+    /// Tells whether a pending rename of a server is held up because an old item could not leave its version group in the
+    /// last round (§10 row 359).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>True while the last finish could not detach an old item of a stub of the server.</returns>
+    bool IsStuck(Guid serverId);
+
+    /// <summary>
     /// Writes the stubs of a server under the label of its new name, and saves their new and old paths with the label
     /// in one step. A change of case keeps the label (row 84).
     /// </summary>
