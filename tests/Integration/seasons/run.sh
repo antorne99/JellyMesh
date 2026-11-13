@@ -4,7 +4,7 @@
 # already has gets a change, and an episode added later to a locked season keeps its numbers.
 # usage: MEDIA=<main checkout>/tests/Integration/media PREFIX=jm-seasons PORT=18820 run.sh   (KEEP=1 keeps the stack)
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/../play/lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SERIES="JM Serie Divisa (2026)"
 FILM="Tears of Steel (2012)"
 [ "${KEEP:-}" = 1 ] || trap down EXIT
@@ -14,31 +14,10 @@ upload() {
   curl -fsS -o /dev/null -X POST -H "Authorization: $AUTH, Token=\"$(token_of "$1")\"" -H 'Content-Type: image/png' \
     --data-binary @<(base64 <"$4" | tr -d '\n') "http://127.0.0.1:$(port_of "$1")/Items/$2/Images/$3"
 }
-# edit <server> <item> <jq filter>: changes an item as the metadata editor does
-edit() {
-  local dto
-  dto=$(get "$1" "/Items/$2" | jq -c "$3")
-  post "$1" "/Items/$2" "$dto" >/dev/null
-  status
-}
 remote_series() { get remote '/Items?Recursive=true&IncludeItemTypes=Series' | jq -r --arg n "${SERIES% (*}" '.Items[] | select(.Name == $n) | .Id'; }
 remote_film() { get remote '/Items?Recursive=true&IncludeItemTypes=Movie' | jq -r '.Items[] | select(.Name == "Tears of Steel") | .Id'; }
 local_series() { get local '/Items?Recursive=true&IncludeItemTypes=Series&Fields=Path' | jq -r --arg n "$SERIES" '[.Items[] | select((.Path // "") | (startswith("/federata") and endswith($n)))][0].Id // ""'; }
 local_season() { get local "/Shows/$1/Seasons?Fields=Overview,Path" | jq -c '[.Items[] | select(.IndexNumber == 1)][0] | {Name, Overview, Poster: (.ImageTags.Primary != null)}'; }
-# full_scan <server>: scans once no scan runs, until one completes, since a new scan cancels the one running
-full_scan() {
-  local i
-  for i in 1 2 3 4 5; do
-    scan_idle "$1"
-    scan "$1"
-    scan_idle "$1"
-    [ "$(scan_task "$1" | jq -r .LastExecutionResult.Status)" = Completed ] && return 0
-  done
-  echo "no scan of $1 completed" >&2
-  return 1
-}
-scan_task() { get "$1" /ScheduledTasks | jq -c '.[] | select(.Key == "RefreshLibrary")'; }
-scan_idle() { until [ "$(scan_task "$1" | jq -r .State)" = Idle ]; do sleep 1; done; }
 art_of() { get local "/Items?Ids=$1&Fields=Path" | jq -c '.Items[0].ImageTags | {Logo: has("Logo"), Banner: has("Banner"), Thumb: has("Thumb")}'; }
 
 down
