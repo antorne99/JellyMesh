@@ -39,6 +39,7 @@ public sealed class LayoutMigrationTests : IDisposable
     private readonly Mock<IUserDataManager> _userData = new();
     private readonly Mock<IRemoteServerRegistry> _servers = new();
     private readonly Mock<IFederationIndex> _index = new();
+    private readonly Mock<IVersionLinker> _linker = new();
     private readonly Dictionary<Guid, BaseItem> _items = [];
     private readonly Dictionary<(Guid User, Guid Item), UserItemData> _rows = [];
     private readonly HashSet<(Guid User, Guid Item)> _hidden = [];
@@ -582,6 +583,91 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Theory]
+    [InlineData(WatchStateRefusal.OldItemNotStub)]
+    [InlineData(WatchStateRefusal.NoTarget)]
+    [InlineData(WatchStateRefusal.TargetNotStub)]
+    [InlineData(WatchStateRefusal.SeveralLocalVersions)]
+    [InlineData(WatchStateRefusal.LocalNotInGroup)]
+    [InlineData(WatchStateRefusal.LocalNotPrimary)]
+    public async Task ADefinitiveRefusalClosesTheTitle(WatchStateRefusal refusal)
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []) { Refusal = refusal };
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task ARefusalForAMissingFederatedFolderLeavesTheTitleWaiting()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []) { Refusal = WatchStateRefusal.NoFederatedFolder };
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Waiting);
+        Assert.Equal(0, shown.Blocked);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("go without it", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ARefusalWhileTheLinkOfTheRoundFailedLeavesTheTitleWaitingUntilALinkSucceeds()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []) { Refusal = WatchStateRefusal.LocalNotPrimary };
+        _linker.Setup(linker => linker.LastRunFailed).Returns(true);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+
+        _linker.Setup(linker => linker.LastRunFailed).Returns(false);
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task AFederatedFolderChangedDuringTheRunLeavesTheOldTitlesWaiting()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        Row(_mario, oldItem).IsFavorite = true;
+        var moved = Path.Combine(_data, "altrove");
+
+        // The admin saves another folder once the migration has read the first one.
+        _library.Setup(library => library.GetVirtualFolders()).Returns(() =>
+        {
+            _store.Configuration.FederatedFolderPath = moved;
+            return _libraries.ToList();
+        });
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("go without it", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData(WatchStateMoveStatus.Failed, null)]
     [InlineData(WatchStateMoveStatus.UsersLeft, WatchStateUserSkipReason.NoUserData)]
     [InlineData(WatchStateMoveStatus.UsersLeft, WatchStateUserSkipReason.NotSaved)]
@@ -864,7 +950,7 @@ public sealed class LayoutMigrationTests : IDisposable
             carrier = fake.Object;
         }
 
-        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _logger);
+        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object, _logger);
     }
 
     private UserItemData Row(User user, BaseItem item) => _userData.Object.GetUserData(user, item)!;

@@ -12,6 +12,11 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface IVersionLinker
 {
     /// <summary>
+    /// Gets a value indicating whether the last link run could not link some group or did not finish; false before the first.
+    /// </summary>
+    bool LastRunFailed { get; }
+
+    /// <summary>
     /// Links every group of versions as the registry has it, and saves nothing that is already linked.
     /// </summary>
     /// <param name="thorough">

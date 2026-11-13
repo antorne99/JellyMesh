@@ -29,6 +29,7 @@ public sealed class LayoutMigration : ILayoutMigration
     private readonly IFederationIndex _index;
     private readonly IWatchStateCarrier _carrier;
     private readonly StubRemover _remover;
+    private readonly IVersionLinker _linker;
     private readonly ILogger<LayoutMigration> _logger;
     private volatile LastRun? _lastRun;
 
@@ -42,6 +43,7 @@ public sealed class LayoutMigration : ILayoutMigration
     /// <param name="index">The index, which tells a title gone from every server.</param>
     /// <param name="carrier">The watch state carrier.</param>
     /// <param name="remover">The stub remover, which empties the old folders.</param>
+    /// <param name="linker">The version linker, which tells whether its last run failed.</param>
     /// <param name="logger">The logger.</param>
     public LayoutMigration(
         StubRegistry registry,
@@ -51,6 +53,7 @@ public sealed class LayoutMigration : ILayoutMigration
         IFederationIndex index,
         IWatchStateCarrier carrier,
         StubRemover remover,
+        IVersionLinker linker,
         ILogger<LayoutMigration> logger)
     {
         _registry = registry;
@@ -60,6 +63,7 @@ public sealed class LayoutMigration : ILayoutMigration
         _index = index;
         _carrier = carrier;
         _remover = remover;
+        _linker = linker;
         _logger = logger;
     }
 
@@ -111,20 +115,33 @@ public sealed class LayoutMigration : ILayoutMigration
                 Add(SeriesMoveOf(root, state, series, catalog), moves, ref waiting);
             }
 
+            var folderChanged = false;
             if (moves.Count > 0)
             {
                 var report = await _carrier.CarryAsync(moves, cancellationToken).ConfigureAwait(false);
+
+                // A refusal is for good only if the carry read this folder and the link of the round did not fail (Q259).
+                folderChanged = report.Root is not null && !string.Equals(report.Root, root, StringComparison.Ordinal);
+                var unsettled = folderChanged || _linker.LastRunFailed;
                 blocked = report.Moves.Count(IsBlocked);
-                waiting += report.Moves.Count(outcome => !IsDone(outcome) && !IsBlocked(outcome));
-                var refused = report.Moves.Count(outcome => outcome.Status == WatchStateMoveStatus.Refused);
+                waiting += report.Moves.Count(outcome => !IsDone(outcome, unsettled) && !IsBlocked(outcome));
+                var refused = report.Moves.Count(outcome => IsFinalRefusal(outcome, unsettled));
                 if (refused > 0)
                 {
                     _logger.LogWarning("Migration to the server folders: the watch state carry refused {Refused} old titles, which go without it", refused);
                 }
+
+                var later = report.Moves.Count(outcome => outcome.Status == WatchStateMoveStatus.Refused) - refused;
+                if (later > 0)
+                {
+                    _logger.LogInformation("Migration to the server folders: the watch state carry refused {Refused} old titles for now, tried again at the next sync", later);
+                }
             }
 
+            // The old folders of a federated folder changed under the run are not the ones to empty.
+            folderChanged |= !string.Equals(_store.Read(config => config.FederatedFolderPath) ?? string.Empty, root, StringComparison.Ordinal);
             _lastRun = new LastRun(waiting, blocked);
-            if (waiting + blocked > 0)
+            if (waiting + blocked > 0 || folderChanged)
             {
                 _logger.LogInformation("Migration to the server folders: {Waiting} old titles wait for a scan and {Blocked} are blocked", waiting, blocked);
                 return;
@@ -170,15 +187,21 @@ public sealed class LayoutMigration : ILayoutMigration
     private static bool HasOldTitles(StubState state) =>
         state.Stubs.Any(stub => stub.ServerId is null) || state.Series.Any(series => series.ServerId is null);
 
-    // Done for every user, left only for users who see none of the new items (decision 166), or refused as not valid (Q216).
-    private static bool IsDone(WatchStateMoveOutcome outcome) =>
-        outcome.Status is WatchStateMoveStatus.Carried or WatchStateMoveStatus.Refused
-        || (outcome.Status == WatchStateMoveStatus.UsersLeft && outcome.SkippedUsers.All(user => user.Reason == WatchStateUserSkipReason.NoVisibleVersion));
+    // Done for every user, left only for users who see none of the new items (decision 166), or refused for good (Q216, Q259).
+    private static bool IsDone(WatchStateMoveOutcome outcome, bool unsettled) =>
+        outcome.Status == WatchStateMoveStatus.Carried || IsFinalRefusal(outcome, unsettled) || LeftOnlyUnseeing(outcome);
+
+    // A refusal a later sync cannot lift: none for a missing federated folder, nor while the folder changed or the link failed (Q259).
+    private static bool IsFinalRefusal(WatchStateMoveOutcome outcome, bool unsettled) =>
+        outcome.Status == WatchStateMoveStatus.Refused && !unsettled && outcome.Refusal != WatchStateRefusal.NoFederatedFolder;
+
+    private static bool LeftOnlyUnseeing(WatchStateMoveOutcome outcome) =>
+        outcome.Status == WatchStateMoveStatus.UsersLeft && outcome.SkippedUsers.All(user => user.Reason == WatchStateUserSkipReason.NoVisibleVersion);
 
     // Not done for a reason a scan does not fix: a failed move, or a user row missing or not saved (Q216).
     private static bool IsBlocked(WatchStateMoveOutcome outcome) =>
         outcome.Status == WatchStateMoveStatus.Failed
-        || (outcome.Status == WatchStateMoveStatus.UsersLeft && !IsDone(outcome));
+        || (outcome.Status == WatchStateMoveStatus.UsersLeft && !LeftOnlyUnseeing(outcome));
 
     private static void Add((WatchStateMove? Move, bool Waits) step, List<WatchStateMove> moves, ref int waiting)
     {

@@ -25,4 +25,7 @@ public sealed record WatchStateCarryReport(IReadOnlyList<WatchStateMoveOutcome> 
     /// which forgets the records only of those no longer in the library (decisions 179, 187, 204).
     /// </summary>
     public IReadOnlyList<Guid> ForgettableOldItemIds { get; init; } = [];
+
+    /// <summary>Gets the federated folder the run read, empty if none is set, null when the run read none.</summary>
+    public string? Root { get; init; }
 }

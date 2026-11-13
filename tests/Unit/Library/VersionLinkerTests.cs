@@ -479,6 +479,28 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task ARunThatCannotLinkAGroupCountsAsFailedUntilARunLinksThemAll()
+    {
+        var local = Local();
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        var itemA = Scanned(a);
+        Assert.False(_linker.LastRunFailed);
+        _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == itemA.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(TestValues.Host));
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.True(_linker.LastRunFailed);
+
+        _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == itemA.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        await _linker.LinkAsync(false, CancellationToken.None);
+
+        Assert.Equal(local.Id, itemA.PrimaryVersionId);
+        Assert.False(_linker.LastRunFailed);
+    }
+
+    [Fact]
     public async Task ACollectionWhoseSaveFailsIsPutBackAndTheOthersStillMove()
     {
         var local = Local();

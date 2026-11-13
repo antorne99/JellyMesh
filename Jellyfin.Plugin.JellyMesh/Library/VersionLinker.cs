@@ -30,6 +30,7 @@ public sealed class VersionLinker : IVersionLinker
     private readonly IUserDataManager _userData;
     private readonly StubItemUpdater _updater;
     private readonly ILogger<VersionLinker> _logger;
+    private volatile bool _lastRunFailed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VersionLinker"/> class.
@@ -63,6 +64,9 @@ public sealed class VersionLinker : IVersionLinker
     }
 
     /// <inheritdoc />
+    public bool LastRunFailed => _lastRunFailed;
+
+    /// <inheritdoc />
     public async Task LinkAsync(bool thorough, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
@@ -74,6 +78,9 @@ public sealed class VersionLinker : IVersionLinker
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // Failed until the run ends, so that one stopped by an error or a cancellation counts as failed (Q259).
+            _lastRunFailed = true;
+            var failed = false;
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
             var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
@@ -101,6 +108,7 @@ public sealed class VersionLinker : IVersionLinker
                 {
                     // The type only: a message could hold a remote address.
                     _logger.LogError("Cannot link the versions of a title: {Error}", exception.GetType().Name);
+                    failed = true;
                 }
 
                 changed |= !string.Equals(recorded, group.PrimaryStubId, StringComparison.Ordinal);
@@ -119,6 +127,8 @@ public sealed class VersionLinker : IVersionLinker
             {
                 await _registry.SaveAsync(state with { Groups = groups }, cancellationToken).ConfigureAwait(false);
             }
+
+            _lastRunFailed = failed;
         }
         finally
         {

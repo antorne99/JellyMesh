@@ -364,6 +364,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         var report = await CarryAsync(WatchStateMove.Of(oldStub, other.Id, [new WatchStateTarget(a.Id, _serverA)]));
 
         Assert.Equal(WatchStateMoveStatus.Refused, report.Moves.Single().Status);
+        Assert.Equal(WatchStateRefusal.OldItemNotStub, report.Moves.Single().Refusal);
         Assert.Empty(_saves);
     }
 
@@ -376,8 +377,8 @@ public sealed class WatchStateCarrierTests : IDisposable
         Row(_mario, old).PlaybackPositionTicks = 300;
         Row(_mario, old).LastPlayedDate = _older;
 
-        Assert.Equal(WatchStateMoveStatus.Refused, (await CarryAsync(Move(old, oldStub, (a, _serverB)))).Moves.Single().Status);
-        Assert.Equal(WatchStateMoveStatus.Refused, (await CarryAsync(Move(old, oldStub, (loose, _serverA)))).Moves.Single().Status);
+        Assert.Equal(WatchStateRefusal.TargetNotStub, (await CarryAsync(Move(old, oldStub, (a, _serverB)))).Moves.Single().Refusal);
+        Assert.Equal(WatchStateRefusal.TargetNotStub, (await CarryAsync(Move(old, oldStub, (loose, _serverA)))).Moves.Single().Refusal);
         Assert.Empty(_saves);
     }
 
@@ -396,8 +397,41 @@ public sealed class WatchStateCarrierTests : IDisposable
         Row(_mario, old).PlaybackPositionTicks = 300;
         Row(_mario, old).LastPlayedDate = _older;
 
-        Assert.Equal(WatchStateMoveStatus.Refused, (await CarryAsync(Move(old, oldStub, (a, _serverA), (local, null), (other, null)))).Moves.Single().Status);
-        Assert.Equal(WatchStateMoveStatus.Refused, (await CarryAsync(Move(old, oldStub, (b, _serverB), (secondary, null)))).Moves.Single().Status);
+        Assert.Equal(WatchStateRefusal.SeveralLocalVersions, (await CarryAsync(Move(old, oldStub, (a, _serverA), (local, null), (other, null)))).Moves.Single().Refusal);
+        Assert.Equal(WatchStateRefusal.LocalNotPrimary, (await CarryAsync(Move(old, oldStub, (b, _serverB), (secondary, null)))).Moves.Single().Refusal);
+        Assert.Equal(WatchStateRefusal.LocalNotInGroup, (await CarryAsync(Move(old, oldStub, (a, _serverA), (other, null)))).Moves.Single().Refusal);
+        Assert.Empty(_saves);
+    }
+
+    [Fact]
+    public async Task AMoveWithNoFederatedFolderIsRefusedAndTheReportNamesTheFolderItRead()
+    {
+        var (old, oldStub) = Old();
+        var a = Movie(_serverA);
+        Row(_mario, old).PlaybackPositionTicks = 300;
+        Row(_mario, old).LastPlayedDate = _older;
+        var root = Root;
+
+        var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+        Assert.Equal(root, report.Root);
+
+        _store.Configuration.FederatedFolderPath = string.Empty;
+        report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
+
+        Assert.Equal(WatchStateRefusal.NoFederatedFolder, report.Moves.Single().Refusal);
+        Assert.Equal(string.Empty, report.Root);
+    }
+
+    [Fact]
+    public async Task AMoveOntoTheOldItemAloneIsRefused()
+    {
+        var (old, oldStub) = Old();
+        Row(_mario, old).PlaybackPositionTicks = 300;
+        Row(_mario, old).LastPlayedDate = _older;
+
+        var report = await CarryAsync(WatchStateMove.Of(oldStub, old.Id, [new WatchStateTarget(old.Id, null)]));
+
+        Assert.Equal(WatchStateRefusal.NoTarget, report.Moves.Single().Refusal);
         Assert.Empty(_saves);
     }
 
@@ -495,6 +529,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         var report = await CarryAsync(WatchStateMove.OfSeries(oldStub, old.Id, [new WatchStateTarget(a.Id, _serverA), new WatchStateTarget(local.Id, null)]));
 
         Assert.Equal(WatchStateMoveStatus.Refused, report.Moves.Single().Status);
+        Assert.Equal(WatchStateRefusal.TargetNotStub, report.Moves.Single().Refusal);
         Assert.Empty(_saves);
     }
 
