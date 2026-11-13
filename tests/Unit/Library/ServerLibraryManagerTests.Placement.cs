@@ -179,4 +179,38 @@ public sealed partial class ServerLibraryManagerTests
         Assert.NotNull(libraries);
         Assert.Equal(["Casa - Film", "Casa - Serie"], libraries.Automatic.Select(folder => folder.Name).Order(StringComparer.Ordinal));
     }
+
+    [Fact]
+    public async Task A_library_there_at_switch_on_that_passes_as_the_own_library_of_a_server_does_not_hold_placement_back()
+    {
+        // The admin's library on the server folder, with the automatic one gone: placement treats it as the admin's (§10 row 393).
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        Assert.Contains(fixture.Libraries.IdOf("Film"), fixture.Server.PreexistingLibraryIds);
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_library_left_to_the_admin_that_passes_again_does_not_hold_placement_back()
+    {
+        // Its type changed and came back: it is no longer in the registry and stays the admin's (§10 rows 383, 393).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Find("Casa - Film").CollectionType = CollectionTypeOptions.tvshows;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+        fixture.Libraries.Find("Casa - Film").CollectionType = CollectionTypeOptions.movies;
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+    }
 }

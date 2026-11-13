@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using MediaBrowser.Model.Entities;
 
@@ -54,10 +55,18 @@ public sealed partial class ServerLibraryManager
                 .OfType<VirtualFolderInfo>()
                 .ToHashSet();
 
-            // One made and never recorded, as after a crash, passes as the own library of a server with the switch on that lacks it.
-            var unrecorded = config.Servers.Any(server => server.AutomaticLibraries && _kinds.Any(kind =>
-                server.AutomaticLibraryRegistry.All(record => record.Kind != kind)
-                && folders.Any(folder => !automatic.Contains(folder) && Passes(folder, kind, root, server.Id))));
+            // One made and never recorded, as after a crash, passes as the own library of a server with the switch on that lacks
+            // it; one there at switch-on or left to the admin is the admin's (§10 row 393).
+            var unrecorded = config.Servers.Any(server =>
+            {
+                var preexisting = IdSet(server.PreexistingLibraryIds);
+                return server.AutomaticLibraries && _kinds.Any(kind =>
+                    server.AutomaticLibraryRegistry.All(record => record.Kind != kind)
+                    && folders.Any(folder => !automatic.Contains(folder)
+                        && !preexisting.Contains(folder.ItemId ?? string.Empty)
+                        && !server.ReleasedAutomaticLibraries.Contains(folder.Name, StringComparer.Ordinal)
+                        && Passes(folder, kind, root, server.Id)));
+            });
             return unrecorded ? null : new PlacementLibraries(folders, automatic);
         });
     }

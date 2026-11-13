@@ -515,6 +515,25 @@ public sealed partial class LayoutMigrationTests
     }
 
     // A server with the switch on whose records are its libraries there now, all of them seen by the last follow.
+    [Fact]
+    public async Task ALibraryThereAtSwitchOnThatPassesAsTheOwnLibraryOfAServerGetsTheNewServer()
+    {
+        // The admin's library on the server folder, with no automatic one: it is the admin's (§10 rows 383, 393).
+        Migrated();
+        _libraries.Add(Library("Film di A", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        var a = new RemoteServerConfig { Id = _serverA, AutomaticLibraries = true };
+        a.PreexistingLibraryIds.Add(IdOf("Film di A"));
+        _store.Configuration.Servers.Add(a);
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film di A", ServerFilms(_serverC))], _addedPaths);
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
     private RemoteServerConfig SwitchedOn(Guid server)
     {
         var config = new RemoteServerConfig { Id = server, AutomaticLibraries = true };
