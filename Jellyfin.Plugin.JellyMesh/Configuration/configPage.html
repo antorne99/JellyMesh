@@ -1524,7 +1524,7 @@
                         <h3 class="sectionTitle">New servers</h3>
                         <div class="selectContainer">
                             <label class="selectLabel" for="jmNewServerMode">Folders of a server linked later</label>
-                            <select id="jmNewServerMode" is="emby-select">
+                            <select id="jmNewServerMode" is="emby-select" disabled>
                                 <option value="Manual">Add them by hand</option>
                                 <option value="Automatic">Add them automatically</option>
                             </select>
@@ -5333,6 +5333,7 @@
                 var timer = null;
                 var shown = false;
                 var running = false;
+                var sendingMode = false;
                 var automaticSteps = {
                     AddPaths: t('Adding the folders of each server to the libraries.'),
                     Scan: t('Waiting for the library scan.'),
@@ -5555,11 +5556,12 @@
                     }).then(poll);
                 }
 
-                // Shows the mode for the servers linked later, unless a choice is being sent.
+                // Shows the mode for the servers linked later, and allows a change once it is known, unless a choice is being sent.
                 function renderNewServerMode(mode) {
                     var select = page.querySelector('#jmNewServerMode');
-                    if (!select.disabled && (mode === 'Manual' || mode === 'Automatic')) {
+                    if (!sendingMode && (mode === 'Manual' || mode === 'Automatic')) {
                         select.value = mode;
+                        select.disabled = false;
                     }
                 }
 
@@ -5569,6 +5571,7 @@
                     var error = page.querySelector('#jmNewServerModeError');
                     error.hidden = true;
                     select.disabled = true;
+                    sendingMode = true;
                     fetch(ApiClient.getUrl('JellyMesh/Admin/Migration/NewServers'), {
                         method: 'POST',
                         headers: {
@@ -5588,7 +5591,7 @@
                         error.textContent = t('The server cannot be reached.');
                         error.hidden = false;
                     }).then(function () {
-                        select.disabled = false;
+                        sendingMode = false;
                         poll();
                     });
                 }
