@@ -478,6 +478,50 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task The_manager_is_busy_from_before_a_library_is_created_until_its_record_is_saved()
+    {
+        var fixture = new Fixture();
+        var busyAtCreate = new List<bool>();
+        fixture.Libraries.OnCreate = () => busyAtCreate.Add(fixture.Manager.IsBusy);
+        Assert.False(fixture.Manager.IsBusy);
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Equal([true, true], busyAtCreate);
+        Assert.Equal(2, fixture.Server.AutomaticLibraryRegistry.Count);
+        Assert.False(fixture.Manager.IsBusy);
+    }
+
+    [Fact]
+    public async Task The_manager_is_busy_while_a_rename_of_the_server_runs()
+    {
+        // A rename moves the library before it updates the record, outside any job of a server.
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+
+        var rename = fixture.Manager.RenameAsync(_serverId, CancellationToken.None);
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(fixture.Manager.IsBusy);
+        release.SetResult();
+        await rename.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(fixture.Manager.IsBusy);
+    }
+
+    [Fact]
+    public void The_manager_is_busy_while_a_library_rename_is_left_halfway()
+    {
+        var fixture = new Fixture();
+
+        fixture.Renamer.HasPending = true;
+
+        Assert.True(fixture.Manager.IsBusy);
+    }
+
+    [Fact]
     public async Task While_a_job_runs_another_request_is_busy_and_the_sync_skips_the_follow_so_the_job_takes_no_renamed_one()
     {
         var fixture = new Fixture();

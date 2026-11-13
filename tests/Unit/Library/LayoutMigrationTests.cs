@@ -1038,9 +1038,10 @@ public sealed partial class LayoutMigrationTests : IDisposable
         }
 
         _migration?.Dispose();
+        _automaticLibraries.Setup(manager => manager.IsBusy).Returns(() => _managerBusy);
         _migration = new LayoutMigration(
             _registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object,
-            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _logger);
+            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _automaticLibraries.Object, _logger);
         return _migration;
     }
 

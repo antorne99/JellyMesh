@@ -16,6 +16,8 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 public sealed partial class LayoutMigrationTests
 {
     private static readonly Guid _serverC = Guid.NewGuid();
+    private readonly Mock<IServerLibraryManager> _automaticLibraries = new();
+    private bool _managerBusy;
 
     [Fact]
     public async Task AServerLinkedAfterTheMigrationJoinsEveryLibraryHoldingAFolderOfTheSameKindOfAnotherServer()
@@ -297,10 +299,125 @@ public sealed partial class LayoutMigrationTests
         Assert.Empty(_store.Configuration.LayoutMigration.PlacedServers);
     }
 
+    [Fact]
+    public async Task ALibraryCreatedBeforeItsRecordIsSavedGetsNoFolderAndTheServerIsNotPlaced()
+    {
+        // The manager made "A - Film" and has not saved its record yet: placement waits rather than take it for the admin's.
+        Migrated();
+        _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _serverA, AutomaticLibraries = true });
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.Equal(0, _scansQueued);
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task OnceTheRecordsAreSavedTheNextHookPlacesTheServerInTheSharedLibrariesOnly()
+    {
+        Migrated();
+        var a = new RemoteServerConfig { Id = _serverA, AutomaticLibraries = true };
+        _store.Configuration.Servers.Add(a);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, ServerSeries(_serverA), ServerSeries(_serverB)));
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+        _libraries.Add(Library("A - Serie", CollectionTypeOptions.tvshows, ServerSeries(_serverA)));
+        a.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "A - Film" });
+        a.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "A - Serie" });
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", ServerFilms(_serverC)), ("Serie", ServerSeries(_serverC))], _addedPaths);
+        Assert.Equal([ServerFilms(_serverA)], Locations("A - Film"));
+        Assert.Equal([ServerSeries(_serverA)], Locations("A - Serie"));
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+        Assert.Equal(1, _scansQueued);
+    }
+
+    [Fact]
+    public async Task WhileTheLibraryManagerIsBusyPlacementWaitsForTheNextHook()
+    {
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _configured.Add(_serverC);
+        _managerBusy = true;
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+
+        _managerBusy = false;
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB), ServerFilms(_serverC)], Locations("Film"));
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task AJobThatStartsBeforeTheLibrariesAreReadMakesPlacementWait()
+    {
+        // The check follows the read: a library a job makes before the read is seen with the job still running.
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _library.Setup(library => library.GetVirtualFolders()).Returns(() =>
+        {
+            if (!_managerBusy)
+            {
+                _managerBusy = true;
+                _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+            }
+
+            return _libraries.ToList();
+        });
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task TheSettingsCannotGoBackToManualWhilePlacementRuns()
+    {
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _configured.Add(_serverC);
+        var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _scans.Setup(scans => scans.WaitIdleAsync(It.IsAny<CancellationToken>())).Returns(idle.Task);
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        var choice = migration.SetMode(LayoutMigrationMode.Manual);
+        idle.SetResult();
+        await migration.Running;
+
+        Assert.Equal(LayoutMigrationChoiceOutcome.Busy, choice.Outcome);
+        Assert.Equal(LayoutMigrationMode.Automatic, _store.Configuration.LayoutMigration.Mode);
+    }
+
     private static RemoteServerConfig Automatic(Guid server, string name, string itemId)
     {
         var config = new RemoteServerConfig { Id = server, AutomaticLibraries = true };
         config.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = name, ItemId = itemId });
+        config.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = name + " serie" });
         return config;
     }
 

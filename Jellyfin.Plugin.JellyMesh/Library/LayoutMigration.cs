@@ -33,6 +33,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     private readonly ILibraryPaths _paths;
     private readonly ILibraryScans _scans;
     private readonly ILibraryMaterializer _materializer;
+    private readonly IServerLibraryManager _automaticLibraries;
     private readonly ILogger<LayoutMigration> _logger;
     private volatile LastRun? _lastRun;
 
@@ -50,6 +51,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     /// <param name="paths">The service that adds and removes the federated folders in the libraries.</param>
     /// <param name="scans">The library scans the automatic migration waits for.</param>
     /// <param name="materializer">The materializer, which writes the server folders before they are added.</param>
+    /// <param name="automaticLibraries">The manager of the automatic libraries, which placement waits for.</param>
     /// <param name="logger">The logger.</param>
     public LayoutMigration(
         StubRegistry registry,
@@ -63,6 +65,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         ILibraryPaths paths,
         ILibraryScans scans,
         ILibraryMaterializer materializer,
+        IServerLibraryManager automaticLibraries,
         ILogger<LayoutMigration> logger)
     {
         _registry = registry;
@@ -76,6 +79,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         _paths = paths;
         _scans = scans;
         _materializer = materializer;
+        _automaticLibraries = automaticLibraries;
         _logger = logger;
     }
 

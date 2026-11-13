@@ -10,6 +10,12 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface IServerLibraryManager
 {
     /// <summary>
+    /// Gets a value indicating whether a job, a deletion, a check or a rename may be changing the libraries or their
+    /// registry, so that a library may not have its record yet.
+    /// </summary>
+    bool IsBusy { get; }
+
+    /// <summary>
     /// Gets what the page shows for a server.
     /// </summary>
     /// <param name="serverId">The server.</param>
