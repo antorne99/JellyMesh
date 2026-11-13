@@ -1091,7 +1091,7 @@ public sealed class ServerLibraryManagerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task A_held_library_a_configured_server_found_at_switch_on_and_the_admin_renamed_is_released_under_its_old_name(bool skipped)
+    public async Task A_held_library_a_configured_server_found_at_switch_on_and_the_admin_renamed_is_released_under_its_current_name(bool skipped)
     {
         var fixture = new Fixture();
         var other = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
@@ -1111,7 +1111,7 @@ public sealed class ServerLibraryManagerTests
         Assert.Equal(["Film mio"], fixture.Libraries.Folders.Select(folder => folder.Name));
         var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
         Assert.Empty(held.Libraries);
-        Assert.Equal(["Altro - Film"], held.ReleasedLibraries);
+        Assert.Equal(["Film mio"], held.ReleasedLibraries);
     }
 
     [Fact]
@@ -1138,7 +1138,7 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_held_library_the_server_added_back_found_at_switch_on_and_the_admin_renamed_is_never_deleted_next_to_its_new_library()
+    public async Task A_held_library_the_server_added_back_found_at_switch_on_and_the_admin_renamed_is_released_next_to_its_new_library()
     {
         var fixture = new Fixture();
         await fixture.Manager.Enable(_serverId).Job;
@@ -1156,7 +1156,10 @@ public sealed class ServerLibraryManagerTests
 
         Assert.Empty(fixture.Libraries.Removed);
         Assert.Equal(["Casa - Film", "Casa - Serie", "Film mio"], fixture.Libraries.Folders.Select(folder => folder.Name));
-        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Film mio"], held.ReleasedLibraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
     }
 
     [Fact]

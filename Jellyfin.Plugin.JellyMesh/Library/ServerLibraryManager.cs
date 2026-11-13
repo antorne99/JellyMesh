@@ -251,7 +251,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             server.FollowedLibraryIds,
             server.FollowSkipped,
             skipped => server.FollowSkipped = skipped,
-            true)
+            true,
+            [])
         : null;
 
     // The registry a removed server left. It never sees the libraries of a configured server with the same id, nor those
@@ -263,7 +264,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             return null;
         }
 
-        var live = IdSet(Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => record.ItemId) ?? []);
+        var added = Find(config, serverId)?.AutomaticLibraryRegistry.ToList() ?? [];
+        var live = IdSet(added.Select(record => record.ItemId));
         var preexisting = IdSet(config.Servers.SelectMany(server => server.PreexistingLibraryIds));
         return new Registry(
             serverId,
@@ -275,7 +277,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             held.FollowedLibraryIds,
             held.FollowSkipped,
             skipped => held.FollowSkipped = skipped,
-            false);
+            false,
+            added);
     }
 
     private static string PathOf(ServerLibraryKind kind, string root, Guid serverId) => kind == ServerLibraryKind.Movies
@@ -876,10 +879,11 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             }
             else if (folder is null && registry.ReleasedWhenHidden.Contains(record.ItemId))
             {
-                // One a configured server found at switch-on, then renamed: never adopted, and released under its old name
-                // when it is the only library on the folder with the type (decision 202).
-                var only = folders.Count(other => !claimed.Contains(other) && Passes(other, record.Kind, root, registry.ServerId)) == 1;
-                changes.Add(new FollowChange(record, null, record.Name, only));
+                // One a configured server found at switch-on, then renamed: never adopted, and released under its current name
+                // when it is the only library on the folder with the type, those of the server added back aside (202, 251, 252).
+                var uncounted = registry.Uncounted.Select(live => FindRecorded(live, folders)).OfType<VirtualFolderInfo>().ToList();
+                var others = folders.Where(other => !claimed.Contains(other) && !uncounted.Contains(other) && Passes(other, record.Kind, root, registry.ServerId)).ToList();
+                changes.Add(others is [var only] ? new FollowChange(record, null, only.Name, true) : new FollowChange(record, null, record.Name, false));
             }
             else if (folder is null)
             {
@@ -915,7 +919,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private sealed record DeletedLibrary(Guid ServerId, ServerLibraryKind Kind, string Name);
 
     // A registry with the ids it never sees (libraries there at switch-on), never adopts, releases when hidden, and saw at
-    // its last check, and whether a check was skipped since. A live one releases every library it drops.
+    // its last check, whether a check was skipped since, and the libraries it never counts. A live one releases all it drops.
     private sealed record Registry(
         Guid ServerId,
         Collection<AutomaticLibraryConfig> Libraries,
@@ -926,7 +930,8 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         Collection<string> Followed,
         bool FollowSkipped,
         Action<bool> SetFollowSkipped,
-        bool ReleasesAll)
+        bool ReleasesAll,
+        IReadOnlyCollection<AutomaticLibraryConfig> Uncounted)
     {
         public List<VirtualFolderInfo> Visible(IReadOnlyList<VirtualFolderInfo> folders) =>
             folders.Where(folder => folder.ItemId is null || !Hidden.Contains(folder.ItemId)).ToList();
