@@ -41,6 +41,7 @@ public sealed class UnchangedSyncTests : IDisposable
         "a stub failed",
         "a local title awaits its refresh",
         "an image is pending",
+        "a removed server's folder is left",
         "a scan was queued",
         "no federated folder",
         "the materialization failed",
@@ -99,6 +100,9 @@ public sealed class UnchangedSyncTests : IDisposable
                 break;
             case "an image is pending":
                 _report = _report with { ImagesPending = 1 };
+                break;
+            case "a removed server's folder is left":
+                _report = _report with { FoldersPending = 1 };
                 break;
             case "a scan was queued":
                 _report = _report with { ScanQueued = true };

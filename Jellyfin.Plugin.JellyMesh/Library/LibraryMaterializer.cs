@@ -298,6 +298,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             RegistryGeneration = _registry.Generation,
             AwaitingRefresh = view.LocalItemsAwaitingRefresh.Count,
             ImagesPending = run.ImagesPending,
+            FoldersPending = run.FoldersPending,
             ScanQueued = scanQueued
         };
     }
@@ -668,6 +669,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     {
         var removal = _remover.RemoveServerFolders(run.Root, run.State, removedServers, serverId => _servers.GetServers().Any(server => server.Id == serverId));
         run.State = removal.State;
+        run.FoldersPending += removal.Failures.Count;
         foreach (var failure in removal.Failures)
         {
             _logger.LogError("Cannot remove the folder of a removed server: {Error}", failure.GetType().Name);
@@ -742,6 +744,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public int Failed { get; set; }
 
         public int ImagesPending { get; set; }
+
+        public int FoldersPending { get; set; }
 
         /// <summary>Adds to the totals and to the counts of the server, if the stub has one.</summary>
         public void Count(Guid? serverId, int created = 0, int updated = 0)

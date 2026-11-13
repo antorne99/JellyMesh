@@ -465,7 +465,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     // it ran: the inputs then hold the registry as its links left it.
     private SyncInputs? BaselineOf(SyncInputs inputs, Materialized materialized)
     {
-        if (materialized is not { Failed: false, Report: { IsFolderSet: true, Failed: 0, AwaitingRefresh: 0, ImagesPending: 0, ScanQueued: false } report })
+        if (materialized is not { Failed: false, Report: { IsFolderSet: true, Failed: 0, AwaitingRefresh: 0, ImagesPending: 0, FoldersPending: 0, ScanQueued: false } report })
         {
             return null;
         }
