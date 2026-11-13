@@ -15,6 +15,12 @@ public sealed class RemoteContent : IDisposable
 {
     private const int CopyBufferBytes = 80 * 1024;
 
+    /// <summary>
+    /// The shortest wait for a client to take the next bytes that counts as a pause. A player that plays waits far less for
+    /// the bytes of one copy buffer, even at the lowest bitrates.
+    /// </summary>
+    public static readonly TimeSpan ClientPause = TimeSpan.FromSeconds(30);
+
     private readonly HttpResponseMessage? _response;
     private readonly Stream? _body;
     private IDisposable? _release;
@@ -59,10 +65,11 @@ public sealed class RemoteContent : IDisposable
     /// <param name="target">The target.</param>
     /// <param name="stallLimit">The longest wait for the remote.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="clock">The clock that times the client, the system clock if null.</param>
     /// <returns>The copy.</returns>
     /// <exception cref="TimeoutException">The remote sent nothing for <paramref name="stallLimit"/>.</exception>
     /// <exception cref="RemoteStreamBrokenException">The connection to the remote broke.</exception>
-    public async Task CopyToAsync(Stream target, TimeSpan stallLimit, CancellationToken cancellationToken)
+    public async Task CopyToAsync(Stream target, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(target);
 
@@ -71,6 +78,8 @@ public sealed class RemoteContent : IDisposable
             return;
         }
 
+        clock ??= TimeProvider.System;
+        DateTimeOffset? pauseEnded = null;
         using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferBytes);
         try
@@ -89,7 +98,10 @@ public sealed class RemoteContent : IDisposable
                 }
                 catch (IOException exception)
                 {
-                    throw new RemoteStreamBrokenException("The remote dropped the stream.", exception);
+                    throw new RemoteStreamBrokenException("The remote dropped the stream.", exception)
+                    {
+                        SinceClientPause = clock.GetUtcNow() - pauseEnded
+                    };
                 }
 
                 stall.CancelAfter(Timeout.InfiniteTimeSpan);
@@ -98,7 +110,13 @@ public sealed class RemoteContent : IDisposable
                     return;
                 }
 
+                var started = clock.GetUtcNow();
                 await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                var written = clock.GetUtcNow();
+                if (written - started >= ClientPause)
+                {
+                    pauseEnded = written;
+                }
             }
         }
         finally

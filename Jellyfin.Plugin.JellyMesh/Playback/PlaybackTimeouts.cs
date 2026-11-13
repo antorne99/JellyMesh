@@ -65,6 +65,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan FailedSourceMemory = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// How long after a pause a break of the remote stream is put down to the pause and not to the source (row 273): what
+    /// was held on the way drains first, and a remote or a proxy between can close a connection left unread meanwhile.
+    /// </summary>
+    public static readonly TimeSpan AfterClientPause = TimeSpan.FromMinutes(2);
+
+    /// <summary>
     /// Default time without requests after which a session is forgotten. Until then a paused player can resume with its
     /// URLs: the remote restarts ffmpeg at the requested segment.
     /// </summary>
