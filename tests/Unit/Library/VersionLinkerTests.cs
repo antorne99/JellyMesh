@@ -966,7 +966,7 @@ public sealed class VersionLinkerTests : IDisposable
         await SaveAsync([a]);
         Scanned(a);
 
-        await _linker.DetachForRemovalAsync([a], CancellationToken.None);
+        Assert.Empty(await _linker.DetachForRemovalAsync([a], CancellationToken.None));
 
         Assert.Empty(_saves);
     }
@@ -988,8 +988,9 @@ public sealed class VersionLinkerTests : IDisposable
         _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == local.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException(TestValues.Host));
 
-        await _linker.DetachForRemovalAsync([a, c], CancellationToken.None);
+        var kept = await _linker.DetachForRemovalAsync([a, c], CancellationToken.None);
 
+        Assert.Equal([a], kept);
         Assert.Null(itemC.PrimaryVersionId);
         Assert.Empty(other.LinkedAlternateVersions);
         Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));

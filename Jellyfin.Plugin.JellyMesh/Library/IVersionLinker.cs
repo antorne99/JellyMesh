@@ -59,6 +59,6 @@ public interface IVersionLinker
     /// </summary>
     /// <param name="stubs">The stubs.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task.</returns>
-    Task DetachForRemovalAsync(IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken);
+    /// <returns>The stubs that could not be detached, which the caller keeps until the next round (Q326).</returns>
+    Task<IReadOnlyList<StubEntry>> DetachForRemovalAsync(IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken);
 }

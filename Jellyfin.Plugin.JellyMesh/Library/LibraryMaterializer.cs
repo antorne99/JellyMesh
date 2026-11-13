@@ -261,12 +261,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         run.Commit();
-        if (_linker is not null && plan.Removals.Count > 0)
-        {
-            await _linker.DetachForRemovalAsync(plan.Removals, cancellationToken).ConfigureAwait(false);
-        }
-
-        RemoveGone(run, plan.Removals);
+        RemoveGone(run, await DetachRemovalsAsync(run, plan.Removals, cancellationToken).ConfigureAwait(false));
         RemoveServerFolders(run, plan.State.RemovedServers);
 
         await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
@@ -611,6 +606,31 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         await WriteFileAsync(path, read.Value.Content, cancellationToken).ConfigureAwait(false);
         DeleteOtherExtensions(stem, path);
         return path;
+    }
+
+    // The stubs to remove this round: one that could not leave its version group stays, counted as failed, for the next
+    // round (Q326).
+    private async Task<IReadOnlyList<StubEntry>> DetachRemovalsAsync(Run run, IReadOnlyList<StubEntry> removals, CancellationToken cancellationToken)
+    {
+        if (_linker is null || removals.Count == 0)
+        {
+            return removals;
+        }
+
+        var kept = await _linker.DetachForRemovalAsync(removals, cancellationToken).ConfigureAwait(false);
+        if (kept.Count == 0)
+        {
+            return removals;
+        }
+
+        run.Failed += kept.Count;
+        foreach (var serverId in kept.Select(stub => stub.ServerId).OfType<Guid>())
+        {
+            run.CountServer(serverId, failed: 1);
+        }
+
+        var ids = kept.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        return removals.Where(stub => !ids.Contains(stub.Id)).ToList();
     }
 
     private void RemoveGone(Run run, IReadOnlyList<StubEntry> stubs)

@@ -215,17 +215,17 @@ public sealed class VersionLinker : IVersionLinker
     }
 
     /// <inheritdoc />
-    public async Task DetachForRemovalAsync(IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<StubEntry>> DetachForRemovalAsync(IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stubs);
 
         var root = _store.Read(config => config.FederatedFolderPath);
         if (string.IsNullOrEmpty(root) || stubs.Count == 0)
         {
-            return;
+            return [];
         }
 
-        await DetachEachAsync(stubs, new Run(root, true, _index, _library), cancellationToken).ConfigureAwait(false);
+        return await DetachEachAsync(stubs, new Run(root, true, _index, _library), cancellationToken).ConfigureAwait(false);
     }
 
     private static VersionLinkState StateOf(Video video) => new(
@@ -321,15 +321,17 @@ public sealed class VersionLinker : IVersionLinker
     }
 
     // Detaches each of the stubs that is in no group from every item it is linked to, keeping only links between films (Q144).
-    private Task DetachUngroupedAsync(StubState state, IEnumerable<StubEntry> stubs, Run run, CancellationToken cancellationToken)
+    private Task<List<StubEntry>> DetachUngroupedAsync(StubState state, IEnumerable<StubEntry> stubs, Run run, CancellationToken cancellationToken)
     {
         var grouped = state.Groups.SelectMany(group => group.StubIds).ToHashSet(StringComparer.Ordinal);
         return DetachEachAsync(stubs.Where(stub => !grouped.Contains(stub.Id)), run, cancellationToken);
     }
 
-    // Detaches each stub from every item it is linked to, keeping only links between films. A failure stops only that stub.
-    private async Task DetachEachAsync(IEnumerable<StubEntry> stubs, Run run, CancellationToken cancellationToken)
+    // Detaches each stub from every item it is linked to, keeping only links between films. A failure stops only that stub,
+    // and the stubs that failed are returned.
+    private async Task<List<StubEntry>> DetachEachAsync(IEnumerable<StubEntry> stubs, Run run, CancellationToken cancellationToken)
     {
+        var failed = new List<StubEntry>();
         foreach (var stub in stubs)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -345,8 +347,11 @@ public sealed class VersionLinker : IVersionLinker
             {
                 // The type only: a message could hold a remote address.
                 _logger.LogError("Cannot detach a version from its group: {Error}", exception.GetType().Name);
+                failed.Add(stub);
             }
         }
+
+        return failed;
     }
 
     // The cached item is put back if the save fails, or the next run would find it linked already.

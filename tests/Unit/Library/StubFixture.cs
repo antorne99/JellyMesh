@@ -58,6 +58,8 @@ internal sealed class StubFixture : IDisposable
             Logger,
             Refresher,
             Linker.Object);
+        Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
     }
 
     public SyncFixture Sync { get; }
