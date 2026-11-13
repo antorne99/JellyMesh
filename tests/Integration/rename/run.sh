@@ -44,6 +44,35 @@ only() { # only <user> <library>...: the user sees those libraries alone
   policy=$(get local "/Users/$uid" | jq -c --argjson f "$libs" '.Policy | .EnableAllFolders = false | .EnabledFolders = $f')
   post local "/Users/$uid/Policy" "$policy" >/dev/null
 }
+# stopped <sql>: runs a statement on the database of the consumer while it is stopped, then starts it again.
+stopped() {
+  docker stop "$PREFIX-local" >/dev/null
+  docker run --rm --name "$PREFIX-sqlite" -v "$PREFIX-local-config:/config" alpine \
+    sh -c 'apk add -q sqlite >/dev/null && sqlite3 /config/data/jellyfin.db "$1"' sh "$1"
+  docker start "$PREFIX-local" >/dev/null
+  sleep 3
+  wait_ready local
+  login local
+}
+# block_sql <user id> <library id>: blocks one library; 12.4 does not save BlockedMediaFolders from the policy route.
+block_sql() {
+  local uid
+  uid=$(dashed "$1" | tr a-f A-F)
+  echo "update Preferences set Value = '$(dashed "$2")' where Kind = 2 and UserId = '$uid';"
+}
+blocks() { get local "/Users/$ALL" | jq -c '[.Policy.BlockedMediaFolders[] | ascii_downcase | gsub("-"; "")]'; }
+# probe <user> <id>: what the item routes answer to an id, with the records of the list routes [row 291].
+probe() {
+  local uid id a b c d e
+  uid=$(user_id local "$1" | tr -d -)
+  id=$(dashed "$2")
+  as "$1" GET "/Items/$id" >/dev/null; a=$(status)
+  as "$1" GET "/Users/$uid/Items/$id" >/dev/null; b=$(status)
+  as "$1" GET "/Items/$id/Images" >/dev/null; c=$(status)
+  d=$(as "$1" GET "/Items?ids=$id" | jq -r '.TotalRecordCount // "-"' 2>/dev/null || echo -); d="$(status)/$d"
+  e=$(as "$1" GET "/Items?ParentId=$id&Recursive=true" | jq -r '.TotalRecordCount // "-"' 2>/dev/null || echo -); e="$(status)/$e"
+  echo "$a $b $c $d $e"
+}
 lib_id() { get local /Library/VirtualFolders | jq -r --arg n "$1" '.[] | select(.Name == $n) | .ItemId // ""' | tr -d -; }
 lib_names() { get local /Library/VirtualFolders | jq -c '[.[].Name] | sort'; }
 changes() { get local /JellyMesh/Admin/Status | jq -c .FederatedFolder.Changes; }
@@ -107,9 +136,13 @@ wait_own
 scan local
 sync_now local
 check "the libraries of Casa exist" '["Casa - Film","Casa - Serie","Film"]' "$(lib_names)"
-for u in lim blk; do user local "$u" >/dev/null; done
+for u in lim blk all; do user local "$u" >/dev/null; done
 only lim "Casa - Film" "Casa - Serie" Film
 only blk "Casa - Serie" Film
+ALL=$(user_id local all | tr -d -)
+policy=$(get local "/Users/$ALL" | jq -c '.Policy | .EnableAllFolders = true')
+post local "/Users/$ALL/Policy" "$policy" >/dev/null
+stopped "$(block_sql "$ALL" "$(lib_id "Casa - Film")")"
 ADMIN=$(user_id local admin | tr -d -)
 LIM=$(user_id local lim | tr -d -)
 
@@ -135,6 +168,9 @@ post local "/UserPlayedItems/$(dashed "$BARE_EP")?userId=$LIM" >/dev/null
 config=$(get local "/Users/$LIM" | jq -c --arg id "$(dashed "$OLD_FILM_LIB" | tr -d -)" '.Configuration | .OrderedViews = [$id] | .MyMediaExcludes = [$id] | .LatestItemsExcludes = [$id]')
 post local "/Users/Configuration?userId=$LIM" "$config" >/dev/null
 check "the home lists are saved" '[true,true,true]' "$(home "$OLD_FILM_LIB")"
+check "the user who blocks Film blocks it" "[\"$OLD_FILM_LIB\"]" "$(blocks)"
+as all GET "/Items/$(dashed "$TEARS")" >/dev/null
+check "and cannot open its film" 404 "$(status)"
 check "the limited user sees the Film library" 1 "$([ "$(count_as lim "$OLD_FILM_LIB" Movie)" -gt 0 ] && echo 1 || echo 0)"
 check "no library change since the sync" '{"Added":[],"Removed":[]}' "$(changes)"
 
@@ -179,6 +215,11 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   check "the blocked user gets 404 on the old Film id [row 86]" 404 "$(status)"
   as lim GET "/Items?ParentId=$(dashed "$old_serie")&Recursive=true" >/dev/null
   check "the limited user gets 404 on the old Serie id [row 86]" 404 "$(status)"
+  check "the user who blocks Film blocks the new id only [row 290]" "[\"$film_lib\"]" "$(blocks)"
+  as all GET "/Items/$(dashed "$tears")" >/dev/null
+  check "and still cannot open the film" 404 "$(status)"
+  check "nor the old Film id by any item route [row 291]" "404 404 404 200/0 404/-" "$(probe all "$old_film")"
+  check "nor can the limited user" "404 404 404 200/0 404/-" "$(probe lim "$old_film")"
   check "the page asks for a restart" true "$(get local /JellyMesh/Admin/Status | jq -r .RenamedLibrariesNeedRestart)"
   sync_now local
   post local "/Items/$(dashed "$tears")/PlaybackInfo?userId=$ADMIN" "$DIRECT" >/dev/null
@@ -189,10 +230,24 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
 rename_to Casa Mare
 rename_to Mare Alba
 
-echo "--- after a restart"
-docker restart "$PREFIX-local" >/dev/null
-sleep 3
-wait_ready local
-login local
+echo "--- a library rename left with a user to rewrite [row 290]"
+GHOST=$(uuidgen | tr A-Z a-z)
+ALBA_FILM=$(lib_id "Alba - Film")
+DATA=$(docker exec "$PREFIX-local" sh -c 'dirname "$(find /config -name federated-stubs.json | head -1)"')
+jq -n --arg old "$GHOST" --arg new "$(dashed "$ALBA_FILM")" \
+  '{Version: 1, Records: [{OldName: "Fantasma - Film", NewName: "Alba - Film", OldId: $old, NewId: $new, Type: "movies", TemporaryName: null}]}' >"$WORK/library-renames.json"
+docker cp "$WORK/library-renames.json" "$PREFIX-local:$DATA/library-renames.json"
+
+echo "--- after a restart, with the user blocking an id of before that rename"
+stopped "$(block_sql "$ALL" "$(echo "$GHOST" | tr -d -)")"
+for i in $(seq 1 30); do [ "$(blocks)" = "[\"$ALBA_FILM\"]" ] && break; sleep 1; done
+check "the start finishes the rewrite: the new id is blocked [row 290]" "[\"$ALBA_FILM\"]" "$(blocks)"
+check "and the record is gone" 0 "$(docker exec "$PREFIX-local" sh -c "ls '$DATA' | grep -c '^library-renames.json$'" || true)"
+as all GET "/Items/$(dashed "$(film "Tears of Steel" Alba)")" >/dev/null
+check "and cannot open its film" 404 "$(status)"
+views() { as all GET "/UserViews?userId=$ALL" | jq -c '[.Items[].Name] | sort'; }
+echo "   libraries $(lib_names), views of a user who sees all but Film: $(views)"
+scan local
+echo "   after a scan, views of that user: $(views)"
 check "no restart is asked" false "$(get local /JellyMesh/Admin/Status | jq -r .RenamedLibrariesNeedRestart)"
 exit "$FAILED"
