@@ -1628,7 +1628,7 @@
                     "It reads the catalogs and fills the Film and Serie folders of each server. It also runs by itself on a timer.": "Legge i cataloghi e riempie le cartelle Film e Serie di ogni server. Parte anche da sola a intervalli regolari.",
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
                     "Its automatic libraries are deleted too: {names}.": "Vengono eliminate anche le sue librerie automatiche: {names}.",
-                    "Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai film uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
+                    "Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai titoli uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
                     "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: ogni episodio viene riprodotto dalla sua copia migliore, le altre restano come riserve, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
                     "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
@@ -1839,7 +1839,7 @@
                     "The browser did not allow copying. {value} is selected, so copy it by hand.": "Il browser non ha permesso di copiare. {value} è selezionato: copialo a mano.",
                     "The catalog kept changing while it was read. Try again.": "Il catalogo continuava a cambiare durante la lettura. Riprova.",
                     "The connected servers could not be read. The page keeps trying.": "Non è stato possibile leggere i server connessi. La pagina continua a provare.",
-                    "The duplicate and merged films could not be read. The page keeps trying.": "Non è stato possibile leggere i film duplicati e uniti. La pagina continua a provare.",
+                    "The duplicate and merged titles could not be read. The page keeps trying.": "Non è stato possibile leggere i titoli duplicati e uniti. La pagina continua a provare.",
                     "The federation index was damaged and is empty until a sync fills it.": "L'indice della federazione era danneggiato ed è vuoto finché una sincronizzazione non lo riempie.",
                     "The federation index was damaged and no copy could be read. It is empty until a sync fills it again.": "L'indice della federazione era danneggiato e non è stato possibile leggerne una copia. È vuoto finché una sincronizzazione non lo riempie di nuovo.",
                     "The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.": "L'indice della federazione era danneggiato ed è stata caricata la copia precedente. Esegui una sincronizzazione per aggiornarlo.",
@@ -1885,7 +1885,7 @@
                     "This server is at its stream limit on that remote.": "Questo server ha raggiunto il suo limite di stream su quel remoto.",
                     "This server is not configured.": "Questo server non è configurato.",
                     "This user sees no film or series libraries. Give it access on that server, then open Libraries again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Librerie.",
-                    "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I film dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
+                    "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I titoli dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
                     "To do": "Da fare",
                     "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.": "Due film locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo un titolo con una copia locale.",
                     "Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.": "Due serie locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo una serie con una copia locale.",
@@ -1948,7 +1948,7 @@
                     "synced": "sincronizzato",
                     "the catalog kept changing": "il catalogo continuava a cambiare",
                     "the connected servers": "i server connessi",
-                    "the duplicate and merged films": "i film duplicati e uniti",
+                    "the duplicate and merged titles": "i titoli duplicati e uniti",
                     "the settings": "le impostazioni",
                     "the state of the sync": "lo stato della sincronizzazione",
                     "the status": "lo stato",
@@ -2990,8 +2990,8 @@
                     actions.appendChild(button(t('Remove'), function () {
                         var paragraphs = [
                             t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
-                            t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
-                            t('Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
+                            t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
+                            t('Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
                             t('Playback already running may not stop right away.'),
                             t('Adding the server back brings the same titles and watch state.')
                         ];
@@ -4670,7 +4670,7 @@
                     var merges = current(mergesSection);
                     var notes = [];
                     if (mergesSection.failure) {
-                        notes.push({ key: 'failed', text: t('The duplicate and merged films could not be read. The page keeps trying.'), tab: 'catalog' });
+                        notes.push({ key: 'failed', text: t('The duplicate and merged titles could not be read. The page keeps trying.'), tab: 'catalog' });
                     }
 
                     if (merges && merges.IsStoreDamaged) {
@@ -4924,7 +4924,7 @@
                 var mergesSection = section(function () {
                     return read('Merges');
                 }, renderMerges, function (reason) {
-                    showFailure('#jmMergesFailure', t('the duplicate and merged films'), keepsTrying, reason);
+                    showFailure('#jmMergesFailure', t('the duplicate and merged titles'), keepsTrying, reason);
                 });
 
                 var historySection = section(function () {
