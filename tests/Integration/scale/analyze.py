@@ -33,7 +33,8 @@ def read(name):
 def iso_ms(value):
     if not value:
         return None
-    value = re.sub(r"(\.\d{6})\d+", r"\1", value).replace("Z", "+00:00")
+    # Python before 3.11 reads only 6 fraction digits, and .NET drops trailing zeros.
+    value = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], value).replace("Z", "+00:00")
     return int(datetime.datetime.fromisoformat(value).timestamp() * 1000)
 
 

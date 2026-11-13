@@ -83,10 +83,22 @@ snapshot() {
   in_box "find /federata -type f | sed -e 's/.*\.//' | sort | uniq -c; echo total \$(find /federata -type f | wc -l); echo kib \$(du -sk /federata | cut -f1)" >"$WORK/$phase-tree.txt"
 }
 
+# Waits until no scheduled task runs, such as the post-scan task a sync queued, so that a phase measures its sync alone.
+settle() {
+  local i
+  for i in $(seq 1 3600); do
+    [ "$(get /ScheduledTasks | jq '[.[] | select(.State != "Idle")] | length')" = 0 ] && return
+    sleep 2
+  done
+}
+
 # Runs one sync and waits for it: <phase> <start command...>.
 measure() {
   local phase=$1 before i
   shift
+  settle
+  # Other containers on the same Docker VM skew the times: their load is kept with the phase.
+  docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' >"$WORK/$phase-load.txt" 2>/dev/null
   before=$(get /JellyMesh/Admin/Sync | jq -r '.LastStartedUtc // ""')
   echo "$(now_ms)" >"$WORK/$phase-requested"
   "$@" >/dev/null
