@@ -111,7 +111,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = MergeStubs(root, _registry.State, cancellationToken);
+            var state = await MergeStubsAsync(root, _registry.State, cancellationToken).ConfigureAwait(false);
             state = RefreshNewSeries(root, state);
             if (!ReferenceEquals(state, _registry.State))
             {
@@ -185,7 +185,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
     }
 
-    private StubState MergeStubs(string root, StubState state, CancellationToken cancellationToken)
+    private async Task<StubState> MergeStubsAsync(string root, StubState state, CancellationToken cancellationToken)
     {
         // One snapshot and one server list, so that the claims are those the materializer made.
         var snapshot = _index.Snapshot;
@@ -208,7 +208,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             {
                 foreach (var merged in claim.Merged)
                 {
-                    state = Merge(root, state, merged, stub, users, cancellationToken);
+                    state = await MergeAsync(root, state, merged, stub, users, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -221,10 +221,16 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         return state;
     }
 
-    private StubState Merge(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
+    private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
     {
         // Without its item, which only a scan makes, the survivor cannot receive anything yet.
         if (_library.FindByPath(FederatedPaths.Resolve(root, into.RelativePath), false) is not { } survivor)
+        {
+            return state;
+        }
+
+        // A stub that cannot leave its version group stays for the next scan, so Jellyfin rewrites no .nfo (Q326, Q327).
+        if (_linker is not null && (await _linker.DetachForRemovalAsync([stub], cancellationToken).ConfigureAwait(false)).Count > 0)
         {
             return state;
         }

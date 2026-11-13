@@ -45,6 +45,8 @@ public sealed class StubCleanupTaskTests : IDisposable
         _userData
             .Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()))
             .Callback<User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken>((user, item, _, _, _) => _calls.Add("save " + user.Username + " " + item.Path));
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -205,6 +207,52 @@ public sealed class StubCleanupTaskTests : IDisposable
         Assert.Equal(["save anna " + survivor.Path, "delete " + merged.Path], _calls);
         Assert.Equal(survivor.Path, _fixture.Path_(Assert.Single(_fixture.Registry.State.Stubs).RelativePath));
         Assert.False(File.Exists(merged.Path));
+    }
+
+    // Q327: the merged stub leaves its version group, with the registry lock held, before it is deleted.
+    [Fact]
+    public async Task AMergedStubLeavesItsVersionGroupBeforeItGoes()
+    {
+        var (_, merged) = await TwoFilmsThatBecomeOneAsync();
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IReadOnlyCollection<StubEntry> stubs, CancellationToken _) =>
+            {
+                using var wait = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _fixture.Registry.EnterAsync(wait.Token));
+                _calls.Add("detach " + string.Join(",", stubs.Select(stub => _fixture.Path_(stub.RelativePath))));
+                return (IReadOnlyList<StubEntry>)[];
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["detach " + merged.Path, "delete " + merged.Path], _calls);
+        Assert.False(File.Exists(merged.Path));
+    }
+
+    // Q326 and Q327: a merged stub that cannot leave its group stays, with its state, for the next scan.
+    [Fact]
+    public async Task AMergedStubThatCannotLeaveItsVersionGroupStaysForTheNextScan()
+    {
+        var (survivor, merged) = await TwoFilmsThatBecomeOneAsync();
+        GiveState(_anna, merged, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        var kept = new UserItemData { Key = "s" };
+        GiveState(_anna, survivor, kept);
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.ToList());
+
+        await RunAsync();
+
+        Assert.Empty(_calls);
+        Assert.False(kept.Played);
+        Assert.True(File.Exists(merged.Path));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        await RunAsync();
+
+        Assert.False(File.Exists(merged.Path));
+        Assert.Single(_fixture.Registry.State.Stubs);
     }
 
     [Fact]

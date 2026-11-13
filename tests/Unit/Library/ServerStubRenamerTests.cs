@@ -26,12 +26,15 @@ public sealed class ServerStubRenamerTests : IDisposable
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IWatchStateCarrier> _carrier = new();
+    private readonly Mock<IVersionLinker> _linker = new();
+    private readonly List<string> _detached = [];
     private readonly Dictionary<Guid, BaseItem> _items = [];
     private readonly List<IReadOnlyList<WatchStateMove>> _carries = [];
     private readonly List<IReadOnlyCollection<Guid>> _forgets = [];
     private readonly ServerStubRenamer _renamer;
     private Func<WatchStateMove, WatchStateMoveStatus> _status = _ => WatchStateMoveStatus.Carried;
     private bool _deletesFail;
+    private bool _detachFails;
 
     public ServerStubRenamerTests()
     {
@@ -55,7 +58,13 @@ public sealed class ServerStubRenamerTests : IDisposable
                 _forgets.Add(ids);
                 return ids.ToList();
             });
-        _renamer = new ServerStubRenamer(_registry, _store, _library.Object, _carrier.Object, new CapturingLogger<ServerStubRenamer>(), Delete);
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) =>
+            {
+                _detached.AddRange(stubs.Select(stub => stub.RelativePath + (File.Exists(Full(stub.RelativePath)) ? " on disk" : " gone")));
+                return _detachFails ? stubs.ToList() : [];
+            });
+        _renamer = new ServerStubRenamer(_registry, _store, _library.Object, _carrier.Object, _linker.Object, new CapturingLogger<ServerStubRenamer>(), Delete);
     }
 
     private string Root => _store.Configuration.FederatedFolderPath;
@@ -156,6 +165,41 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.True(File.Exists(Full(Path.Combine(Path.GetDirectoryName(FilmPath("Casa"))!, "movie.nfo"))));
         Assert.Equal([new StubRename("f", FilmPath("Casa")) { RemovedItemId = old.Id, Forgets = true }], _registry.State.Renames);
         Assert.True(_renamer.IsPending(_server));
+    }
+
+    // Q327: the old item leaves its version group before its file goes, so Jellyfin rewrites no .nfo of a local copy.
+    [Fact]
+    public async Task TheOldItemLeavesItsVersionGroupBeforeItsFileGoes()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Casa"), new Movie());
+        Scanned(FilmPath("Mare"), new Movie());
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal([FilmPath("Casa") + " on disk"], _detached);
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+    }
+
+    // Q326 and Q327: an old item that cannot leave its group keeps its file, and the next scan tries again.
+    [Fact]
+    public async Task AnOldItemThatCannotLeaveItsVersionGroupKeepsItsFileForTheNextScan()
+    {
+        await RenamedFilmAsync();
+        var old = Scanned(FilmPath("Casa"), new Movie());
+        Scanned(FilmPath("Mare"), new Movie());
+        _detachFails = true;
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
+
+        _detachFails = false;
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Equal([new StubRename("f", FilmPath("Casa")) { RemovedItemId = old.Id, Forgets = true }], _registry.State.Renames);
     }
 
     [Fact]
@@ -420,6 +464,30 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Equal("nfo", Read(Path.Combine(Path.GetDirectoryName(FilmPath("Casa"))!, "movie.nfo")));
         Assert.Equal([new StubRename("o", FilmPath("Altro", _other))], _registry.State.Renames);
         Assert.Equal([FilmPath("Mare")], _registry.State.Stubs.Where(stub => stub.ServerId == _server).Select(stub => stub.RelativePath));
+    }
+
+    // Q327: a cancel deletes the old files too, so their items leave their version groups first.
+    [Fact]
+    public async Task CancellingDetachesTheOldItemsBeforeTheirFilesGo()
+    {
+        await RenamedFilmAsync();
+
+        Assert.True(await _renamer.CancelAsync(_server, CancellationToken.None));
+
+        Assert.Equal([FilmPath("Casa") + " on disk"], _detached);
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+    }
+
+    [Fact]
+    public async Task CancellingKeepsAPendingMoveWhoseOldItemCannotLeaveItsVersionGroup()
+    {
+        await RenamedFilmAsync();
+        _detachFails = true;
+
+        Assert.False(await _renamer.CancelAsync(_server, CancellationToken.None));
+
+        Assert.True(_renamer.IsPending(_server));
+        Assert.True(File.Exists(Full(FilmPath("Casa"))));
     }
 
     [Fact]

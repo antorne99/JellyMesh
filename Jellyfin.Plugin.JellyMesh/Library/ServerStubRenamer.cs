@@ -25,6 +25,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     private readonly IPluginConfigurationStore _store;
     private readonly ILibraryManager _library;
     private readonly IWatchStateCarrier _carrier;
+    private readonly IVersionLinker _linker;
     private readonly ILogger<ServerStubRenamer> _logger;
     private readonly Action<string> _delete;
 
@@ -35,19 +36,21 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     /// <param name="store">The configuration store.</param>
     /// <param name="library">The library manager.</param>
     /// <param name="carrier">The watch state carrier.</param>
+    /// <param name="linker">The version linker, which detaches an old item before its file goes.</param>
     /// <param name="logger">The logger.</param>
-    public ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, ILogger<ServerStubRenamer> logger)
-        : this(registry, store, library, carrier, logger, File.Delete)
+    public ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, IVersionLinker linker, ILogger<ServerStubRenamer> logger)
+        : this(registry, store, library, carrier, linker, logger, File.Delete)
     {
     }
 
     // Takes how an old file is deleted, so that tests can make it fail.
-    internal ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, ILogger<ServerStubRenamer> logger, Action<string> delete)
+    internal ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, IVersionLinker linker, ILogger<ServerStubRenamer> logger, Action<string> delete)
     {
         _registry = registry;
         _store = store;
         _library = library;
         _carrier = carrier;
+        _linker = linker;
         _logger = logger;
         _delete = delete;
     }
@@ -198,9 +201,10 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             {
                 var report = await _carrier.CarryAsync(moves.Select(entry => entry.Move).ToList(), cancellationToken).ConfigureAwait(false);
                 var forgettable = report.ForgettableOldItemIds.ToHashSet();
-                foreach (var outcome in report.Moves.Where(IsDone))
+                var done = report.Moves.Where(IsDone).Select(outcome => moves.First(entry => ReferenceEquals(entry.Move, outcome.Move))).ToList();
+                var stuck = await StuckInGroupsAsync(done.Select(entry => entry.Rename).ToList(), cancellationToken).ConfigureAwait(false);
+                foreach (var (rename, stub, move) in done.Where(entry => !stuck.Contains(entry.Rename)))
                 {
-                    var (rename, stub, move) = moves.First(entry => ReferenceEquals(entry.Move, outcome.Move));
                     if (TryDeleteOld(root, rename, stub))
                     {
                         next[rename] = rename with { RemovedItemId = move.FromItemId, Forgets = forgettable.Contains(move.FromItemId) };
@@ -245,13 +249,11 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             var live = state.Stubs.Select(stub => stub.RelativePath)
                 .Concat(state.Renames.Where(rename => !ours.Contains(rename) && _registry.Find(rename.StubId) is not null).Select(rename => rename.OldPath))
                 .ToHashSet(_pathComparer);
-            var kept = state.Renames
-                .Where(rename => ours.Contains(rename)
-                    && rename.RemovedItemId is null
-                    && !live.Contains(rename.OldPath)
-                    && root.Length > 0
-                    && !TryDeleteOld(root, rename, _registry.Find(rename.StubId)))
-                .ToHashSet();
+            var deleting = state.Renames
+                .Where(rename => ours.Contains(rename) && rename.RemovedItemId is null && !live.Contains(rename.OldPath) && root.Length > 0)
+                .ToList();
+            var kept = await StuckInGroupsAsync(deleting, cancellationToken).ConfigureAwait(false);
+            kept.UnionWith(deleting.Where(rename => !kept.Contains(rename) && !TryDeleteOld(root, rename, _registry.Find(rename.StubId))));
             var renames = state.Renames.Where(rename => !ours.Contains(rename) || kept.Contains(rename)).ToList();
             await _registry.SaveAsync(state with { Renames = renames }, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Cancelled {Count} pending stub moves of a renamed server, {Left} left", ours.Count - kept.Count, kept.Count);
@@ -269,6 +271,24 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             .Concat(state.Renames.Where(rename => _registry.Find(rename.StubId) is not null).Select(rename => rename.OldPath))
             .Concat(taking)
             .ToHashSet(_pathComparer);
+
+    // Detaches the old items of these moves before their files go (Q327), and returns the moves whose old item could not
+    // leave its version group, which wait for the next round (Q326). The caller holds the registry lock.
+    private async Task<HashSet<StubRename>> StuckInGroupsAsync(IReadOnlyList<StubRename> renames, CancellationToken cancellationToken)
+    {
+        var olds = renames
+            .Select(rename => (Rename: rename, Stub: _registry.Find(rename.StubId)))
+            .Where(entry => entry.Stub is not null)
+            .Select(entry => (entry.Rename, Old: entry.Stub! with { RelativePath = entry.Rename.OldPath }))
+            .ToList();
+        if (olds.Count == 0)
+        {
+            return [];
+        }
+
+        var failed = await _linker.DetachForRemovalAsync(olds.Select(entry => entry.Old).ToList(), cancellationToken).ConfigureAwait(false);
+        return olds.Where(entry => failed.Contains(entry.Old)).Select(entry => entry.Rename).ToHashSet();
+    }
 
     // An entry whose stub left, at a path a live stub has or takes: its files and item ID are that stub's now.
     private bool IsTaken(StubRename rename, HashSet<string> live) => _registry.Find(rename.StubId) is null && live.Contains(rename.OldPath);
