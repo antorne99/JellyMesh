@@ -417,6 +417,17 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task AnUndefinedModeIsRefusedAndKeepsTheError()
+    {
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
+        _store.Configuration.LayoutMigration.Error = AutomaticMigrationError.RemoveFailed;
+        var migration = await MigrationAsync();
+
+        Assert.Equal(LayoutMigrationChoiceOutcome.NotAllowed, migration.Choose((LayoutMigrationMode)3).Outcome);
+        Assert.Equal(AutomaticMigrationError.RemoveFailed, _store.Configuration.LayoutMigration.Error);
+    }
+
+    [Fact]
     public async Task ASecondChoiceWhileTheMigrationRunsIsBusy()
     {
         OldFilm("Dune", (_serverA, "a1"));
