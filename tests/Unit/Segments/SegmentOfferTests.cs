@@ -278,6 +278,26 @@ public class SegmentOfferTests
     }
 
     [Fact]
+    public void A_device_playing_the_local_copy_reads_no_segments_of_the_stub_but_those_of_the_copy()
+    {
+        var localId = Guid.NewGuid();
+        _manager.Setup(manager => manager.HasSegments(localId)).Returns(true);
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        var identity = PlaybackValues.Identity() with { ItemId = localId };
+        var offer = Offer();
+
+        offer.RecordLocalCopy(identity, "copy-play", localId, _itemId);
+        _sessions.RecordLocal(identity.UserId, "copy-play", localId, identity.DeviceId);
+
+        Assert.False(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+        Assert.True(offer.ServesDirect(identity.UserId, identity.DeviceId, localId));
+        Assert.True(offer.ServesDirect(identity.UserId, "another device", _itemId));
+
+        _sessions.EndLocal(identity.UserId, "copy-play");
+        Assert.True(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+    }
+
+    [Fact]
     public async Task The_route_of_the_segments_answers_none_to_a_device_playing_another_copy()
     {
         _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));

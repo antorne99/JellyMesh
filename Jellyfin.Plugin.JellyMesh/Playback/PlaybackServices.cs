@@ -40,7 +40,8 @@ public static class PlaybackServices
         services.AddSingleton<SegmentOffer>();
         services.AddSingleton<SegmentRouteFilter>();
         services.AddHostedService<PlaybackSweeper>();
-        services.AddHostedService<NewStubSegments>();
+        services.AddSingleton<NewStubSegments>();
+        services.AddHostedService(provider => provider.GetRequiredService<NewStubSegments>());
 
         services.Configure<MvcOptions>(options =>
         {

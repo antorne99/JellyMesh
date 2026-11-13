@@ -169,6 +169,23 @@ public class PageTranslationsTests
     }
 
     [Theory]
+    [InlineData("without this backup")]
+    [InlineData("senza questa riserva")]
+    [InlineData("or add those servers again")]
+    [InlineData("o aggiungi di nuovo quei server")]
+    public void No_text_speaks_of_the_flat_layout_or_of_adding_missing_servers_again(string text)
+    {
+        Assert.DoesNotContain(text, _page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Removing_a_server_says_its_folders_go_and_how_they_come_back()
+    {
+        Assert.Contains("t('The folders of this server are deleted now: its titles leave the libraries, with their images.", _script, StringComparison.Ordinal);
+        Assert.Contains("t('Adding the server back, or restoring the settings, brings its folders back, with the same titles and watch state.')", _script, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(@"create\('[a-z0-9]+', '[A-Z]")]
     [InlineData(@"\bbutton\('")]
     [InlineData(@"addFact\(\w+, '")]

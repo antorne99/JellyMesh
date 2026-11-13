@@ -1220,8 +1220,9 @@ def confirms(s, width):
     remove = u.button(u.server_row(page, HOSTILE), "remove")
     remove.click()
     confirm_shows(page, name + " remove", "Remove this server?", [
-        HOSTILE + " and its stored login leave JellyMesh now", "login is not revoked", "deleted from the libraries now",
-        "without this backup", "Doubtful titles", "local files are not touched", "may not stop right away", "same titles and watch state"], viewport)
+        HOSTILE + " and its stored login leave JellyMesh now", "login is not revoked", "folders of this server are deleted now",
+        "same titles from another server stay", "Doubtful titles", "local files are not touched", "may not stop right away",
+        "restoring the settings, brings its folders back, with the same titles and watch state"], viewport)
     u.shot(page, f"confirm-remove-{width}", full_page=False)
     confirm_keeps(page, name + " remove", lambda: len(status()) == count and u.server_row(page, HOSTILE).count() == 1)
     remove.click()
@@ -2646,7 +2647,8 @@ def overview_damaged(s, width):
     shown = " ".join(alarms(page))
     check(name + " reports the titles", "5 titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog." in shown, shown)
     catalog = text(page, u.ALERTS_WITH_DATA[1])
-    check(name + " says how to get them back", "were not removed on this page" in catalog and "restore them" in catalog, catalog)
+    check(name + " says how to get them back", "were not removed on this page" in catalog and "restore them" in catalog
+          and "add those servers again" not in catalog, catalog)
     check(name + " says they can be forgotten", "forget them below" in catalog, catalog)
     forget_missing(page, name)
     u.close(page)

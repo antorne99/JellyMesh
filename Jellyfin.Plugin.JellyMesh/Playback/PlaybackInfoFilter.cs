@@ -158,7 +158,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         // The local copy under a stub is stock's, through the file route of the local copy.
         if (targetStub is null)
         {
-            await PlayLocalCopyAsync(context, next, request, target).ConfigureAwait(false);
+            await PlayLocalCopyAsync(context, next, request, target, route).ConfigureAwait(false);
             return;
         }
 
@@ -175,7 +175,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
                 await RunLocalTranscodeAsync(context, next, served, outcome, route).ConfigureAwait(false);
                 break;
             default:
-                await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user).ConfigureAwait(false);
+                await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user, route).ConfigureAwait(false);
                 break;
         }
     }
@@ -245,7 +245,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         return true;
     }
 
-    private async Task RefuseOrPlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, User user)
+    private async Task RefuseOrPlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, User user, Guid route)
     {
         // A local copy in no library is not one to fall back on for a non-admin (D17).
         if (_localCopies.Find(request.Stub, user) is not { } local || !_stubs.Sees(user, local.Id))
@@ -254,10 +254,10 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        await PlayLocalCopyAsync(context, next, request, local.Id).ConfigureAwait(false);
+        await PlayLocalCopyAsync(context, next, request, local.Id, route).ConfigureAwait(false);
     }
 
-    private async Task PlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, Guid localItemId)
+    private async Task PlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, Guid localItemId, Guid route)
     {
         // The stock action answers for the local item. The source the client asked for is one of the stub.
         context.ActionArguments[ItemArgument] = localItemId;
@@ -272,6 +272,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
+        _segments.RecordLocalCopy(request.Identity, response.PlaySessionId, localItemId, route);
     }
 
     private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, Guid route)
