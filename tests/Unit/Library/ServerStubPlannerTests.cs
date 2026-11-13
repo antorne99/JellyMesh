@@ -460,6 +460,57 @@ public class ServerStubPlannerTests
     }
 
     [Fact]
+    public void OfTwoOldGroupsThatHoldTheStubsOfATitle_TheFirstInTheListIsKept()
+    {
+        var contents = new[] { Title("k", OnA("m"), OnB("z")) };
+        var catalogs = new[] { Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z")) };
+        var first = Plan(contents, catalogs);
+        var (a, b) = (On(first, _serverA).Entry.Id, On(first, _serverB).Entry.Id);
+        VersionGroup[] old = [new() { Id = "z-later", IdentityKey = "k", StubIds = [b, "gone-1"] }, new() { Id = "a-earlier", IdentityKey = "k", StubIds = [a, "gone-2"] }];
+
+        var second = Plan(contents, catalogs, first.State with { Groups = old });
+
+        Assert.Equal("z-later", Assert.Single(second.State.Groups).Id);
+    }
+
+    [Fact]
+    public void AnOldGroupThatHoldsOnlyTheLocalCopyOfATitleCanBeKept()
+    {
+        var local = Guid.NewGuid();
+        var contents = new[] { Local(Title("k", OnA("m"), OnB("z")), local) };
+        var catalogs = new[] { Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z")) };
+        var first = Plan(contents, catalogs);
+        var (a, b) = (On(first, _serverA).Entry.Id, On(first, _serverB).Entry.Id);
+        VersionGroup[] old = [new() { Id = "z-local", IdentityKey = "k", LocalItemIds = [local] }, new() { Id = "a-stubs", IdentityKey = "k", StubIds = [a, b] }];
+
+        var second = Plan(contents, catalogs, first.State with { Groups = old });
+
+        var group = Assert.Single(second.State.Groups);
+        Assert.Equal("z-local", group.Id);
+        Assert.Equal(new[] { a, b }.Order(), group.StubIds.Order());
+    }
+
+    [Fact]
+    public void ALocalEpisodeOfAnotherSeasonIsNotLinked()
+    {
+        var (l1, l2) = (Guid.NewGuid(), Guid.NewGuid());
+        var season2 = new ResolvedContent(new ContentIdentity("show|S2E7", "show", ContentKind.Episode, MatchKind.ProviderId, 2, 7), false, null, [])
+        {
+            RemoteItems = [OnA("a27")]
+        };
+
+        var plan = Plan(
+            [Local(EpisodeTitle(7, OnA("a7")), l1), Local(season2, l2)],
+            [Catalog(_serverA, SeriesItem("sa"), EpisodeItem("a7", "sa", 7), EpisodeItem("a27", "sa", 7) with { ParentIndexNumber = 2 })]);
+
+        Assert.Equal(
+            [(l1, 1), (l2, 2)],
+            plan.State.Groups
+                .Select(group => (Assert.Single(group.LocalItemIds), plan.State.Stubs.Single(stub => stub.Id == Assert.Single(group.StubIds)).SeasonNumber!.Value))
+                .OrderBy(entry => entry.Item2));
+    }
+
+    [Fact]
     public void ALocalEpisodeIsNotLinkedToACopyMatchedByItsItemAlone()
     {
         var l7 = Guid.NewGuid();

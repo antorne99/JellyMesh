@@ -33,7 +33,8 @@ def read(name):
 def iso_ms(value):
     if not value:
         return None
-    value = re.sub(r"(\.\d{6})\d+", r"\1", value).replace("Z", "+00:00")
+    # Python before 3.11 reads only 6 fraction digits, and .NET drops trailing zeros.
+    value = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], value).replace("Z", "+00:00")
     return int(datetime.datetime.fromisoformat(value).timestamp() * 1000)
 
 
@@ -92,6 +93,15 @@ def memory_of(phase):
     return values
 
 
+def sum_reads(read_lines):
+    if not read_lines:
+        return "-"
+    if len(read_lines) == 1:
+        return read_lines[0][3]
+    counts = [int(re.match(r"Read (\d+)", entry[3]).group(1)) for entry in read_lines]
+    return f"Read {' + '.join(map(str, counts))} entries from {len(read_lines)} servers"
+
+
 def report(phase, previous_files):
     status_text = read(f"{phase}-status.json")
     if not status_text:
@@ -103,7 +113,9 @@ def report(phase, previous_files):
     images = [r for r in window if r[3].startswith("image-")]
     others = [r for r in window if not r[3].startswith(("items-", "image-"))]
     in_logs = [entry for entry in logs if start - 1000 <= entry[0] <= end + 1000]
-    read_line = next((entry for entry in in_logs if re.match(r"Read \d+ .*entries", entry[3])), None)
+    # One line per server: the read ends with the last.
+    read_lines = [entry for entry in in_logs if re.match(r"Read \d+ .*entries", entry[3])]
+    read_line = read_lines[-1] if read_lines else None
     done_line = next((entry for entry in in_logs if entry[3].startswith("Materialized the federated folder")), None)
     index = files_of(phase).get("federation-index.json")
     index_saved = index[1] if index and previous_files.get("federation-index.json") != index and start <= index[1] <= end + 1000 else None
@@ -126,8 +138,9 @@ def report(phase, previous_files):
         + (f", first to last {seconds(images[-1][0] - images[0][0])}, fake busy {seconds(sum(r[1] for r in images))}" if images else ""),
         f"    from read end to first image           {seconds(images[0][0] - read_end) if images and read_end else '-'}",
         f"    after the last image                   {seconds(materialize_end - images[-1][0]) if images else '-'}",
+        f"  after the materialization                {seconds(end - materialize_end) if done_line else '-'}  (version links, migration, libraries)",
         f"  other calls                              {len(others)} ({', '.join(sorted({r[3].split(' ')[0] for r in others}))})",
-        f"log                                        {read_line[3] if read_line else '-'} | {done_line[3] if done_line else '-'}",
+        f"log                                        {sum_reads(read_lines)} | {done_line[3] if done_line else '-'}",
         f"warnings/errors in the window              {sum(1 for e in in_logs if e[1] in ('WRN', 'ERR', 'FTL'))}",
     ]
     if in_samples:
@@ -136,6 +149,12 @@ def report(phase, previous_files):
     lines.append(f"memory, process VmHWM after the phase     {memory.get('VmHWM', '-')} MiB (cgroup memory.peak {memory.get('cgroup-peak', '-')} MiB, page cache included)")
     lines.append(f"federation-index.json                     {index[0] / 1048576:.1f} MiB" if index else "federation-index.json                     -")
     lines.append(f"federated-stubs.json                      {stubs[0] / 1048576:.1f} MiB" if stubs else "federated-stubs.json                      -")
+    groups = (read(f"{phase}-groups.txt") or "").strip()
+    if groups:
+        lines.append(f"version groups in the registry            {groups}")
+    links = (read(f"{phase}-links.txt") or "").strip()
+    if links:
+        lines.append(f"listed films and episodes by versions     {links}")
     lines.append(f"files in the federated folder             {tree.get('total', 0)} ({', '.join(f'{k} {v}' for k, v in sorted(tree.items()) if k not in ('total', 'kib'))}), {tree.get('kib', 0) / 1024:.0f} MiB")
     servers = status.get("Servers") or []
     lines.append("servers                                   " + "; ".join(
@@ -144,11 +163,14 @@ def report(phase, previous_files):
 
 
 print(f"# Scale run in {WORK}")
-print((read("fake.out") or "").strip())
+print((read("fake.out") or read("fake-1.out") or "").strip())
+remotes = len([name for name in os.listdir(WORK) if re.match(r"fake-\d+\.out$", name)])
+if remotes > 1:
+    print(f"{remotes} remote servers with that catalog each")
 idle = memory_of("idle")
 print(f"idle before the first sync: VmHWM {idle.get('VmHWM', '-')} MiB, VmRSS {idle.get('VmRSS', '-')} MiB\n")
 previous = files_of("idle")
-for phase in ("first", "incremental", "repeat", "scan", "incremental-scanned"):
+for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-scanned", "incremental-scanned-again", "nightly-scanned"):
     if phase == "scan":
         if read("scan-seen"):
             requested, seen = int(read("scan-requested")), int(read("scan-seen"))

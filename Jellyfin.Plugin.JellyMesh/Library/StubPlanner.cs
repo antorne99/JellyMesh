@@ -256,12 +256,14 @@ public static class StubPlanner
         var titles = placed
             .GroupBy(entry => GroupKeyOf(entry.Content, entry.Winner, entry.Work.Entry.ServerId!.Value, covered), StringComparer.Ordinal)
             .OrderBy(title => title.Key, StringComparer.Ordinal);
+        var seasons = input.View.Contents.ToLookup(entry => (entry.Identity.WorkKey, entry.Identity.SeasonNumber));
+        var oldGroups = OldGroupIndex.Of(input.State.Groups);
         foreach (var title in titles)
         {
             var (_, content, winner) = title.First();
             var stubIds = title.DistinctBy(entry => entry.Work.Entry.ServerId).Select(entry => entry.Work.Entry.Id).ToList();
-            var local = LocalCopiesOf(input, content, winner);
-            var old = input.State.Groups.FirstOrDefault(group => !reused.Contains(group.Id) && (group.StubIds.Any(stubIds.Contains) || group.LocalItemIds.Any(local.Contains)));
+            var local = LocalCopiesOf(seasons, content, winner);
+            var old = oldGroups.FirstHolding(stubIds, local, reused);
             if (old is not null)
             {
                 reused.Add(old.Id);
@@ -318,7 +320,7 @@ public static class StubPlanner
     // The local copies of a stub. For episodes, only a local file that covers each episode of the file behind the stub and
     // no other episode of the season in the view. The view holds no episode that is only local, so a longer local file can
     // still pass.
-    private static List<Guid> LocalCopiesOf(StubPlanInput input, ResolvedContent content, IndexedItem winner)
+    private static List<Guid> LocalCopiesOf(ILookup<(string WorkKey, int? SeasonNumber), ResolvedContent> seasons, ResolvedContent content, IndexedItem winner)
     {
         if (content.Identity.Kind != ContentKind.Episode)
         {
@@ -326,9 +328,7 @@ public static class StubPlanner
         }
 
         var (first, last) = FileRangeOf(content, winner);
-        var season = input.View.Contents
-            .Where(entry => string.Equals(entry.Identity.WorkKey, content.Identity.WorkKey, StringComparison.Ordinal) && entry.Identity.SeasonNumber == content.Identity.SeasonNumber)
-            .ToList();
+        var season = seasons[(content.Identity.WorkKey, content.Identity.SeasonNumber)].ToList();
         var inside = season.Where(entry => entry.Identity.EpisodeNumber >= first && entry.Identity.EpisodeNumber <= last).ToList();
         var outside = season.Except(inside).SelectMany(entry => entry.LocalItemIds).ToHashSet();
 
@@ -780,6 +780,25 @@ public static class StubPlanner
     }
 
     private sealed record SeasonEpisode(string Folder, int Season, Guid ServerId, IndexedItem Episode);
+
+    // Finds the first group of the last plan, in its order, that holds one of some stubs or local copies and is not taken.
+    private sealed class OldGroupIndex(IReadOnlyList<VersionGroup> groups, ILookup<string, int> byStub, ILookup<Guid, int> byLocal)
+    {
+        public static OldGroupIndex Of(IReadOnlyList<VersionGroup> groups) => new(
+            groups,
+            groups.SelectMany((group, order) => group.StubIds.Select(stub => (stub, order))).ToLookup(entry => entry.stub, entry => entry.order, StringComparer.Ordinal),
+            groups.SelectMany((group, order) => group.LocalItemIds.Select(local => (local, order))).ToLookup(entry => entry.local, entry => entry.order));
+
+        public VersionGroup? FirstHolding(IEnumerable<string> stubIds, IEnumerable<Guid> local, HashSet<string> taken)
+        {
+            var order = stubIds.SelectMany(stub => byStub[stub])
+                .Concat(local.SelectMany(id => byLocal[id]))
+                .Where(index => !taken.Contains(groups[index].Id))
+                .DefaultIfEmpty(-1)
+                .Min();
+            return order < 0 ? null : groups[order];
+        }
+    }
 
     /// <summary>
     /// Where the series of a plan live: the flat layout, or the folder of one server, whose series come from that server

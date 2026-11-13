@@ -25,9 +25,12 @@ public static class PlaybackServices
         services.AddSingleton<IRemotePlaybackClient>(provider => provider.GetRequiredService<RemotePlaybackClient>());
         services.AddSingleton<IRemoteSegmentClient>(provider => provider.GetRequiredService<RemotePlaybackClient>());
         services.AddSingleton<PlaybackSessionStore>();
-        services.AddSingleton<ILastServedSourceStore>(provider => new LastServedSourceStore(
+        services.AddSingleton(provider => new LastServedSourceStore(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<LastServedSourceStore>>()));
+            provider.GetRequiredService<ILogger<LastServedSourceStore>>(),
+            provider.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<ILastServedSourceStore>(provider => provider.GetRequiredService<LastServedSourceStore>());
+        services.AddHostedService(provider => provider.GetRequiredService<LastServedSourceStore>());
         services.AddSingleton<PlaybackCoordinator>();
         services.AddSingleton<PlaybackRefusal>();
         services.AddSingleton<StubLookup>();

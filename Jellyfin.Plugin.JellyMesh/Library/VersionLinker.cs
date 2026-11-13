@@ -103,6 +103,7 @@ public sealed class VersionLinker : IVersionLinker
             var failed = false;
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
+            run.KnowItemsOf(state.Stubs);
             var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
             var changed = false;
 
@@ -214,7 +215,9 @@ public sealed class VersionLinker : IVersionLinker
         {
             var state = _registry.State;
             var named = stubIds.ToHashSet(StringComparer.Ordinal);
-            await DetachUngroupedAsync(state, state.Stubs.Where(stub => named.Contains(stub.Id)), new Run(root, false, _index, _library), cancellationToken).ConfigureAwait(false);
+            var run = new Run(root, false, _index, _library);
+            run.KnowItemsOf(state.Stubs.Where(stub => named.Contains(stub.Id)));
+            await DetachUngroupedAsync(state, state.Stubs.Where(stub => named.Contains(stub.Id)), run, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -233,7 +236,9 @@ public sealed class VersionLinker : IVersionLinker
             return [];
         }
 
-        return await DetachEachAsync(stubs, new Run(root, true, _index, _library), cancellationToken).ConfigureAwait(false);
+        var run = new Run(root, true, _index, _library);
+        run.KnowItemsOf(stubs);
+        return await DetachEachAsync(stubs, run, cancellationToken).ConfigureAwait(false);
     }
 
     private static VersionLinkState StateOf(Video video) => new(
@@ -442,8 +447,11 @@ public sealed class VersionLinker : IVersionLinker
     // What one run looks up once: the quality of the stubs and the collections.
     private sealed class Run(string root, bool thorough, IFederationIndex index, ILibraryManager library)
     {
+        private const int KnownChunk = 1000;
+
         private IndexItemLookup? _lookup;
         private List<BoxSet>? _collections;
+        private HashSet<Guid>? _known;
 
         // The primary that each alternate's collection entries move to.
         public Dictionary<Guid, Video> Moves { get; } = [];
@@ -455,13 +463,30 @@ public sealed class VersionLinker : IVersionLinker
 
         public bool IsStub(BaseItem item) => FederatedPaths.IsInside(root, item.Path);
 
+        // Asks Jellyfin in a few queries which items the stubs can be, so that a stub with no item costs no lookup of its
+        // own: one per stub was most of a sync on a large catalog.
+        public void KnowItemsOf(IEnumerable<StubEntry> stubs)
+        {
+            _known = [];
+            foreach (var chunk in stubs.SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
+            {
+                _known.UnionWith(library.GetItemIds(new InternalItemsQuery { ItemIds = chunk }));
+            }
+        }
+
         public Video? FindStub(StubEntry stub)
         {
             var path = FederatedPaths.Resolve(root, stub.RelativePath);
-            Type kind = stub.Kind == StubKind.Episode ? typeof(Episode) : typeof(Movie);
-            var video = library.GetItemById(library.GetNewItemId(path, kind)) as Video
-                ?? library.GetItemById(library.GetNewItemId(path, typeof(Video))) as Video;
+            var video = IdsOf(stub).Where(id => _known?.Contains(id) != false).Select(id => library.GetItemById(id)).OfType<Video>().FirstOrDefault();
             return video ?? (thorough ? library.FindByPath(path, false) as Video : null);
+        }
+
+        // The item of the stub's path as Jellyfin names a film or an episode, then as a plain video.
+        private Guid[] IdsOf(StubEntry stub)
+        {
+            var path = FederatedPaths.Resolve(root, stub.RelativePath);
+            Type kind = stub.Kind == StubKind.Episode ? typeof(Episode) : typeof(Movie);
+            return [library.GetNewItemId(path, kind), library.GetNewItemId(path, typeof(Video))];
         }
 
         public string Best(IReadOnlyList<string> stubIds, StubRegistry registry)

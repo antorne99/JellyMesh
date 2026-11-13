@@ -54,6 +54,8 @@ public sealed class VersionLinkerTests : IDisposable
 
         _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), It.IsAny<Type>())).Returns((string key, Type type) => IdOf(key, type));
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
+        _library.Setup(library => library.GetItemIds(It.IsAny<InternalItemsQuery>()))
+            .Returns((InternalItemsQuery query) => query.ItemIds.Where(_items.ContainsKey).ToList());
         _library.Setup(library => library.FindByPath(It.IsAny<string>(), It.IsAny<bool?>()))
             .Returns((string path, bool? _) => _items.Values.FirstOrDefault(item => string.Equals(item.Path, path, StringComparison.Ordinal)));
         _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>()))
@@ -107,6 +109,26 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal([itemA.Id], LinkedIds(itemB));
         Assert.Equal([(itemA.Id, ItemUpdateType.MetadataImport), (itemB.Id, ItemUpdateType.MetadataImport)], _saves);
         Assert.Equal("sb", _registry.State.Groups.Single().PrimaryStubId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AStubWhoseItemJellyfinDoesNotHaveIsNotLookedUpByItsId(bool thorough)
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        var c = Stub("sc", _serverC, 720);
+        await SaveAsync([a, b, c], Group("g", ["sa", "sb", "sc"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        Assert.Equal(itemB.Id, itemA.PrimaryVersionId);
+        var missing = FederatedPaths.Resolve(Root, c.RelativePath);
+        _library.Verify(library => library.GetItemById(IdOf(missing, typeof(Movie))), Times.Never);
+        _library.Verify(library => library.GetItemById(IdOf(missing, typeof(Video))), Times.Never);
     }
 
     [Theory]
