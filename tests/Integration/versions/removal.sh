@@ -53,6 +53,10 @@ film_links "$RES"
 check "Sintel: the local copy is the primary of the stub of peer" "$sl" "$(primary_of "$sp")"
 check "Codec: the local copy holds both stubs" "$(printf '%s\n' "$ca" "$cb" | sort | paste -sd, -)" "$(alternates_of "$cl")"
 check "Resolution: the stub of peer is the primary of the stub of remote" "$rb" "$(primary_of "$ra")"
+# The screen grabber can time out under load and succeed on a later scan, whose image save rewrites the .nfo.
+unframed() { get local '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq '[.Items[] | select((.Path // "" | startswith("/media")) and .ImageTags.Primary == null)] | length'; }
+for _ in 1 2 3 4 5; do [ "$(unframed)" = 0 ] && break; scan local; done
+check "the local copies have their posters" 0 "$(unframed)"
 sums() { docker exec "$PREFIX-local" sh -c "find /media -type f $1 -exec md5sum {} + | sort -k2"; }
 media_before=$(sums "! -name '*.nfo'")
 nfo_before=$(sums "-name '*.nfo'")
