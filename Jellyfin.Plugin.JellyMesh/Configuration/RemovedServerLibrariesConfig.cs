@@ -39,4 +39,9 @@ public class RemovedServerLibrariesConfig
     /// Gets the names of its libraries left to the admin because the federated folder changed (decision 158).
     /// </summary>
     public Collection<string> ReleasedLibraries { get; } = [];
+
+    /// <summary>
+    /// Gets the names of <see cref="ReleasedLibraries"/> the admin hid from the page. The libraries themselves stay.
+    /// </summary>
+    public Collection<string> HiddenReleasedLibraries { get; } = [];
 }

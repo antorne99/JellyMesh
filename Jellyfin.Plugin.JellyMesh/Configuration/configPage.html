@@ -685,6 +685,14 @@
                 margin-top: 1em;
             }
 
+            .jmReleasedLibraries p {
+                margin: 0;
+            }
+
+            .jmReleasedLibraries .jmActions {
+                margin-top: 0.75em;
+            }
+
             .jmCopyField {
                 position: fixed;
                 top: 0;
@@ -1140,6 +1148,11 @@
 
             .jmMergeUnused {
                 margin-top: 0.5em;
+            }
+
+            #JellyMeshConfigPage .jmMergeSplit {
+                margin: 0.75em 0 0;
+                padding: 0.6em 0.8em;
             }
 
             .jmMerge .emby-button {
@@ -1621,10 +1634,14 @@
                     "It reads the catalogs and fills the Film and Serie folders of each server. It also runs by itself on a timer.": "Legge i cataloghi e riempie le cartelle Film e Serie di ogni server. Parte anche da sola a intervalli regolari.",
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
                     "Its automatic libraries are deleted too: {names}.": "Vengono eliminate anche le sue librerie automatiche: {names}.",
-                    "Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai film uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
+                    "Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai titoli uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
                     "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: ogni episodio viene riprodotto dalla sua copia migliore, le altre restano come riserve, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
+                    "Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.": "Jellyfin mostra questa serie divisa, perché le cartelle Serie dei suoi server sono in librerie diverse: {libraries}. Aggiungile alle stesse librerie.",
                     "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
+                    "Hide from this page": "Nascondi da questa pagina",
+                    "These libraries are no longer listed here. They stay in Dashboard > Libraries.": "Queste librerie non sono più elencate qui. Restano nel Pannello di controllo > Librerie.",
+                    "These libraries are no longer listed. The page reads them again.": "Queste librerie non sono più elencate. La pagina le legge di nuovo.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
                     "JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.": "JellyMesh non gestisce più queste librerie, perché ne sono cambiati il percorso o il tipo, sono state eliminate o è cambiata la cartella federata: {libraries}. Quelle ancora presenti sono tue, da tenere o eliminare.",
                     "JellyMesh server": "server JellyMesh",
@@ -1647,10 +1664,12 @@
                     "Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.": "Accedi con un utente dedicato non amministratore di quel server, al suo indirizzo tailnet. Subito dopo compaiono le sue librerie.",
                     "Merge selected": "Unisci selezionati",
                     "Merge the ones that are one film.": "Unisci quelli che sono un solo film.",
+                    "Merge the ones that are one series.": "Unisci quelle che sono una sola serie.",
                     "Merge undone. The film list changes after the library scan that was queued.": "Unione annullata. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
                     "Merge undone. The series list changes after the library scan that was queued.": "Unione annullata. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
                     "Merged films": "Film uniti",
                     "Merged on {date}": "Uniti il {date}",
+                    "Merged on {date}|series": "Unite il {date}",
                     "Merged series": "Serie unite",
                     "Merged. The film list changes after the library scan that was queued.": "Uniti. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
                     "Merged. The series list changes after the library scan that was queued.": "Unite. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
@@ -1714,7 +1733,7 @@
                     "Remove this server?": "Rimuovere questo server?",
                     "Removed {server}. Its titles are leaving the libraries.": "{server} è stato rimosso. I suoi titoli stanno uscendo dalle librerie.",
                     "Resolution": "Risoluzione",
-                    "Restoring the settings or adding those servers again brings the same titles and watch state.": "Ripristinando le impostazioni o aggiungendo di nuovo quei server tornano gli stessi titoli e lo stato di visione.",
+                    "Restoring the settings brings their folders back, with the same titles and watch state.": "Ripristinando le impostazioni tornano le loro cartelle, con gli stessi titoli e lo stato di visione.",
                     "Run the first sync": "Esegui la prima sincronizzazione",
                     "Running now": "In corso",
                     "Save": "Salva",
@@ -1779,7 +1798,7 @@
                     "This server is being renamed, or its titles wait for a library scan. Try again when it is done.": "Questo server è in fase di rinomina, oppure i suoi titoli aspettano un'analisi delle librerie. Riprova quando ha finito.",
                     "Confirm to rename this server.": "Conferma per rinominare questo server.",
                     "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
-                    "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
+                    "The missing servers are forgotten. Their folders are being deleted.": "I server mancanti sono stati dimenticati. Le loro cartelle vengono eliminate.",
                     "The Serie folders of the servers are in different libraries, so a series on more than one server stays split.": "Le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa.",
                     "The server refused to create a library.": "Il server ha rifiutato di creare una libreria.",
                     "The server refused to delete a library. Try again.": "Il server ha rifiutato di eliminare una libreria. Riprova.",
@@ -1828,7 +1847,7 @@
                     "The browser did not allow copying. {value} is selected, so copy it by hand.": "Il browser non ha permesso di copiare. {value} è selezionato: copialo a mano.",
                     "The catalog kept changing while it was read. Try again.": "Il catalogo continuava a cambiare durante la lettura. Riprova.",
                     "The connected servers could not be read. The page keeps trying.": "Non è stato possibile leggere i server connessi. La pagina continua a provare.",
-                    "The duplicate and merged films could not be read. The page keeps trying.": "Non è stato possibile leggere i film duplicati e uniti. La pagina continua a provare.",
+                    "The duplicate and merged titles could not be read. The page keeps trying.": "Non è stato possibile leggere i titoli duplicati e uniti. La pagina continua a provare.",
                     "The federation index was damaged and is empty until a sync fills it.": "L'indice della federazione era danneggiato ed è vuoto finché una sincronizzazione non lo riempie.",
                     "The federation index was damaged and no copy could be read. It is empty until a sync fills it again.": "L'indice della federazione era danneggiato e non è stato possibile leggerne una copia. È vuoto finché una sincronizzazione non lo riempie di nuovo.",
                     "The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.": "L'indice della federazione era danneggiato ed è stata caricata la copia precedente. Esegui una sincronizzazione per aggiornarlo.",
@@ -1874,7 +1893,7 @@
                     "This server is at its stream limit on that remote.": "Questo server ha raggiunto il suo limite di stream su quel remoto.",
                     "This server is not configured.": "Questo server non è configurato.",
                     "This user sees no film or series libraries. Give it access on that server, then open Libraries again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Librerie.",
-                    "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I film dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
+                    "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I titoli dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
                     "To do": "Da fare",
                     "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.": "Due film locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo un titolo con una copia locale.",
                     "Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.": "Due serie locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo una serie con una copia locale.",
@@ -1937,7 +1956,7 @@
                     "synced": "sincronizzato",
                     "the catalog kept changing": "il catalogo continuava a cambiare",
                     "the connected servers": "i server connessi",
-                    "the duplicate and merged films": "i film duplicati e uniti",
+                    "the duplicate and merged titles": "i titoli duplicati e uniti",
                     "the settings": "le impostazioni",
                     "the state of the sync": "lo stato della sincronizzazione",
                     "the status": "lo stato",
@@ -1947,9 +1966,9 @@
                     "unexpected answer": "risposta inattesa",
                     "unknown problem": "problema sconosciuto",
                     "{count} min": "{count} min",
-                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server. Se quei server non torneranno più, dimenticali qui sotto.",
+                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below: their folders are deleted.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server. Se quei server non torneranno più, dimenticali qui sotto: le loro cartelle vengono eliminate.",
                     "{count} titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog.": "{count} titoli vengono da server assenti dalle impostazioni. Restano finché quei server non vengono dimenticati nel Catalogo.",
-                    "{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.": "{count} titoli presenti solo su quei server vengono eliminati ora dalle librerie, con le loro immagini. I titoli presenti anche su un server nelle impostazioni restano, senza quelle riserve. Su quei server non cambia nulla e i file locali non vengono toccati.",
+                    "The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.": "Le cartelle di quei server vengono eliminate ora, come quando si rimuove un server: i loro {count} titoli escono dalle librerie, con le loro immagini. Gli stessi titoli di un server nelle impostazioni restano. Su quei server non cambia nulla e i file locali non vengono toccati.",
                     "{field} was refused, so nothing was saved. {rule}": "{field} è stato rifiutato, quindi non è stato salvato nulla. {rule}",
                     "{films}, {series} series, {episodes}": "{films}, {series} serie, {episodes}",
                     "{first} Also marked: {more}.": "{first} Segnalati anche: {more}.",
@@ -2073,9 +2092,10 @@
                 }
 
                 // Translates an English text, or keeps it when it has no translation, and fills its {names}.
+                // A text ending in |word is the same English with its own translation, for a word such as a gender.
                 function t(text, values) {
                     var strings = translations[pageLanguage] || {};
-                    var shown = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text;
+                    var shown = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text.replace(/\|\w+$/, '');
                     return shown.replace(/\{(\w+)\}/g, function (whole, name) {
                         return values && values[name] !== undefined ? values[name] : whole;
                     });
@@ -2979,8 +2999,8 @@
                     actions.appendChild(button(t('Remove'), function () {
                         var paragraphs = [
                             t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
-                            t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
-                            t('Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
+                            t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
+                            t('Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
                             t('Playback already running may not stop right away.'),
                             t('Adding the server back brings the same titles and watch state.')
                         ];
@@ -3253,15 +3273,43 @@
                     showServers();
                     renderFolder(status.FederatedFolder);
                     renderReleasedLibraries(status.ReleasedLibraries || []);
+                    if (mergesSection.data) {
+                        renderMergeLists(mergesSection.data);
+                    }
                 }
 
-                // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed.
-                function renderReleasedLibraries(names) {
+                // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed,
+                // with an action that takes them off this page. Rebuilds only when they change, so polling keeps the focus.
+                function renderReleasedLibraries(libraries) {
                     var notice = el('#jmReleasedLibraries');
-                    setText(notice, names.length > 0
-                        ? t('JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.', { libraries: names.join(', ') })
-                        : '');
-                    notice.hidden = names.length === 0;
+                    var key = JSON.stringify(libraries);
+                    notice.hidden = libraries.length === 0;
+                    if (notice.jmKey === key) {
+                        return;
+                    }
+
+                    notice.jmKey = key;
+                    notice.textContent = '';
+                    if (libraries.length === 0) {
+                        return;
+                    }
+
+                    var names = libraries.map(function (library) {
+                        return library.Name;
+                    });
+                    notice.appendChild(create('p', t('JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.', { libraries: names.join(', ') })));
+                    var actions = actionRow();
+                    actions.appendChild(button(t('Hide from this page'), function () {
+                        act(api('POST', 'ReleasedLibraries/Hide', { Libraries: libraries }).then(function () {
+                            showMessage(t('These libraries are no longer listed here. They stay in Dashboard > Libraries.'));
+                            return loadStatus();
+                        }, function (error) {
+                            return loadStatus().then(function () {
+                                throw error;
+                            });
+                        }));
+                    }));
+                    notice.appendChild(actions);
                 }
 
                 function statusFailed(reason) {
@@ -3375,7 +3423,7 @@
                         return t('A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.', { server: held.ServerName, count: held.Stubs });
                     });
                     if (status.UnconfiguredStubs > 0) {
-                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.', { count: status.UnconfiguredStubs }));
+                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below: their folders are deleted.', { count: status.UnconfiguredStubs }));
                     }
 
                     return notes.join(' ');
@@ -3660,6 +3708,7 @@
                         merged: t('Merged. The film list changes after the library scan that was queued.'),
                         undone: t('Merge undone. The film list changes after the library scan that was queued.'),
                         unused: t('Not in effect: a copy is missing, or the IDs already make these one film.'),
+                        mergedOn: t('Merged on {date}'),
                         forecast: describeForecast
                     },
                     series: {
@@ -3673,6 +3722,7 @@
                         merged: t('Merged. The series list changes after the library scan that was queued.'),
                         undone: t('Merge undone. The series list changes after the library scan that was queued.'),
                         unused: t('Not in effect: a copy is missing, or the IDs already make these one series.'),
+                        mergedOn: t('Merged on {date}|series'),
                         forecast: function () {
                             return t('If merged, each episode plays from its best copy, and a local copy always wins. The others stay as backups.');
                         }
@@ -4006,6 +4056,33 @@
                     return row;
                 }
 
+                function sameServer(left, right) {
+                    return left.replace(/-/g, '').toLowerCase() === right.replace(/-/g, '').toLowerCase();
+                }
+
+                // The servers of a merged series whose Serie folders sit in different libraries, where Jellyfin does not
+                // group it (Q46). The library of a local copy, or of a server no longer configured, is not known here.
+                function seriesSplit(merge) {
+                    var folder = statusSection.data && statusSection.data.FederatedFolder;
+                    if (!folder) {
+                        return [];
+                    }
+
+                    var servers = folder.Servers.filter(function (server) {
+                        return server.SeriesLibraries.length > 0 && merge.Copies.some(function (copy) {
+                            return !copy.Copy.IsLocal && sameServer(copy.Copy.ServerId, server.Id);
+                        });
+                    });
+                    var sets = servers.map(function (server) {
+                        return server.SeriesLibraries.filter(function (name, index, names) {
+                            return names.indexOf(name) === index;
+                        }).sort().join('\n');
+                    });
+                    return sets.some(function (set) {
+                        return set !== sets[0];
+                    }) ? servers : [];
+                }
+
                 function renderMerge(merge, kind) {
                     var row = create('div');
                     row.className = 'jmMerge';
@@ -4017,7 +4094,7 @@
                         date.className = 'jmMergeDate';
                         var time = create('time', formatDate(current.CreatedUtc));
                         time.setAttribute('datetime', current.CreatedUtc);
-                        var around = t('Merged on {date}').split('{date}');
+                        var around = kind.mergedOn.split('{date}');
                         date.appendChild(document.createTextNode(around[0]));
                         date.appendChild(time);
                         date.appendChild(document.createTextNode(around[1] || ''));
@@ -4030,6 +4107,17 @@
                             var unused = create('div', kind.unused);
                             unused.className = 'jmMergeUnused';
                             details.appendChild(unused);
+                        }
+
+                        var split = kind === mergeKinds.series ? seriesSplit(current) : [];
+                        if (split.length > 0) {
+                            var warning = create('p', t('Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.', {
+                                libraries: split.map(function (server) {
+                                    return server.Name + ' (' + server.SeriesLibraries.join(', ') + ')';
+                                }).join(', ')
+                            }));
+                            warning.className = 'jmAlert jmMergeSplit';
+                            details.appendChild(warning);
                         }
                     };
                     row.jmUpdate(merge);
@@ -4078,7 +4166,11 @@
 
                     renderCases(el('#jmMergeCases'), list.Cases, mergeKinds.films);
                     renderCases(el('#jmSeriesCases'), list.SeriesCases, mergeKinds.series);
+                    renderMergeLists(list);
+                }
 
+                // Lists the merges made. The status calls it too, since the warnings of merged series read it.
+                function renderMergeLists(list) {
                     // A merge of series holds episodes, as the server names the kind of each copy.
                     var series = list.Merges.filter(function (merge) {
                         return merge.Copies.some(function (copy) {
@@ -4634,7 +4726,7 @@
                     var merges = current(mergesSection);
                     var notes = [];
                     if (mergesSection.failure) {
-                        notes.push({ key: 'failed', text: t('The duplicate and merged films could not be read. The page keeps trying.'), tab: 'catalog' });
+                        notes.push({ key: 'failed', text: t('The duplicate and merged titles could not be read. The page keeps trying.'), tab: 'catalog' });
                     }
 
                     if (merges && merges.IsStoreDamaged) {
@@ -4645,12 +4737,17 @@
                         notes.push({ key: 'review', text: t('Merge the ones that are one film.'), tab: 'catalog', calm: true });
                     }
 
+                    if (merges && merges.SeriesCases.length > 0) {
+                        notes.push({ key: 'reviewSeries', text: t('Merge the ones that are one series.'), tab: 'catalog', calm: true });
+                    }
+
                     return {
                         key: 'duplicates',
                         label: t('Duplicates to review'),
                         notes: notes,
                         value: factValue(mergesSection, function (data) {
-                            return data.Cases.length === 0 ? t('None') : String(data.Cases.length);
+                            var cases = data.Cases.length + data.SeriesCases.length;
+                            return cases === 0 ? t('None') : String(cases);
                         })
                     };
                 }
@@ -4883,7 +4980,7 @@
                 var mergesSection = section(function () {
                     return read('Merges');
                 }, renderMerges, function (reason) {
-                    showFailure('#jmMergesFailure', t('the duplicate and merged films'), keepsTrying, reason);
+                    showFailure('#jmMergesFailure', t('the duplicate and merged titles'), keepsTrying, reason);
                 });
 
                 var historySection = section(function () {
@@ -5053,12 +5150,12 @@
                 el('#jmForgetMissing').addEventListener('click', function () {
                     var count = syncSection.data ? syncSection.data.UnconfiguredStubs : 0;
                     confirmAction(t('Forget the servers missing from the settings?'), [
-                        t('{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.', { count: count }),
-                        t('Restoring the settings or adding those servers again brings the same titles and watch state.')
+                        t('The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.', { count: escapeHtml(String(count)) }),
+                        t('Restoring the settings brings their folders back, with the same titles and watch state.')
                     ], function () {
                         act(api('POST', 'MissingServers/Forget').then(function (result) {
                             showMessage(result.Servers > 0
-                                ? t('The missing servers are forgotten. Their titles are leaving the libraries.')
+                                ? t('The missing servers are forgotten. Their folders are being deleted.')
                                 : t('No server was left to forget.'));
                             return load();
                         }));

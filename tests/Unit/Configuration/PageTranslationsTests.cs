@@ -99,6 +99,7 @@ public class PageTranslationsTests
             yield return FederationAdminController.RenameRefusalMessage(outcome);
         }
 
+        yield return FederationAdminController.ReleasedLibraryNotListed;
         yield return "A sync is already running.";
         yield return "This merge no longer exists.";
         yield return "Select at least two titles of one group.";
@@ -150,6 +151,21 @@ public class PageTranslationsTests
     public void A_translation_fills_the_same_values(string language)
     {
         Assert.Empty(_languages[language].Where(pair => !Holes(pair.Key).SequenceEqual(Holes(pair.Value))).Select(pair => pair.Key));
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public void A_translation_shows_no_context_mark(string language)
+    {
+        Assert.Empty(_languages[language].Where(pair => Regex.IsMatch(pair.Value, @"\|\w+$")).Select(pair => pair.Key));
+    }
+
+    [Fact]
+    public void The_merge_date_of_series_has_its_own_text()
+    {
+        Assert.Contains("mergedOn: t('Merged on {date}|series')", _script, StringComparison.Ordinal);
+        Assert.Equal("Unite il {date}", _languages["it"]["Merged on {date}|series"]);
+        Assert.Equal("Uniti il {date}", _languages["it"]["Merged on {date}"]);
     }
 
     [Theory]
