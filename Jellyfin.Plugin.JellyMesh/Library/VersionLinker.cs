@@ -63,7 +63,21 @@ public sealed class VersionLinker : IVersionLinker
     }
 
     /// <inheritdoc />
-    public async Task LinkAsync(bool thorough, CancellationToken cancellationToken)
+    public Task LinkAsync(bool thorough, CancellationToken cancellationToken) => LinkGroupsAsync((groups, _) => groups, thorough, cancellationToken);
+
+    /// <inheritdoc />
+    public Task LinkLocalAsync(IReadOnlyCollection<Guid> localItemIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(localItemIds);
+
+        var local = localItemIds.ToHashSet();
+        return local.Count == 0
+            ? Task.CompletedTask
+            : LinkGroupsAsync((groups, run) => GroupsReaching(groups, local, run), false, cancellationToken);
+    }
+
+    // Links the groups chosen, as the full run links them.
+    private async Task LinkGroupsAsync(Func<IReadOnlyList<VersionGroup>, Run, IEnumerable<VersionGroup>> choose, bool thorough, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
         if (string.IsNullOrEmpty(root))
@@ -83,7 +97,7 @@ public sealed class VersionLinker : IVersionLinker
             var renaming = state.Renames.Select(rename => rename.StubId).ToHashSet(StringComparer.Ordinal);
 
             // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
-            foreach (var group in state.Groups.OrderBy(group => group.Id, StringComparer.Ordinal))
+            foreach (var group in choose(state.Groups, run).OrderBy(group => group.Id, StringComparer.Ordinal))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var recorded = group.PrimaryStubId;
@@ -124,6 +138,17 @@ public sealed class VersionLinker : IVersionLinker
         {
             _registry.Exit();
         }
+    }
+
+    // The groups that hold one of the local copies, and the groups whose local film is the same, which may claim it first
+    // (Q170).
+    private List<VersionGroup> GroupsReaching(IReadOnlyList<VersionGroup> groups, HashSet<Guid> local, Run run)
+    {
+        Guid? HeadOf(VersionGroup group) => group.LocalItemIds.Count == 0 ? null : LocalVersionHead.Of(group.LocalItemIds, _library, run.IsStub)?.Id;
+
+        var holding = groups.Where(group => group.LocalItemIds.Any(local.Contains)).ToList();
+        var heads = holding.Select(HeadOf).OfType<Guid>().ToHashSet();
+        return groups.Where(group => holding.Contains(group) || (HeadOf(group) is { } head && heads.Contains(head))).ToList();
     }
 
     /// <inheritdoc />

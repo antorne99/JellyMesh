@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,6 +23,14 @@ public interface IVersionLinker
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task LinkAsync(bool thorough, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Links, as <see cref="LinkAsync"/> does, only the groups that hold one of these local copies (Q245).
+    /// </summary>
+    /// <param name="localItemIds">The local copies of one title.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task LinkLocalAsync(IReadOnlyCollection<Guid> localItemIds, CancellationToken cancellationToken);
 
     /// <summary>
     /// Finds the stubs of every version group that holds one of these copies, as the registry has them now.

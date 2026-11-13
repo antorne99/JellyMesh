@@ -5,6 +5,7 @@ using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -21,16 +22,19 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
 
     private readonly ILibraryManager _libraryManager;
     private readonly IPluginConfigurationStore _store;
+    private readonly ILocalRefreshRequester? _refreshes;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LocalCatalogReader"/> class.
     /// </summary>
     /// <param name="libraryManager">The library manager.</param>
     /// <param name="store">The configuration store.</param>
-    public LocalCatalogReader(ILibraryManager libraryManager, IPluginConfigurationStore store)
+    /// <param name="refreshes">What remembers the refreshes asked for, whose wait ends after one sync interval (Q243).</param>
+    public LocalCatalogReader(ILibraryManager libraryManager, IPluginConfigurationStore store, ILocalRefreshRequester? refreshes = null)
     {
         _libraryManager = libraryManager;
         _store = store;
+        _refreshes = refreshes;
     }
 
     /// <inheritdoc />
@@ -68,6 +72,13 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
     // Matching reads only these two IDs on a film.
     private static bool HasNoFilmIds(ContentIds ids) => string.IsNullOrWhiteSpace(ids.Tmdb) && string.IsNullOrWhiteSpace(ids.Imdb);
 
+    // A series is also matched by its TVDB ID.
+    private static bool HasNoSeriesIds(ContentIds ids) => HasNoFilmIds(ids) && string.IsNullOrWhiteSpace(ids.Tvdb);
+
+    // Jellyfin stamps an item at the end of each metadata refresh, so an unstamped one has never had one. The wait ends
+    // after one sync interval even if the refresh never comes (Q243).
+    private bool AwaitsRefresh(BaseItem item) => item.DateLastRefreshed == DateTime.MinValue && !(_refreshes?.IsOverdue(item.Id) ?? false);
+
     private CatalogItem ToCatalogItem(BaseItem item, Dictionary<Guid, BaseItem?> series)
     {
         if (item is not Episode episode)
@@ -81,8 +92,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
                 Title = item.Name,
                 Year = item.ProductionYear,
                 Ids = ids,
-                // Jellyfin stamps an item at the end of each metadata refresh, so an unstamped one has never had one.
-                AwaitsRefresh = HasNoFilmIds(ids) && item.DateLastRefreshed == DateTime.MinValue,
+                AwaitsRefresh = HasNoFilmIds(ids) && AwaitsRefresh(item),
                 Metadata = new ComparableMetadata
                 {
                     OriginalTitle = item.OriginalTitle,
@@ -102,6 +112,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             series[episode.SeriesId] = parent;
         }
 
+        var seriesIds = ContentIds.FromProviderIds(parent?.ProviderIds);
         return new CatalogItem
         {
             ServerId = LocalServerId,
@@ -110,7 +121,9 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             SeriesId = episode.SeriesId == Guid.Empty ? null : episode.SeriesId.ToString("N"),
             Title = parent?.Name ?? episode.SeriesName,
             Year = parent?.ProductionYear,
-            Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
+            Ids = seriesIds,
+            // An episode waits for the refresh of its series, which gives it the IDs (Q244).
+            AwaitsRefresh = parent is not null && HasNoSeriesIds(seriesIds) && AwaitsRefresh(parent),
             SeasonNumber = episode.ParentIndexNumber,
             EpisodeNumber = episode.IndexNumber,
             EpisodeNumberEnd = episode.IndexNumberEnd

@@ -38,7 +38,7 @@ public sealed record FederationView(
     public IReadOnlyList<ManualMergeView> ManualMerges { get; init; } = [];
 
     /// <summary>
-    /// Gets the local films without IDs whose metadata Jellyfin has not read yet (decision 214).
+    /// Gets the local films and series without IDs whose metadata Jellyfin has not read yet (decision 214, Q244).
     /// </summary>
     public IReadOnlyList<Guid> LocalItemsAwaitingRefresh { get; init; } = [];
 }

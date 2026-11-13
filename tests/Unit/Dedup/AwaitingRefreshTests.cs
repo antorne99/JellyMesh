@@ -55,4 +55,27 @@ public class AwaitingRefreshTests
         Assert.Equal(Fingerprint(refreshed), Fingerprint(waiting));
         Assert.Equal(refreshed.LocalItemByWork, waiting.LocalItemByWork);
     }
+
+    // A new local series without IDs, next to two remote series of the same title that the IDs keep apart.
+    private static DedupResult SeriesCase(bool awaitsRefresh) => DedupEngine.Resolve(
+        [Episode(Local, "Serie", 2026, null, 1, 1) with { AwaitsRefresh = awaitsRefresh }],
+        [
+            Episode(Standard, "Serie", 2026, new ContentIds("5"), 1, 1, _hd),
+            Episode(RemoteJellyMesh, "Serie", 2026, new ContentIds("6"), 1, 1, _hd) with { SeriesId = "series-sei" }
+        ]);
+
+    [Fact]
+    public void ARefreshedSeries_IsInACase()
+    {
+        Assert.Contains(SeriesCase(false).MergeCases, entry => entry.Works.Any(work => work.HasLocalCopy));
+    }
+
+    [Fact]
+    public void ASeriesAwaitingItsRefresh_IsInNoCaseYet()
+    {
+        var result = SeriesCase(true);
+
+        Assert.DoesNotContain(result.MergeCases, entry => entry.Works.Any(work => work.HasLocalCopy));
+        Assert.Equal(Fingerprint(SeriesCase(false)), Fingerprint(result));
+    }
 }

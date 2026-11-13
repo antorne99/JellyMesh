@@ -255,6 +255,57 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task ALinkOfOneTitleLinksOnlyTheGroupsOfItsLocalCopies()
+    {
+        var local = Local();
+        var (a, b, c) = (Stub("sa", _serverA, 1080), Stub("sb", _serverB, 2160), Stub("sc", _serverC, 720));
+        await SaveAsync([a, b, c], Group("g1", ["sa"], [local.Id]), Group("g2", ["sb", "sc"]));
+        var (itemA, itemB, itemC) = (Scanned(a), Scanned(b), Scanned(c));
+
+        await _linker.LinkLocalAsync([local.Id], CancellationToken.None);
+
+        Assert.Equal(local.Id, itemA.PrimaryVersionId);
+        Assert.Equal([itemA.Id], LinkedIds(local));
+        Assert.Null(itemB.PrimaryVersionId);
+        Assert.Null(itemC.PrimaryVersionId);
+        Assert.Empty(LinkedIds(itemB));
+    }
+
+    // Q170 holds for one title too: the group with the lower ID claims the film, as in the full run.
+    [Fact]
+    public async Task ALinkOfOneTitleLetsTheFirstGroupClaimAFilmTwoGroupsShare()
+    {
+        var film = Local();
+        var first = Local();
+        var second = Local();
+        first.SetPrimaryVersionId(film.Id);
+        second.SetPrimaryVersionId(film.Id);
+        film.LinkedAlternateVersions = [Link(first.Id), Link(second.Id)];
+        var (a, b, c) = (Stub("sa", _serverA, 1080), Stub("sb", _serverB, 2160), Stub("sc", _serverC, 720));
+        await SaveAsync([a, b, c], Group("g1", ["sa"], [first.Id]), Group("g2", ["sb", "sc"], [second.Id]));
+        var (itemA, itemB, itemC) = (Scanned(a), Scanned(b), Scanned(c));
+
+        await _linker.LinkLocalAsync([second.Id], CancellationToken.None);
+
+        Assert.Equal(film.Id, itemA.PrimaryVersionId);
+        Assert.Null(itemB.PrimaryVersionId);
+        Assert.Equal(itemB.Id, itemC.PrimaryVersionId);
+    }
+
+    [Fact]
+    public async Task ALinkOfNoLocalCopyDoesNothing()
+    {
+        var (a, b) = (Stub("sa", _serverA, 1080), Stub("sb", _serverB, 2160));
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        Scanned(a);
+        Scanned(b);
+
+        await _linker.LinkLocalAsync([], CancellationToken.None);
+
+        Assert.Empty(_saves);
+    }
+
+    [Fact]
     public async Task AFileVersionOfTheLocalCopyStaysLinked()
     {
         var local = Local();

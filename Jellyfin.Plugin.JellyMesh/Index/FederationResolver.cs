@@ -112,7 +112,13 @@ public sealed class FederationResolver : IFederationResolver
             ManualMerges = result.Merges
                 .Select(merge => new ManualMergeView(merge.Merge.Id, merge.Merge.CreatedUtc, merge.IsInEffect, merge.Copies.Select(ToMergedCopyView).ToList()))
                 .ToList(),
-            LocalItemsAwaitingRefresh = local.Where(item => item.AwaitsRefresh).Select(item => ToLocalId(item.ItemId)).Where(id => id != Guid.Empty).ToList()
+            // A series is refreshed as a whole, never episode by episode (Q244).
+            LocalItemsAwaitingRefresh = local
+                .Where(item => item.AwaitsRefresh)
+                .Select(item => ToLocalId(item.Kind == ContentKind.Movie ? item.ItemId : item.SeriesId ?? string.Empty))
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .ToList()
         };
     }
 

@@ -1,5 +1,6 @@
 using System;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.IO;
 using Moq;
@@ -11,8 +12,10 @@ public class LocalRefreshRequesterTests
 {
     private readonly Mock<IProviderManager> _providers = new();
     private readonly CapturingLogger<LocalRefreshRequester> _logger = new();
+    private readonly InMemoryConfigurationStore _store = new();
+    private readonly FixedClock _clock = new(SyncFixture.Start);
 
-    private LocalRefreshRequester Requester() => new(_providers.Object, Mock.Of<IFileSystem>(), _logger);
+    private LocalRefreshRequester Requester() => new(_providers.Object, Mock.Of<IFileSystem>(), _store, _clock, _logger);
 
     private void VerifyQueued(Guid itemId, Times times) =>
         _providers.Verify(provider => provider.QueueRefresh(itemId, It.IsAny<MetadataRefreshOptions>(), It.IsAny<RefreshPriority>()), times);
@@ -67,6 +70,87 @@ public class LocalRefreshRequesterTests
     {
         Requester().Request([Guid.NewGuid(), Guid.NewGuid()]);
 
-        Assert.Contains(_logger.Lines, line => line.StartsWith("Asked Jellyfin to read the metadata of 2 new local films", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.StartsWith("Asked Jellyfin to read the metadata of 2 new local films or series", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnItemNotAskedForIsNotOverdue()
+    {
+        Assert.False(Requester().IsOverdue(Guid.NewGuid()));
+    }
+
+    [Theory]
+    [InlineData(899, false)]
+    [InlineData(900, true)]
+    [InlineData(5000, true)]
+    public void ARequestIsOverdueAfterOneSyncInterval(int seconds, bool overdue)
+    {
+        var item = Guid.NewGuid();
+        _store.Configuration.SyncIntervalSeconds = 900;
+        var requester = Requester();
+        requester.Request([item]);
+
+        _clock.Now = SyncFixture.Start.AddSeconds(seconds);
+
+        Assert.Equal(overdue, requester.IsOverdue(item));
+    }
+
+    [Fact]
+    public void AnIntervalBelowTheMinimumCountsAsTheMinimum()
+    {
+        var item = Guid.NewGuid();
+        _store.Configuration.SyncIntervalSeconds = 10;
+        var requester = Requester();
+        requester.Request([item]);
+
+        _clock.Now = SyncFixture.Start.AddSeconds(299);
+        Assert.False(requester.IsOverdue(item));
+        _clock.Now = SyncFixture.Start.AddSeconds(300);
+        Assert.True(requester.IsOverdue(item));
+    }
+
+    [Fact]
+    public void AskingAgainDoesNotRestartTheWait()
+    {
+        var item = Guid.NewGuid();
+        var requester = Requester();
+        requester.Request([item]);
+
+        _clock.Now = SyncFixture.Start.AddSeconds(600);
+        requester.Request([item]);
+        _clock.Now = SyncFixture.Start.AddSeconds(900);
+
+        Assert.True(requester.IsOverdue(item));
+    }
+
+    [Fact]
+    public void TheRefreshOfAnItemAskedForArrivesOnce()
+    {
+        var item = Guid.NewGuid();
+        var requester = Requester();
+        requester.Request([item]);
+
+        Assert.True(requester.TryTakeArrival(item));
+        Assert.False(requester.TryTakeArrival(item));
+    }
+
+    [Fact]
+    public void AnItemNotAskedForHasNoArrival()
+    {
+        Assert.False(Requester().TryTakeArrival(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void AnItemAskedForAgainAfterItsArrivalIsNotQueuedAgain()
+    {
+        var item = Guid.NewGuid();
+        var requester = Requester();
+        requester.Request([item]);
+        requester.TryTakeArrival(item);
+
+        requester.Request([item]);
+
+        VerifyQueued(item, Times.Once());
+        Assert.False(requester.TryTakeArrival(item));
     }
 }
