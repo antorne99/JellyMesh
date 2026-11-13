@@ -30,6 +30,7 @@ public sealed class VersionLinker : IVersionLinker
     private readonly IUserDataManager _userData;
     private readonly StubItemUpdater _updater;
     private readonly ILogger<VersionLinker> _logger;
+    private volatile bool _lastRunFailed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VersionLinker"/> class.
@@ -63,7 +64,10 @@ public sealed class VersionLinker : IVersionLinker
     }
 
     /// <inheritdoc />
-    public Task LinkAsync(bool thorough, CancellationToken cancellationToken) => LinkGroupsAsync((groups, _) => groups, thorough, cancellationToken);
+    public bool LastRunFailed => _lastRunFailed;
+
+    /// <inheritdoc />
+    public Task LinkAsync(bool thorough, CancellationToken cancellationToken) => LinkGroupsAsync((groups, _) => groups, true, thorough, cancellationToken);
 
     /// <inheritdoc />
     public Task LinkLocalAsync(IReadOnlyCollection<Guid> localItemIds, CancellationToken cancellationToken)
@@ -73,11 +77,11 @@ public sealed class VersionLinker : IVersionLinker
         var local = localItemIds.ToHashSet();
         return local.Count == 0
             ? Task.CompletedTask
-            : LinkGroupsAsync((groups, run) => GroupsReaching(groups, local, run), false, cancellationToken);
+            : LinkGroupsAsync((groups, run) => GroupsReaching(groups, local, run), false, false, cancellationToken);
     }
 
-    // Links the groups chosen, as the full run links them.
-    private async Task LinkGroupsAsync(Func<IReadOnlyList<VersionGroup>, Run, IEnumerable<VersionGroup>> choose, bool thorough, CancellationToken cancellationToken)
+    // Links the groups chosen, as the full run links them. Only a full run clears the failed flag; any run can set it.
+    private async Task LinkGroupsAsync(Func<IReadOnlyList<VersionGroup>, Run, IEnumerable<VersionGroup>> choose, bool full, bool thorough, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
         if (string.IsNullOrEmpty(root))
@@ -88,6 +92,13 @@ public sealed class VersionLinker : IVersionLinker
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // Failed until the run ends, so that one stopped by an error or a cancellation counts as failed (Q259).
+            if (full)
+            {
+                _lastRunFailed = true;
+            }
+
+            var failed = false;
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
             var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
@@ -115,6 +126,7 @@ public sealed class VersionLinker : IVersionLinker
                 {
                     // The type only: a message could hold a remote address.
                     _logger.LogError("Cannot link the versions of a title: {Error}", exception.GetType().Name);
+                    failed = true;
                 }
 
                 changed |= !string.Equals(recorded, group.PrimaryStubId, StringComparison.Ordinal);
@@ -133,6 +145,8 @@ public sealed class VersionLinker : IVersionLinker
             {
                 await _registry.SaveAsync(state with { Groups = groups }, cancellationToken).ConfigureAwait(false);
             }
+
+            _lastRunFailed = full ? failed : _lastRunFailed || failed;
         }
         finally
         {

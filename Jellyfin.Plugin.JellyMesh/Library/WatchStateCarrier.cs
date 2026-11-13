@@ -155,7 +155,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             forgettable = ForgettableOf(outcomes);
         }
 
-        var report = new WatchStateCarryReport(outcomes) { ForgettableOldItemIds = forgettable };
+        var report = new WatchStateCarryReport(outcomes) { ForgettableOldItemIds = forgettable, Root = run.Root };
         if (report.Skipped > 0)
         {
             _logger.LogWarning("Watch state carried for {Carried} titles, {Skipped} left for a later run", report.Carried, report.Skipped);
@@ -201,6 +201,9 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
 
     private static WatchStateMoveOutcome Outcome(WatchStateMove move, WatchStateMoveStatus status) => new(move, status, []);
 
+    private static WatchStateMoveOutcome Refused(WatchStateMove move, WatchStateRefusal refusal) =>
+        new(move, WatchStateMoveStatus.Refused, []) { Refusal = refusal };
+
     private static bool ChangesFavoriteOrRating(UserItemData? before, UserItemData after) =>
         before is null || before.IsFavorite != after.IsFavorite || before.Rating != after.Rating;
 
@@ -208,7 +211,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         data.Played || data.PlayCount > 0 || data.PlaybackPositionTicks > 0 || data.LastPlayedDate is not null || data.IsFavorite || data.Rating is not null;
 
     // The versions of each title, or the status that stops the move: a version not linked, or one that is not allowed.
-    private static (List<List<(Video Item, Guid? ServerId)>>? Titles, WatchStateMoveStatus Status) TitlesOf(
+    private static (List<List<(Video Item, Guid? ServerId)>>? Titles, WatchStateMoveStatus Status, WatchStateRefusal? Refusal) TitlesOf(
         IReadOnlyList<(BaseItem Item, Guid? ServerId)> targets,
         Run run,
         StubRegistry registry,
@@ -216,7 +219,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     {
         if (targets.Count(target => target.ServerId is null) > 1)
         {
-            return (null, WatchStateMoveStatus.Refused);
+            return (null, WatchStateMoveStatus.Refused, WatchStateRefusal.SeveralLocalVersions);
         }
 
         var byGroup = new Dictionary<string, List<(Video Item, Guid? ServerId)>>(StringComparer.Ordinal);
@@ -224,7 +227,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         {
             if (item is not Video video)
             {
-                return (null, WatchStateMoveStatus.Refused);
+                return (null, WatchStateMoveStatus.Refused, serverId is null ? WatchStateRefusal.LocalNotInGroup : WatchStateRefusal.TargetNotStub);
             }
 
             string? group;
@@ -232,7 +235,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             {
                 if (registry.FindByPath(video.Path) is not { } stub || stub.ServerId != server)
                 {
-                    return (null, WatchStateMoveStatus.Refused);
+                    return (null, WatchStateMoveStatus.Refused, WatchStateRefusal.TargetNotStub);
                 }
 
                 group = run.GroupOfStub.GetValueOrDefault(stub.Id);
@@ -245,7 +248,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                     : null;
                 if (group is null)
                 {
-                    return (null, WatchStateMoveStatus.Refused);
+                    return (null, WatchStateMoveStatus.Refused, WatchStateRefusal.LocalNotInGroup);
                 }
             }
 
@@ -263,16 +266,16 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         {
             if (title.Any(version => version.ServerId is null && version.Item.PrimaryVersionId is not null))
             {
-                return (null, WatchStateMoveStatus.Refused);
+                return (null, WatchStateMoveStatus.Refused, WatchStateRefusal.LocalNotPrimary);
             }
 
             if (PrimaryOf(title, move) is null)
             {
-                return (null, WatchStateMoveStatus.NotLinked);
+                return (null, WatchStateMoveStatus.NotLinked, null);
             }
         }
 
-        return (byGroup.Values.ToList(), WatchStateMoveStatus.Carried);
+        return (byGroup.Values.ToList(), WatchStateMoveStatus.Carried, null);
     }
 
     // The new item of a renamed stub, owned by the old item until its file goes, is the primary of its own title (Q38).
@@ -299,7 +302,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     {
         if (run.Root.Length == 0)
         {
-            return Outcome(move, WatchStateMoveStatus.Refused);
+            return Refused(move, WatchStateRefusal.NoFederatedFolder);
         }
 
         if (_library.GetItemById(move.FromItemId) is not { } from)
@@ -311,7 +314,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         if ((isSeries ? from is not Series : from is not Video)
             || !string.Equals(FederatedPaths.RelativeTo(run.Root, from.Path ?? string.Empty), move.FromPath, StringComparison.Ordinal))
         {
-            return Outcome(move, WatchStateMoveStatus.Refused);
+            return Refused(move, WatchStateRefusal.OldItemNotStub);
         }
 
         var targets = new List<(BaseItem Item, Guid? ServerId)>();
@@ -329,19 +332,19 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
 
         if (targets.Count == 0)
         {
-            return Outcome(move, WatchStateMoveStatus.Refused);
+            return Refused(move, WatchStateRefusal.NoTarget);
         }
 
         if (isSeries)
         {
             return IsSeriesStubs(targets, run)
                 ? CarryUsers(move, run, from, recorded, (user, old, mode) => SeriesRows(user, old, mode, targets), cancellationToken)
-                : Outcome(move, WatchStateMoveStatus.Refused);
+                : Refused(move, WatchStateRefusal.TargetNotStub);
         }
 
-        var (titles, status) = TitlesOf(targets, run, _registry, move);
+        var (titles, status, refusal) = TitlesOf(targets, run, _registry, move);
         return titles is null
-            ? Outcome(move, status)
+            ? new WatchStateMoveOutcome(move, status, []) { Refusal = refusal }
             : CarryUsers(move, run, from, recorded, (user, old, mode) => TitleRows(user, old, mode, move, titles), cancellationToken);
     }
 

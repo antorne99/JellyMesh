@@ -39,6 +39,7 @@ public sealed class LayoutMigrationTests : IDisposable
     private readonly Mock<IUserDataManager> _userData = new();
     private readonly Mock<IRemoteServerRegistry> _servers = new();
     private readonly Mock<IFederationIndex> _index = new();
+    private readonly Mock<IVersionLinker> _linker = new();
     private readonly Dictionary<Guid, BaseItem> _items = [];
     private readonly Dictionary<(Guid User, Guid Item), UserItemData> _rows = [];
     private readonly HashSet<(Guid User, Guid Item)> _hidden = [];
@@ -87,6 +88,8 @@ public sealed class LayoutMigrationTests : IDisposable
             .Callback((User user, BaseItem item, UserItemData data, UserDataSaveReason _, CancellationToken _) => _rows[(user.Id, item.Id)] = data);
         _servers.Setup(servers => servers.GetServers()).Returns(() =>
             _configured.Select(server => new RemoteServerInfo(server, "Server", "http://" + server.ToString("N"), RemoteMode.Standard, 0, _imported.ToList(), null, null)).ToList());
+        _servers.Setup(servers => servers.GetLibrariesAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>([]));
         _index.Setup(index => index.Snapshot).Returns(() => new IndexSnapshot
         {
             Version = IndexSnapshot.CurrentVersion,
@@ -157,7 +160,7 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.Equal("Film", library.Name);
         Assert.Equal([OldFilms], library.OldPaths);
         Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], library.MissingPaths);
-        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], status.UnlinkedFolders);
+        Assert.Empty(status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
@@ -176,7 +179,7 @@ public sealed class LayoutMigrationTests : IDisposable
         var status = migration.GetStatus(Root)!;
         Assert.Equal(LayoutMigrationStep.AddPaths, status.Step);
         Assert.Empty(status.Libraries);
-        Assert.Equal(NewPaths(), status.UnlinkedFolders);
+        Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
@@ -185,6 +188,10 @@ public sealed class LayoutMigrationTests : IDisposable
     {
         var (old, _) = OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
+        var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
+        OldEpisode(oldShow, (_serverA, "e1"));
+        var (newShow, _) = NewShow(_serverA, "s1");
+        NewEpisode(newShow, _serverA, "e1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies,
             [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
 
@@ -200,6 +207,65 @@ public sealed class LayoutMigrationTests : IDisposable
         await migration.RunAsync(CancellationToken.None);
 
         Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+        Assert.DoesNotContain(_registry.State.Series, series => series.ServerId is null);
+    }
+
+    [Fact]
+    public async Task AnInstallWithOnlyFilmsFinishesWithoutTheSeriesFolders()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies,
+            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, OldSeries));
+        Row(_mario, oldItem).IsFavorite = true;
+
+        var migration = await MigrationAsync();
+        var before = migration.GetStatus(Root)!;
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.Equal(LayoutMigrationStep.Carrying, before.Step);
+        Assert.Empty(before.UnlinkedFolders);
+        Assert.All(before.Libraries, library => Assert.Empty(library.MissingPaths));
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.Null(_registry.Find(old.Id));
+        Assert.Equal(LayoutMigrationStep.RemoveOldPaths, migration.GetStatus(Root)!.Step);
+    }
+
+    [Fact]
+    public async Task AnInstallWithOnlySeriesFinishesWithoutTheFilmFolders()
+    {
+        var (oldShow, oldShowItem) = OldShow("Lost", (_serverA, "s1"));
+        OldEpisode(oldShow, (_serverA, "e1"));
+        var (newShow, newShowItem) = NewShow(_serverA, "s1");
+        NewEpisode(newShow, _serverA, "e1");
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
+            [OldSeries, FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)]));
+        Row(_mario, oldShowItem).IsFavorite = true;
+
+        var migration = await MigrationAsync();
+        Assert.Equal(LayoutMigrationStep.Carrying, migration.GetStatus(Root)!.Step);
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.True(Row(_mario, newShowItem).IsFavorite);
+        Assert.DoesNotContain(_registry.State.Series, series => series.ServerId is null);
+        Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+    }
+
+    [Fact]
+    public async Task AnOldEpisodeAloneNeedsTheSeriesFolders()
+    {
+        var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
+        var (episode, _) = OldEpisode(oldShow, (_serverA, "e1"));
+        _series.Remove(oldShow);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies,
+            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(episode.Id));
+        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
     }
 
     [Fact]
@@ -219,6 +285,7 @@ public sealed class LayoutMigrationTests : IDisposable
     public async Task ALibraryOnTheOldSeriesPathNeedsOnlyTheSeriesPathsOfEachServer()
     {
         OldFilm("Dune", (_serverA, "a1"));
+        OldShow("Lost", (_serverA, "s1"));
         _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, OldSeries, FederatedFolderLayout.ServerSeriesPath(Root, _serverA)));
 
         var status = (await MigrationAsync()).GetStatus(Root)!;
@@ -226,6 +293,40 @@ public sealed class LayoutMigrationTests : IDisposable
         var library = Assert.Single(status.Libraries);
         Assert.Equal([OldSeries], library.OldPaths);
         Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], library.MissingPaths);
+    }
+
+    [Fact]
+    public async Task WithNoServerConfiguredTheMigrationDoesNotStart()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _items.Remove(oldItem.Id);
+        _configured.Clear();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task AServerListEmptiedBeforeTheLockKeepsTheOldStubs()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _items.Remove(oldItem.Id);
+        AllPathsLinked();
+
+        // A removal from the page empties the list once the gate has passed; the run reads the index inside the lock.
+        var snapshot = _index.Object.Snapshot;
+        _index.Setup(index => index.Snapshot).Returns(() =>
+        {
+            _configured.Clear();
+            return snapshot;
+        });
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
     }
 
     [Fact]
@@ -374,19 +475,61 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
-    public async Task AnImportedLibraryReadEmptyKeepsTheOldStubsWaiting()
+    public async Task AnImportedLibraryReadEmptyHoldsTheOldStubsApartFromTheScanAndTheLogNamesIt()
     {
         _imported.Add("lib");
         var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         _indexed.Remove((_serverA, "a1"));
         AllPathsLinked();
+        _servers.Setup(servers => servers.GetLibrariesAsync(_serverA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>([new RemoteLibrary("lib", "Film di casa", "movies")]));
 
         var migration = await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
 
         Assert.NotNull(_registry.Find(old.Id));
         Assert.True(_items.ContainsKey(oldItem.Id));
-        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Held);
+        Assert.Equal(0, shown.Waiting);
+        var line = Assert.Single(_logger.Lines, line => line.Contains("Film di casa", StringComparison.Ordinal));
+        Assert.Contains("Server", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("http", line, StringComparison.Ordinal);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains(_serverA.ToString("N"), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AHeldLibraryWhoseNameCannotBeReadIsLoggedByServerAndId()
+    {
+        _imported.Add("lib");
+        OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+        _servers.Setup(servers => servers.GetLibrariesAsync(_serverA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(RemoteFailure.Unreachable));
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        var line = Assert.Single(_logger.Lines, line => line.Contains("came back empty", StringComparison.Ordinal));
+        Assert.Contains("Server", line, StringComparison.Ordinal);
+        Assert.Contains("lib", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("http", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATitleStillOnAnotherServerWaitsAndIsNotHeld()
+    {
+        _imported.Add("lib");
+        OldFilm("Dune", (_serverA, "a1"), (_serverB, "b1"));
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Waiting);
+        Assert.Equal(0, shown.Held);
     }
 
     [Fact]
@@ -405,7 +548,8 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.NotNull(_registry.Find(episode.Id));
         Assert.Contains(_registry.State.Series, series => series.Id == show.Id);
         Assert.True(_items.ContainsKey(episodeItem.Id) && _items.ContainsKey(showItem.Id));
-        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+        Assert.Equal(1, migration.GetStatus(Root)!.Held);
+        Assert.Equal(0, migration.GetStatus(Root)!.Waiting);
     }
 
     [Fact]
@@ -481,6 +625,91 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.DoesNotContain("Dune", warning, StringComparison.Ordinal);
         Assert.DoesNotContain(Root, warning, StringComparison.Ordinal);
         Assert.Contains(LogLevel.Warning, _logger.Levels);
+    }
+
+    [Theory]
+    [InlineData(WatchStateRefusal.OldItemNotStub)]
+    [InlineData(WatchStateRefusal.NoTarget)]
+    [InlineData(WatchStateRefusal.TargetNotStub)]
+    [InlineData(WatchStateRefusal.SeveralLocalVersions)]
+    [InlineData(WatchStateRefusal.LocalNotInGroup)]
+    [InlineData(WatchStateRefusal.LocalNotPrimary)]
+    public async Task ADefinitiveRefusalClosesTheTitle(WatchStateRefusal refusal)
+    {
+        var (old, _) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []) { Refusal = refusal };
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task ARefusalForAMissingFederatedFolderLeavesTheTitleWaiting()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []) { Refusal = WatchStateRefusal.NoFederatedFolder };
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Waiting);
+        Assert.Equal(0, shown.Blocked);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("go without it", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ARefusalWhileTheLinkOfTheRoundFailedLeavesTheTitleWaitingUntilALinkSucceeds()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Refused, []) { Refusal = WatchStateRefusal.LocalNotPrimary };
+        _linker.Setup(linker => linker.LastRunFailed).Returns(true);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+
+        _linker.Setup(linker => linker.LastRunFailed).Returns(false);
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task AFederatedFolderChangedDuringTheRunLeavesTheOldTitlesWaiting()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        Row(_mario, oldItem).IsFavorite = true;
+        var moved = Path.Combine(_data, "altrove");
+
+        // The admin saves another folder once the migration has read the first one.
+        _library.Setup(library => library.GetVirtualFolders()).Returns(() =>
+        {
+            _store.Configuration.FederatedFolderPath = moved;
+            return _libraries.ToList();
+        });
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("go without it", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -766,7 +995,7 @@ public sealed class LayoutMigrationTests : IDisposable
             carrier = fake.Object;
         }
 
-        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _logger);
+        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object, _logger);
     }
 
     private UserItemData Row(User user, BaseItem item) => _userData.Object.GetUserData(user, item)!;
