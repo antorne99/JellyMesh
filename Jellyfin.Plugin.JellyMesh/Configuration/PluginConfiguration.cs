@@ -133,8 +133,15 @@ public class PluginConfiguration : BasePluginConfiguration
     public Collection<ProviderPeerConfig> Peers { get; } = [];
 
     /// <summary>
-    /// Replaces <see cref="Servers"/>, <see cref="FormerServers"/>, <see cref="RemovedServerLibraries"/> and <see cref="Peers"/> with those of
-    /// <paramref name="current"/>. The stock save
+    /// Gets or sets the migration from the flat layout: the admin's choice and the step of the automatic one (Q55-Q57).
+    /// Never sent to the browser through this object.
+    /// </summary>
+    [JsonIgnore]
+    public LayoutMigrationConfig LayoutMigration { get; set; } = new();
+
+    /// <summary>
+    /// Replaces <see cref="Servers"/>, <see cref="FormerServers"/>, <see cref="RemovedServerLibraries"/>, <see cref="Peers"/> and
+    /// <see cref="LayoutMigration"/> with those of <paramref name="current"/>. The stock save
     /// endpoint deserializes JSON that never holds them, so they would otherwise be erased.
     /// </summary>
     /// <param name="current">The configuration in force.</param>
@@ -169,6 +176,8 @@ public class PluginConfiguration : BasePluginConfiguration
         {
             Peers.Add(peer);
         }
+
+        LayoutMigration = current.LayoutMigration;
     }
 
     /// <summary>

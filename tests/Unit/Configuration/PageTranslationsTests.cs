@@ -99,6 +99,11 @@ public class PageTranslationsTests
             yield return FederationAdminController.RenameRefusalMessage(outcome);
         }
 
+        foreach (var outcome in Enum.GetValues<LayoutMigrationChoiceOutcome>().Where(outcome => outcome is not (LayoutMigrationChoiceOutcome.Started or LayoutMigrationChoiceOutcome.Chosen)))
+        {
+            yield return FederationAdminController.MigrationRefusalMessage(outcome);
+        }
+
         yield return FederationAdminController.ReleasedLibraryNotListed;
         yield return "A sync is already running.";
         yield return "This merge no longer exists.";

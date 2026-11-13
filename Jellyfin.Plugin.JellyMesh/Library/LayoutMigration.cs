@@ -20,7 +20,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// remote items or its identity, with their version groups and the local primary; the old stubs stay out of the groups
 /// and play as before until the emptying (D12). Progress is read from the registry and the libraries, so a restart resumes.
 /// </summary>
-public sealed class LayoutMigration : ILayoutMigration
+public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
 {
     private readonly StubRegistry _registry;
     private readonly IPluginConfigurationStore _store;
@@ -30,6 +30,9 @@ public sealed class LayoutMigration : ILayoutMigration
     private readonly IWatchStateCarrier _carrier;
     private readonly StubRemover _remover;
     private readonly IVersionLinker _linker;
+    private readonly ILibraryPaths _paths;
+    private readonly ILibraryScans _scans;
+    private readonly ILibraryMaterializer _materializer;
     private readonly ILogger<LayoutMigration> _logger;
     private volatile LastRun? _lastRun;
 
@@ -44,6 +47,9 @@ public sealed class LayoutMigration : ILayoutMigration
     /// <param name="carrier">The watch state carrier.</param>
     /// <param name="remover">The stub remover, which empties the old folders.</param>
     /// <param name="linker">The version linker, which tells whether its last run failed.</param>
+    /// <param name="paths">The service that adds and removes the federated folders in the libraries.</param>
+    /// <param name="scans">The library scans the automatic migration waits for.</param>
+    /// <param name="materializer">The materializer, which writes the server folders before they are added.</param>
     /// <param name="logger">The logger.</param>
     public LayoutMigration(
         StubRegistry registry,
@@ -54,6 +60,9 @@ public sealed class LayoutMigration : ILayoutMigration
         IWatchStateCarrier carrier,
         StubRemover remover,
         IVersionLinker linker,
+        ILibraryPaths paths,
+        ILibraryScans scans,
+        ILibraryMaterializer materializer,
         ILogger<LayoutMigration> logger)
     {
         _registry = registry;
@@ -64,15 +73,30 @@ public sealed class LayoutMigration : ILayoutMigration
         _carrier = carrier;
         _remover = remover;
         _linker = linker;
+        _paths = paths;
+        _scans = scans;
+        _materializer = materializer;
         _logger = logger;
     }
 
     /// <inheritdoc />
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        var root = _store.Read(config => config.FederatedFolderPath) ?? string.Empty;
+        var (root, migration) = _store.Read(config => (config.FederatedFolderPath ?? string.Empty, Copy(config.LayoutMigration)));
+        // Nothing moves before the admin chooses in the banner (Q55, §10 row 217).
+        if (migration.Mode == LayoutMigrationMode.None || root.Length == 0)
+        {
+            return;
+        }
+
+        if (migration.Mode == LayoutMigrationMode.Automatic)
+        {
+            await ContinueAsync(root, migration, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         // With no server configured every server folder looks linked, so nothing starts (Q260).
-        if (root.Length == 0 || !HasOldTitles(_registry.State) || _servers.GetServers().Count == 0)
+        if (!HasOldTitles(_registry.State) || _servers.GetServers().Count == 0)
         {
             return;
         }
@@ -84,18 +108,7 @@ public sealed class LayoutMigration : ILayoutMigration
             return;
         }
 
-        Dictionary<(Guid ServerId, string LibraryId), int> held;
-        await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            held = await MigrateAsync(root, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _registry.Exit();
-        }
-
-        await LogHeldAsync(held, cancellationToken).ConfigureAwait(false);
+        await MigrateLockedAsync(root, false, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -111,7 +124,9 @@ public sealed class LayoutMigration : ILayoutMigration
         var old = state.Stubs.Count(stub => stub.ServerId is null) + state.Series.Count(series => series.ServerId is null);
         var read = LibrariesOf(root, state);
         var libraries = read?.OnOldPaths ?? [];
-        if (old == 0 && libraries.Count == 0)
+        var migration = _store.Read(config => Copy(config.LayoutMigration));
+        var automatic = migration.Mode == LayoutMigrationMode.Automatic;
+        if (old == 0 && libraries.Count == 0 && !(automatic && migration.Error != AutomaticMigrationError.None))
         {
             return null;
         }
@@ -124,7 +139,12 @@ public sealed class LayoutMigration : ILayoutMigration
             Waiting = old == 0 ? null : _lastRun?.Waiting,
             Blocked = old == 0 ? null : _lastRun?.Blocked,
             Held = old == 0 ? null : _lastRun?.Held,
-            UnlinkedFolders = read?.Unlinked ?? []
+            UnlinkedFolders = read?.Unlinked ?? [],
+            Mode = migration.Mode,
+            AutomaticStep = automatic ? migration.Step : null,
+            Running = IsRunning,
+            Error = automatic ? migration.Error : AutomaticMigrationError.None,
+            ErrorLibrary = automatic && migration.ErrorLibrary.Length > 0 ? migration.ErrorLibrary : null
         };
     }
 
@@ -218,9 +238,26 @@ public sealed class LayoutMigration : ILayoutMigration
             .ToList();
     }
 
+    // Carries and empties under the registry lock, then logs the empty libraries holding old titles.
+    private async Task MigrateLockedAsync(string root, bool automatic, CancellationToken cancellationToken)
+    {
+        Dictionary<(Guid ServerId, string LibraryId), int> held;
+        await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            held = await MigrateAsync(root, automatic, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _registry.Exit();
+        }
+
+        await LogHeldAsync(held, cancellationToken).ConfigureAwait(false);
+    }
+
     // Carries the old titles and empties the old folders once nothing waits; returns the empty libraries holding titles.
-    // Runs under the registry lock.
-    private async Task<Dictionary<(Guid ServerId, string LibraryId), int>> MigrateAsync(string root, CancellationToken cancellationToken)
+    // Runs under the registry lock. The automatic migration tells the carrier the old items go (decisions 179, 187).
+    private async Task<Dictionary<(Guid ServerId, string LibraryId), int>> MigrateAsync(string root, bool automatic, CancellationToken cancellationToken)
     {
         var held = new Dictionary<(Guid ServerId, string LibraryId), int>();
         var state = _registry.State;
@@ -244,18 +281,20 @@ public sealed class LayoutMigration : ILayoutMigration
         var heldTitles = 0;
         foreach (var stub in state.Stubs.Where(stub => stub.ServerId is null))
         {
-            Add(TitleMoveOf(root, state, stub, catalog), moves, held, ref waiting, ref heldTitles);
+            Add(TitleMoveOf(root, state, stub, catalog, automatic), moves, held, ref waiting, ref heldTitles);
         }
 
         foreach (var series in state.Series.Where(series => series.ServerId is null))
         {
-            Add(SeriesMoveOf(root, state, series, catalog), moves, held, ref waiting, ref heldTitles);
+            Add(SeriesMoveOf(root, state, series, catalog, automatic), moves, held, ref waiting, ref heldTitles);
         }
 
         var folderChanged = false;
+        IReadOnlyList<Guid> forgettable = [];
         if (moves.Count > 0)
         {
             var report = await _carrier.CarryAsync(moves, cancellationToken).ConfigureAwait(false);
+            forgettable = report.ForgettableOldItemIds;
 
             // A refusal is for good only if the carry read this folder and the link of the round did not fail (Q259).
             folderChanged = report.Root is not null && !string.Equals(report.Root, root, StringComparison.Ordinal);
@@ -289,6 +328,13 @@ public sealed class LayoutMigration : ILayoutMigration
         }
 
         await EmptyAsync(root, state).ConfigureAwait(false);
+
+        // Only after the old items are gone: the carrier keeps the records of any still in the library (decisions 187, 204).
+        if (forgettable.Count > 0)
+        {
+            await _carrier.ForgetRemovedAsync(forgettable, cancellationToken).ConfigureAwait(false);
+        }
+
         return held;
     }
 
@@ -313,7 +359,7 @@ public sealed class LayoutMigration : ILayoutMigration
 
     // The move of an old film or episode, or whether it still waits: an old stub with no item, or whose title is gone, has
     // nothing to carry.
-    private Step TitleMoveOf(string root, StubState state, StubEntry old, Catalog catalog)
+    private Step TitleMoveOf(string root, StubState state, StubEntry old, Catalog catalog, bool automatic)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), false) is not Video item)
         {
@@ -326,10 +372,10 @@ public sealed class LayoutMigration : ILayoutMigration
             return FateOf(old.Sources, catalog);
         }
 
-        return TargetsOf(root, news) is { } targets ? new Step(WatchStateMove.Of(old, item.Id, targets), false, []) : Step.Waiting;
+        return TargetsOf(root, news) is { } targets ? new Step(WatchStateMove.Of(old, item.Id, targets, automatic), false, []) : Step.Waiting;
     }
 
-    private Step SeriesMoveOf(string root, StubState state, SeriesStub old, Catalog catalog)
+    private Step SeriesMoveOf(string root, StubState state, SeriesStub old, Catalog catalog, bool automatic)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), true) is not Series item)
         {
@@ -353,7 +399,7 @@ public sealed class LayoutMigration : ILayoutMigration
             targets.Add(new WatchStateTarget(found.Id, series.ServerId));
         }
 
-        return new Step(WatchStateMove.OfSeries(old, item.Id, targets), false, []);
+        return new Step(WatchStateMove.OfSeries(old, item.Id, targets, automatic), false, []);
     }
 
     // The new versions of the title: the stubs with their groups, and the local copy that is the primary of its group.
