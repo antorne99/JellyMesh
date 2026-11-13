@@ -126,6 +126,26 @@ public sealed class SegmentOffer
     }
 
     /// <summary>
+    /// Records a play of the local copy under a stub with no source, so the segments of the stub fit it nowhere (Q309).
+    /// The local copy keeps its own segments.
+    /// </summary>
+    /// <param name="played">The user and device that play it.</param>
+    /// <param name="playSessionId">The stock play session of the local copy.</param>
+    /// <param name="localItemId">The local copy.</param>
+    /// <param name="routeItemId">The item the client asked for, which it may read the segments of.</param>
+    public void RecordLocalCopy(PlaybackIdentity played, string? playSessionId, Guid localItemId, Guid routeItemId)
+    {
+        ArgumentNullException.ThrowIfNull(played);
+
+        if (!string.IsNullOrEmpty(playSessionId))
+        {
+            var items = new HashSet<Guid> { played.ItemId, routeItemId };
+            items.Remove(localItemId);
+            Store(played, null, playSessionId, true, items);
+        }
+    }
+
+    /// <summary>
     /// Tells whether a direct read of the segments of an item may answer them, by what the device of the user plays.
     /// </summary>
     /// <param name="userId">The user.</param>
@@ -158,13 +178,17 @@ public sealed class SegmentOffer
     // Records what a play session of a device plays, and forgets the play sessions that ended.
     private void Record(PlaybackIdentity identity, StubSource? source, string playSessionId, bool local, params Guid?[] items)
     {
+        Store(identity, source, playSessionId, local, items.OfType<Guid>().Append(identity.ItemId).ToHashSet());
+    }
+
+    private void Store(PlaybackIdentity identity, StubSource? source, string playSessionId, bool local, IReadOnlySet<Guid> items)
+    {
         foreach (var (key, ended) in _played.Where(entry => !IsLive(entry.Key)).ToList())
         {
             _played.TryRemove(KeyValuePair.Create(key, ended));
         }
 
-        var named = items.OfType<Guid>().Append(identity.ItemId).ToHashSet();
-        _played[(local, playSessionId)] = new Played(identity.UserId, identity.DeviceId, named, source);
+        _played[(local, playSessionId)] = new Played(identity.UserId, identity.DeviceId, items, source);
     }
 
     private bool IsLive((bool Local, string PlaySessionId) key)

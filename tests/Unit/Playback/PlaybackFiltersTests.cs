@@ -51,9 +51,11 @@ public class PlaybackFiltersTests
     private readonly Mock<ISessionManager> _sessionManager = new();
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly Mock<IFederationResolver> _resolver = new();
+    private readonly Mock<IMediaSegmentManager> _segmentManager = new();
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StreamSlots _peerSlots = new(TimeProvider.System, new InMemoryConfigurationStore());
     private readonly StubEntry _stub;
+    private SegmentOffer? _offer;
 
     public PlaybackFiltersTests()
     {
@@ -87,6 +89,7 @@ public class PlaybackFiltersTests
     {
         var store = new InMemoryConfigurationStore();
         var lookup = new StubLookup(_library.Object, _stubs.Object, store);
+        _offer = new SegmentOffer(_segmentManager.Object, Segments(lookup, store), lookup, _fixture.Sessions);
         return new PlaybackInfoFilter(
             lookup,
             _authorization.Object,
@@ -94,17 +97,15 @@ public class PlaybackFiltersTests
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
             new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
-            new SegmentOffer(new Mock<IMediaSegmentManager>().Object, Segments(lookup, store), lookup, _fixture.Sessions));
+            _offer);
     }
 
-    private StubSegments Segments(StubLookup lookup, InMemoryConfigurationStore store) => new(
-        lookup,
-        new Mock<IFederationIndex>().Object,
-        _fixture.Registry,
-        new StubSegmentsTests.FakeSegmentClient(),
-        store,
-        TimeProvider.System,
-        NullLogger<StubSegments>.Instance);
+    private StubSegments Segments(StubLookup lookup, InMemoryConfigurationStore store)
+    {
+        var index = new Mock<IFederationIndex>();
+        index.Setup(federation => federation.Snapshot).Returns(new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [] });
+        return new(lookup, index.Object, _fixture.Registry, new StubSegmentsTests.FakeSegmentClient(), store, TimeProvider.System, NullLogger<StubSegments>.Instance);
+    }
 
     private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null, Func<string, IReadOnlyList<string>>? listFolder = null)
     {
@@ -430,6 +431,26 @@ public class PlaybackFiltersTests
         Assert.True(source.SupportsTranscoding);
         Assert.Null(source.Path);
         Assert.Null(source.MediaStreams[0].Path);
+    }
+
+    [Fact]
+    public async Task A_device_playing_the_local_copy_reads_no_segments_of_the_stub_directly()
+    {
+        Offline();
+        LocalCopyArrived();
+        _segmentManager.Setup(manager => manager.HasSegments(It.IsAny<Guid>())).Returns(true);
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+        var file = LocalFile(directPlay: true);
+        file.HasSegments = true;
+
+        var executed = await RunStockAsync(context, file);
+
+        var response = Assert.IsType<PlaybackInfoResponse>(Assert.IsType<OkObjectResult>(executed.Result).Value);
+        Assert.True(Assert.Single(response.MediaSources).HasSegments);
+        Assert.False(_offer!.ServesDirect(_user.Id, "device", _itemId));
+        Assert.True(_offer.ServesDirect(_user.Id, "device", _localId));
+        _fixture.Sessions.EndLocal(_user.Id, "local-session");
+        Assert.True(_offer.ServesDirect(_user.Id, "device", _itemId));
     }
 
     [Fact]
