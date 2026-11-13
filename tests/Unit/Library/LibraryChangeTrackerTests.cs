@@ -89,6 +89,17 @@ public sealed class LibraryChangeTrackerTests
     }
 
     [Fact]
+    public void TheFolderOfANewServerAddedToALibraryOverTheFolderIsNotAChange()
+    {
+        // The automatic placement only adds to libraries already over the folder, so it raises no warning (§10 row 367).
+        _libraries.Add(Library("1", "Film", "/media/film", "/federata/a/Film"));
+        _tracker.Record();
+        _libraries[0] = Library("1", "Film", "/media/film", "/federata/a/Film", "/federata/c/Film");
+
+        Assert.Equal(LibraryChanges.None, _tracker.Compare());
+    }
+
+    [Fact]
     public void ARenamedLibraryIsNotAChange()
     {
         _libraries.Add(Library("1", "Casa - Film", "/federata/a/Film"));
