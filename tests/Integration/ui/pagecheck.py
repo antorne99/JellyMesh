@@ -1395,7 +1395,7 @@ def merge_selection(page, name):
     said = result(case)
     check(name + " the server has a winner", forecast["Copy"]["ServerName"] == "peer" and forecast["IsCertain"], forecast)
     check(name + " says what would play", f"on {forecast['Copy']['ServerName']} plays" in said and f"{forecast['Version']['Quality']['Height']}p" in said, said)
-    check(name + " says the others stay as backups", "backups" in said, said)
+    check(name + " says the others become versions", "become versions" in said, said)
     check(name + " the line is a status region", case.locator(u.MERGE_RESULT).get_attribute("role") == "status")
     check(name + " asks only for a preview", posts and all(url.endswith("/Merges/Preview") for url in posts), posts)
     check(name + " nothing was merged by asking", u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]["Merges"] == [])
