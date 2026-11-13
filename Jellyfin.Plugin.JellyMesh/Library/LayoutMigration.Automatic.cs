@@ -315,6 +315,13 @@ public sealed partial class LayoutMigration
             return AutomaticMigrationStep.Carry;
         }
 
+        // An unreadable registry loads empty, so stubs still in the old folders would lose their state (§10 row 371).
+        if (OldFoldersHoldStubs(root))
+        {
+            Stop(AutomaticMigrationError.OldStubsLeft, null);
+            return null;
+        }
+
         if (LibrariesOf(root, _registry.State) is not { } libraries)
         {
             Stop(AutomaticMigrationError.ReadFailed, null);
@@ -331,6 +338,22 @@ public sealed partial class LayoutMigration
         }
 
         return AutomaticMigrationStep.Finish;
+    }
+
+    // Whether a .strm is left under the flat Film or Serie; true as well when they cannot be read.
+    private bool OldFoldersHoldStubs(string root)
+    {
+        try
+        {
+            return new[] { FederatedFolderLayout.MoviesPath(root), FederatedFolderLayout.SeriesPath(root) }
+                .Where(Directory.Exists)
+                .Any(folder => Directory.EnumerateFiles(folder, "*.strm", SearchOption.AllDirectories).Any());
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot read the old folders before removing them from the libraries: {Error}", exception.GetType().Name);
+            return true;
+        }
     }
 
     private List<VirtualFolderInfo>? ReadFolders()

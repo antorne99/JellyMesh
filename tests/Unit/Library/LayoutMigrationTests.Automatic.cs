@@ -226,6 +226,48 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task StubFilesInTheOldFoldersWithNoOldTitleStopTheMigrationBeforeTheRemoval()
+    {
+        // An unreadable registry loads empty while the old folders still hold stubs: removing the paths would lose their state (§10 row 371).
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
+        var stray = Path.Combine(OldSeries, "Lost", "Season 01", "S01E01.strm");
+        Directory.CreateDirectory(Path.GetDirectoryName(stray)!);
+        await File.WriteAllTextAsync(stray, "x");
+        var migration = await MigrationAsync();
+
+        await migration.Choose(LayoutMigrationMode.Automatic).Job;
+
+        var status = migration.GetStatus(Root)!;
+        Assert.Equal(AutomaticMigrationError.OldStubsLeft, status.Error);
+        Assert.Equal(AutomaticMigrationStep.RemoveOldPaths, status.AutomaticStep);
+        Assert.Equal(LayoutMigrationStep.RemoveOldPaths, status.Step);
+        Assert.Contains(OldFilms, Locations("Film"));
+        Assert.Empty(_removedPaths);
+        Assert.True(File.Exists(stray));
+
+        File.Delete(stray);
+        await migration.Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
+    }
+
+    [Fact]
+    public async Task OnlyTheJellymeshMarkersInTheOldFoldersLetTheRemovalGoOn()
+    {
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
+        Directory.CreateDirectory(OldFilms);
+        await File.WriteAllTextAsync(Path.Combine(OldFilms, ".jellymesh"), string.Empty);
+
+        await (await MigrationAsync()).Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal(AutomaticMigrationError.None, _store.Configuration.LayoutMigration.Error);
+        Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
+    }
+
+    [Fact]
     public async Task AStepThatThrowsStopsWithAnErrorAndARetryResumesFromIt()
     {
         OldFilm("Dune", (_serverA, "a1"));
