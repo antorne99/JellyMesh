@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Integration 9 of the per-server spec: a server renamed end to end (Q38, §10 rows 84-86).
+# Integration 9 of the per-server spec: a server renamed end to end (Q38, §10 rows 84-86), leaving no old library behind (row 318).
 # A stock remote and a consumer with automatic libraries, a local copy linked to a stub, a limited and a blocked user.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-rename] [PORT=18960] [KEEP=1] run.sh
 set -euo pipefail
@@ -75,6 +75,22 @@ probe() {
 }
 lib_id() { get local /Library/VirtualFolders | jq -r --arg n "$1" '.[] | select(.Name == $n) | .ItemId // ""' | tr -d -; }
 lib_names() { get local /Library/VirtualFolders | jq -c '[.[].Name] | sort'; }
+# db_libs: the CollectionFolder rows of Jellyfin's database, which also keep the libraries a rename left behind [row 318].
+db_libs() { sql "select Name from BaseItems where Type like '%.CollectionFolder' order by Name;" | jq -Rnc '[inputs] | sort'; }
+views() { as all GET "/UserViews?userId=$ALL" | jq -c '[.Items[].Name] | sort'; }
+# ghosts <moment>: no old library is left in the database, in the views of a user who sees all, or by id [row 318].
+ghosts() {
+  local id
+  check "$1: Jellyfin keeps no row of an old library [row 318]" "$(lib_names)" "$(db_libs)"
+  check "$1: the views of a user who sees all but Film have no old library" "$(lib_names | jq -c 'map(select(endswith(" - Film") | not))')" "$(views)"
+  for id in "${OLD_SERIES[@]}"; do
+    as lim GET "/Items?ids=$(dashed "$id")" >/dev/null
+    check "$1: the limited user gets no record by the old Serie id $id" 0 "$(jq -r '.TotalRecordCount // 0' "$WORK/body")"
+    as all GET "/Items/$(dashed "$id")" >/dev/null
+    check "$1: nor does a user who sees all open it" 404 "$(status)"
+  done
+}
+OLD_SERIES=()
 changes() { get local /JellyMesh/Admin/Status | jq -c .FederatedFolder.Changes; }
 rename_state() { get local /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" '.Servers[] | select(.Id == $id) | .Rename'; }
 wait_rename() {
@@ -185,7 +201,9 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   check "confirmed: 202" 202 "$(status)"
   check "the rename running is no library change" '{"Added":[],"Removed":[]}' "$(changes)"
   wait_rename
+  OLD_SERIES+=("$old_serie")
   check "the rename is done" '{"Busy":false,"Pending":false,"Failed":false}' "$(rename_state)"
+  ghosts "right after the rename"
   check "the renamed libraries are no library change" '{"Added":[],"Removed":[]}' "$(changes)"
   check "the libraries follow the server" "$(jq -nc --arg n "$new" '["Film", "\($n) - Film", "\($n) - Serie"] | sort')" "$(lib_names)"
   check "no stub has the old label" 0 "$(strms "$old")"
@@ -225,6 +243,8 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   post local "/Items/$(dashed "$tears")/PlaybackInfo?userId=$ADMIN" "$DIRECT" >/dev/null
   check "the renamed film plays after a sync" 200 "$(status)"
   check "its .strm holds no token" "" "$(docker exec "$PREFIX-local" sh -c "grep -il 'token\|api_key' \"\$(find '$FOLDER/Film' -name '*Tears of Steel*- $new.strm')\"" || true)"
+  scan local
+  ghosts "after a scan"
 }
 
 rename_to Casa Mare
@@ -256,9 +276,8 @@ check "and the record is gone" 0 "$(docker exec "$PREFIX-local" sh -c "ls '$DATA
 check "the unbound record is set aside [row 329]" 1 "$(docker exec "$PREFIX-local" sh -c "grep -c '$(dashed "$UNBOUND")' '$DATA/library-renames.json.damaged'" || true)"
 as all GET "/Items/$(dashed "$(film "Tears of Steel" Alba)")" >/dev/null
 check "and cannot open its film" 404 "$(status)"
-views() { as all GET "/UserViews?userId=$ALL" | jq -c '[.Items[].Name] | sort'; }
-echo "   libraries $(lib_names), views of a user who sees all but Film: $(views)"
+ghosts "after a restart"
 scan local
-echo "   after a scan, views of that user: $(views)"
+ghosts "after a restart and a scan"
 check "no restart is asked" false "$(get local /JellyMesh/Admin/Status | jq -r .RenamedLibrariesNeedRestart)"
 exit "$FAILED"

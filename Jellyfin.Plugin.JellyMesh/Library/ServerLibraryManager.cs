@@ -238,8 +238,14 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         try
         {
             _errors[serverId] = AutomaticLibrariesError.None;
+            var resumed = _renamer.HasPending;
             await _renamer.ResumeAsync(cancellationToken).ConfigureAwait(false);
-            var done = await RenameLibrariesAsync(serverId, cancellationToken).ConfigureAwait(false);
+            var (done, moved) = await RenameLibrariesAsync(serverId, cancellationToken).ConfigureAwait(false);
+            if (resumed || moved)
+            {
+                await ValidateTopFoldersAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             if (_renamer.HasPending)
             {
                 // Users still named by an old id: the next rename or start finishes them (row 290).
@@ -261,7 +267,12 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var resumed = _renamer.HasPending;
             await _renamer.ResumeAsync(cancellationToken).ConfigureAwait(false);
+            if (resumed)
+            {
+                await ValidateTopFoldersAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -553,11 +564,12 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     // Renames each library of the registry that passes, after a follow on a fresh read, and records it in the same job.
-    private async Task<bool> RenameLibrariesAsync(Guid serverId, CancellationToken cancellationToken)
+    // Also tells whether a library folder moved.
+    private async Task<(bool Done, bool Moved)> RenameLibrariesAsync(Guid serverId, CancellationToken cancellationToken)
     {
         if (!_store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count > 0))
         {
-            return true;
+            return (true, false);
         }
 
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
@@ -565,7 +577,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         if (folders is null)
         {
             _errors[serverId] = AutomaticLibrariesError.ReadFailed;
-            return false;
+            return (false, false);
         }
 
         Follow(serverId, folders);
@@ -574,6 +586,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             Find(config, serverId)?.Name,
             Find(config, serverId)?.AutomaticLibraryRegistry.Select(record => (record.Kind, record.Name, record.ItemId)).ToList() ?? []));
         var done = true;
+        var moved = false;
         foreach (var (kind, name, itemId) in records)
         {
             var record = new AutomaticLibraryConfig { Kind = kind, Name = name, ItemId = itemId };
@@ -603,6 +616,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 continue;
             }
 
+            moved = true;
             _store.Update(config =>
             {
                 if (Find(config, serverId)?.AutomaticLibraryRegistry.FirstOrDefault(live => live.Kind == kind && live.Name == name && live.ItemId == itemId) is { } live)
@@ -615,7 +629,22 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             folders = ReadFolders() ?? folders;
         }
 
-        return done;
+        return (done, moved);
+    }
+
+    // Has stock drop the rows of moved library folders; left to a scan, one with no picture is saved back (Q318).
+    // The second run reloads the children the first one still holds in memory.
+    private async Task ValidateTopFoldersAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _libraries.ValidateTopLibraryFolders(cancellationToken, true).ConfigureAwait(false);
+            await _libraries.ValidateTopLibraryFolders(cancellationToken, true).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("Cannot validate the libraries after a rename: {Error}", exception.GetType().Name);
+        }
     }
 
     private async Task<Guid?> RenameOneAsync(VirtualFolderInfo folder, ServerLibraryKind kind, string newName, CancellationToken cancellationToken)
