@@ -1657,6 +1657,7 @@
                     "Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.": "Accedi con un utente dedicato non amministratore di quel server, al suo indirizzo tailnet. Subito dopo compaiono le sue librerie.",
                     "Merge selected": "Unisci selezionati",
                     "Merge the ones that are one film.": "Unisci quelli che sono un solo film.",
+                    "Merge the ones that are one series.": "Unisci quelle che sono una sola serie.",
                     "Merge undone. The film list changes after the library scan that was queued.": "Unione annullata. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
                     "Merge undone. The series list changes after the library scan that was queued.": "Unione annullata. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
                     "Merged films": "Film uniti",
@@ -4680,12 +4681,17 @@
                         notes.push({ key: 'review', text: t('Merge the ones that are one film.'), tab: 'catalog', calm: true });
                     }
 
+                    if (merges && merges.SeriesCases.length > 0) {
+                        notes.push({ key: 'reviewSeries', text: t('Merge the ones that are one series.'), tab: 'catalog', calm: true });
+                    }
+
                     return {
                         key: 'duplicates',
                         label: t('Duplicates to review'),
                         notes: notes,
                         value: factValue(mergesSection, function (data) {
-                            return data.Cases.length === 0 ? t('None') : String(data.Cases.length);
+                            var cases = data.Cases.length + data.SeriesCases.length;
+                            return cases === 0 ? t('None') : String(cases);
                         })
                     };
                 }
