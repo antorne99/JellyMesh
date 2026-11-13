@@ -554,8 +554,8 @@ def forget_missing(page, name):
         title = page.locator(u.CONFIRM_TITLE).inner_text()
         body = page.locator(u.CONFIRM_TEXT).inner_text()
         check(name + " " + label + " asks first", "Forget the servers missing from the settings?" in title, title)
-        check(name + " " + label + " says what goes and what stays", "5 titles that only those servers have" in body and "without those backups" in body, body)
-        check(name + " " + label + " says how to get them back", "brings the same titles and watch state" in body, body)
+        check(name + " " + label + " says what goes and what stays", "their 5 titles leave the libraries" in body and "The same titles from a server in the settings stay" in body, body)
+        check(name + " " + label + " says how to get them back", "brings their folders back, with the same titles and watch state" in body, body)
         page.locator(u.CONFIRM_OK).click()
         page.wait_for_selector(u.CONFIRM_BACKDROP, state="detached", timeout=15000)
         shown = until(page, lambda said=said: said in u.message(page))
@@ -1221,7 +1221,7 @@ def confirms(s, width):
     remove.click()
     confirm_shows(page, name + " remove", "Remove this server?", [
         HOSTILE + " and its stored login leave JellyMesh now", "login is not revoked", "deleted from the libraries now",
-        "without this backup", "Doubtful films", "local files are not touched", "may not stop right away", "same titles and watch state"], viewport)
+        "without this backup", "Doubtful titles", "local files are not touched", "may not stop right away", "same titles and watch state"], viewport)
     u.shot(page, f"confirm-remove-{width}", full_page=False)
     confirm_keeps(page, name + " remove", lambda: len(status()) == count and u.server_row(page, HOSTILE).count() == 1)
     remove.click()
@@ -2424,8 +2424,9 @@ def half_done(status):
 
 
 def no_cases(merges):
-    """Leaves no doubtful films."""
+    """Leaves no doubtful films or series."""
     merges["Cases"] = []
+    merges["SeriesCases"] = []
 
 
 def overview_well(s, width):
@@ -2454,7 +2455,8 @@ def overview_well(s, width):
 
     name = width + " overview duplicates"
     page = s.open("fresh", width, route=lambda context: fake(context, "Status", linked))
-    cases = len(u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]["Cases"])
+    found = u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
+    cases = len(found["Cases"]) + len(found["SeriesCases"])
     check(name + " count", fact_value(page, "Duplicates to review") == str(cases), fact_value(page, "Duplicates to review"))
     check(name + " are no problem", text(page, u.STATUS) == "Active. All is well." and alarms(page) == [], text(page, u.STATUS))
     opens(page, name, u.fact(page, "Duplicates").locator(u.TAB_LINK), "catalog")
