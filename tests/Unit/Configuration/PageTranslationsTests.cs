@@ -94,7 +94,7 @@ public class PageTranslationsTests
             yield return FederationAdminController.RefusalMessage(outcome);
         }
 
-        foreach (var outcome in Enum.GetValues<ServerRenameOutcome>().Where(outcome => outcome != ServerRenameOutcome.Started))
+        foreach (var outcome in Enum.GetValues<ServerRenameOutcome>().Where(outcome => outcome is not (ServerRenameOutcome.Started or ServerRenameOutcome.Cancelled)))
         {
             yield return FederationAdminController.RenameRefusalMessage(outcome);
         }

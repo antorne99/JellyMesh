@@ -228,6 +228,41 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         }
     }
 
+    /// <inheritdoc />
+    public async Task<bool> CancelAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = _registry.State;
+            var ours = state.Renames.Where(rename => _registry.Find(rename.StubId) is { } stub && stub.ServerId == serverId).ToHashSet();
+            if (ours.Count == 0)
+            {
+                return true;
+            }
+
+            var live = state.Stubs.Select(stub => stub.RelativePath)
+                .Concat(state.Renames.Where(rename => !ours.Contains(rename) && _registry.Find(rename.StubId) is not null).Select(rename => rename.OldPath))
+                .ToHashSet(_pathComparer);
+            var kept = state.Renames
+                .Where(rename => ours.Contains(rename)
+                    && rename.RemovedItemId is null
+                    && !live.Contains(rename.OldPath)
+                    && root.Length > 0
+                    && !TryDeleteOld(root, rename, _registry.Find(rename.StubId)))
+                .ToHashSet();
+            var renames = state.Renames.Where(rename => !ours.Contains(rename) || kept.Contains(rename)).ToList();
+            await _registry.SaveAsync(state with { Renames = renames }, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Cancelled {Count} pending stub moves of a renamed server, {Left} left", ours.Count - kept.Count, kept.Count);
+            return kept.Count == 0;
+        }
+        finally
+        {
+            _registry.Exit();
+        }
+    }
+
     // The paths of live stubs, the old paths their renames still carry from, and the paths they are about to take.
     private HashSet<string> LivePaths(StubState state, IEnumerable<string> taking) =>
         state.Stubs.Select(stub => stub.RelativePath)
