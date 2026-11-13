@@ -37,6 +37,7 @@ public sealed partial class PlaybackSession
     private int _parked;
     private int _abandoned;
     private int _failed;
+    private int _closedAfterFailure;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSession"/> class.
@@ -148,6 +149,13 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <returns>Whether this call marked it.</returns>
     public bool TryFail() => Interlocked.Exchange(ref _failed, 1) == 0;
+
+    /// <summary>
+    /// Claims the close of the remote side of a session whose source stopped, once, so that the retries of a player do not
+    /// close it again.
+    /// </summary>
+    /// <returns>Whether this call claimed it.</returns>
+    public bool TryCloseAfterFailure() => HasFailed && Interlocked.Exchange(ref _closedAfterFailure, 1) == 0;
 
     /// <summary>
     /// Tells whether the client went: its last request lost the connection and no other has come for the whole grace. A

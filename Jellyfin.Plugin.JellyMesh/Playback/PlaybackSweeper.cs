@@ -12,10 +12,10 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
-/// Closes what clients leave open: on a reported stop right away, after the grace on a JellyMesh remote when a client
-/// dropped its connection, and after the idle time when the client simply went away. Nothing pings the remote during a
-/// pause: its job ends, and resuming restarts it. Also forgets the stock play session of a stub when its user stops it or
-/// leaves it idle.
+/// Closes what clients leave open: on a reported stop right away, within a second when the source of a session dropped,
+/// after the grace on a JellyMesh remote when a client dropped its connection, and after the idle time when the client
+/// simply went away. Nothing pings the remote during a pause: its job ends, and resuming restarts it. Also forgets the
+/// stock play session of a stub when its user stops it or leaves it idle.
 /// </summary>
 public sealed class PlaybackSweeper : BackgroundService
 {
@@ -103,7 +103,8 @@ public sealed class PlaybackSweeper : BackgroundService
         }
     }
 
-    // A loop of its own: a remote that does not answer holds a sweep up, and this has to come right after the grace.
+    // A loop of its own: a remote that does not answer holds a sweep up, and this has to come right after the grace or
+    // the drop.
     private async Task ReleaseAbandonedAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(PlaybackTimeouts.AbandonCheck, _clock);
@@ -111,14 +112,14 @@ public sealed class PlaybackSweeper : BackgroundService
         {
             try
             {
-                await _coordinator.ReleaseAbandonedAsync().ConfigureAwait(false);
+                await Task.WhenAll(_coordinator.ReleaseAbandonedAsync(), _coordinator.CloseFailedAsync()).ConfigureAwait(false);
             }
 #pragma warning disable CA1031 // This only saves time on a remote, and must not end the loop or touch a stream.
             catch (Exception exception)
 #pragma warning restore CA1031
             {
                 // The type only: a message could hold a remote address.
-                _logger.LogError("Could not tell a remote that a client went: {Error}", exception.GetType().Name);
+                _logger.LogError("Could not tell a remote that a client went or a source dropped: {Error}", exception.GetType().Name);
             }
         }
     }

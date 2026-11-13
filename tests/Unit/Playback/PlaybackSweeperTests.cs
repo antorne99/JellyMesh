@@ -82,6 +82,29 @@ public class PlaybackSweeperTests
         Assert.DoesNotContain(logger.Lines, line => line.Contains(FailingOnceStore.Secret, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task A_session_whose_source_dropped_gets_its_remote_transcode_closed_at_the_next_check()
+    {
+        await _fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(_fixture.Sessions.All);
+        _fixture.Coordinator.ReportFailure(session);
+        var clock = new HandClock();
+        using var sweeper = new PlaybackSweeper(_fixture.Coordinator, _sessionManager.Object, _fixture.Sessions, _fixture.Store, clock, NullLogger<PlaybackSweeper>.Instance);
+        using var stop = new CancellationTokenSource();
+        await sweeper.StartAsync(stop.Token);
+        for (var waited = 0; waited < 200 && _fixture.Client.Stopped.Count == 0; waited++)
+        {
+            clock.Tick();
+            await Task.Delay(10);
+        }
+
+        var closedWhileRunning = _fixture.Client.Stopped.ToList();
+        await stop.CancelAsync();
+        await sweeper.StopAsync(CancellationToken.None);
+
+        Assert.Equal([session.RemotePlaySessionId!], closedWhileRunning);
+    }
+
     // A clock whose timers fire only when the test ticks it.
     private sealed class HandClock : TimeProvider
     {

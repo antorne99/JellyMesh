@@ -204,6 +204,84 @@ public class ReconnectionTests
     }
 
     [Fact]
+    public async Task A_drop_closes_the_remote_transcode_and_gives_the_slot_back_without_waiting_for_the_player()
+    {
+        _fixture.Registry.AddJellyMesh(_serverA);
+        var session = await PlayAndDropAsync(_single, _user);
+
+        await _fixture.Coordinator.CloseFailedAsync();
+
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Stopped);
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_drop_keeps_the_session_so_that_its_retries_still_get_an_error()
+    {
+        var session = await PlayAndDropAsync(_single, _user);
+
+        await _fixture.Coordinator.CloseFailedAsync();
+
+        Assert.Same(session, _fixture.Sessions.Find(session.Id));
+        Assert.True(session.HasFailed);
+    }
+
+    [Fact]
+    public async Task A_session_that_plays_is_not_closed()
+    {
+        _fixture.Registry.AddJellyMesh(_serverA);
+        await OpenAsync(_single, _user);
+
+        await _fixture.Coordinator.CloseFailedAsync();
+
+        Assert.Empty(_fixture.Client.Stopped);
+        Assert.Empty(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task The_retries_of_a_player_do_not_close_the_remote_again()
+    {
+        _fixture.Registry.AddJellyMesh(_serverA);
+        var session = await PlayAndDropAsync(_single, _user);
+        await _fixture.Coordinator.CloseFailedAsync();
+
+        session.TryBeginRequest(_fixture.Clock)!.Dispose();
+        _fixture.Coordinator.ReportFailure(session);
+        await _fixture.Coordinator.CloseFailedAsync();
+
+        Assert.Single(_fixture.Client.Stopped);
+        Assert.Single(_fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task The_end_of_a_dropped_session_closes_the_remote_again_when_the_first_close_found_it_down()
+    {
+        _fixture.Registry.AddJellyMesh(_serverA);
+        var session = await PlayAndDropAsync(_single, _user);
+        _fixture.Registry.Offline.Add(_serverA);
+        await _fixture.Coordinator.CloseFailedAsync();
+        _fixture.Registry.Offline.Remove(_serverA);
+
+        await _fixture.Coordinator.CloseAsync(session.Id);
+
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Stopped);
+        Assert.Equal([session.RemotePlaySessionId!], _fixture.Client.Released);
+    }
+
+    [Fact]
+    public async Task A_dropped_session_ended_before_its_close_is_closed_once()
+    {
+        _fixture.Registry.AddJellyMesh(_serverA);
+        var session = await PlayAndDropAsync(_single, _user);
+
+        await _fixture.Coordinator.CloseAsync(session.Id);
+        await _fixture.Coordinator.CloseFailedAsync();
+
+        Assert.Single(_fixture.Client.Stopped);
+        Assert.Single(_fixture.Client.Released);
+    }
+
+    [Fact]
     public async Task The_title_plays_again_five_minutes_after_the_drops()
     {
         for (var drop = 0; drop <= PlaybackLimits.Reconnections; drop++)

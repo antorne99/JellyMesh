@@ -157,7 +157,8 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Records that the source of a session stopped serving during playback.
+    /// Records that the source of a session stopped serving during playback. Its remote side is closed by
+    /// <see cref="CloseFailedAsync"/>, and the session stays to answer the retries of the player with an error.
     /// </summary>
     /// <param name="session">The session.</param>
     public void ReportFailure(PlaybackSession session)
@@ -437,6 +438,17 @@ public sealed class PlaybackCoordinator
         return Task.WhenAll(_sessions.All
             .Where(session => session.IsAbandoned(now, StreamSlots.AbandonGrace) && session.RemotePlaySessionId is not null && IsJellyMesh(session.Source.ServerId) && session.TryPark())
             .Select(CloseRemoteAsync));
+    }
+
+    /// <summary>
+    /// Closes the remote transcode and gives the stream slot back for each session whose source dropped, once, without
+    /// waiting for its player to stop retrying (row 274). The session stays until it is replaced or forgotten, and its end
+    /// closes the remote again, in case this close found the remote down.
+    /// </summary>
+    /// <returns>A task.</returns>
+    public Task CloseFailedAsync()
+    {
+        return Task.WhenAll(_sessions.All.Where(session => session.TryCloseAfterFailure()).Select(CloseRemoteAsync));
     }
 
     // The request itself, then one request per other version the user sees, in their order.
