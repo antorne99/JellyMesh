@@ -493,6 +493,25 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task The_manager_is_busy_while_a_rename_of_the_server_runs()
+    {
+        // A rename moves the library before it updates the record, outside any job of a server.
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+
+        var rename = fixture.Manager.RenameAsync(_serverId, CancellationToken.None);
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(fixture.Manager.IsBusy);
+        release.SetResult();
+        await rename.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(fixture.Manager.IsBusy);
+    }
+
+    [Fact]
     public void The_manager_is_busy_while_a_library_rename_is_left_halfway()
     {
         var fixture = new Fixture();
