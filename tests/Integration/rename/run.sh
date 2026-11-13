@@ -250,32 +250,36 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
 rename_to Casa Mare
 rename_to Mare Alba
 
-echo "--- a library rename left with a user to rewrite [row 290], and a record bound to no library [row 329]"
+echo "--- a library rename left with a user to rewrite [row 290], and a forged record whose old id is another live library [rows 329, 360]"
 # The old id of a rename is that of its old folder: a library made, read and deleted gives a real one.
 library local "Fantasma - Film" movies
 for i in $(seq 1 30); do GHOST=$(lib_id "Fantasma - Film"); [ -n "$GHOST" ] && break; sleep 1; done
 req local DELETE "/Library/VirtualFolders?name=Fantasma%20-%20Film&refreshLibrary=true" >/dev/null
 check "the library of the old name is gone, with its folder" false "$(lib_names | jq 'index("Fantasma - Film") != null')"
 check "and its folder" 0 "$(docker exec "$PREFIX-local" sh -c "ls /config/root/default | grep -c '^Fantasma - Film$'" || true)"
-UNBOUND=$(uuidgen | tr A-Z a-z | tr -d -)
+# Its new side is in the registry, so only the old id, that of the live Serie library, sets it aside (row 360).
+LIVE=$(lib_id "Alba - Serie")
 ALBA_FILM=$(lib_id "Alba - Film")
 DATA=$(docker exec "$PREFIX-local" sh -c 'dirname "$(find /config -name federated-stubs.json | head -1)"')
-jq -n --arg old "$(dashed "$GHOST")" --arg unbound "$(dashed "$UNBOUND")" --arg new "$(dashed "$ALBA_FILM")" \
+jq -n --arg old "$(dashed "$GHOST")" --arg live "$(dashed "$LIVE")" --arg new "$(dashed "$ALBA_FILM")" \
   '{Version: 1, Records: [
-    {OldName: "Spettro - Film", NewName: "Alba - Film", OldId: $unbound, NewId: $new, Type: "movies", TemporaryName: null},
+    {OldName: "Spettro - Film", NewName: "Alba - Film", OldId: $live, NewId: $new, Type: "movies", TemporaryName: null},
     {OldName: "Fantasma - Film", NewName: "Alba - Film", OldId: $old, NewId: $new, Type: "movies", TemporaryName: null}]}' >"$WORK/library-renames.json"
 docker cp "$WORK/library-renames.json" "$PREFIX-local:$DATA/library-renames.json"
 
-echo "--- after a restart, with the user blocking an id of before that rename and the unbound id"
+echo "--- after a restart, with the user blocking an id of before that rename and the live Serie library"
 uid=$(dashed "$ALL" | tr a-f A-F)
-stopped "update Preferences set Value = '$(dashed "$GHOST"),$(dashed "$UNBOUND")' where Kind = 2 and UserId = '$uid';"
-want="[\"$ALBA_FILM\",\"$UNBOUND\"]"
+stopped "update Preferences set Value = '$(dashed "$GHOST"),$(dashed "$LIVE")' where Kind = 2 and UserId = '$uid';"
+want="[\"$ALBA_FILM\",\"$LIVE\"]"
 for i in $(seq 1 30); do [ "$(blocks)" = "$want" ] && break; sleep 1; done
-check "the start finishes the rewrite: the new id is blocked, the unbound id is left alone [rows 290, 329]" "$want" "$(blocks)"
+check "the start finishes the rewrite: the new id is blocked, the live Serie library stays blocked [rows 290, 360]" "$want" "$(blocks)"
 check "and the record is gone" 0 "$(docker exec "$PREFIX-local" sh -c "ls '$DATA' | grep -c '^library-renames.json$'" || true)"
-check "the unbound record is set aside [row 329]" 1 "$(docker exec "$PREFIX-local" sh -c "grep -c '$(dashed "$UNBOUND")' '$DATA/library-renames.json.damaged'" || true)"
+check "the forged record is set aside [rows 329, 360]" 1 "$(docker exec "$PREFIX-local" sh -c "grep -c '$(dashed "$LIVE")' '$DATA/library-renames.json.damaged'" || true)"
 as all GET "/Items/$(dashed "$(film "Tears of Steel" Alba)")" >/dev/null
 check "and cannot open its film" 404 "$(status)"
+# The Serie library was blocked only to prove the set-aside: the user sees it again for the checks below.
+stopped "$(block_sql "$ALL" "$ALBA_FILM")"
+check "the user blocks only Film again" "[\"$ALBA_FILM\"]" "$(blocks)"
 ghosts "after a restart"
 scan local
 ghosts "after a restart and a scan"
