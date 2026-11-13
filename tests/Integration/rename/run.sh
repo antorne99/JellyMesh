@@ -202,7 +202,7 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   check "the rename running is no library change" '{"Added":[],"Removed":[]}' "$(changes)"
   wait_rename
   OLD_SERIES+=("$old_serie")
-  check "the rename is done" '{"Busy":false,"Pending":false,"Failed":false}' "$(rename_state)"
+  check "the rename is done" '{"Busy":false,"Pending":false,"Failed":false,"Stuck":false}' "$(rename_state)"
   ghosts "right after the rename"
   check "the renamed libraries are no library change" '{"Added":[],"Removed":[]}' "$(changes)"
   check "the libraries follow the server" "$(jq -nc --arg n "$new" '["Film", "\($n) - Film", "\($n) - Serie"] | sort')" "$(lib_names)"
