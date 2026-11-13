@@ -13,6 +13,8 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 // The follow before the placement of new servers, and the automatic libraries found in that same read (§10 rows 384, 385).
 public sealed partial class ServerLibraryManagerTests
 {
+    private static readonly Guid _otherId = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+
     [Fact]
     public async Task Placement_follows_a_library_renamed_in_the_dashboard_and_counts_it_as_automatic()
     {
@@ -178,5 +180,196 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.NotNull(libraries);
         Assert.Equal(["Casa - Film", "Casa - Serie"], libraries.Automatic.Select(folder => folder.Name).Order(StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("before the follow reads the registries")]
+    [InlineData("between the read and the save of a follow")]
+    [InlineData("after the save of a follow")]
+    public async Task A_sync_that_finds_placement_following_marks_no_check_skipped_so_no_rename_is_lost(string when)
+    {
+        // Placement holds the lock while it follows every registry, so the sync's check is not missed (§10 row 394).
+        var fixture = new Fixture();
+        var other = await TwoServersFollowedAsync(fixture);
+        fixture.Libraries.RenameFromDashboard("Mare - Film", "Film del mare");
+        var synced = false;
+        void Sync()
+        {
+            Assert.True(fixture.Manager.ReconcileAsync(CancellationToken.None).IsCompletedSuccessfully);
+            synced = true;
+        }
+
+        switch (when)
+        {
+            case "before the follow reads the registries":
+                fixture.Libraries.OnRead = () =>
+                {
+                    fixture.Libraries.OnRead = null;
+                    Sync();
+                };
+                break;
+            case "between the read and the save of a follow":
+                fixture.Hooks.BeforeUpdate = Sync;
+                break;
+            default:
+                fixture.Hooks.AfterUpdate = Sync;
+                break;
+        }
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.True(synced);
+        Assert.NotNull(libraries);
+        Assert.Equal(["Film del mare", "Mare - Serie"], other.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.False(fixture.Server.FollowSkipped);
+        Assert.False(other.FollowSkipped);
+
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Film di casa", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+    }
+
+    [Fact]
+    public async Task A_sync_that_finds_placement_unable_to_follow_has_its_check_marked_skipped()
+    {
+        var fixture = new Fixture();
+        var other = await TwoServersFollowedAsync(fixture);
+        fixture.Libraries.RenameFromDashboard("Mare - Film", "Film del mare");
+        fixture.Libraries.Find("Film del mare").ItemId = null;
+        fixture.Libraries.OnRead = () =>
+        {
+            fixture.Libraries.OnRead = null;
+            Assert.True(fixture.Manager.ReconcileAsync(CancellationToken.None).IsCompletedSuccessfully);
+        };
+
+        Assert.Null(fixture.Manager.FollowForPlacement());
+
+        Assert.Null(fixture.Libraries.OnRead);
+        Assert.True(fixture.Server.FollowSkipped);
+        Assert.True(other.FollowSkipped);
+    }
+
+    [Fact]
+    public async Task A_sync_while_a_job_holds_the_lock_after_a_placement_still_marks_its_check_skipped()
+    {
+        var fixture = new Fixture();
+        var other = await TwoServersFollowedAsync(fixture);
+        Assert.NotNull(fixture.Manager.FollowForPlacement());
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var job = fixture.Manager.Disable(other.Id, true);
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(fixture.Server.FollowSkipped);
+        release.SetResult();
+        await job.Job.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task A_library_there_at_switch_on_that_passes_as_the_own_library_of_a_server_does_not_hold_placement_back()
+    {
+        // The admin's library on the server folder, with the automatic one gone: placement treats it as the admin's (§10 row 393).
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        Assert.Contains(fixture.Libraries.IdOf("Film"), fixture.Server.PreexistingLibraryIds);
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_library_left_to_the_admin_that_passes_again_does_not_hold_placement_back()
+    {
+        // Its type changed and came back: it is no longer in the registry and stays the admin's (§10 rows 383, 393).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Find("Casa - Film").CollectionType = CollectionTypeOptions.tvshows;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+        fixture.Libraries.Find("Casa - Film").CollectionType = CollectionTypeOptions.movies;
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_library_a_removed_server_left_renamed_in_the_dashboard_still_counts_as_automatic()
+    {
+        // The held registries are not followed, so the library is found by its folder (§10 row 395).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Vecchio film");
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie", "Vecchio film"], libraries.Automatic.Select(folder => folder.Name).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_renamed_library_of_a_removed_server_does_not_hold_back_the_server_added_back_with_its_switch_on()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Vecchio film");
+        fixture.AddServerBack("Casa").AutomaticLibraries = true;
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Contains(libraries.Automatic, folder => folder.Name == "Vecchio film");
+    }
+
+    // Two servers with their switch on, each with its libraries, and a check that recorded them all.
+    private static async Task<RemoteServerConfig> TwoServersFollowedAsync(Fixture fixture)
+    {
+        await fixture.Manager.Enable(_serverId).Job;
+        var other = new RemoteServerConfig { Id = _otherId, Name = "Mare" };
+        fixture.Store.Update(config => config.Servers.Add(other));
+        await fixture.Manager.Enable(other.Id).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        Assert.Equal(["Mare - Film", "Mare - Serie"], other.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.False(fixture.Server.FollowSkipped || other.FollowSkipped);
+        return other;
+    }
+
+    // Runs a step once, just before or just after the next save.
+    internal sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
+    {
+        public event EventHandler? SettingsChanged
+        {
+            add => inner.SettingsChanged += value;
+            remove => inner.SettingsChanged -= value;
+        }
+
+        public Action? BeforeUpdate { get; set; }
+
+        public Action? AfterUpdate { get; set; }
+
+        public T Read<T>(Func<PluginConfiguration, T> read) => inner.Read(read);
+
+        public void Update(Action<PluginConfiguration> update)
+        {
+            var before = BeforeUpdate;
+            BeforeUpdate = null;
+            before?.Invoke();
+            inner.Update(update);
+            var after = AfterUpdate;
+            AfterUpdate = null;
+            after?.Invoke();
+        }
     }
 }
