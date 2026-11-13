@@ -39,6 +39,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<LibraryMaterializer> _logger;
     private readonly ILocalRefreshRequester? _refresher;
+    private readonly IVersionLinker? _linker;
     private volatile MaterializationReport? _lastReport;
 
     /// <summary>
@@ -58,6 +59,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="refresher">What asks Jellyfin to read the metadata of new local films.</param>
+    /// <param name="linker">What detaches a stub from its versions before it is removed.</param>
     public LibraryMaterializer(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -72,7 +74,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         StubUrlBuilder urls,
         TimeProvider timeProvider,
         ILogger<LibraryMaterializer> logger,
-        ILocalRefreshRequester? refresher = null)
+        ILocalRefreshRequester? refresher = null,
+        IVersionLinker? linker = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -88,6 +91,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         _timeProvider = timeProvider;
         _logger = logger;
         _refresher = refresher;
+        _linker = linker;
     }
 
     /// <inheritdoc />
@@ -255,6 +259,11 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         run.Commit();
+        if (_linker is not null && plan.Removals.Count > 0)
+        {
+            await _linker.DetachForRemovalAsync(plan.Removals, cancellationToken).ConfigureAwait(false);
+        }
+
         RemoveGone(run, plan.Removals);
         RemoveServerFolders(run, plan.State.RemovedServers);
 

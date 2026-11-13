@@ -38,4 +38,13 @@ public interface IVersionLinker
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task DetachAsync(IReadOnlyCollection<string> stubIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Detaches from every item each of these stubs about to be deleted, saving no metadata, so that Jellyfin hands no
+    /// group over, and rewrites no <c>.nfo</c>, when it deletes them (Q276). The caller holds the stub registry lock.
+    /// </summary>
+    /// <param name="stubs">The stubs.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task DetachForRemovalAsync(IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken);
 }

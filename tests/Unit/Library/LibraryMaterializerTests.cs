@@ -677,6 +677,28 @@ public sealed class LibraryMaterializerTests : IDisposable
         _fixture.Library.Verify(library => library.DeleteItem(item, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
     }
 
+    // Q276: the stub leaves its version group, with no metadata save, before Jellyfin deletes its row.
+    [Fact]
+    public async Task ARemovedStubLeavesItsVersionGroupBeforeItsRowIsDeleted()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
+        var item = new Movie { Id = Guid.NewGuid(), Path = path };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        var steps = new List<string>();
+        _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => steps.Add("detach " + string.Join(",", stubs.Select(stub => Path.GetFileName(stub.RelativePath)))))
+            .Returns(Task.CompletedTask);
+        _fixture.Library.Setup(library => library.DeleteItem(item, It.IsAny<DeleteOptions>())).Callback(() => steps.Add("delete"));
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["detach Film (2020) - A.strm", "delete"], steps);
+    }
+
     // Decision 48: the sync history shows what each server's folder got.
     [Fact]
     public async Task TheReportCountsTheStubsOfEachServer()
