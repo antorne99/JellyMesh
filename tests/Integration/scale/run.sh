@@ -6,7 +6,8 @@
 # SCALE_REMOTES fakes (default 1) serve the same catalog, each as its own server, so every title has one stub in each
 # server folder and the stubs form one version group. The catalog size and images come from the SCALE_* variables of
 # fake_remote.py; SCALE_SCAN=1 also links the server folders to two libraries afterwards, scans them, and repeats the
-# incremental sync twice (the first links the versions) and the nightly reconciliation on scanned items.
+# incremental sync three times (the first finds the scanned library, the next ones find nothing changed), the nightly
+# reconciliation on scanned items and one more incremental after it.
 # SCALE_NAME, SCALE_PORT and SCALE_FAKE_PORT (the first fake; the others follow) override the container and the ports.
 # usage: run.sh   (raw data and results.txt go in WORK, by default ${TMPDIR:-/tmp}/jm-scale-run)
 set -uo pipefail
@@ -198,7 +199,9 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
   echo "--- scan done: $(cat "$WORK/scan-items.txt") items"
   measure incremental-scanned start_incremental
   measure incremental-scanned-again start_incremental
+  measure incremental-scanned-third start_incremental
   measure nightly-scanned start_nightly
+  measure incremental-after-nightly start_incremental
 fi
 
 sleep 3
