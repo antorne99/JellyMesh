@@ -4,6 +4,7 @@ using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -105,6 +106,22 @@ public class LocalCatalogReaderTests
         film.ProviderIds = new Dictionary<string, string>();
 
         Assert.True(Assert.Single(ReaderOver(film).Read()).AwaitsRefresh);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void AFilmWhoseRefreshIsOverdueAwaitsItNoLonger(bool overdue, bool awaits)
+    {
+        var film = Film("/media/film/a.mkv");
+        film.ProviderIds = new Dictionary<string, string>();
+        var refreshes = new Mock<ILocalRefreshRequester>();
+        refreshes.Setup(requester => requester.IsOverdue(film.Id)).Returns(overdue);
+        _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>())).Returns([film]);
+
+        var read = new LocalCatalogReader(_library.Object, _store, refreshes.Object).Read();
+
+        Assert.Equal(awaits, Assert.Single(read).AwaitsRefresh);
     }
 
     [Fact]

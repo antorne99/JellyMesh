@@ -5,6 +5,7 @@ using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -21,16 +22,19 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
 
     private readonly ILibraryManager _libraryManager;
     private readonly IPluginConfigurationStore _store;
+    private readonly ILocalRefreshRequester? _refreshes;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LocalCatalogReader"/> class.
     /// </summary>
     /// <param name="libraryManager">The library manager.</param>
     /// <param name="store">The configuration store.</param>
-    public LocalCatalogReader(ILibraryManager libraryManager, IPluginConfigurationStore store)
+    /// <param name="refreshes">What remembers the refreshes asked for, whose wait ends after one sync interval (Q243).</param>
+    public LocalCatalogReader(ILibraryManager libraryManager, IPluginConfigurationStore store, ILocalRefreshRequester? refreshes = null)
     {
         _libraryManager = libraryManager;
         _store = store;
+        _refreshes = refreshes;
     }
 
     /// <inheritdoc />
@@ -82,7 +86,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
                 Year = item.ProductionYear,
                 Ids = ids,
                 // Jellyfin stamps an item at the end of each metadata refresh, so an unstamped one has never had one.
-                AwaitsRefresh = HasNoFilmIds(ids) && item.DateLastRefreshed == DateTime.MinValue,
+                AwaitsRefresh = HasNoFilmIds(ids) && item.DateLastRefreshed == DateTime.MinValue && !(_refreshes?.IsOverdue(item.Id) ?? false),
                 Metadata = new ComparableMetadata
                 {
                     OriginalTitle = item.OriginalTitle,
