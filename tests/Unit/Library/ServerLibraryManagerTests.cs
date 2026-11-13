@@ -1678,12 +1678,16 @@ public sealed partial class ServerLibraryManagerTests
             fileSystem.Setup(system => system.GetValidFilename(It.IsAny<string>()))
                 .Returns<string>(name => string.Concat(name.Select(character => ":/\\*?\"<>|".Contains(character, StringComparison.Ordinal) ? ' ' : character)));
             FileSystem = fileSystem.Object;
+            Hooks = new HookedStore(Store);
             Manager = NewManager();
         }
 
         public IFileSystem FileSystem { get; }
 
         public InMemoryConfigurationStore Store { get; } = new();
+
+        // The store the manager sees, which can run a step around a save.
+        public HookedStore Hooks { get; }
 
         public RemoteServerConfig Server { get; }
 
@@ -1706,7 +1710,7 @@ public sealed partial class ServerLibraryManagerTests
         public ServerLibraryManager NewManager()
         {
             Renamer.Libraries = Libraries;
-            return new(Store, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, Logger, Clock);
+            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, Logger, Clock);
         }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.
@@ -1744,7 +1748,9 @@ public sealed partial class ServerLibraryManagerTests
                     throw ReadFailure;
                 }
 
-                return Folders.Select(Copy).ToList();
+                var read = Folders.Select(Copy).ToList();
+                OnRead?.Invoke();
+                return read;
             });
             _mock.Setup(manager => manager.AddVirtualFolder(It.IsAny<string>(), It.IsAny<CollectionTypeOptions?>(), It.IsAny<LibraryOptions>(), It.IsAny<bool>()))
                 .Returns<string, CollectionTypeOptions?, LibraryOptions, bool>((name, type, options, refresh) =>
@@ -1795,6 +1801,9 @@ public sealed partial class ServerLibraryManagerTests
         public Func<string, string>? RenameOnCreate { get; set; }
 
         public Action? OnCreate { get; set; }
+
+        // Runs after each read of the libraries, before the caller sees it.
+        public Action? OnRead { get; set; }
 
         public Exception? CreateFailure { get; set; }
 

@@ -175,6 +175,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <inheritdoc />
     public async Task ReconcileAsync(CancellationToken cancellationToken)
     {
+        var completeFollows = CompleteFollows();
         if (await _gate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
             try
@@ -188,7 +189,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         else
         {
-            MarkSkipped(config => FollowedServers(config).Select(serverId => LiveRegistry(config, serverId)));
+            MarkSyncSkipped(completeFollows);
         }
 
         // After a failure or a restart, what removed servers left is tried again.

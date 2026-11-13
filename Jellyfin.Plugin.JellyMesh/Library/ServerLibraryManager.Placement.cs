@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -7,28 +9,55 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 // The follow before the placement of the servers linked later, and the automatic libraries in that same read (§10 rows 384, 385).
 public sealed partial class ServerLibraryManager
 {
+    // Guards the placement follow state below. Lock order: the gate if held, then this lock, then the store; the gate is
+    // never taken under this lock.
+    private readonly Lock _followLock = new();
+    private long _completeFollows;
+    private int _placementFollows;
+    private bool _skipDeferred;
+
     /// <inheritdoc />
     public PlacementLibraries? FollowForPlacement()
     {
-        // A holder of the lock may be changing the libraries, so placement waits rather than queue behind it.
-        if (!_gate.Wait(0))
+        // Counted before the gate, so that a sync finding the gate held leaves its skipped mark to this follow (§10 row 394).
+        lock (_followLock)
         {
-            return null;
+            _placementFollows++;
         }
 
+        var gated = false;
+        var followed = false;
         try
         {
-            return _renamer.HasPending ? null : FollowAndFind();
+            // A holder of the lock may be changing the libraries, so placement waits rather than queue behind it.
+            gated = _gate.Wait(0);
+            if (!gated || _renamer.HasPending || FollowLive() is not { } read)
+            {
+                return null;
+            }
+
+            followed = true;
+            return FindAutomatic(read.Folders, read.Root);
         }
         finally
         {
-            _gate.Release();
+            try
+            {
+                EndPlacementFollow(followed);
+            }
+            finally
+            {
+                if (gated)
+                {
+                    _gate.Release();
+                }
+            }
         }
     }
 
-    // Reads the libraries once, follows the live registries with that read, then finds the automatic libraries in it.
-    // A follow that cannot run marks nothing skipped: no check of the sync was missed (decision 173).
-    private PlacementLibraries? FollowAndFind()
+    // Reads the libraries once and follows the live registries with that read; null when the follow cannot run.
+    // A follow that cannot run marks nothing skipped, unless a sync left its mark to it (decision 173, §10 row 394).
+    private (List<VirtualFolderInfo> Folders, string Root)? FollowLive()
     {
         var (serverIds, root) = _store.Read(config => (FollowedServers(config), config.FederatedFolderPath));
         if (root.Length == 0 || ReadFolders() is not { } folders)
@@ -47,29 +76,80 @@ public sealed partial class ServerLibraryManager
             Follow(serverId, folders);
         }
 
-        return _store.Read(config =>
-        {
-            // A held library renamed in the dashboard is not followed, so it is found by its folder too (§10 row 395).
-            var automatic = config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
-                .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
-                .Select(record => FindRecorded(record, folders))
-                .Concat(folders.Where(folder => config.RemovedServerLibraries.Any(held => _kinds.Any(kind => Passes(folder, kind, root, held.ServerId)))))
-                .OfType<VirtualFolderInfo>()
-                .ToHashSet();
+        return (folders, root);
+    }
 
-            // One made and never recorded, as after a crash, passes as the own library of a server with the switch on that lacks
-            // it; one there at switch-on or left to the admin is the admin's (§10 row 393).
-            var unrecorded = config.Servers.Any(server =>
-            {
-                var preexisting = IdSet(server.PreexistingLibraryIds);
-                return server.AutomaticLibraries && _kinds.Any(kind =>
-                    server.AutomaticLibraryRegistry.All(record => record.Kind != kind)
-                    && folders.Any(folder => !automatic.Contains(folder)
-                        && !preexisting.Contains(folder.ItemId ?? string.Empty)
-                        && !server.ReleasedAutomaticLibraries.Contains(folder.Name, StringComparer.Ordinal)
-                        && Passes(folder, kind, root, server.Id)));
-            });
-            return unrecorded ? null : new PlacementLibraries(folders, automatic);
+    // Finds the automatic libraries in the read the follow used, or null while one may lack its record (§10 rows 384, 393, 395).
+    private PlacementLibraries? FindAutomatic(List<VirtualFolderInfo> folders, string root) => _store.Read(config =>
+    {
+        // A held library renamed in the dashboard is not followed, so it is found by its folder too (§10 row 395).
+        var automatic = config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
+            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+            .Select(record => FindRecorded(record, folders))
+            .Concat(folders.Where(folder => config.RemovedServerLibraries.Any(held => _kinds.Any(kind => Passes(folder, kind, root, held.ServerId)))))
+            .OfType<VirtualFolderInfo>()
+            .ToHashSet();
+
+        // One made and never recorded, as after a crash, passes as the own library of a server with the switch on that lacks
+        // it; one there at switch-on or left to the admin is the admin's (§10 row 393).
+        var unrecorded = config.Servers.Any(server =>
+        {
+            var preexisting = IdSet(server.PreexistingLibraryIds);
+            return server.AutomaticLibraries && _kinds.Any(kind =>
+                server.AutomaticLibraryRegistry.All(record => record.Kind != kind)
+                && folders.Any(folder => !automatic.Contains(folder)
+                    && !preexisting.Contains(folder.ItemId ?? string.Empty)
+                    && !server.ReleasedAutomaticLibraries.Contains(folder.Name, StringComparer.Ordinal)
+                    && Passes(folder, kind, root, server.Id)));
         });
+        return unrecorded ? null : new PlacementLibraries(folders, automatic);
+    });
+
+    // A complete follow covers the checks of the syncs that found the gate held meanwhile; otherwise their mark is made now.
+    private void EndPlacementFollow(bool followed)
+    {
+        lock (_followLock)
+        {
+            _placementFollows--;
+            if (followed)
+            {
+                _completeFollows++;
+                _skipDeferred = false;
+            }
+            else if (_skipDeferred && _placementFollows == 0)
+            {
+                _skipDeferred = false;
+                MarkSkipped(config => FollowedServers(config).Select(serverId => LiveRegistry(config, serverId)));
+            }
+        }
+    }
+
+    private long CompleteFollows()
+    {
+        lock (_followLock)
+        {
+            return _completeFollows;
+        }
+    }
+
+    // The mark of a sync that found the gate held: none when a complete follow ended since the sync started, and left to the
+    // placement follow running now (§10 row 394).
+    private void MarkSyncSkipped(long completeFollows)
+    {
+        lock (_followLock)
+        {
+            if (_completeFollows != completeFollows)
+            {
+                return;
+            }
+
+            if (_placementFollows > 0)
+            {
+                _skipDeferred = true;
+                return;
+            }
+
+            MarkSkipped(config => FollowedServers(config).Select(serverId => LiveRegistry(config, serverId)));
+        }
     }
 }
