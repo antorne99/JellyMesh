@@ -111,6 +111,12 @@ public sealed class LibraryRenamer : ILibraryRenamer
         ArgumentException.ThrowIfNullOrWhiteSpace(newName);
         cancellationToken.ThrowIfCancellationRequested();
 
+        // The same exact name is no rename and must not write a temporary name (row 358).
+        if (string.Equals(name, newName, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
         var root = _paths.DefaultUserViewsPath;
         if (ChildOf(root, name) is not { } currentPath || ChildOf(root, newName) is not { } newPath || !Directory.Exists(currentPath))
         {

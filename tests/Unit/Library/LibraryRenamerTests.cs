@@ -225,6 +225,20 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_rename_to_the_same_name_is_refused_and_records_nothing()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+
+        Assert.Null(await RenameAsync(to: "Casa - Film"));
+
+        Assert.Equal(["Casa - Film"], Directory.GetDirectories(_root).Select(Path.GetFileName));
+        Assert.False(File.Exists(JournalPath));
+        Assert.False(_renamer.HasPending);
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
+        _monitor.Verify(monitor => monitor.Stop(), Times.Never);
+    }
+
+    [Fact]
     public async Task Renaming_back_takes_the_id_out_of_the_retired_ones()
     {
         await RenameAsync();
