@@ -92,10 +92,15 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             var paths = stubs.Select(stub => stub.ServerId == serverId ? NewPath(stub.RelativePath, old, label) : null).ToList();
             var live = LivePaths(state, paths.OfType<string>());
 
-            // The old files of a stub that left go now, so that a file written at their path is not deleted later.
+            // The old files of a stub that left go now, so that a file written at their path is not deleted later; their item
+            // leaves its version group first, or the entry stays for the next round (Q351).
+            var leaving = state.Renames
+                .Where(rename => !IsTaken(rename, live) && rename.RemovedItemId is null && _registry.Find(rename.StubId) is null && root.Length > 0)
+                .ToList();
+            var stuck = await StuckInGroupsAsync(leaving, cancellationToken).ConfigureAwait(false);
+            var detached = leaving.Where(rename => !stuck.Contains(rename)).ToHashSet();
             var renames = state.Renames
-                .Where(rename => !IsTaken(rename, live)
-                    && (rename.RemovedItemId is not null || _registry.Find(rename.StubId) is not null || root.Length == 0 || !TryDeleteOld(root, rename, null)))
+                .Where(rename => !IsTaken(rename, live) && (!detached.Contains(rename) || !TryDeleteOld(root, rename, null)))
                 .ToList();
             var written = new List<string>();
             var renamed = new List<(string From, string To)>();
@@ -167,6 +172,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             var next = new Dictionary<StubRename, StubRename?>();
             var moves = new List<(StubRename Rename, StubEntry Stub, WatchStateMove Move)>();
             var forget = new List<Guid>();
+            var leaving = new List<(StubRename Rename, StubEntry? Stub)>();
             var live = LivePaths(state, []);
             foreach (var rename in state.Renames)
             {
@@ -197,11 +203,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 if (stub is null || (old is null && renamed is not null))
                 {
                     // Nothing to carry: the stub left the registry, or a scan made the new item but never the old one.
-                    if (TryDeleteOld(root, rename, stub))
-                    {
-                        next[rename] = null;
-                    }
-
+                    leaving.Add((rename, stub));
                     continue;
                 }
 
@@ -210,6 +212,19 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 {
                     var from = stub with { RelativePath = rename.OldPath };
                     moves.Add((rename, stub, WatchStateMove.Of(from, old.Id, [new WatchStateTarget(renamed.Id, stub.ServerId)], removesOldItem: true)));
+                }
+            }
+
+            if (leaving.Count > 0)
+            {
+                // The old item may still be in its version group, so it leaves first, or its files wait (Q351).
+                var stuck = await StuckInGroupsAsync(leaving.Select(entry => entry.Rename).ToList(), cancellationToken).ConfigureAwait(false);
+                foreach (var (rename, stub) in leaving.Where(entry => !stuck.Contains(entry.Rename)))
+                {
+                    if (TryDeleteOld(root, rename, stub))
+                    {
+                        next[rename] = null;
+                    }
                 }
             }
 
@@ -292,11 +307,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     // leave its version group, which wait for the next round (Q326). The caller holds the registry lock.
     private async Task<HashSet<StubRename>> StuckInGroupsAsync(IReadOnlyList<StubRename> renames, CancellationToken cancellationToken)
     {
-        var olds = renames
-            .Select(rename => (Rename: rename, Stub: _registry.Find(rename.StubId)))
-            .Where(entry => entry.Stub is not null)
-            .Select(entry => (entry.Rename, Old: entry.Stub! with { RelativePath = entry.Rename.OldPath }))
-            .ToList();
+        var olds = renames.Select(rename => (Rename: rename, Old: OldEntryOf(rename))).ToList();
         if (olds.Count == 0)
         {
             return [];
@@ -305,6 +316,13 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         var failed = await _linker.DetachForRemovalAsync(olds.Select(entry => entry.Old).ToList(), cancellationToken).ConfigureAwait(false);
         return olds.Where(entry => failed.Contains(entry.Old)).Select(entry => entry.Rename).ToHashSet();
     }
+
+    // The stub at the old path of a move. One that left the registry has no kind: the removal lookup finds its item by path
+    // whatever the kind.
+    private StubEntry OldEntryOf(StubRename rename) =>
+        _registry.Find(rename.StubId) is { } stub
+            ? stub with { RelativePath = rename.OldPath }
+            : new StubEntry { Id = rename.StubId, Kind = StubKind.Movie, RelativePath = rename.OldPath, Sources = [], IdentityKey = string.Empty };
 
     // An entry whose stub left, at a path a live stub has or takes: its files and item ID are that stub's now.
     private bool IsTaken(StubRename rename, HashSet<string> live) => _registry.Find(rename.StubId) is null && live.Contains(rename.OldPath);

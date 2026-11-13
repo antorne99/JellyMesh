@@ -193,6 +193,25 @@ public sealed class StubCleanupTaskTests : IDisposable
         return (survivor, merged);
     }
 
+    // Gives the stub of an item a pending server rename from an old label, its old .strm still on disk.
+    private async Task<string> PendingRenameAsync(Movie item)
+    {
+        var stub = _fixture.Registry.State.Stubs.Single(stub => _fixture.Path_(stub.RelativePath) == item.Path);
+        var oldPath = Path.Combine(Path.GetDirectoryName(stub.RelativePath)!, "Vecchio.strm");
+        await File.WriteAllTextAsync(_fixture.Path_(oldPath), "old");
+        await _fixture.Registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await _fixture.Registry.SaveAsync(_fixture.Registry.State with { Renames = [new StubRename(stub.Id, oldPath)] }, CancellationToken.None);
+        }
+        finally
+        {
+            _fixture.Registry.Exit();
+        }
+
+        return oldPath;
+    }
+
     [Fact]
     public async Task AStubMergedIntoAnother_HandsItsStateOverBeforeItGoes()
     {
@@ -227,6 +246,38 @@ public sealed class StubCleanupTaskTests : IDisposable
 
         Assert.Equal(["detach " + merged.Path, "delete " + merged.Path], _calls);
         Assert.False(File.Exists(merged.Path));
+    }
+
+    // Q351: a merged stub whose server rename is pending also has its old item in a version group, and its folder goes.
+    [Fact]
+    public async Task AMergedStubWithAPendingRenameDetachesItsOldItemToo()
+    {
+        var (_, merged) = await TwoFilmsThatBecomeOneAsync();
+        var oldPath = await PendingRenameAsync(merged);
+        var detached = new List<string>();
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => detached.AddRange(stubs.Select(stub => _fixture.Path_(stub.RelativePath))))
+            .ReturnsAsync([]);
+
+        await RunAsync();
+
+        Assert.Equal([merged.Path, _fixture.Path_(oldPath)], detached);
+        Assert.False(File.Exists(merged.Path));
+    }
+
+    [Fact]
+    public async Task AMergedStubWhoseOldItemCannotLeaveItsVersionGroupStays()
+    {
+        var (_, merged) = await TwoFilmsThatBecomeOneAsync();
+        var oldPath = await PendingRenameAsync(merged);
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.Where(stub => stub.RelativePath == oldPath).ToList());
+
+        await RunAsync();
+
+        Assert.True(File.Exists(merged.Path));
+        Assert.True(File.Exists(_fixture.Path_(oldPath)));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
     }
 
     // Q326 and Q327: a merged stub that cannot leave its group stays, with its state, for the next scan.

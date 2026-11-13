@@ -787,6 +787,56 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(["detach Film (2020) - A.strm", "delete"], steps);
     }
 
+    // Q351: during a server rename the old item is still in its version group, and a film's folder takes its file too, so
+    // it leaves the group with the stub.
+    [Fact]
+    public async Task ARemovedStubWithAPendingRenameDetachesItsOldItemToo()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var oldPath = await PendingRenameAsync(a, "Film (2020)");
+        var detached = new List<string>();
+        _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => detached.AddRange(stubs.Select(stub => Path.GetFileName(stub.RelativePath))))
+            .ReturnsAsync([]);
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["Film (2020) - A.strm", Path.GetFileName(oldPath)], detached);
+        Assert.False(Directory.Exists(_fixture.Path_(a, "Film", "Film (2020)")));
+    }
+
+    // Q351 and Q326: an old item that cannot leave its group keeps the stub, counted once, for the next round.
+    [Fact]
+    public async Task ARemovedStubWhoseOldItemCannotLeaveItsGroupStaysUntilTheNextRound()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var oldPath = await PendingRenameAsync(a, "Film (2020)");
+        _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.Where(stub => stub.RelativePath == oldPath).ToList());
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(_fixture.Path_(oldPath)));
+        Assert.True(File.Exists(_fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm")));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        Assert.Equal(1, report.Failed);
+        Assert.Equal(new StubCounts(0, 0, 0, 1), report.ByServer[a.Id]);
+
+        _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(File.Exists(_fixture.Path_(oldPath)));
+        Assert.Single(_fixture.Registry.State.Stubs);
+    }
+
     // Q326: a stub whose detach failed stays, with its file and registry entry, and the next round removes it.
     [Fact]
     public async Task AStubWhoseDetachFailedStaysUntilTheNextRound()
@@ -1544,6 +1594,25 @@ public sealed class LibraryMaterializerTests : IDisposable
 
         libraries.Verify(item => item.ReconcileAsync(It.IsAny<CancellationToken>()), Times.Once);
         libraries.Verify(item => item.MarkFollowSkipped(), Times.Never);
+    }
+
+    // Leaves the film stub of a server with a pending rename from an old label, its old .strm still on disk.
+    private async Task<string> PendingRenameAsync(RemoteServerInfo server, string folder)
+    {
+        var stub = _fixture.Registry.State.Stubs.Single(stub => stub.RelativePath.Contains(folder, StringComparison.Ordinal));
+        var oldPath = StubFixture.In(server, "Film", folder, folder + " - Vecchio.strm");
+        await File.WriteAllTextAsync(_fixture.Path_(oldPath), "old");
+        await _fixture.Registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await _fixture.Registry.SaveAsync(_fixture.Registry.State with { Renames = [new StubRename(stub.Id, oldPath)] }, CancellationToken.None);
+        }
+        finally
+        {
+            _fixture.Registry.Exit();
+        }
+
+        return oldPath;
     }
 
     private CatalogSyncService SyncWith(ILibraryMaterializer materializer, IServerLibraryManager libraries) => new(

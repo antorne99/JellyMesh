@@ -608,8 +608,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return path;
     }
 
-    // The stubs to remove this round: one that could not leave its version group stays, counted as failed, for the next
-    // round (Q326).
+    // The stubs to remove this round: one that could not leave its version group, also at the old path of a pending server
+    // rename, stays, counted as failed, for the next round (Q326, Q351).
     private async Task<IReadOnlyList<StubEntry>> DetachRemovalsAsync(Run run, IReadOnlyList<StubEntry> removals, CancellationToken cancellationToken)
     {
         if (_linker is null || removals.Count == 0)
@@ -617,19 +617,20 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             return removals;
         }
 
-        var kept = await _linker.DetachForRemovalAsync(removals, cancellationToken).ConfigureAwait(false);
+        var kept = await _linker.DetachForRemovalAsync(run.State.WithOldPaths(removals), cancellationToken).ConfigureAwait(false);
         if (kept.Count == 0)
         {
             return removals;
         }
 
-        run.Failed += kept.Count;
-        foreach (var serverId in kept.Select(stub => stub.ServerId).OfType<Guid>())
+        var ids = kept.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        var stuck = removals.Where(stub => ids.Contains(stub.Id)).ToList();
+        run.Failed += stuck.Count;
+        foreach (var serverId in stuck.Select(stub => stub.ServerId).OfType<Guid>())
         {
             run.CountServer(serverId, failed: 1);
         }
 
-        var ids = kept.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
         return removals.Where(stub => !ids.Contains(stub.Id)).ToList();
     }
 
