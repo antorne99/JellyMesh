@@ -73,8 +73,9 @@ public sealed class LayoutMigration : ILayoutMigration
             return;
         }
 
-        // Until every library on an old path holds the new ones, and each server folder is in a library, the old layout stays (Q49, Q215).
-        if (LibrariesOf(root) is not { } libraries || !libraries.ServerFoldersLinked || libraries.OnOldPaths.Any(library => library.MissingPaths.Count > 0))
+        // Until every library on an old path holds the new ones, and each server folder is in a library, the old layout
+        // stays; only the kinds with old titles count (Q49, Q215, Q249).
+        if (LibrariesOf(root, _registry.State) is not { } libraries || !libraries.ServerFoldersLinked || libraries.OnOldPaths.Any(library => library.MissingPaths.Count > 0))
         {
             return;
         }
@@ -148,7 +149,7 @@ public sealed class LayoutMigration : ILayoutMigration
 
         var state = _registry.State;
         var old = state.Stubs.Count(stub => stub.ServerId is null) + state.Series.Count(series => series.ServerId is null);
-        var read = LibrariesOf(root);
+        var read = LibrariesOf(root, state);
         var libraries = read?.OnOldPaths ?? [];
         if (old == 0 && libraries.Count == 0)
         {
@@ -340,8 +341,8 @@ public sealed class LayoutMigration : ILayoutMigration
     }
 
     // The libraries on an old path, with the server folders of the same kind they lack, whether every server folder is in
-    // some library, and the ones that are in none; null when they cannot be read.
-    private Libraries? LibrariesOf(string root)
+    // some library, and the ones that are in none; only the kinds with old titles count (Q249). Null when unreadable.
+    private Libraries? LibrariesOf(string root, StubState state)
     {
         List<VirtualFolderInfo> folders;
         try
@@ -355,14 +356,14 @@ public sealed class LayoutMigration : ILayoutMigration
         }
 
         var servers = _servers.GetServers();
-        var kinds = new (string Old, Func<Guid, string> New)[]
+        var kinds = new (string Old, Func<Guid, string> New, bool Needed)[]
         {
-            (FederatedFolderLayout.MoviesPath(root), server => FederatedFolderLayout.ServerMoviesPath(root, server)),
-            (FederatedFolderLayout.SeriesPath(root), server => FederatedFolderLayout.ServerSeriesPath(root, server))
+            (FederatedFolderLayout.MoviesPath(root), server => FederatedFolderLayout.ServerMoviesPath(root, server), state.Stubs.Any(stub => stub.ServerId is null && stub.Kind == StubKind.Movie)),
+            (FederatedFolderLayout.SeriesPath(root), server => FederatedFolderLayout.ServerSeriesPath(root, server), state.Series.Any(series => series.ServerId is null) || state.Stubs.Any(stub => stub.ServerId is null && stub.Kind == StubKind.Episode))
         };
         var libraries = new List<LayoutMigrationLibrary>();
         var unlinked = servers
-            .SelectMany(server => kinds.Select(kind => kind.New(server.Id)))
+            .SelectMany(server => kinds.Where(kind => kind.Needed).Select(kind => kind.New(server.Id)))
             .Where(path => !folders.Any(folder => (folder.Locations ?? []).Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))))
             .ToList();
         foreach (var folder in folders)
@@ -373,7 +374,7 @@ public sealed class LayoutMigration : ILayoutMigration
             var old = kinds.Where(kind => Holds(kind.Old)).ToList();
             if (old.Count > 0)
             {
-                var missing = old.SelectMany(kind => servers.Select(server => kind.New(server.Id))).Where(path => !Holds(path)).ToList();
+                var missing = old.Where(kind => kind.Needed).SelectMany(kind => servers.Select(server => kind.New(server.Id))).Where(path => !Holds(path)).ToList();
                 libraries.Add(new LayoutMigrationLibrary(folder.Name, old.Select(kind => kind.Old).ToList(), missing));
             }
         }

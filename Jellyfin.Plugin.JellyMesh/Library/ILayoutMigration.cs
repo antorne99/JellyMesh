@@ -13,8 +13,8 @@ public interface ILayoutMigration
 {
     /// <summary>
     /// Once every library on an old path holds the new paths of the same kind, and each server folder is in some library,
-    /// carries each user's state from the old stubs to the new items, and empties the old folders when every old title is
-    /// done. Without the new paths, or any server, it does nothing (Q49, Q215, Q260).
+    /// counting only the kinds with old titles, carries each user's state from the old stubs to the new items, and empties
+    /// the old folders when every old title is done. Without the new paths, or any server, it does nothing (Q49, Q215, Q249, Q260).
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>

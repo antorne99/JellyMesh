@@ -157,7 +157,7 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.Equal("Film", library.Name);
         Assert.Equal([OldFilms], library.OldPaths);
         Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], library.MissingPaths);
-        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], status.UnlinkedFolders);
+        Assert.Empty(status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
@@ -176,7 +176,7 @@ public sealed class LayoutMigrationTests : IDisposable
         var status = migration.GetStatus(Root)!;
         Assert.Equal(LayoutMigrationStep.AddPaths, status.Step);
         Assert.Empty(status.Libraries);
-        Assert.Equal(NewPaths(), status.UnlinkedFolders);
+        Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
@@ -185,6 +185,10 @@ public sealed class LayoutMigrationTests : IDisposable
     {
         var (old, _) = OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
+        var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
+        OldEpisode(oldShow, (_serverA, "e1"));
+        var (newShow, _) = NewShow(_serverA, "s1");
+        NewEpisode(newShow, _serverA, "e1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies,
             [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
 
@@ -200,6 +204,65 @@ public sealed class LayoutMigrationTests : IDisposable
         await migration.RunAsync(CancellationToken.None);
 
         Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+        Assert.DoesNotContain(_registry.State.Series, series => series.ServerId is null);
+    }
+
+    [Fact]
+    public async Task AnInstallWithOnlyFilmsFinishesWithoutTheSeriesFolders()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies,
+            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, OldSeries));
+        Row(_mario, oldItem).IsFavorite = true;
+
+        var migration = await MigrationAsync();
+        var before = migration.GetStatus(Root)!;
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.Equal(LayoutMigrationStep.Carrying, before.Step);
+        Assert.Empty(before.UnlinkedFolders);
+        Assert.All(before.Libraries, library => Assert.Empty(library.MissingPaths));
+        Assert.True(Row(_mario, a).IsFavorite);
+        Assert.Null(_registry.Find(old.Id));
+        Assert.Equal(LayoutMigrationStep.RemoveOldPaths, migration.GetStatus(Root)!.Step);
+    }
+
+    [Fact]
+    public async Task AnInstallWithOnlySeriesFinishesWithoutTheFilmFolders()
+    {
+        var (oldShow, oldShowItem) = OldShow("Lost", (_serverA, "s1"));
+        OldEpisode(oldShow, (_serverA, "e1"));
+        var (newShow, newShowItem) = NewShow(_serverA, "s1");
+        NewEpisode(newShow, _serverA, "e1");
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
+            [OldSeries, FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)]));
+        Row(_mario, oldShowItem).IsFavorite = true;
+
+        var migration = await MigrationAsync();
+        Assert.Equal(LayoutMigrationStep.Carrying, migration.GetStatus(Root)!.Step);
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.True(Row(_mario, newShowItem).IsFavorite);
+        Assert.DoesNotContain(_registry.State.Series, series => series.ServerId is null);
+        Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+    }
+
+    [Fact]
+    public async Task AnOldEpisodeAloneNeedsTheSeriesFolders()
+    {
+        var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
+        var (episode, _) = OldEpisode(oldShow, (_serverA, "e1"));
+        _series.Remove(oldShow);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies,
+            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(episode.Id));
+        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
     }
 
     [Fact]
@@ -219,6 +282,7 @@ public sealed class LayoutMigrationTests : IDisposable
     public async Task ALibraryOnTheOldSeriesPathNeedsOnlyTheSeriesPathsOfEachServer()
     {
         OldFilm("Dune", (_serverA, "a1"));
+        OldShow("Lost", (_serverA, "s1"));
         _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, OldSeries, FederatedFolderLayout.ServerSeriesPath(Root, _serverA)));
 
         var status = (await MigrationAsync()).GetStatus(Root)!;
