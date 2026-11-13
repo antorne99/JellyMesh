@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -86,7 +87,7 @@ public sealed partial class ServerLibraryManager
         var automatic = config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
             .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
             .Select(record => FindRecorded(record, folders))
-            .Concat(folders.Where(folder => config.RemovedServerLibraries.Any(held => _kinds.Any(kind => Passes(folder, kind, root, held.ServerId)))))
+            .Concat(folders.Where(folder => config.RemovedServerLibraries.Any(held => PassesAsHeld(folder, held, root))))
             .OfType<VirtualFolderInfo>()
             .ToHashSet();
 
@@ -104,6 +105,12 @@ public sealed partial class ServerLibraryManager
         });
         return unrecorded ? null : new PlacementLibraries(folders, automatic);
     });
+
+    // A library on the folder of a removed server, other than one there at switch-on or released to the admin (§10 rows 395, 402).
+    private static bool PassesAsHeld(VirtualFolderInfo folder, RemovedServerLibrariesConfig held, string root) =>
+        !(folder.ItemId is { Length: > 0 } id && held.PreexistingLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase))
+        && !held.ReleasedLibraries.Contains(folder.Name, StringComparer.Ordinal)
+        && _kinds.Any(kind => Passes(folder, kind, root, held.ServerId));
 
     // A complete follow covers the checks of the syncs that found the gate held meanwhile; otherwise their mark is made now.
     private void EndPlacementFollow(bool followed)

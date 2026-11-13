@@ -366,6 +366,60 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(["Film di casa"], fixture.Server.ReleasedAutomaticLibraries);
     }
 
+    [Fact]
+    public async Task A_library_a_removed_server_found_at_switch_on_on_its_folder_is_the_admin_s()
+    {
+        // Row 395 counts the libraries on the folder of a removed server, but not one that was there at switch-on (§10 row 402).
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], libraries.Automatic.Select(folder => folder.Name).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_library_a_removed_server_released_on_its_folder_is_the_admin_s()
+    {
+        // As rows 177 and 202 leave it: dropped from the held registry and listed as released (§10 row 402).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film mio");
+        fixture.Store.Update(config =>
+        {
+            var held = config.RemovedServerLibraries.Single();
+            held.Libraries.Remove(held.Libraries.Single(record => record.Kind == ServerLibraryKind.Movies));
+            held.ReleasedLibraries.Add("Film mio");
+        });
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_library_a_removed_server_found_at_switch_on_stays_the_admin_s_once_the_server_is_added_back()
+    {
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        var server = fixture.AddServerBack("Casa");
+        await fixture.Manager.Enable(_serverId).Job;
+        Assert.Contains(fixture.Libraries.IdOf("Film"), server.PreexistingLibraryIds);
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.DoesNotContain(libraries.Automatic, folder => folder.Name == "Film");
+        Assert.Equal(4, libraries.Automatic.Count);
+    }
+
     // Two servers with their switch on, each with its libraries, and a check that recorded them all.
     private static async Task<RemoteServerConfig> TwoServersFollowedAsync(Fixture fixture)
     {
