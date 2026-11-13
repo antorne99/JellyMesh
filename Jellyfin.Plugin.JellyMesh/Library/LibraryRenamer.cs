@@ -9,6 +9,7 @@ using Jellyfin.Data;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -40,6 +41,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     private readonly ILibraryViewIds _views;
     private readonly RetiredLibraryIds _retired;
     private readonly LibraryRenameJournal _journal;
+    private readonly IPluginConfigurationStore _store;
     private readonly ILogger<LibraryRenamer> _logger;
     private readonly ILibraryChangeTracker? _changes;
     private readonly Action<string, string> _move;
@@ -54,6 +56,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     /// <param name="views">The view ids of the running server.</param>
     /// <param name="retired">The retired library ids.</param>
     /// <param name="journal">The renames whose user lists are not all rewritten yet.</param>
+    /// <param name="store">The configuration store, whose registries name the libraries of the plugin.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="changes">The library change tracker, told of the new id so the page does not warn (Q53).</param>
     public LibraryRenamer(
@@ -64,9 +67,10 @@ public sealed class LibraryRenamer : ILibraryRenamer
         ILibraryViewIds views,
         RetiredLibraryIds retired,
         LibraryRenameJournal journal,
+        IPluginConfigurationStore store,
         ILogger<LibraryRenamer> logger,
         ILibraryChangeTracker? changes = null)
-        : this(paths, library, monitor, users, views, retired, journal, logger, changes, Directory.Move)
+        : this(paths, library, monitor, users, views, retired, journal, store, logger, changes, Directory.Move)
     {
     }
 
@@ -79,6 +83,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
         ILibraryViewIds views,
         RetiredLibraryIds retired,
         LibraryRenameJournal journal,
+        IPluginConfigurationStore store,
         ILogger<LibraryRenamer> logger,
         ILibraryChangeTracker? changes,
         Action<string, string> move)
@@ -90,6 +95,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
         _views = views;
         _retired = retired;
         _journal = journal;
+        _store = store;
         _logger = logger;
         _changes = changes;
         _move = move;
@@ -274,6 +280,13 @@ public sealed class LibraryRenamer : ILibraryRenamer
 
     private async Task ResumeAsync(LibraryRenameRecord record, string root)
     {
+        if (!IsBound(record, root))
+        {
+            _logger.LogError("A pending library rename does not match the library folders. It is set aside");
+            _journal.SetAside(record);
+            return;
+        }
+
         var names = FolderNames(root);
         if (record.TemporaryName is { } temporary && names.Contains(temporary))
         {
@@ -286,19 +299,45 @@ public sealed class LibraryRenamer : ILibraryRenamer
             // Only the folder of the library moves, outside every watched path, so the monitor runs on.
             _move(Path.Combine(root, temporary), Path.Combine(root, record.NewName));
             CollectionFolder.OnCollectionFolderChange();
+            _retired.Retire(_library.GetNewItemId(Path.Combine(root, temporary), typeof(CollectionFolder)));
             _retired.Restore(record.NewId);
             _changes?.Renamed(record.OldId, record.NewId, record.NewName);
             names = FolderNames(root);
         }
 
-        if (!names.Contains(record.NewName) && names.Contains(record.OldName))
+        if (names.Contains(record.OldName))
         {
-            // The folder never moved, so the old id is still the library's: its lists stay, and a new rename starts over.
+            // The folder never moved, or a library was made again with the old name and so its id: lists stay (row 331).
             _journal.Remove(record);
             return;
         }
 
         await FinishAsync(record, root).ConfigureAwait(false);
+    }
+
+    // True when the names stay in the libraries folder, the new id is the new folder's and the old id the old folder's or
+    // a library of the plugin's, so a record written by someone else moves and remaps nothing (row 329).
+    private bool IsBound(LibraryRenameRecord record, string root)
+    {
+        try
+        {
+            if (ChildOf(root, record.OldName) is not { } oldPath
+                || ChildOf(root, record.NewName) is not { } newPath
+                || (record.TemporaryName is { } temporary && ChildOf(root, temporary) is null)
+                || !_library.GetNewItemId(newPath, typeof(CollectionFolder)).Equals(record.NewId))
+            {
+                return false;
+            }
+
+            return _library.GetNewItemId(oldPath, typeof(CollectionFolder)).Equals(record.OldId)
+                || _store.Read(config => config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
+                    .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+                    .Any(library => Guid.TryParse(library.ItemId, out var id) && id.Equals(record.OldId)));
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     // Drops the record once every user is rewritten. With no user listed, as early in a start, it waits.
