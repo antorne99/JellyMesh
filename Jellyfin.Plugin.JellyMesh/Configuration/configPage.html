@@ -1551,7 +1551,7 @@
                     "Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Librerie nella sua scheda per riprovare.",
                     "Added {server}. Choose its libraries.": "{server} è stato aggiunto. Scegli le sue librerie.",
                     "Added {server}. Open Libraries on its card to choose what to import.": "{server} è stato aggiunto. Apri Librerie nella sua scheda per scegliere cosa importare.",
-                    "Adding the server back brings the same titles and watch state.": "Aggiungendo di nuovo il server tornano gli stessi titoli e lo stato di visione.",
+                    "Adding the server back, or restoring the settings, brings its folders back, with the same titles and watch state.": "Aggiungendo di nuovo il server, o ripristinando le impostazioni, tornano le sue cartelle, con gli stessi titoli e lo stato di visione.",
                     "Advanced playback times": "Tempi di riproduzione avanzati",
                     "Already merged.": "Già uniti.",
                     "Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.": "Un altro server JellyMesh accede qui con un utente dedicato non amministratore di questo server. Scegli quell'utente, cosa può leggere e quanti stream può tenere insieme. Un utente così non può raggiungere nient'altro su questo server.",
@@ -1893,7 +1893,7 @@
                     "This server is at its stream limit on that remote.": "Questo server ha raggiunto il suo limite di stream su quel remoto.",
                     "This server is not configured.": "Questo server non è configurato.",
                     "This user sees no film or series libraries. Give it access on that server, then open Libraries again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Librerie.",
-                    "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I titoli dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
+                    "The folders of this server are deleted now: its titles leave the libraries, with their images. The same titles from another server stay. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "Le cartelle di questo server vengono eliminate ora: i suoi titoli escono dalle librerie, con le loro immagini. Gli stessi titoli di un altro server restano. I titoli dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
                     "To do": "Da fare",
                     "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.": "Due film locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo un titolo con una copia locale.",
                     "Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.": "Due serie locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo una serie con una copia locale.",
@@ -2999,10 +2999,10 @@
                     actions.appendChild(button(t('Remove'), function () {
                         var paragraphs = [
                             t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
-                            t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
+                            t('The folders of this server are deleted now: its titles leave the libraries, with their images. The same titles from another server stay. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
                             t('Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
                             t('Playback already running may not stop right away.'),
-                            t('Adding the server back brings the same titles and watch state.')
+                            t('Adding the server back, or restoring the settings, brings its folders back, with the same titles and watch state.')
                         ];
 
                         // Removing the server deletes its automatic libraries with no other confirmation (decision 156).
