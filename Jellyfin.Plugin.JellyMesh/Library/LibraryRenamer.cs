@@ -305,10 +305,16 @@ public sealed class LibraryRenamer : ILibraryRenamer
             return;
         }
 
-        if (folders.ContainsKey(record.OldName))
+        if (folders.TryGetValue(record.OldName, out var liveId))
         {
             // The folder never moved, or a library was made again with the old name and so its id: lists stay and the id
-            // is valid again (rows 331, 348).
+            // is valid again (rows 331, 348). Any other id stays retired.
+            if (!liveId.Equals(record.OldId))
+            {
+                PutAside(record);
+                return;
+            }
+
             _retired.Restore(record.OldId);
             _journal.Remove(record);
             return;

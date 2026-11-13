@@ -685,6 +685,22 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_resumed_record_bound_by_the_new_library_does_not_restore_another_retired_id()
+    {
+        var retired = Guid.NewGuid();
+        _retired.Retire(retired);
+        MovedToMare(retired);
+        Register("Mare - Film", NewId);
+        WriteJournal(Pending(oldName: "Mare - Film", oldId: retired));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.True(_retired.Contains(retired));
+        AssertSetAside(retired);
+    }
+
+    [Fact]
     public async Task A_resumed_record_naming_a_live_library_by_another_case_is_set_aside()
     {
         Directory.CreateDirectory(Path.Combine(_root, "Kids"));
