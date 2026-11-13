@@ -5,5 +5,5 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 /// <param name="Busy">Whether the rename is running.</param>
 /// <param name="Pending">Whether stubs of the server still wait for a scan to finish their move.</param>
-/// <param name="Failed">Whether the last rename since the start failed.</param>
+/// <param name="Failed">Whether the last rename did not finish, kept across a restart (§10 row 289).</param>
 public sealed record ServerRenameState(bool Busy, bool Pending, bool Failed);

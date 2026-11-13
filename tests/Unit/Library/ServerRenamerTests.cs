@@ -22,7 +22,9 @@ public sealed class ServerRenamerTests : IDisposable
     private readonly Mock<IVersionLinker> _linker = new();
     private readonly RetiredLibraryIds _retired = new();
     private readonly CapturingLogger<ServerRenamer> _logger = new();
+    private readonly InMemoryConfigurationStore _store = new();
     private readonly List<string> _steps = [];
+    private readonly List<ServerRenamer> _made = [];
     private readonly ServerRenamer _renamer;
     private bool _pending;
 
@@ -44,10 +46,25 @@ public sealed class ServerRenamerTests : IDisposable
             AutomaticLibrariesError.None));
         _scans.Setup(scans => scans.QueueAndWaitAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("scan")).Returns(Task.CompletedTask);
         _linker.Setup(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("link")).Returns(Task.CompletedTask);
-        _renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _scans.Object, _linker.Object, _retired, _logger);
+        _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _server, Name = "Casa" });
+        _renamer = NewRenamer();
     }
 
-    public void Dispose() => _renamer.Dispose();
+    public void Dispose()
+    {
+        foreach (var renamer in _made)
+        {
+            renamer.Dispose();
+        }
+    }
+
+    // A renamer over the same saved configuration, as after a restart.
+    private ServerRenamer NewRenamer()
+    {
+        var renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _scans.Object, _linker.Object, _retired, _store, _logger);
+        _made.Add(renamer);
+        return renamer;
+    }
 
     [Theory]
     [InlineData(null)]
@@ -131,14 +148,74 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenALibraryCannotBeRenamed_TheStubsStillFinish_AndThePageShowsTheLibraryError()
+    public async Task WhenALibraryCannotBeRenamed_TheStubsStillFinish_AndTheRenameStaysUnfinished()
     {
         _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("libraries")).ReturnsAsync(false);
 
         await _renamer.Rename(_server, "Mare", true).Job;
 
         Assert.Equal(["name Mare", "stubs Mare", "libraries", "scan", "finish", "link"], _steps);
+        Assert.True(_renamer.GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task AFailedRename_IsStillShownAfterARestart()
+    {
+        _stubs.Setup(stubs => stubs.RelabelAsync(_server, It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk"));
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.True(NewRenamer().GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task ARenameStoppedByTheShutdown_IsShownAfterARestart()
+    {
+        var entered = new TaskCompletionSource();
+        _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Returns(async (Guid _, CancellationToken token) =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.Infinite, token);
+            return true;
+        });
+        var renamer = NewRenamer();
+        var job = renamer.Rename(_server, "Mare", true).Job;
+        await entered.Task;
+
+        renamer.Dispose();
+        _made.Remove(renamer);
+        await job;
+
+        Assert.True(_store.Configuration.Servers[0].RenameUnfinished);
+        Assert.True(NewRenamer().GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task ACompletedRename_ClearsTheSavedFailure()
+    {
+        _store.Configuration.Servers[0].RenameUnfinished = true;
+        Assert.True(_renamer.GetState(_server).Failed);
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.False(_store.Configuration.Servers[0].RenameUnfinished);
         Assert.False(_renamer.GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task WhileARenameRuns_ItIsNotShownAsFailed()
+    {
+        var release = new TaskCompletionSource();
+        _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            await release.Task;
+            return true;
+        });
+        var job = _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(new ServerRenameState(true, false, false), _renamer.GetState(_server));
+        release.SetResult();
+        await job;
     }
 
     [Fact]
