@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -19,7 +20,8 @@ public interface ILastServedSourceStore
     Guid? Find(Guid userId, string stubId);
 
     /// <summary>
-    /// Records the server that just served a stub to a user. A failed save is logged, not thrown: playback goes on.
+    /// Records the server that just served a stub to a user. The record is known at once and saved later, off the request
+    /// (Q76); a failed save is logged, not thrown: playback goes on.
     /// </summary>
     /// <param name="userId">The local user.</param>
     /// <param name="stubId">The stub.</param>
@@ -27,4 +29,12 @@ public interface ILastServedSourceStore
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task RecordAsync(Guid userId, string stubId, Guid serverId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Drops the records of stubs that are gone and of servers the administrator removed (Q76).
+    /// </summary>
+    /// <param name="stubExists">Tells whether a stub still exists.</param>
+    /// <param name="removedServers">The servers removed.</param>
+    /// <returns>How many records were dropped.</returns>
+    int Prune(Func<string, bool> stubExists, IReadOnlySet<Guid> removedServers);
 }

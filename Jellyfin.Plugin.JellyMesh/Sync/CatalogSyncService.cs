@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Extensions.Logging;
@@ -49,6 +50,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly IPluginConfigurationStore? _store;
     private readonly ILayoutMigration? _migration;
     private readonly ILibraryChangeTracker? _changes;
+    private readonly ILastServedSourceStore? _lastServed;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
@@ -77,6 +79,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="store">The configuration, which says whether collections are read.</param>
     /// <param name="migration">The migration from the flat layout, which also runs after each sync (Q222).</param>
     /// <param name="changes">What remembers the libraries on the federated folder at each sync, for the page (Q53).</param>
+    /// <param name="lastServed">The last server that served each stub, pruned after every sync (Q76).</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -92,7 +95,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         ISyncHistory? history = null,
         IPluginConfigurationStore? store = null,
         ILayoutMigration? migration = null,
-        ILibraryChangeTracker? changes = null)
+        ILibraryChangeTracker? changes = null,
+        ILastServedSourceStore? lastServed = null)
     {
         _registry = registry;
         _reader = reader;
@@ -109,6 +113,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _store = store;
         _migration = migration;
         _changes = changes;
+        _lastServed = lastServed;
     }
 
     /// <summary>
@@ -323,6 +328,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             materialized = await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
             await MigrateAsync(cancellationToken).ConfigureAwait(false);
             followed = await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
+            PruneLastServed();
             if (servers.Count > 0)
             {
                 WriteActivity(ActivityEntries.SyncCompleted(servers.Count, _runFailures.Values.ToList()));
@@ -459,6 +465,23 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         return materialized;
+    }
+
+    // After the migration, which reads the records of the old stubs (D15). Removed means what DropRemovedServersAsync
+    // means; an empty registry drops no stub, since it may be one that could not be read.
+    private void PruneLastServed()
+    {
+        if (_lastServed is null || _stubs is null)
+        {
+            return;
+        }
+
+        var state = _stubs.State;
+        var configured = _registry.GetServers().Select(server => server.Id).ToHashSet();
+        var removed = state.RemovedServers.Where(serverId => !configured.Contains(serverId)).ToHashSet();
+        var anyStub = state.Stubs.Count > 0;
+        var stubs = _stubs;
+        _lastServed.Prune(stubId => !anyStub || stubs.Find(stubId) is not null, removed);
     }
 
     // Takes the stub registry lock itself, so it runs after the materialization and the link have let it go.
