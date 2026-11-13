@@ -362,7 +362,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     // The library folders by exact name, with the id each one has.
     private Dictionary<string, Guid> LiveFolders(string root) => Directory.Exists(root)
         ? Directory.EnumerateDirectories(root)
-            .Select(path => (Name: Path.GetFileName(path), Path: path))
+            .Select(path => (Name: Path.GetFileName(path), Path: Path.GetFullPath(path)))
             .Where(folder => folder.Name.Length > 0)
             .ToDictionary(folder => folder.Name, folder => _library.GetNewItemId(folder.Path, typeof(CollectionFolder)), StringComparer.Ordinal)
         : [];
