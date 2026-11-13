@@ -1,17 +1,22 @@
 # Rows 386 and 387: a sync with nothing changed, measured on 2026-11-13 at 535728a (worktree-agent-perf)
 
-Same machine, image and harness as below, 3 x 16,500 scanned, no other container running. Row 386 skips the
-materialization and the version links on a sync that finds nothing changed since the last completed one: same index,
-servers, stub settings, libraries, ids of the local films, episodes and series, and no title added, removed or
-updated outside the federated folder or edited by the administrator. Row 387 reads the link state in blocks and reads
-an item again only for a group that must change. On a skipped phase "materialization" below is the time of that check.
+Same machine, image and harness as below, 3 x 16,500 scanned; the <phase>-load.txt snapshots showed only the idle
+jellymesh-sdk beside the consumer. Row 386 skips the materialization and the version links on a sync that finds nothing
+changed since the last completed one: same index, servers, stub settings, libraries, ids of the local films, episodes
+and series, and no title added, removed or updated outside the federated folder or edited by the administrator. Row 387
+reads the link state in blocks and reads an item again only for a group that must change. On a skipped phase
+"materialization" below is the time of that check.
 
-phase at 3 x 16,500, scanned          before (F21, below)     now (measured)
-incremental after the scan            26.1 s                  14.8 s (links 5.3 s: 49,500 items read, 0 saved)
-incremental with nothing changed      59.8 s (sampled)        0.5 s (check 318 ms, skipped)
-the same once more                    -                       0.5 s (check 316 ms, skipped)
-nightly                               79.2 s                  63.0 s (links 4.7 s, never skipped, row 59)
-incremental after the nightly         -                       0.5 s (check 412 ms, skipped)
+phase at 3 x 16,500, scanned          before (F21, below)            now (measured)
+incremental after the scan            26.1 s (links 18.0 s)          14.8 s (links 5.3 s: 49,500 items read, 0 saved)
+incremental with nothing changed      26.1 s unsampled, 59.8 s       0.5 s (check 318 ms, skipped)
+                                      with stack samples
+the same once more                    -                              0.5 s (check 316 ms, skipped)
+nightly                               79.2 s (links 19.0 s)          63.0 s (links 4.7 s, never skipped, row 59)
+incremental after the nightly         -                              0.5 s (check 412 ms, skipped)
+
+Phases these rows do not touch also ran faster than F21's (first 39.1 against 31.8 s, repeat 25.7 against 16.4 s, scan
+1346 against 1232 s), so only the link times and the skips are due to rows 386 and 387; the rest is run-to-run variance.
 
 Projected, not measured, at 3 x 55,000 scanned: the check hashes the sorted ids of the local films, episodes and
 series, so it grows with them, about 1.1-1.4 s at linear scale and about 3 s if it doubles the way the unscanned
@@ -19,12 +24,17 @@ phases did at 55,000. With the 3.0 s incremental read measured at 3 x 55,000 (be
 would take about 4-6 s against the 30 s target. The links after a scan, which still run once, project to about 18 s
 linearly from 5.3 s. The scan of 3 x 55,000 itself (about 75 min) was not run.
 
-Every title stayed listed once with 3 versions in every scanned phase. Also checked on real 12.4 (3 x 32 titles,
-scanned): splitting a film's versions with DELETE /Videos/{id}/AlternateSources made the next incremental run and
-link it again ("1 groups read again, 3 items saved"), and the incremental after that skipped.
+Every title stayed listed once with 3 versions in every scanned phase. Also checked on real 12.4 with 3 x 32 titles,
+scanned, and a local movies library of generated files (which did not match a federated title, so no local copy was
+linked): the next incremental ran, and the one after it skipped, after each of these:
+- splitting a film's versions with DELETE /Videos/{id}/AlternateSources, which the run linked again ("1 groups read
+  again, 3 items saved");
+- adding a library, a local film appearing after a scan, a local film disappearing after a scan;
+- a restart.
+When the last file of a library folder goes, Jellyfin's scan keeps the item, so the plugin sees no change either.
 
-A sync does not skip:
-- after a restart (the comparison is kept in memory), and on a full sync from the page or the nightly;
+From the code and the unit tests, not from these runs, a sync also does not skip:
+- on a full sync from the page, or the nightly;
 - when the last run failed, was cancelled, could not save the index, or left work for the next one: a stub that
   failed, a local copy awaiting its refresh, an image not downloaded, a scan queued;
 - once more after each remote change, because the 5 min change overlap reads the changed item again, and once more
