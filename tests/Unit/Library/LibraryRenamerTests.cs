@@ -406,6 +406,64 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_resumed_record_whose_temporary_name_is_not_a_guid_is_set_aside()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "Lago - Film"));
+        var lago = IdOf(Path.Combine(_root, "Lago - Film"));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [lago.ToString("N")]);
+        WriteJournal(Pending(
+            oldName: "Riva - Film",
+            newName: "RIVA - FILM",
+            oldId: IdOf(Path.Combine(_root, "Riva - Film")),
+            newId: IdOf(Path.Combine(_root, "RIVA - FILM")),
+            temporary: "lago - film"));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        AssertSetAside(lago);
+    }
+
+    [Fact]
+    public async Task A_resumed_record_with_a_temporary_name_but_not_a_change_of_case_is_set_aside()
+    {
+        var other = Guid.NewGuid().ToString("N");
+        Directory.CreateDirectory(Path.Combine(_root, other));
+        var otherId = IdOf(Path.Combine(_root, other));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [otherId.ToString("N")]);
+        WriteJournal(Pending(
+            oldName: "Riva - Film",
+            newName: "Lago - Film",
+            oldId: IdOf(Path.Combine(_root, "Riva - Film")),
+            newId: IdOf(Path.Combine(_root, "Lago - Film")),
+            temporary: other));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, other)));
+        Assert.False(Directory.Exists(Path.Combine(_root, "Lago - Film")));
+        AssertSetAside(otherId);
+    }
+
+    [Fact]
+    public async Task A_resumed_change_of_case_through_a_guid_folder_is_finished()
+    {
+        var temporary = Guid.NewGuid().ToString("N");
+        Directory.Move(Path.Combine(_root, "Casa - Film"), Path.Combine(_root, temporary));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N"), IdOf(Path.Combine(_root, temporary)).ToString("N")]);
+        WriteJournal(Pending(newName: "CASA - FILM", newId: IdOf(Path.Combine(_root, "CASA - FILM")), temporary: temporary));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal(["CASA - FILM"], Directory.GetDirectories(_root).Select(Path.GetFileName));
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.False(File.Exists(DamagedPath));
+        Assert.False(_renamer.HasPending);
+    }
+
+    [Fact]
     public async Task A_resumed_record_whose_new_id_is_not_that_of_its_new_folder_is_set_aside()
     {
         MovedToMare(OldId);

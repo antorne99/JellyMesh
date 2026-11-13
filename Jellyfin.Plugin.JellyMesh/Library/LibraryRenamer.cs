@@ -224,6 +224,13 @@ public sealed class LibraryRenamer : ILibraryRenamer
         ? Directory.EnumerateDirectories(root).Select(Path.GetFileName).OfType<string>().ToHashSet(StringComparer.Ordinal)
         : [];
 
+    // True for no temporary name, or for a guid one on a change of case only, as RenameAsync writes it (row 345).
+    private static bool IsTemporaryBound(LibraryRenameRecord record) => record.TemporaryName is not { } temporary
+        || (temporary.Length == 32
+            && Guid.TryParseExact(temporary, "N", out _)
+            && string.Equals(record.OldName, record.NewName, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(record.OldName, record.NewName, StringComparison.Ordinal));
+
     private void Retire(Guid oldId, Guid newId)
     {
         if (!oldId.Equals(newId))
@@ -321,9 +328,9 @@ public sealed class LibraryRenamer : ILibraryRenamer
     {
         try
         {
-            if (ChildOf(root, record.OldName) is not { } oldPath
+            if (!IsTemporaryBound(record)
+                || ChildOf(root, record.OldName) is not { } oldPath
                 || ChildOf(root, record.NewName) is not { } newPath
-                || (record.TemporaryName is { } temporary && ChildOf(root, temporary) is null)
                 || !_library.GetNewItemId(newPath, typeof(CollectionFolder)).Equals(record.NewId))
             {
                 return false;
