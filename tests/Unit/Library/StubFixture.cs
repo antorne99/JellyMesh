@@ -56,7 +56,8 @@ internal sealed class StubFixture : IDisposable
             new StubUrlBuilder(Host.Object, Network.Object, Signer),
             Sync.Clock,
             Logger,
-            Refresher);
+            Refresher,
+            Linker.Object);
     }
 
     public SyncFixture Sync { get; }
@@ -100,6 +101,8 @@ internal sealed class StubFixture : IDisposable
     public LibraryMaterializer Materializer { get; }
 
     public RecordingRefresher Refresher { get; } = new();
+
+    public Mock<IVersionLinker> Linker { get; } = new();
 
     public string[] Files => Directory.Exists(Root)
         ? Directory.GetFiles(Root, "*", SearchOption.AllDirectories).Select(file => Path.GetRelativePath(Root, file)).Order(StringComparer.Ordinal).ToArray()

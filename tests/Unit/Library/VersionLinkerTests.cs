@@ -907,6 +907,95 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal([itemA.Id], LinkedIds(itemB));
     }
 
+    // Q276: a stub about to be deleted leaves its group first, saved with no metadata saver, while the caller holds the lock.
+    [Fact]
+    public async Task AStubAboutToBeRemovedLeavesTheLocalCopyWithoutAMetadataSave()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 1080);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        var local = Local();
+        itemA.SetPrimaryVersionId(local.Id);
+        itemB.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(itemA.Id), Link(itemB.Id)];
+
+        await _registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await _linker.DetachForRemovalAsync([a], CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            _registry.Exit();
+        }
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Equal([itemB.Id], LinkedIds(local));
+        Assert.Equal(local.Id, itemB.PrimaryVersionId);
+        Assert.Equal(new[] { local.Id, itemA.Id }.Order(), _saves.Select(save => save.Item).Order());
+        Assert.All(_saves, save => Assert.Equal(ItemUpdateType.MetadataImport, save.Reason));
+    }
+
+    [Fact]
+    public async Task APrimaryStubAboutToBeRemovedHandsItsGroupToNoOne()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 1080);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        var local = Local();
+        local.SetPrimaryVersionId(itemA.Id);
+        itemB.SetPrimaryVersionId(itemA.Id);
+        itemA.LinkedAlternateVersions = [Link(local.Id), Link(itemB.Id)];
+
+        await _linker.DetachForRemovalAsync([a], CancellationToken.None);
+
+        Assert.Empty(itemA.LinkedAlternateVersions);
+        Assert.Null(local.PrimaryVersionId);
+        Assert.Null(itemB.PrimaryVersionId);
+        Assert.All(_saves, save => Assert.Equal(ItemUpdateType.MetadataImport, save.Reason));
+    }
+
+    [Fact]
+    public async Task AStubAboutToBeRemovedWithoutLinksIsNotSaved()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a]);
+        Scanned(a);
+
+        await _linker.DetachForRemovalAsync([a], CancellationToken.None);
+
+        Assert.Empty(_saves);
+    }
+
+    [Fact]
+    public async Task AFailedDetachBeforeARemovalDoesNotStopTheOthers()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var c = Stub("sc", _serverA, 720);
+        await SaveAsync([a, c]);
+        var itemA = Scanned(a);
+        var itemC = Scanned(c);
+        var local = Local();
+        var other = Local();
+        itemA.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(itemA.Id)];
+        itemC.SetPrimaryVersionId(other.Id);
+        other.LinkedAlternateVersions = [Link(itemC.Id)];
+        _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == local.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(TestValues.Host));
+
+        await _linker.DetachForRemovalAsync([a, c], CancellationToken.None);
+
+        Assert.Null(itemC.PrimaryVersionId);
+        Assert.Empty(other.LinkedAlternateVersions);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task NothingHappensWithoutAFederatedFolder()
     {

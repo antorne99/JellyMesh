@@ -62,6 +62,13 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <inheritdoc />
     public VersionGroup? FindGroupOfLocal(Guid itemId) => _lookup.GroupsByLocal.TryGetValue(itemId, out var group) ? group : null;
 
+    /// <inheritdoc />
+    public bool HasTitlesOf(Guid serverId)
+    {
+        var state = _lookup.State;
+        return state.Stubs.Any(stub => stub.ServerId == serverId) || state.Series.Any(series => series.ServerId == serverId);
+    }
+
     /// <summary>
     /// Finds the episode stubs of a remote series on one server, through the series stubs it is a source of (decision 51).
     /// </summary>
