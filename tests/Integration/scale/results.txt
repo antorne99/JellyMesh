@@ -1,3 +1,37 @@
+# Rows 386 and 387: a sync with nothing changed, measured on 2026-11-13 at 535728a (worktree-agent-perf)
+
+Same machine, image and harness as below, 3 x 16,500 scanned, no other container running. Row 386 skips the
+materialization and the version links on a sync that finds nothing changed since the last completed one: same index,
+servers, stub settings, libraries, ids of the local films, episodes and series, and no title added, removed or
+updated outside the federated folder or edited by the administrator. Row 387 reads the link state in blocks and reads
+an item again only for a group that must change. On a skipped phase "materialization" below is the time of that check.
+
+phase at 3 x 16,500, scanned          before (F21, below)     now (measured)
+incremental after the scan            26.1 s                  14.8 s (links 5.3 s: 49,500 items read, 0 saved)
+incremental with nothing changed      59.8 s (sampled)        0.5 s (check 318 ms, skipped)
+the same once more                    -                       0.5 s (check 316 ms, skipped)
+nightly                               79.2 s                  63.0 s (links 4.7 s, never skipped, row 59)
+incremental after the nightly         -                       0.5 s (check 412 ms, skipped)
+
+Projected, not measured, at 3 x 55,000 scanned: the check hashes the sorted ids of the local films, episodes and
+series, so it grows with them, about 1.1-1.4 s at linear scale and about 3 s if it doubles the way the unscanned
+phases did at 55,000. With the 3.0 s incremental read measured at 3 x 55,000 (below), a sync with nothing changed
+would take about 4-6 s against the 30 s target. The links after a scan, which still run once, project to about 18 s
+linearly from 5.3 s. The scan of 3 x 55,000 itself (about 75 min) was not run.
+
+Every title stayed listed once with 3 versions in every scanned phase. Also checked on real 12.4 (3 x 32 titles,
+scanned): splitting a film's versions with DELETE /Videos/{id}/AlternateSources made the next incremental run and
+link it again ("1 groups read again, 3 items saved"), and the incremental after that skipped.
+
+A sync does not skip:
+- after a restart (the comparison is kept in memory), and on a full sync from the page or the nightly;
+- when the last run failed, was cancelled, could not save the index, or left work for the next one: a stub that
+  failed, a local copy awaiting its refresh, an image not downloaded, a scan queued;
+- once more after each remote change, because the 5 min change overlap reads the changed item again, and once more
+  after links that save local copies, because those saves are local changes.
+
+# Phase F21, before rows 386 and 387
+
 Measured on 2026-11-13 at 91c705f (worktree-agent-f21, phase F21: the plugin code is that of 3be90b9), Jellyfin
 12.4.20261026-211555 on Docker Desktop for Mac (8 CPUs, 7.6 GiB VM). Three fakes (fake_remote.py) on the host serve the
 same catalog, each as its own server, so every title has three stubs that form one version group. Each phase waits for
@@ -57,6 +91,214 @@ every 5 s (3 s in the incremental) and dotnet-counters, which slowed it:
 
 Jellyfin lists every title once with all three versions, after the incremental that links them, after the next one
 and after the nightly, at 3 x 5,500 and 3 x 16,500 ("listed films and episodes by versions" below).
+
+# Scale run at 3 x 16,500 (scanned), rows 386 and 387
+catalog: {'Movie': 1500, 'Series': 150, 'Season': 750, 'Episode': 15000}, images on
+3 remote servers with that catalog each
+idle before the first sync: VmHWM 472 MiB, VmRSS 472 MiB
+
+## first
+wall time (LastStartedUtc to LastFinishedUtc) 31.8 s
+  read of the catalog                      6.7 s  (264 /Items calls, 153.7 MiB, fake busy 1.5 s)
+  index save after the read                0.6 s
+  materialization                          23.9 s
+    image downloads                        57150, first to last 11.5 s, fake busy 0.2 s
+    from read end to first image           4.9 s
+    after the last image                   8.1 s
+  after the materialization                0.8 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 17400 + 17400 + 17400 entries from 3 servers | Materialized the federated folder: 49500 created, 0 updated, 0 removed, 0 failed
+version links                              Linked the versions of the titles: 0 items read, 0 groups read again, 0 items saved
+warnings/errors in the window              2
+memory, docker stats peak sample          1639 MiB (at start 354 MiB)
+memory, process RSS peak sample           1471 MiB
+memory, process VmHWM after the phase     1661 MiB (cgroup memory.peak 2845 MiB, page cache included)
+federation-index.json                     164.7 MiB
+federated-stubs.json                      50.8 MiB
+version groups in the registry            16500
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## incremental
+wall time (LastStartedUtc to LastFinishedUtc) 3.2 s
+  read of the catalog                      0.1 s  (12 /Items calls, 0.0 MiB, fake busy 0.0 s)
+  index save after the read                no write
+  materialization                          2.7 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                0.4 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 0 + 0 + 0 entries from 3 servers | Materialized the federated folder: 0 created, 0 updated, 0 removed, 0 failed
+version links                              Linked the versions of the titles: 0 items read, 0 groups read again, 0 items saved
+warnings/errors in the window              0
+memory, docker stats peak sample          1602 MiB (at start 1602 MiB)
+memory, process RSS peak sample           1332 MiB
+memory, process VmHWM after the phase     1672 MiB (cgroup memory.peak 2994 MiB, page cache included)
+federation-index.json                     164.7 MiB
+federated-stubs.json                      50.8 MiB
+version groups in the registry            16500
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## repeat
+wall time (LastStartedUtc to LastFinishedUtc) 16.4 s
+  read of the catalog                      9.3 s  (264 /Items calls, 153.7 MiB, fake busy 1.7 s)
+  index save after the read                0.9 s
+  materialization                          5.8 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                0.4 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 17400 + 17400 + 17400 entries from 3 servers | Materialized the federated folder: 0 created, 0 updated, 0 removed, 0 failed
+version links                              Linked the versions of the titles: 0 items read, 0 groups read again, 0 items saved
+warnings/errors in the window              0
+memory, docker stats peak sample          2180 MiB (at start 1551 MiB)
+memory, process RSS peak sample           2099 MiB
+memory, process VmHWM after the phase     2109 MiB (cgroup memory.peak 3322 MiB, page cache included)
+federation-index.json                     164.8 MiB
+federated-stubs.json                      50.8 MiB
+version groups in the registry            16500
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## nightly
+wall time (LastStartedUtc to LastFinishedUtc) 85.3 s
+  read of the catalog                      10.2 s  (264 /Items calls, 153.7 MiB, fake busy 1.8 s)
+  index save after the read                1.0 s
+  materialization                          43.6 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                30.5 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 17400 + 17400 + 17400 entries from 3 servers | Materialized the federated folder: 0 created, 0 updated, 0 removed, 0 failed
+version links                              Linked the versions of the titles: 0 items read, 0 groups read again, 0 items saved
+warnings/errors in the window              0
+memory, docker stats peak sample          2422 MiB (at start 2323 MiB)
+memory, process RSS peak sample           2214 MiB
+memory, process VmHWM after the phase     2323 MiB (cgroup memory.peak 3747 MiB, page cache included)
+federation-index.json                     164.7 MiB
+federated-stubs.json                      50.8 MiB
+version groups in the registry            16500
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## scan of the linked federated folder (Jellyfin's own work, with the plugin's providers)
+wall time                                 1232.0 s (polled every 2 s)
+items in the library                      16650
+memory, docker stats peak sample          1846 MiB
+memory, process VmHWM after               2323 MiB
+
+## incremental-scanned
+wall time (LastStartedUtc to LastFinishedUtc) 14.8 s
+  read of the catalog                      0.2 s  (12 /Items calls, 0.0 MiB, fake busy 0.0 s)
+  index save after the read                no write
+  materialization                          9.4 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                5.3 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 0 + 0 + 0 entries from 3 servers | Materialized the federated folder: 0 created, 0 updated, 0 removed, 0 failed
+version links                              Linked the versions of the titles: 49500 items read, 0 groups read again, 0 items saved
+warnings/errors in the window              0
+memory, docker stats peak sample          1913 MiB (at start 1815 MiB)
+memory, process RSS peak sample           1685 MiB
+memory, process VmHWM after the phase     2323 MiB (cgroup memory.peak 3747 MiB, page cache included)
+federation-index.json                     164.7 MiB
+federated-stubs.json                      51.6 MiB
+version groups in the registry            16500
+listed films and episodes by versions     [{"versions":3,"items":16500}]
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## incremental-scanned-again
+wall time (LastStartedUtc to LastFinishedUtc) 0.5 s
+  read of the catalog                      0.2 s  (12 /Items calls, 0.0 MiB, fake busy 0.0 s)
+  index save after the read                no write
+  materialization                          0.3 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                0.0 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 0 + 0 + 0 entries from 3 servers | Nothing changed since the last sync, checked in 318 ms: materialization and version links skipped
+version links                              -
+warnings/errors in the window              0
+memory, process VmHWM after the phase     2323 MiB (cgroup memory.peak 3747 MiB, page cache included)
+federation-index.json                     164.7 MiB
+federated-stubs.json                      51.6 MiB
+version groups in the registry            16500
+listed films and episodes by versions     [{"versions":3,"items":16500}]
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## incremental-scanned-third
+wall time (LastStartedUtc to LastFinishedUtc) 0.5 s
+  read of the catalog                      0.2 s  (12 /Items calls, 0.0 MiB, fake busy 0.0 s)
+  index save after the read                no write
+  materialization                          0.3 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                0.0 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 0 + 0 + 0 entries from 3 servers | Nothing changed since the last sync, checked in 316 ms: materialization and version links skipped
+version links                              -
+warnings/errors in the window              0
+memory, process VmHWM after the phase     2323 MiB (cgroup memory.peak 3747 MiB, page cache included)
+federation-index.json                     164.7 MiB
+federated-stubs.json                      51.6 MiB
+version groups in the registry            16500
+listed films and episodes by versions     [{"versions":3,"items":16500}]
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## nightly-scanned
+wall time (LastStartedUtc to LastFinishedUtc) 63.0 s
+  read of the catalog                      9.7 s  (264 /Items calls, 153.7 MiB, fake busy 1.5 s)
+  index save after the read                0.5 s
+  materialization                          48.1 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                4.7 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 17400 + 17400 + 17400 entries from 3 servers | Materialized the federated folder: 0 created, 0 updated, 0 removed, 0 failed
+version links                              Linked the versions of the titles: 49500 items read, 0 groups read again, 0 items saved
+warnings/errors in the window              0
+memory, docker stats peak sample          2569 MiB (at start 1786 MiB)
+memory, process RSS peak sample           2324 MiB
+memory, process VmHWM after the phase     2363 MiB (cgroup memory.peak 4300 MiB, page cache included)
+federation-index.json                     164.8 MiB
+federated-stubs.json                      51.6 MiB
+version groups in the registry            16500
+listed films and episodes by versions     [{"versions":3,"items":16500}]
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
+
+## incremental-after-nightly
+wall time (LastStartedUtc to LastFinishedUtc) 0.5 s
+  read of the catalog                      0.1 s  (12 /Items calls, 0.0 MiB, fake busy 0.0 s)
+  index save after the read                no write
+  materialization                          0.4 s
+    image downloads                        0
+    from read end to first image           -
+    after the last image                   -
+  after the materialization                0.0 s  (version links, migration, libraries)
+  other calls                              9 (capabilities, info, views)
+log                                        Read 0 + 0 + 0 entries from 3 servers | Nothing changed since the last sync, checked in 412 ms: materialization and version links skipped
+version links                              -
+warnings/errors in the window              0
+memory, process VmHWM after the phase     2363 MiB (cgroup memory.peak 4300 MiB, page cache included)
+federation-index.json                     164.8 MiB
+federated-stubs.json                      51.6 MiB
+version groups in the registry            16500
+listed films and episodes by versions     [{"versions":3,"items":16500}]
+files in the federated folder             158858 (jellymesh 8, jpg 57150, nfo 52200, strm 49500), 649 MiB
+servers                                   Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000; Complete failure=None movies=1500 series=150 episodes=15000
 
 # Scale run at 3 x 55,000 (full scale, unscanned)
 catalog: {'Movie': 5000, 'Series': 500, 'Season': 2500, 'Episode': 50000}, images on
@@ -147,7 +389,7 @@ version groups in the registry            55000
 files in the federated folder             529508 (jellymesh 8, jpg 190500, nfo 174000, strm 165000), 2163 MiB
 servers                                   Complete failure=None movies=5000 series=500 episodes=50000; Complete failure=None movies=5000 series=500 episodes=50000; Complete failure=None movies=5000 series=500 episodes=50000
 
-# Scale run at 3 x 16,500 (scanned)
+# Scale run at 3 x 16,500 (scanned), F21
 catalog: {'Movie': 1500, 'Series': 150, 'Season': 750, 'Episode': 15000}, images on
 3 remote servers with that catalog each
 idle before the first sync: VmHWM 451 MiB, VmRSS 451 MiB
