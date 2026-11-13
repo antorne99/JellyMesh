@@ -34,7 +34,8 @@ public sealed record FederationStatus(
     public bool RenamedLibrariesNeedRestart { get; init; }
 
     /// <summary>
-    /// Gets the libraries of removed servers that the plugin left to the admin when the federated folder changed.
+    /// Gets the libraries of removed servers that the plugin left to the admin when the federated folder changed, without
+    /// those the admin hid.
     /// </summary>
-    public IReadOnlyList<string> ReleasedLibraries { get; init; } = [];
+    public IReadOnlyList<ReleasedLibrary> ReleasedLibraries { get; init; } = [];
 }

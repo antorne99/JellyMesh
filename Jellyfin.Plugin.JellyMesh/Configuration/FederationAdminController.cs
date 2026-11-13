@@ -27,6 +27,9 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 [Produces(MediaTypeNames.Application.Json)]
 public class FederationAdminController : ControllerBase
 {
+    /// <summary>The refusal of a hide whose libraries are no longer listed.</summary>
+    internal const string ReleasedLibraryNotListed = "These libraries are no longer listed. The page reads them again.";
+
     private readonly IRemoteServerRegistry _registry;
     private readonly ICredentialVault _vault;
     private readonly IPluginConfigurationStore _store;
@@ -108,8 +111,47 @@ public class FederationAdminController : ControllerBase
         {
             LegacyKeySet = _vault.IsLegacyKeySet,
             RenamedLibrariesNeedRestart = _renamer?.NeedsRestart ?? false,
-            ReleasedLibraries = _store.Read(config => config.RemovedServerLibraries.SelectMany(held => held.ReleasedLibraries).ToList())
+            ReleasedLibraries = _store.Read(config => config.RemovedServerLibraries
+                .SelectMany(held => held.ReleasedLibraries
+                    .Where(name => !held.HiddenReleasedLibraries.Contains(name, StringComparer.Ordinal))
+                    .Select(name => new ReleasedLibrary(held.ServerId, name)))
+                .ToList())
         };
+    }
+
+    /// <summary>
+    /// Takes released libraries of removed servers off the page (§10 row 281). The libraries themselves are not touched.
+    /// Hides nothing if one of them is not listed.
+    /// </summary>
+    /// <param name="request">The libraries.</param>
+    /// <returns>Nothing.</returns>
+    [HttpPost("ReleasedLibraries/Hide")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public ActionResult HideReleasedLibraries([FromBody] HideReleasedLibrariesRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var hidden = false;
+        _store.Update(config =>
+        {
+            var found = request.Libraries
+                .Select(library => (Held: config.RemovedServerLibraries.FirstOrDefault(held => held.ServerId == library.ServerId), library.Name))
+                .ToList();
+            if (found.Any(pair => pair.Held is null || !pair.Held.ReleasedLibraries.Contains(pair.Name, StringComparer.Ordinal)))
+            {
+                return;
+            }
+
+            foreach (var (held, name) in found.Where(pair => !pair.Held!.HiddenReleasedLibraries.Contains(pair.Name, StringComparer.Ordinal)))
+            {
+                held!.HiddenReleasedLibraries.Add(name);
+            }
+
+            hidden = true;
+        });
+
+        return hidden ? NoContent() : NotFound(new FailureResponse(RemoteFailure.None, ReleasedLibraryNotListed));
     }
 
     /// <summary>

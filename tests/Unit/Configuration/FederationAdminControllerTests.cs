@@ -887,7 +887,63 @@ public class FederationAdminControllerTests
 
         var status = ControllerFor(fixture).GetStatus().Value!;
 
-        Assert.Equal(["Vecchio - Film", "Altro - Serie"], status.ReleasedLibraries);
+        Assert.Equal(["Vecchio - Film", "Altro - Serie"], status.ReleasedLibraries.Select(library => library.Name));
+        Assert.Equal(fixture.Store.Configuration.RemovedServerLibraries.Select(held => held.ServerId), status.ReleasedLibraries.Select(library => library.ServerId));
+    }
+
+    [Fact]
+    public void HidingReleasedLibrariesTakesThemOffTheStatusAndLeavesTheLibrariesAlone()
+    {
+        using var fixture = new RegistryFixture();
+        var removed = Guid.NewGuid();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = removed, ReleasedLibraries = { "Vecchio - Film", "Vecchio - Serie" } });
+        var libraries = new Mock<IServerLibraryManager>();
+        var controller = ControllerFor(fixture, libraries: libraries.Object);
+
+        var result = controller.HideReleasedLibraries(new HideReleasedLibrariesRequest([new ReleasedLibrary(removed, "Vecchio - Film")]));
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(["Vecchio - Serie"], controller.GetStatus().Value!.ReleasedLibraries.Select(library => library.Name));
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Equal(["Vecchio - Film", "Vecchio - Serie"], held.ReleasedLibraries);
+        Assert.Equal(["Vecchio - Film"], held.HiddenReleasedLibraries);
+        libraries.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void HidingAReleasedLibraryTwiceKeepsOneMark()
+    {
+        using var fixture = new RegistryFixture();
+        var removed = Guid.NewGuid();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = removed, ReleasedLibraries = { "Vecchio - Film" } });
+        var controller = ControllerFor(fixture);
+        var request = new HideReleasedLibrariesRequest([new ReleasedLibrary(removed, "Vecchio - Film")]);
+
+        controller.HideReleasedLibraries(request);
+        var result = controller.HideReleasedLibraries(request);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(["Vecchio - Film"], Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
+        Assert.Empty(controller.GetStatus().Value!.ReleasedLibraries);
+    }
+
+    [Theory]
+    [InlineData(false, "Vecchio - Film")]
+    [InlineData(true, "Vecchio - Serie")]
+    [InlineData(true, "vecchio - film")]
+    public void HidingAReleasedLibraryThatIsNotListedHidesNothing(bool sameServer, string name)
+    {
+        using var fixture = new RegistryFixture();
+        var removed = Guid.NewGuid();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = removed, ReleasedLibraries = { "Vecchio - Film", "Altro - Film" } });
+        var controller = ControllerFor(fixture);
+
+        var result = controller.HideReleasedLibraries(new HideReleasedLibrariesRequest(
+            [new ReleasedLibrary(removed, "Altro - Film"), new ReleasedLibrary(sameServer ? removed : Guid.NewGuid(), name)]));
+
+        Assert.Equal(404, Assert.IsAssignableFrom<ObjectResult>(result).StatusCode);
+        Assert.Empty(Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
+        Assert.Equal(2, controller.GetStatus().Value!.ReleasedLibraries.Count);
     }
 
     [Fact]

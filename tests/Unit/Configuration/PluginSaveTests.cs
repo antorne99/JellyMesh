@@ -167,6 +167,7 @@ public sealed class PluginSaveTests : IDisposable
                 ["5d6c7b8a99a8b7c6d5e4f30211203f4e"],
                 true);
             config.RemovedServerLibraries[0].ReleasedLibraries.Add("Casa - Serie");
+            config.RemovedServerLibraries[0].HiddenReleasedLibraries.Add("Casa - Serie");
         });
         var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
         _plugin.UpdateConfiguration(JsonSerializer.Deserialize<PluginConfiguration>(json, JsonDefaults.Options)!);
@@ -181,6 +182,7 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Equal(["5d6c7b8a99a8b7c6d5e4f30211203f4e"], held.FollowedLibraryIds);
         Assert.True(held.FollowSkipped);
         Assert.Equal(["Casa - Serie"], held.ReleasedLibraries);
+        Assert.Equal(["Casa - Serie"], held.HiddenReleasedLibraries);
     }
 
     [Fact]

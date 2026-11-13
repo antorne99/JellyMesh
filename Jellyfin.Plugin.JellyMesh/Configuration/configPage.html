@@ -685,6 +685,14 @@
                 margin-top: 1em;
             }
 
+            .jmReleasedLibraries p {
+                margin: 0;
+            }
+
+            .jmReleasedLibraries .jmActions {
+                margin-top: 0.75em;
+            }
+
             .jmCopyField {
                 position: fixed;
                 top: 0;
@@ -1624,6 +1632,9 @@
                     "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: ogni episodio viene riprodotto dalla sua copia migliore, le altre restano come riserve, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
                     "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
+                    "Hide from this page": "Nascondi da questa pagina",
+                    "These libraries are no longer listed here. They stay in Dashboard > Libraries.": "Queste librerie non sono più elencate qui. Restano nel Pannello di controllo > Librerie.",
+                    "These libraries are no longer listed. The page reads them again.": "Queste librerie non sono più elencate. La pagina le legge di nuovo.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
                     "JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.": "JellyMesh non gestisce più queste librerie, perché ne sono cambiati il percorso o il tipo, sono state eliminate o è cambiata la cartella federata: {libraries}. Quelle ancora presenti sono tue, da tenere o eliminare.",
                     "JellyMesh server": "server JellyMesh",
@@ -3254,13 +3265,38 @@
                     renderReleasedLibraries(status.ReleasedLibraries || []);
                 }
 
-                // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed.
-                function renderReleasedLibraries(names) {
+                // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed,
+                // with an action that takes them off this page. Rebuilds only when they change, so polling keeps the focus.
+                function renderReleasedLibraries(libraries) {
                     var notice = el('#jmReleasedLibraries');
-                    setText(notice, names.length > 0
-                        ? t('JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.', { libraries: names.join(', ') })
-                        : '');
-                    notice.hidden = names.length === 0;
+                    var key = JSON.stringify(libraries);
+                    notice.hidden = libraries.length === 0;
+                    if (notice.jmKey === key) {
+                        return;
+                    }
+
+                    notice.jmKey = key;
+                    notice.textContent = '';
+                    if (libraries.length === 0) {
+                        return;
+                    }
+
+                    var names = libraries.map(function (library) {
+                        return library.Name;
+                    });
+                    notice.appendChild(create('p', t('JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.', { libraries: names.join(', ') })));
+                    var actions = actionRow();
+                    actions.appendChild(button(t('Hide from this page'), function () {
+                        act(api('POST', 'ReleasedLibraries/Hide', { Libraries: libraries }).then(function () {
+                            showMessage(t('These libraries are no longer listed here. They stay in Dashboard > Libraries.'));
+                            return loadStatus();
+                        }, function (error) {
+                            return loadStatus().then(function () {
+                                throw error;
+                            });
+                        }));
+                    }));
+                    notice.appendChild(actions);
                 }
 
                 function statusFailed(reason) {
