@@ -1726,7 +1726,7 @@
                     "Remove this server?": "Rimuovere questo server?",
                     "Removed {server}. Its titles are leaving the libraries.": "{server} è stato rimosso. I suoi titoli stanno uscendo dalle librerie.",
                     "Resolution": "Risoluzione",
-                    "Restoring the settings or adding those servers again brings the same titles and watch state.": "Ripristinando le impostazioni o aggiungendo di nuovo quei server tornano gli stessi titoli e lo stato di visione.",
+                    "Restoring the settings brings their folders back, with the same titles and watch state.": "Ripristinando le impostazioni tornano le loro cartelle, con gli stessi titoli e lo stato di visione.",
                     "Run the first sync": "Esegui la prima sincronizzazione",
                     "Running now": "In corso",
                     "Save": "Salva",
@@ -1791,7 +1791,7 @@
                     "This server is being renamed, or its titles wait for a library scan. Try again when it is done.": "Questo server è in fase di rinomina, oppure i suoi titoli aspettano un'analisi delle librerie. Riprova quando ha finito.",
                     "Confirm to rename this server.": "Conferma per rinominare questo server.",
                     "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
-                    "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
+                    "The missing servers are forgotten. Their folders are being deleted.": "I server mancanti sono stati dimenticati. Le loro cartelle vengono eliminate.",
                     "The Serie folders of the servers are in different libraries, so a series on more than one server stays split.": "Le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa.",
                     "The server refused to create a library.": "Il server ha rifiutato di creare una libreria.",
                     "The server refused to delete a library. Try again.": "Il server ha rifiutato di eliminare una libreria. Riprova.",
@@ -1959,9 +1959,9 @@
                     "unexpected answer": "risposta inattesa",
                     "unknown problem": "problema sconosciuto",
                     "{count} min": "{count} min",
-                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server. Se quei server non torneranno più, dimenticali qui sotto.",
+                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below: their folders are deleted.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server. Se quei server non torneranno più, dimenticali qui sotto: le loro cartelle vengono eliminate.",
                     "{count} titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog.": "{count} titoli vengono da server assenti dalle impostazioni. Restano finché quei server non vengono dimenticati nel Catalogo.",
-                    "{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.": "{count} titoli presenti solo su quei server vengono eliminati ora dalle librerie, con le loro immagini. I titoli presenti anche su un server nelle impostazioni restano, senza quelle riserve. Su quei server non cambia nulla e i file locali non vengono toccati.",
+                    "The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.": "Le cartelle di quei server vengono eliminate ora, come quando si rimuove un server: i loro {count} titoli escono dalle librerie, con le loro immagini. Gli stessi titoli di un server nelle impostazioni restano. Su quei server non cambia nulla e i file locali non vengono toccati.",
                     "{field} was refused, so nothing was saved. {rule}": "{field} è stato rifiutato, quindi non è stato salvato nulla. {rule}",
                     "{films}, {series} series, {episodes}": "{films}, {series} serie, {episodes}",
                     "{first} Also marked: {more}.": "{first} Segnalati anche: {more}.",
@@ -3413,7 +3413,7 @@
                         return t('A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.', { server: held.ServerName, count: held.Stubs });
                     });
                     if (status.UnconfiguredStubs > 0) {
-                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.', { count: status.UnconfiguredStubs }));
+                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below: their folders are deleted.', { count: status.UnconfiguredStubs }));
                     }
 
                     return notes.join(' ');
@@ -5098,12 +5098,12 @@
                 el('#jmForgetMissing').addEventListener('click', function () {
                     var count = syncSection.data ? syncSection.data.UnconfiguredStubs : 0;
                     confirmAction(t('Forget the servers missing from the settings?'), [
-                        t('{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.', { count: count }),
-                        t('Restoring the settings or adding those servers again brings the same titles and watch state.')
+                        t('The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.', { count: escapeHtml(String(count)) }),
+                        t('Restoring the settings brings their folders back, with the same titles and watch state.')
                     ], function () {
                         act(api('POST', 'MissingServers/Forget').then(function (result) {
                             showMessage(result.Servers > 0
-                                ? t('The missing servers are forgotten. Their titles are leaving the libraries.')
+                                ? t('The missing servers are forgotten. Their folders are being deleted.')
                                 : t('No server was left to forget.'));
                             return load();
                         }));
