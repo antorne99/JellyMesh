@@ -16,7 +16,10 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 public sealed partial class LayoutMigrationTests
 {
     private static readonly Guid _serverC = Guid.NewGuid();
-    private readonly Mock<IServerLibraryManager> _automaticLibraries = new();
+    private readonly Mock<ILibraryRenamer> _renamer = new();
+    private ServerLibraryManager? _manager;
+
+    // A library rename left halfway, which keeps the manager busy.
     private bool _managerBusy;
 
     [Fact]
@@ -395,6 +398,73 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task AnAutomaticLibraryRenamedInTheDashboardBeforeAFollowGetsNoFolderOfTheNewServer()
+    {
+        // Its record still has the old name and id: placement follows first, so the library stays automatic (§10 row 385).
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _libraries.Add(Library("A - Serie", CollectionTypeOptions.tvshows, ServerSeries(_serverA)));
+        var a = SwitchedOn(_serverA);
+        Rename("A - Film", "Film di A");
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", ServerFilms(_serverC))], _addedPaths);
+        Assert.Equal([ServerFilms(_serverA)], Locations("Film di A"));
+        Assert.Equal(["Film di A", "A - Serie"], a.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task AServerWithItsSwitchOnAndAKindLeftWithNoLibraryDoesNotHoldPlacementBack()
+    {
+        // A failed creation or a record the follow dropped is a stable state, so it does not stall placement (§10 row 384).
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        var a = SwitchedOn(_serverA);
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([ServerLibraryKind.Movies], a.AutomaticLibraryRegistry.Select(record => record.Kind));
+        Assert.Equal([("Film", ServerFilms(_serverC))], _addedPaths);
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task ALibraryWithNoIdMakesPlacementWaitWhileAServerHasAutomaticLibraries()
+    {
+        // It may be an automatic library renamed with no refresh, which the follow cannot match yet (decisions 213, 250).
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _libraries.Add(Library("A - Serie", CollectionTypeOptions.tvshows, ServerSeries(_serverA)));
+        SwitchedOn(_serverA);
+        _libraries.Single(library => library.Name == "Film").ItemId = null;
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+
+        _libraries.Single(library => library.Name == "Film").ItemId = IdOf("Film");
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", ServerFilms(_serverC))], _addedPaths);
+    }
+
+    [Fact]
     public async Task TheSettingsCannotGoBackToManualWhilePlacementRuns()
     {
         Migrated();
@@ -419,6 +489,34 @@ public sealed partial class LayoutMigrationTests
         config.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = name, ItemId = itemId });
         config.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = name + " serie" });
         return config;
+    }
+
+    // A server with the switch on whose records are its libraries there now, all of them seen by the last follow.
+    private RemoteServerConfig SwitchedOn(Guid server)
+    {
+        var config = new RemoteServerConfig { Id = server, AutomaticLibraries = true };
+        foreach (var library in _libraries)
+        {
+            config.FollowedLibraryIds.Add(library.ItemId!);
+            var kind = library.Locations is [var only] && only == ServerFilms(server) ? ServerLibraryKind.Movies
+                : library.Locations is [var series] && series == ServerSeries(server) ? ServerLibraryKind.Series
+                : (ServerLibraryKind?)null;
+            if (kind is { } found)
+            {
+                config.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = found, Name = library.Name, ItemId = library.ItemId! });
+            }
+        }
+
+        _store.Configuration.Servers.Add(config);
+        return config;
+    }
+
+    // A rename from the Dashboard, which gives the library a new id too.
+    private void Rename(string name, string newName)
+    {
+        var library = _libraries.Single(library => library.Name == name);
+        library.Name = newName;
+        library.ItemId = IdOf(newName);
     }
 
     // An automatic migration done with servers A and B.

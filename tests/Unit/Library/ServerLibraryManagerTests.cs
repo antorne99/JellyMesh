@@ -16,7 +16,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
-public sealed class ServerLibraryManagerTests
+public sealed partial class ServerLibraryManagerTests
 {
     private const string Root = "/federata";
     private static readonly Guid _serverId = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000001");
@@ -1844,9 +1844,13 @@ public sealed class ServerLibraryManagerTests
         // When set, a resume finishes every pending rename.
         public bool ResumeFinishes { get; set; }
 
+        // What a resume does to the libraries, such as a rename it finishes.
+        public Action? OnResume { get; set; }
+
         public Task ResumeAsync(CancellationToken cancellationToken)
         {
             Resumes++;
+            OnResume?.Invoke();
             HasPending &= !ResumeFinishes;
             return Task.CompletedTask;
         }

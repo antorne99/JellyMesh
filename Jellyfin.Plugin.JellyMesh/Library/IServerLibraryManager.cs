@@ -76,6 +76,14 @@ public interface IServerLibraryManager
     Task<bool> RenameAsync(Guid serverId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Follows the registries and finds the automatic libraries in that same read, under the lock of the other library
+    /// changes, for the placement of the servers linked later (§10 rows 384, 385).
+    /// </summary>
+    /// <returns>The libraries, or null when placement waits: a change runs or is left halfway, the libraries cannot be read,
+    /// one has no id while the follow needs it, or one with no record may be the own library of a server.</returns>
+    PlacementLibraries? FollowForPlacement();
+
+    /// <summary>
     /// Finishes the library renames a stop left halfway, one at a time with the other library changes (§10 row 290).
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>

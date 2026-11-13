@@ -51,7 +51,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     /// <param name="paths">The service that adds and removes the federated folders in the libraries.</param>
     /// <param name="scans">The library scans the automatic migration waits for.</param>
     /// <param name="materializer">The materializer, which writes the server folders before they are added.</param>
-    /// <param name="automaticLibraries">The manager of the automatic libraries, which placement waits for.</param>
+    /// <param name="automaticLibraries">The manager of the automatic libraries, which follows them before placement.</param>
     /// <param name="logger">The logger.</param>
     public LayoutMigration(
         StubRegistry registry,

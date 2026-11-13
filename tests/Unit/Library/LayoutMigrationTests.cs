@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -110,6 +111,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
     public void Dispose()
     {
         _migration?.Dispose();
+        _manager?.Dispose();
         _registry.Dispose();
         _log.Dispose();
         if (Directory.Exists(_data))
@@ -879,7 +881,11 @@ public sealed partial class LayoutMigrationTests : IDisposable
     private static IndexedItem Indexed(string itemId) => new() { ItemId = itemId, Kind = IndexedItemKind.Movie, LibraryId = "lib", LastSeenUtc = DateTimeOffset.UnixEpoch };
 
     private static VirtualFolderInfo Library(string name, CollectionTypeOptions type, params string[] paths) =>
-        new() { Name = name, CollectionType = type, Locations = paths };
+        new() { Name = name, CollectionType = type, Locations = paths, ItemId = IdOf(name) };
+
+    // Like Jellyfin, the id of a library comes from its name, so a rename changes both.
+    private static string IdOf(string name) =>
+        new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(name.ToLowerInvariant()))).ToString("N");
 
     private static StubSource Source((Guid Server, string ItemId) source) => new(source.Server, source.ItemId, source.ItemId);
 
@@ -1038,10 +1044,13 @@ public sealed partial class LayoutMigrationTests : IDisposable
         }
 
         _migration?.Dispose();
-        _automaticLibraries.Setup(manager => manager.IsBusy).Returns(() => _managerBusy);
+        _manager?.Dispose();
+        _renamer.Setup(renamer => renamer.HasPending).Returns(() => _managerBusy);
+        _manager = new ServerLibraryManager(
+            _store, _library.Object, Mock.Of<IFileSystem>(), _scans.Object, _materializer.Object, _renamer.Object, _registry, new CapturingLogger<ServerLibraryManager>());
         _migration = new LayoutMigration(
             _registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object,
-            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _automaticLibraries.Object, _logger);
+            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _manager, _logger);
         return _migration;
     }
 
