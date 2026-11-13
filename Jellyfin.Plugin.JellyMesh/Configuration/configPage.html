@@ -1150,6 +1150,11 @@
                 margin-top: 0.5em;
             }
 
+            #JellyMeshConfigPage .jmMergeSplit {
+                margin: 0.75em 0 0;
+                padding: 0.6em 0.8em;
+            }
+
             .jmMerge .emby-button {
                 margin: 0.75em 0 0;
             }
@@ -1631,6 +1636,7 @@
                     "Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai titoli uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
                     "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: ogni episodio viene riprodotto dalla sua copia migliore, le altre restano come riserve, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
                     "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
+                    "Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.": "Jellyfin mostra questa serie divisa, perché le cartelle Serie dei suoi server sono in librerie diverse: {libraries}. Aggiungile alle stesse librerie.",
                     "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
                     "Hide from this page": "Nascondi da questa pagina",
                     "These libraries are no longer listed here. They stay in Dashboard > Libraries.": "Queste librerie non sono più elencate qui. Restano nel Pannello di controllo > Librerie.",
@@ -3266,6 +3272,9 @@
                     showServers();
                     renderFolder(status.FederatedFolder);
                     renderReleasedLibraries(status.ReleasedLibraries || []);
+                    if (mergesSection.data) {
+                        renderMergeLists(mergesSection.data);
+                    }
                 }
 
                 // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed,
@@ -4046,6 +4055,33 @@
                     return row;
                 }
 
+                function sameServer(left, right) {
+                    return left.replace(/-/g, '').toLowerCase() === right.replace(/-/g, '').toLowerCase();
+                }
+
+                // The servers of a merged series whose Serie folders sit in different libraries, where Jellyfin does not
+                // group it (Q46). The library of a local copy, or of a server no longer configured, is not known here.
+                function seriesSplit(merge) {
+                    var folder = statusSection.data && statusSection.data.FederatedFolder;
+                    if (!folder) {
+                        return [];
+                    }
+
+                    var servers = folder.Servers.filter(function (server) {
+                        return server.SeriesLibraries.length > 0 && merge.Copies.some(function (copy) {
+                            return !copy.Copy.IsLocal && sameServer(copy.Copy.ServerId, server.Id);
+                        });
+                    });
+                    var sets = servers.map(function (server) {
+                        return server.SeriesLibraries.filter(function (name, index, names) {
+                            return names.indexOf(name) === index;
+                        }).sort().join('\n');
+                    });
+                    return sets.some(function (set) {
+                        return set !== sets[0];
+                    }) ? servers : [];
+                }
+
                 function renderMerge(merge, kind) {
                     var row = create('div');
                     row.className = 'jmMerge';
@@ -4070,6 +4106,17 @@
                             var unused = create('div', kind.unused);
                             unused.className = 'jmMergeUnused';
                             details.appendChild(unused);
+                        }
+
+                        var split = kind === mergeKinds.series ? seriesSplit(current) : [];
+                        if (split.length > 0) {
+                            var warning = create('p', t('Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.', {
+                                libraries: split.map(function (server) {
+                                    return server.Name + ' (' + server.SeriesLibraries.join(', ') + ')';
+                                }).join(', ')
+                            }));
+                            warning.className = 'jmAlert jmMergeSplit';
+                            details.appendChild(warning);
                         }
                     };
                     row.jmUpdate(merge);
@@ -4118,7 +4165,11 @@
 
                     renderCases(el('#jmMergeCases'), list.Cases, mergeKinds.films);
                     renderCases(el('#jmSeriesCases'), list.SeriesCases, mergeKinds.series);
+                    renderMergeLists(list);
+                }
 
+                // Lists the merges made. The status calls it too, since the warnings of merged series read it.
+                function renderMergeLists(list) {
                     // A merge of series holds episodes, as the server names the kind of each copy.
                     var series = list.Merges.filter(function (merge) {
                         return merge.Copies.some(function (copy) {
