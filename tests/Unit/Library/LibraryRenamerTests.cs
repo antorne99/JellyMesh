@@ -535,6 +535,25 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_resumed_record_pairing_a_library_of_the_plugin_with_another_name_is_set_aside()
+    {
+        var recorded = Guid.NewGuid();
+        var server = new RemoteServerConfig { Id = Guid.NewGuid() };
+        server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = recorded.ToString("N") });
+        _store.Configuration.Servers.Add(server);
+        Directory.CreateDirectory(Path.Combine(_root, "Lago - Film"));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [recorded.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [recorded.ToString("N")]);
+        WriteJournal(Pending(oldName: "Inventato - Film", newName: "Lago - Film", oldId: recorded, newId: IdOf(Path.Combine(_root, "Lago - Film"))));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal([recorded.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        AssertSetAside(recorded);
+    }
+
+    [Fact]
     public async Task A_resumed_record_whose_old_id_is_a_library_held_for_a_removed_server_is_finished()
     {
         var recorded = Guid.NewGuid();

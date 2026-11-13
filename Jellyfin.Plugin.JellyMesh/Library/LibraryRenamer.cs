@@ -323,7 +323,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     }
 
     // True when the names stay in the libraries folder, the new id is the new folder's and the old id the old folder's or
-    // a library of the plugin's, so a record written by someone else moves and remaps nothing (row 329).
+    // a library of the plugin's by that old name, so a forged record moves and remaps nothing (rows 329, 346).
     private bool IsBound(LibraryRenameRecord record, string root)
     {
         try
@@ -339,7 +339,9 @@ public sealed class LibraryRenamer : ILibraryRenamer
             return _library.GetNewItemId(oldPath, typeof(CollectionFolder)).Equals(record.OldId)
                 || _store.Read(config => config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
                     .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
-                    .Any(library => Guid.TryParse(library.ItemId, out var id) && id.Equals(record.OldId)));
+                    .Any(library => Guid.TryParse(library.ItemId, out var id)
+                        && id.Equals(record.OldId)
+                        && string.Equals(library.Name, record.OldName, StringComparison.Ordinal)));
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
