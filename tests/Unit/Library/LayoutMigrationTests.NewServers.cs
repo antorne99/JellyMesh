@@ -420,6 +420,29 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task AnAutomaticLibraryRenamedByAResumeAtStartGetsNoFolderOfTheNewServer()
+    {
+        // The resume of a server rename left halfway runs no follow, so its record keeps the old name (§10 row 385).
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _libraries.Add(Library("A - Serie", CollectionTypeOptions.tvshows, ServerSeries(_serverA)));
+        var a = SwitchedOn(_serverA);
+        _renamer.Setup(renamer => renamer.ResumeAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => Rename("A - Film", "Mare - Film"))
+            .Returns(Task.CompletedTask);
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+        await _manager!.ResumeRenamesAsync(CancellationToken.None);
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", ServerFilms(_serverC))], _addedPaths);
+        Assert.Equal(["Mare - Film", "A - Serie"], a.AutomaticLibraryRegistry.Select(record => record.Name));
+    }
+
+    [Fact]
     public async Task AServerWithItsSwitchOnAndAKindLeftWithNoLibraryDoesNotHoldPlacementBack()
     {
         // A failed creation or a record the follow dropped is a stable state, so it does not stall placement (§10 row 384).
