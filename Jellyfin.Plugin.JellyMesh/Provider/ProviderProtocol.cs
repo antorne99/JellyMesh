@@ -16,6 +16,11 @@ public static class ProviderProtocol
     public const int CollectionsVersion = 2;
 
     /// <summary>
+    /// The first protocol version whose provider lets a peer read <c>/MediaSegments</c>. Older peers answer 403 (row 257).
+    /// </summary>
+    public const int SegmentsVersion = 2;
+
+    /// <summary>
     /// The route of the ProviderApi.
     /// </summary>
     public const string Route = "JellyMesh/Provider";

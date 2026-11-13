@@ -7,6 +7,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Segments;
 using Jellyfin.Plugin.JellyMesh.Sync;
@@ -47,7 +48,7 @@ public class StubSegmentsTests
         Indexed(_backup, 9_000, hasSegments: true);
     }
 
-    private void Indexed(StubSource source, long runTime, bool? hasSegments)
+    private void Indexed(StubSource source, long? runTime, bool? hasSegments)
     {
         var remote = TestItems.Movie(source.ItemId) with
         {
@@ -73,6 +74,10 @@ public class StubSegmentsTests
 
     private static MediaSegmentGenerationRequest Request(params MediaSegmentDto[] existing) => new() { ItemId = _itemId, ExistingSegments = existing };
 
+    private static RemoteResult<RemoteSegmentRead> Found(IReadOnlyList<RemoteSegment> segments) => RemoteResult.Success(new RemoteSegmentRead(segments));
+
+    private static RemoteResult<RemoteSegmentRead> Failed(RemoteFailure failure) => RemoteResult.Fail<RemoteSegmentRead>(failure);
+
     private static MediaSegmentDto Existing(MediaSegmentType type, long start, long end) => new() { Id = Guid.NewGuid(), ItemId = _itemId, Type = type, StartTicks = start, EndTicks = end };
 
     [Fact]
@@ -87,7 +92,7 @@ public class StubSegmentsTests
     [Fact]
     public async Task The_segments_of_the_best_source_land_on_the_stub_and_their_origin_is_kept()
     {
-        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([new RemoteSegment(MediaSegmentType.Intro, 0, 900), new RemoteSegment(MediaSegmentType.Outro, 5000, 6000)]);
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Intro, 0, 900), new RemoteSegment(MediaSegmentType.Outro, 5000, 6000)]);
         var segments = Segments();
 
         var result = await segments.GetAsync(Request(), CancellationToken.None);
@@ -96,6 +101,45 @@ public class StubSegmentsTests
         Assert.All(result, segment => Assert.Equal(_itemId, segment.ItemId));
         Assert.Equal(["best"], _client.Asked);
         Assert.Equal(new SegmentOrigin(_best, 6_000), segments.OriginOf(_itemId));
+    }
+
+    [Fact]
+    public async Task Segments_are_cut_at_the_end_of_the_title()
+    {
+        _client.Answer = _ => Found(
+        [
+            new RemoteSegment(MediaSegmentType.Intro, 0, 900),
+            new RemoteSegment(MediaSegmentType.Outro, 5000, 7000),
+            new RemoteSegment(MediaSegmentType.Preview, 6000, 6500),
+            new RemoteSegment(MediaSegmentType.Recap, 8000, 9000)
+        ]);
+
+        var result = await Segments().GetAsync(Request(), CancellationToken.None);
+
+        Assert.Equal([(MediaSegmentType.Intro, 0L, 900L), (MediaSegmentType.Outro, 5000L, 6000L)], result.Select(segment => (segment.Type, segment.StartTicks, segment.EndTicks)));
+    }
+
+    [Fact]
+    public async Task Segments_that_all_start_after_the_end_clear_the_stub()
+    {
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Outro, 6000, 7000)]);
+        var segments = Segments();
+
+        var result = await segments.GetAsync(Request(Existing(MediaSegmentType.Intro, 0, 900)), CancellationToken.None);
+
+        Assert.Empty(result);
+        Assert.Null(segments.OriginOf(_itemId));
+    }
+
+    [Fact]
+    public async Task Segments_of_a_title_of_unknown_duration_are_kept_whole()
+    {
+        Indexed(_best, null, hasSegments: true);
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Outro, 5000, 70_000)]);
+
+        var result = await Segments().GetAsync(Request(), CancellationToken.None);
+
+        Assert.Equal([(MediaSegmentType.Outro, 5000L, 70_000L)], result.Select(segment => (segment.Type, segment.StartTicks, segment.EndTicks)));
     }
 
     [Fact]
@@ -115,7 +159,7 @@ public class StubSegmentsTests
     public async Task A_best_source_whose_segments_are_unknown_is_asked()
     {
         Indexed(_best, 6_000, hasSegments: null);
-        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
 
         var result = await Segments().GetAsync(Request(), CancellationToken.None);
 
@@ -125,10 +169,10 @@ public class StubSegmentsTests
     [Fact]
     public async Task No_segments_on_the_remote_clears_the_stub()
     {
-        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
         var segments = Segments();
         await segments.GetAsync(Request(), CancellationToken.None);
-        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([]);
+        _client.Answer = _ => Found([]);
 
         var result = await segments.GetAsync(Request(Existing(MediaSegmentType.Intro, 0, 900)), CancellationToken.None);
 
@@ -141,7 +185,7 @@ public class StubSegmentsTests
     [InlineData(RemoteFailure.InvalidResponse)]
     public async Task A_failed_read_keeps_what_the_stub_has(RemoteFailure failure)
     {
-        _client.Answer = _ => RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(failure);
+        _client.Answer = _ => Failed(failure);
         var existing = Existing(MediaSegmentType.Intro, 0, 900);
 
         var result = await Segments().GetAsync(Request(existing), CancellationToken.None);
@@ -157,7 +201,7 @@ public class StubSegmentsTests
 
         Assert.Empty(await segments.GetAsync(Request(), CancellationToken.None));
         _registry.Offline.Clear();
-        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
         Assert.Empty(await segments.GetAsync(Request(), CancellationToken.None));
         Assert.Empty(_client.Asked);
 
@@ -165,16 +209,73 @@ public class StubSegmentsTests
         Assert.Single(await segments.GetAsync(Request(), CancellationToken.None));
     }
 
-    [Fact]
-    public async Task A_failure_of_one_item_does_not_pause_its_server()
+    [Theory]
+    [InlineData(RemoteFailure.Forbidden)]
+    [InlineData(RemoteFailure.ServerError)]
+    [InlineData(RemoteFailure.InvalidResponse)]
+    public async Task An_error_of_the_server_leaves_it_alone_for_a_while(RemoteFailure failure)
     {
-        _client.Answer = _ => RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(RemoteFailure.InvalidResponse);
+        _client.Answer = _ => Failed(failure);
+        var segments = Segments();
+        await segments.GetAsync(Request(), CancellationToken.None);
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
+
+        Assert.Empty(await segments.GetAsync(Request(), CancellationToken.None));
+        Assert.Single(_client.Asked);
+
+        _clock.Advance(StubSegments.OfflinePause);
+        Assert.Single(await segments.GetAsync(Request(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task An_item_the_remote_refuses_alone_keeps_what_the_stub_has_and_does_not_pause_its_server()
+    {
+        _client.Answer = _ => RemoteResult.Success(RemoteSegmentRead.Refused);
+        var existing = Existing(MediaSegmentType.Intro, 0, 900);
+        var segments = Segments();
+
+        Assert.Equal([existing], await segments.GetAsync(Request(existing), CancellationToken.None));
+        await segments.GetAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(2, _client.Asked.Count);
+    }
+
+    [Fact]
+    public async Task A_busy_server_is_not_paused()
+    {
+        _client.Answer = _ => Failed(RemoteFailure.Busy);
         var segments = Segments();
         await segments.GetAsync(Request(), CancellationToken.None);
 
         await segments.GetAsync(Request(), CancellationToken.None);
 
         Assert.Equal(2, _client.Asked.Count);
+    }
+
+    [Fact]
+    public async Task Access_denied_by_an_older_peer_means_no_segments_and_does_not_pause_it()
+    {
+        _registry.Servers.Add(new RemoteServerInfo(_best.ServerId, "peer", "http://peer", RemoteMode.JellyMesh, ProviderProtocol.SegmentsVersion - 1, [], null, null));
+        _client.Answer = _ => Failed(RemoteFailure.Forbidden);
+        var segments = Segments();
+
+        Assert.Empty(await segments.GetAsync(Request(), CancellationToken.None));
+        await segments.GetAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(2, _client.Asked.Count);
+    }
+
+    [Fact]
+    public async Task Access_denied_by_a_peer_that_serves_segments_pauses_it()
+    {
+        _registry.Servers.Add(new RemoteServerInfo(_best.ServerId, "peer", "http://peer", RemoteMode.JellyMesh, ProviderProtocol.SegmentsVersion, [], null, null));
+        _client.Answer = _ => Failed(RemoteFailure.Forbidden);
+        var segments = Segments();
+        await segments.GetAsync(Request(), CancellationToken.None);
+
+        await segments.GetAsync(Request(), CancellationToken.None);
+
+        Assert.Single(_client.Asked);
     }
 
     [Fact]
@@ -221,7 +322,7 @@ public class StubSegmentsTests
     [Fact]
     public async Task Forgetting_an_item_drops_its_origin()
     {
-        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
+        _client.Answer = _ => Found([new RemoteSegment(MediaSegmentType.Intro, 0, 900)]);
         var segments = Segments();
         await segments.GetAsync(Request(), CancellationToken.None);
 
@@ -234,9 +335,9 @@ public class StubSegmentsTests
     {
         public List<string> Asked { get; } = [];
 
-        public Func<string, RemoteResult<IReadOnlyList<RemoteSegment>>> Answer { get; set; } = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([]);
+        public Func<string, RemoteResult<RemoteSegmentRead>> Answer { get; set; } = _ => Found([]);
 
-        public Task<RemoteResult<IReadOnlyList<RemoteSegment>>> GetSegmentsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+        public Task<RemoteResult<RemoteSegmentRead>> GetSegmentsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
         {
             Asked.Add(itemId);
             return Task.FromResult(Answer(itemId));

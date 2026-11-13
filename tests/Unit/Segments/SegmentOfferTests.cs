@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
@@ -12,8 +15,17 @@ using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaSegments;
+using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.MediaInfo;
+using MediaBrowser.Model.MediaSegments;
+using MediaBrowser.Model.Querying;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -161,5 +173,145 @@ public class SegmentOfferTests
         Offer().OfferOnRemote(response, null);
 
         Assert.False(response.MediaSources[0].HasSegments);
+    }
+
+    private PlaybackSession Playing(StubSource source, PlaybackIdentity identity)
+    {
+        var session = new PlaybackSession(identity, source, "remote", PlaybackStreamKind.Hls, "/master.m3u8", DateTimeOffset.UnixEpoch);
+        _sessions.Add(session);
+        return session;
+    }
+
+    private static PlaybackInfoResponse Answer(string playSessionId) => new() { PlaySessionId = playSessionId, MediaSources = [new MediaSourceInfo { HasSegments = true }] };
+
+    [Fact]
+    public void A_device_playing_a_copy_of_another_duration_reads_no_segments_directly()
+    {
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        Indexed(_backup, Hour);
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var session = Playing(_backup, identity);
+        var offer = Offer();
+        offer.OfferOnRemote(Answer(session.Id), identity);
+
+        Assert.False(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+        Assert.True(offer.ServesDirect(identity.UserId, "another device", _itemId));
+        Assert.True(offer.ServesDirect(Guid.NewGuid(), identity.DeviceId, _itemId));
+        Assert.True(offer.ServesDirect(identity.UserId, identity.DeviceId, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void Opening_another_title_on_the_device_keeps_the_copy_that_still_plays()
+    {
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        Indexed(_backup, Hour);
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var session = Playing(_backup, identity);
+        var offer = Offer();
+        offer.OfferOnRemote(Answer(session.Id), identity);
+        var next = identity with { ItemId = Guid.NewGuid() };
+        offer.OfferOnRemote(Answer(Playing(_best, next).Id), next);
+
+        Assert.False(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+    }
+
+    [Fact]
+    public void A_device_playing_the_copy_the_segments_came_from_reads_them_directly()
+    {
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var session = Playing(_best, identity);
+        var offer = Offer();
+        offer.OfferOnRemote(Answer(session.Id), identity);
+
+        Assert.True(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+    }
+
+    [Fact]
+    public void The_item_of_the_route_counts_as_the_one_played()
+    {
+        var route = Guid.NewGuid();
+        _manager.Setup(manager => manager.HasSegments(route)).Returns(true);
+        _library.Setup(library => library.GetItemById(route)).Returns(new Movie { Id = route, ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") });
+        _segments.Remember(route, new SegmentOrigin(_best, 2 * Hour));
+        Indexed(_backup, Hour);
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var session = Playing(_backup, identity);
+        var offer = Offer();
+        offer.OfferOnRemote(Answer(session.Id), identity, route);
+
+        Assert.False(offer.ServesDirect(identity.UserId, identity.DeviceId, route));
+    }
+
+    [Fact]
+    public void Once_the_session_is_gone_the_segments_are_read_directly_again()
+    {
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        Indexed(_backup, Hour);
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var session = Playing(_backup, identity);
+        var offer = Offer();
+        offer.OfferOnRemote(Answer(session.Id), identity);
+
+        _sessions.Remove(session.Id);
+
+        Assert.True(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+    }
+
+    [Fact]
+    public void A_local_transcode_of_a_copy_of_another_duration_offers_no_segments_and_reads_none_directly()
+    {
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        Indexed(_backup, Hour);
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var response = Answer("local-play");
+        var offer = Offer();
+
+        offer.OfferOnLocal(response, identity, _backup, _itemId);
+        _sessions.RecordLocal(identity.UserId, "local-play", _itemId, identity.DeviceId);
+
+        Assert.False(response.MediaSources[0].HasSegments);
+        Assert.False(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+
+        _sessions.EndLocal(identity.UserId, "local-play");
+        Assert.True(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+    }
+
+    [Fact]
+    public async Task The_route_of_the_segments_answers_none_to_a_device_playing_another_copy()
+    {
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        Indexed(_backup, Hour);
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var session = Playing(_backup, identity);
+        var offer = Offer();
+        offer.OfferOnRemote(Answer(session.Id), identity);
+
+        var answer = await RouteAsync(offer, identity.UserId, identity.DeviceId);
+
+        Assert.Empty(Assert.IsType<QueryResult<MediaSegmentDto>>(answer.Value).Items);
+    }
+
+    [Fact]
+    public async Task The_route_of_the_segments_leaves_stock_alone_without_a_session()
+    {
+        var answer = await RouteAsync(Offer(), Guid.NewGuid(), "device");
+
+        Assert.Single(Assert.IsType<QueryResult<MediaSegmentDto>>(answer.Value).Items);
+    }
+
+    // Runs the route filter over a stock answer of one segment for the user and device.
+    private static async Task<ObjectResult> RouteAsync(SegmentOffer offer, Guid userId, string deviceId)
+    {
+        var authorization = new Mock<IAuthorizationContext>();
+        authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .ReturnsAsync(new AuthorizationInfo { User = new User("viewer", "auth", "reset") { Id = userId }, DeviceId = deviceId });
+        var descriptor = new ControllerActionDescriptor { ControllerName = "MediaSegments", ActionName = "GetItemSegments" };
+        var context = new ActionExecutingContext(new ActionContext(new DefaultHttpContext(), new RouteData(), descriptor), [], new Dictionary<string, object?> { ["itemId"] = _itemId }!, new object());
+        var stock = new OkObjectResult(new QueryResult<MediaSegmentDto>([new MediaSegmentDto { ItemId = _itemId, Type = MediaSegmentType.Intro, StartTicks = 0, EndTicks = 900 }]));
+
+        await new SegmentRouteFilter(authorization.Object, offer).OnActionExecutionAsync(context, () => Task.FromResult(new ActionExecutedContext(context, [], new object()) { Result = stock }));
+
+        return stock;
     }
 }

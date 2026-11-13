@@ -38,12 +38,15 @@ public static class PlaybackServices
         services.AddSingleton<StubSegments>();
         services.AddSingleton<IMediaSegmentProvider, StubSegmentProvider>();
         services.AddSingleton<SegmentOffer>();
+        services.AddSingleton<SegmentRouteFilter>();
         services.AddHostedService<PlaybackSweeper>();
+        services.AddHostedService<NewStubSegments>();
 
         services.Configure<MvcOptions>(options =>
         {
             options.Filters.AddService<PlaybackInfoFilter>();
             options.Filters.AddService<StockRouteGuardFilter>();
+            options.Filters.AddService<SegmentRouteFilter>();
         });
     }
 }

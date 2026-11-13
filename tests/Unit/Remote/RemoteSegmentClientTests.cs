@@ -36,7 +36,7 @@ public class RemoteSegmentClientTests
         Assert.True(result.IsSuccess);
         Assert.Equal(
             [new RemoteSegment(MediaSegmentType.Intro, 0, 900), new RemoteSegment(MediaSegmentType.Outro, 5000, 6000), new RemoteSegment(MediaSegmentType.Recap, 1, 2), new RemoteSegment(MediaSegmentType.Preview, 3, 4), new RemoteSegment(MediaSegmentType.Commercial, 7, 8)],
-            result.Value!);
+            result.Value!.Segments);
         var request = Assert.Single(handler.Requests);
         Assert.Equal("/MediaSegments/item%2F1", request.Uri.AbsolutePath);
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
@@ -51,7 +51,7 @@ public class RemoteSegmentClientTests
         var result = await client.GetSegmentsAsync(_endpoint, _session, "item", CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Empty(result.Value!);
+        Assert.Empty(result.Value!.Segments);
     }
 
     [Theory]
@@ -67,7 +67,7 @@ public class RemoteSegmentClientTests
 
         var result = await client.GetSegmentsAsync(_endpoint, _session, "item", CancellationToken.None);
 
-        Assert.Equal([new RemoteSegment(MediaSegmentType.Intro, 0, 900)], result.Value!);
+        Assert.Equal([new RemoteSegment(MediaSegmentType.Intro, 0, 900)], result.Value!.Segments);
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public class RemoteSegmentClientTests
 
         var result = await client.GetSegmentsAsync(_endpoint, _session, "item", CancellationToken.None);
 
-        Assert.Equal(RemotePlaybackClient.MaxSegments, result.Value!.Count);
+        Assert.Equal(RemotePlaybackClient.MaxSegments, result.Value!.Segments.Count);
     }
 
     [Theory]
@@ -92,6 +92,33 @@ public class RemoteSegmentClientTests
         var result = await client.GetSegmentsAsync(_endpoint, _session, "item", CancellationToken.None);
 
         Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.BadRequest)]
+    public async Task A_client_error_refuses_the_item_alone(HttpStatusCode status)
+    {
+        var (client, _) = Build(_ => StubHandler.Status(status));
+
+        var result = await client.GetSegmentsAsync(_endpoint, _session, "item", CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value!.ItemRefused);
+        Assert.Empty(result.Value.Segments);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    public async Task An_error_of_the_server_is_a_failure(HttpStatusCode status)
+    {
+        var (client, _) = Build(_ => StubHandler.Status(status));
+
+        var result = await client.GetSegmentsAsync(_endpoint, _session, "item", CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ServerError, result.Failure);
     }
 
     [Fact]

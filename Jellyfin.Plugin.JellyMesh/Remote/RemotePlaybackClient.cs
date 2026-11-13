@@ -266,30 +266,40 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<IReadOnlyList<RemoteSegment>>> GetSegmentsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    public async Task<RemoteResult<RemoteSegmentRead>> GetSegmentsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(itemId);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/MediaSegments/" + Uri.EscapeDataString(itemId));
-        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        var (document, status) = await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false);
         if (!document.IsSuccess)
         {
-            return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(document.Failure);
+            return IsItemRefusal(status)
+                ? RemoteResult.Success(RemoteSegmentRead.Refused)
+                : RemoteResult.Fail<RemoteSegmentRead>(document.Failure);
         }
 
         if (Parse<SegmentPage>(document.Value!)?.Items is not { } items)
         {
-            return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(RemoteFailure.InvalidResponse);
+            return RemoteResult.Fail<RemoteSegmentRead>(RemoteFailure.InvalidResponse);
         }
 
-        IReadOnlyList<RemoteSegment> segments = items
+        var segments = items
             .Select(ToSegment)
             .OfType<RemoteSegment>()
             .Take(MaxSegments)
             .ToList();
-        return RemoteResult.Success(segments);
+        return RemoteResult.Success(new RemoteSegmentRead(segments));
+    }
+
+    // A client error about the item alone, such as not found or too many reads at once; 401 and 403 speak of the user.
+    private static bool IsItemRefusal(HttpStatusCode? status)
+    {
+        return status is { } code
+            && (int)code is >= 400 and < 500
+            && code is not HttpStatusCode.Unauthorized and not HttpStatusCode.Forbidden;
     }
 
     // Null for a type Jellyfin does not name, or times stock would refuse to store.
@@ -374,9 +384,15 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
 
     private async Task<RemoteResult<byte[]>> ReadDocumentAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
     {
+        return (await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false)).Document;
+    }
+
+    // Reads a document with the status of the answer, null when none came.
+    private async Task<(RemoteResult<byte[]> Document, HttpStatusCode? Status)> ReadAnswerAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
+    {
         if (message is null)
         {
-            return RemoteResult.Fail<byte[]>(RemoteFailure.InvalidResponse);
+            return (RemoteResult.Fail<byte[]>(RemoteFailure.InvalidResponse), null);
         }
 
         var client = _httpClientFactory.CreateClient(HttpClientName);
@@ -385,21 +401,19 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return RemoteResult.Fail<byte[]>(FailureOf(response));
+                return (RemoteResult.Fail<byte[]>(FailureOf(response)), response.StatusCode);
             }
 
             var body = await RemoteBody.ReadLimitedAsync(response.Content, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
-            return body is null
-                ? RemoteResult.Fail<byte[]>(RemoteFailure.ResponseTooLarge)
-                : RemoteResult.Success(body);
+            return (body is null ? RemoteResult.Fail<byte[]>(RemoteFailure.ResponseTooLarge) : RemoteResult.Success(body), response.StatusCode);
         }
         catch (HttpRequestException)
         {
-            return RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable);
+            return (RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable), null);
         }
         catch (IOException)
         {
-            return RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable);
+            return (RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable), null);
         }
     }
 

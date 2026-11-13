@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model;
 using MediaBrowser.Model.MediaSegments;
@@ -21,7 +22,7 @@ namespace Jellyfin.Plugin.JellyMesh.Segments;
 public sealed class StubSegments
 {
     /// <summary>
-    /// How long a server that could not be reached is left alone.
+    /// How long a server that could not be reached, or that answered with an error, is left alone.
     /// </summary>
     public static readonly TimeSpan OfflinePause = TimeSpan.FromMinutes(10);
 
@@ -124,7 +125,7 @@ public sealed class StubSegments
         var result = await ReadAsync(best, cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
-            if (result.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.Suspended or RemoteFailure.AuthenticationFailed)
+            if (Pauses(best.ServerId, result.Failure))
             {
                 _pausedUntil[best.ServerId] = _time.GetUtcNow() + OfflinePause;
             }
@@ -134,7 +135,13 @@ public sealed class StubSegments
         }
 
         _pausedUntil.TryRemove(best.ServerId, out _);
-        var segments = result.Value!;
+        if (result.Value!.ItemRefused)
+        {
+            _logger.LogDebug("Server {ServerId} refused the media segments of one stub", best.ServerId);
+            return [.. request.ExistingSegments];
+        }
+
+        var segments = WithinRunTime(result.Value.Segments, version?.RunTimeTicks);
         if (segments.Count == 0)
         {
             Forget(request.ItemId);
@@ -167,7 +174,40 @@ public sealed class StubSegments
             .FirstOrDefault(version => string.Equals(version.MediaSourceId, source.MediaSourceId, StringComparison.Ordinal));
     }
 
-    private async Task<RemoteResult<IReadOnlyList<RemoteSegment>>> ReadAsync(StubSource source, CancellationToken cancellationToken)
+    // Tells whether a failure is of the server as a whole, so that its other stubs wait (Q261). An older peer refuses the
+    // route itself, which is "no segments" for that stub (row 257).
+    private bool Pauses(Guid serverId, RemoteFailure failure)
+    {
+        return failure switch
+        {
+            RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.Suspended or RemoteFailure.AuthenticationFailed
+                or RemoteFailure.ServerError or RemoteFailure.InvalidResponse => true,
+            RemoteFailure.Forbidden => !IsOlderPeer(serverId),
+            _ => false
+        };
+    }
+
+    private bool IsOlderPeer(Guid serverId)
+    {
+        return _registry.GetServers().FirstOrDefault(server => server.Id == serverId) is { Mode: RemoteMode.JellyMesh } server
+            && server.ProtocolVersion < ProviderProtocol.SegmentsVersion;
+    }
+
+    // Cuts each segment at the end of the title and drops those that start at or after it (Q262). Unknown duration cuts none.
+    private static List<RemoteSegment> WithinRunTime(IReadOnlyList<RemoteSegment> segments, long? runTimeTicks)
+    {
+        if (runTimeTicks is not { } end || end <= 0)
+        {
+            return [.. segments];
+        }
+
+        return segments
+            .Where(segment => segment.StartTicks < end)
+            .Select(segment => segment.EndTicks > end ? segment with { EndTicks = end } : segment)
+            .ToList();
+    }
+
+    private async Task<RemoteResult<RemoteSegmentRead>> ReadAsync(StubSource source, CancellationToken cancellationToken)
     {
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_store.Read(PlaybackTimes.From).RemotePlaybackInfo);
@@ -180,12 +220,12 @@ public sealed class StubSegments
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(RemoteFailure.Timeout);
+            return RemoteResult.Fail<RemoteSegmentRead>(RemoteFailure.Timeout);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogDebug("Reading the media segments of a stub failed: {Error}", exception.GetType().Name);
-            return RemoteResult.Fail<IReadOnlyList<RemoteSegment>>(RemoteFailure.ServerError);
+            return RemoteResult.Fail<RemoteSegmentRead>(RemoteFailure.ServerError);
         }
     }
 
