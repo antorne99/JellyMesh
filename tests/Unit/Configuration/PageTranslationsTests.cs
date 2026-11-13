@@ -171,7 +171,9 @@ public class PageTranslationsTests
     [Theory]
     [InlineData("without this backup")]
     [InlineData("senza questa riserva")]
-    public void No_text_speaks_of_the_flat_layout(string text)
+    [InlineData("or add those servers again")]
+    [InlineData("o aggiungi di nuovo quei server")]
+    public void No_text_speaks_of_the_flat_layout_or_of_adding_missing_servers_again(string text)
     {
         Assert.DoesNotContain(text, _page, StringComparison.Ordinal);
     }

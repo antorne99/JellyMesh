@@ -1966,7 +1966,7 @@
                     "unexpected answer": "risposta inattesa",
                     "unknown problem": "problema sconosciuto",
                     "{count} min": "{count} min",
-                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below: their folders are deleted.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server. Se quei server non torneranno più, dimenticali qui sotto: le loro cartelle vengono eliminate.",
+                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them. If those servers are gone for good, forget them below: their folders are deleted.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale. Se quei server non torneranno più, dimenticali qui sotto: le loro cartelle vengono eliminate.",
                     "{count} titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog.": "{count} titoli vengono da server assenti dalle impostazioni. Restano finché quei server non vengono dimenticati nel Catalogo.",
                     "The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.": "Le cartelle di quei server vengono eliminate ora, come quando si rimuove un server: i loro {count} titoli escono dalle librerie, con le loro immagini. Gli stessi titoli di un server nelle impostazioni restano. Su quei server non cambia nulla e i file locali non vengono toccati.",
                     "{field} was refused, so nothing was saved. {rule}": "{field} è stato rifiutato, quindi non è stato salvato nulla. {rule}",
@@ -3423,7 +3423,7 @@
                         return t('A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.', { server: held.ServerName, count: held.Stubs });
                     });
                     if (status.UnconfiguredStubs > 0) {
-                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below: their folders are deleted.', { count: status.UnconfiguredStubs }));
+                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them. If those servers are gone for good, forget them below: their folders are deleted.', { count: status.UnconfiguredStubs }));
                     }
 
                     return notes.join(' ');
