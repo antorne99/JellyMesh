@@ -1,8 +1,8 @@
 Measured on 2026-11-13 at 91c705f (worktree-agent-f21, phase F21: the plugin code is that of 3be90b9), Jellyfin
 12.4.20261026-211555 on Docker Desktop for Mac (8 CPUs, 7.6 GiB VM). Three fakes (fake_remote.py) on the host serve the
 same catalog, each as its own server, so every title has three stubs that form one version group. Each phase waits for
-idle scheduled tasks first, and <phase>-load.txt kept the other containers' load: none ran beside the consumer in the
-runs below, except where noted. The times are the consumer's.
+idle scheduled tasks first. <phase>-load.txt is a snapshot of the containers' load taken as the phase starts: it showed
+no container beside the consumer in any phase of the runs below. The times are the consumer's.
 
 # Q27 targets (§10 row 76) at 3 servers of 55,000 titles
 
@@ -12,11 +12,11 @@ sync without changes within 30 s          incremental 65.7 s unscanned (material
                                           scanned: not run at this size, about 87 s by linear projection of the 26.1 s of
                                           3 x 16,500 (8.0 s materialization + 18.0 s links), more if it grows like the
                                           unscanned one (9.2 s at 3 x 16,500 while sampled, 65.7 s at 3 x 55,000)
-                                          full sync with no changes ("repeat"): 163.0 s, under memory pressure
+                                          full sync with no changes ("repeat"): 163.0 s
 JellyMesh filter under 50 ms on 100 items 8 ms median (7.7-9.6 ms over 3 runs), VersionCheckCostTests: the real
                                           StubRegistry with 165,000 stubs and 55,000 groups, Jellyfin's lookups mocked
-nightly relink (no target)                840.4 s unscanned, under memory pressure (materialization 545.2 s, links
-                                          175.7 s); 79.2 s scanned at 3 x 16,500 (links 19.0 s)
+nightly relink (no target)                840.4 s unscanned (materialization 545.2 s, links 175.7 s); 79.2 s scanned at
+                                          3 x 16,500 (links 19.0 s)
 
 Before F21 (develop cae4bec), the first sync at 3 x 55,000 took 1822 s: 29 s read, about 22.5 min materialization
 (the planner's search of the old groups and local copies was quadratic) and 7.4 min of version links (330,000 lookups
@@ -24,25 +24,34 @@ of items Jellyfin did not have). That run had a foreign SDK build at about 500% 
 first phase. F21 made the planner linear (d9272af) and asks Jellyfin once, in batches of 1000 ids, which stub items
 exist (3be90b9). The links after the materialization went from 7.4 min to 2.8 s on an unscanned first sync.
 
-# What is left, from the profile of a separate 3 x 55,000 run (stacks every 5 s, dotnet-counters)
+# What is left
 
-- GC pauses are about 5% of the time (11.8 s of the 224 s first sync, 7.1 s of the 95 s incremental, both slowed by
-  the sampling). The process uses 1.5 to 1.8 cores. So the excess is work, not collection.
-- First sync: the most frequent JellyMesh frame is LibraryMaterializer.WriteFileAsync (9 of 30 samples). It writes
-  520,000 files (165,000 .strm, 174,000 .nfo, 190,500 images) where one server of 55,000 writes 171,500 in 36 s.
-  The catalog read costs 61 ms a page at 3 x 55,000 against 22 ms at 3 x 16,500, for the same pages.
-- Sync without changes: no frame dominates. The time is spread over the full re-plan of 165,000 stubs: the resolver,
-  dedup, the planner with an .nfo rendered per stub to compare its hash, and the registry lookups rebuilt at each save.
+Every unscanned phase at 3 x 55,000 takes about twice its linear projection from 3 x 16,500: first 267.6 s against
+130 s, incremental 65.7 s against 31 s, repeat 163.0 s against 86 s, nightly 840.4 s against 315 s. The cause of
+this growth is not identified. What was measured, partly on a separate 3 x 55,000 run profiled with stack samples
+every 5 s (3 s in the incremental) and dotnet-counters, which slowed it:
+- GC pauses are about 5% of the time (11.8 s of the 224 s first sync, 7.1 s of the 95 s incremental). The process
+  uses 1.5 to 1.8 cores, mostly in user mode: 268 of 399 CPU seconds in the first sync (131 in the kernel, the file
+  writes), 132 of 141 in the incremental.
+- The catalog read grows with what is already indexed: in the first sync the three servers, with identical catalogs,
+  took 9.1, 20.2 and 24.0 s (31, 70 and 83 ms a page), against 1.8, 1.9 and 2.0 s at 3 x 16,500.
+- First sync: of the 30 samples, 9 had the sync thread in LibraryMaterializer.WriteFileAsync (open, rename, unlink).
+  It writes 529,500 files (165,000 .strm, 174,000 .nfo, 190,500 images) where one server of 55,000 wrote 171,500 in
+  36 s. Two samples were in CredentialVault.GetKeyState, which decrypts the credentials for each remote call.
+- Sync without changes: no helper holds most samples. They are spread over the full re-plan of 165,000 stubs: the
+  resolver and dedup, the planner (an .nfo rendered per stub to compare its hash, the series lookups, the groups), and
+  the two saves of the 169 MiB registry with their lookups rebuilt.
+- In 6 of the 12 incremental samples a request thread was in CatalogSyncService.ToReport, the status this harness polls
+  every 2 s, which counts each server's items by kind on every call. Whether it slows the sync is not verified.
 - Scanned version links: Run.FindStub -> LibraryManager.GetItemById -> BaseItemRepository.RetrieveItem, one SQLite
   query per stub that has an item, about 0.36 ms each (8 of 12 samples at 3 x 16,500). The per-stub cost is the same
-  at 3 x 5,500 and 3 x 16,500, and it is the same on the run that links and on the run after it, which shows the
-  batched id check also finds the alternates Jellyfin hides behind their primary.
+  at 3 x 5,500 and 3 x 16,500, and on the run that links and the run after it: had the batched id check missed the
+  alternates Jellyfin hides behind their primary, the second run would have looked up a third of the stubs.
 - Memory: process VmHWM 4.1 GiB after the first sync, 5.7 GiB after the repeat, 6.7 GiB after the nightly, cgroup
-  peak 6.9 GiB of the 7.6 GiB VM, so the repeat and the nightly at 3 x 55,000 ran under memory pressure. 3 x 16,500
-  (2.6 GiB after its nightly) is the largest size that ran clean. federation-index.json is 549 MiB and
-  federated-stubs.json 169 MiB.
-- The scan of 3 x 16,500 linked folders took 1346 s (27 ms an item); a scanned 3 x 55,000 run would need about 75 min
-  of scan and more memory than the VM has, so it was not run.
+  peak 6.9 GiB of the 7.6 GiB VM; 2.6 GiB after the nightly at 3 x 16,500. federation-index.json is 549 MiB and
+  federated-stubs.json 169 MiB at 3 x 55,000.
+- The scan of 3 x 16,500 linked folders took 1346 s (27 ms an item). A scanned 3 x 55,000 run would need about 75 min
+  of scan on top of 6.7 GiB already reached unscanned, so it was not run; 3 x 16,500 is the largest scanned size.
 
 # Links after the scan
 
