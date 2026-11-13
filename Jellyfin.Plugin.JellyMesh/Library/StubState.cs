@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -40,4 +41,21 @@ public sealed record StubState
 
     /// <summary>Gets the stubs of renamed servers whose old files and items are not gone yet.</summary>
     public IReadOnlyList<StubRename> Renames { get; init; } = [];
+
+    /// <summary>
+    /// Gets these stubs, each followed by itself at every old path a pending server rename still keeps with an item, so that
+    /// both items leave their version groups before a removal (Q351). An old path that a stub has now is left out.
+    /// </summary>
+    /// <param name="stubs">The stubs about to be removed.</param>
+    /// <returns>The stubs, with their old paths.</returns>
+    public IReadOnlyList<StubEntry> WithOldPaths(IEnumerable<StubEntry> stubs)
+    {
+        var current = Stubs.Select(stub => stub.RelativePath).ToHashSet(StringComparer.Ordinal);
+        return stubs
+            .SelectMany(stub => Renames
+                .Where(rename => rename.RemovedItemId is null && string.Equals(rename.StubId, stub.Id, StringComparison.Ordinal) && !current.Contains(rename.OldPath))
+                .Select(rename => stub with { RelativePath = rename.OldPath })
+                .Prepend(stub))
+            .ToList();
+    }
 }

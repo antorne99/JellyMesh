@@ -1022,6 +1022,23 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Empty(_saves);
     }
 
+    // Q351: the old path of a stub that left the registry has no kind, so its item is found by path whatever kind is given.
+    [Fact]
+    public async Task AnEntryAboutToBeRemovedIsFoundByPathWhateverItsKind()
+    {
+        var episode = Stub("se", _serverA, 1080, StubKind.Episode);
+        await SaveAsync([]);
+        var item = Scanned(episode);
+        var local = Local();
+        item.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(item.Id)];
+
+        Assert.Empty(await _linker.DetachForRemovalAsync([episode with { Kind = StubKind.Movie }], CancellationToken.None));
+
+        Assert.Null(item.PrimaryVersionId);
+        Assert.Empty(local.LinkedAlternateVersions);
+    }
+
     [Fact]
     public async Task AFailedDetachBeforeARemovalDoesNotStopTheOthers()
     {

@@ -364,6 +364,81 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    // Q351: the old item of a stub that left is still in its version group, so it leaves the group before its files go.
+    [Fact]
+    public async Task TheOldItemOfAStubThatLeftLeavesItsVersionGroupBeforeItsFilesGo()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Casa"), new Movie());
+        await SaveAsync(_registry.State with { Stubs = [] });
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal([FilmPath("Casa") + " on disk"], _detached);
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Empty(_registry.State.Renames);
+    }
+
+    [Fact]
+    public async Task AnOldItemNeverScannedLeavesItsVersionGroupBeforeItsFileGoes()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Mare"), new Movie());
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal([FilmPath("Casa") + " on disk"], _detached);
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+    }
+
+    // Q351 and Q326: an old item of a stub that left that cannot leave its group keeps its files, and the next round retries.
+    [Fact]
+    public async Task TheOldItemOfAStubThatLeftThatCannotLeaveItsVersionGroupKeepsItsFiles()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [] });
+        _detachFails = true;
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
+
+        _detachFails = false;
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Empty(_registry.State.Renames);
+    }
+
+    // Q351: a new rename also deletes the old files of a stub that left, so their item leaves its version group first.
+    [Fact]
+    public async Task ARenameDetachesTheOldItemOfAStubThatLeftBeforeItsFilesGo()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [] });
+
+        await _renamer.RelabelAsync(_server, "Lago", CancellationToken.None);
+
+        Assert.Equal([FilmPath("Casa") + " on disk"], _detached);
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Empty(_registry.State.Renames);
+    }
+
+    [Fact]
+    public async Task ARenameKeepsTheOldFilesOfAStubThatLeftWhoseItemCannotLeaveItsVersionGroup()
+    {
+        await RenamedFilmAsync();
+        await SaveAsync(_registry.State with { Stubs = [] });
+        _detachFails = true;
+
+        await _renamer.RelabelAsync(_server, "Lago", CancellationToken.None);
+
+        Assert.True(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
+        Assert.Equal("Lago", _registry.State.Labels[_server]);
+    }
+
     [Fact]
     public async Task AStubThatLeftTheRegistryHoldsUpNoRename()
     {

@@ -229,8 +229,9 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             return state;
         }
 
-        // A stub that cannot leave its version group stays for the next scan, so Jellyfin rewrites no .nfo (Q326, Q327).
-        if (_linker is not null && (await _linker.DetachForRemovalAsync([stub], cancellationToken).ConfigureAwait(false)).Count > 0)
+        // A stub that cannot leave its version group, also at the old path of a pending server rename, stays for the next
+        // scan, so Jellyfin rewrites no .nfo (Q326, Q327, Q351).
+        if (_linker is not null && (await _linker.DetachForRemovalAsync(state.WithOldPaths([stub]), cancellationToken).ConfigureAwait(false)).Count > 0)
         {
             return state;
         }
