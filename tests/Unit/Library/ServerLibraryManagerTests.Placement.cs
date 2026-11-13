@@ -333,6 +333,110 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Contains(libraries.Automatic, folder => folder.Name == "Vecchio film");
     }
 
+    [Fact]
+    public async Task A_library_renamed_under_a_skipped_follow_does_not_hold_placement_back()
+    {
+        // The follow cannot adopt it and releases it under its current name, so it is the admin's (§10 rows 393, 401).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+        Assert.Equal(["Film di casa"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_library_renamed_under_a_skipped_follow_next_to_one_there_at_switch_on_does_not_hold_placement_back()
+    {
+        // The library there at switch-on is never seen by the registry, so the renamed one is still the only one (§10 row 401).
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+        Assert.Equal(["Film di casa"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_library_a_removed_server_found_at_switch_on_on_its_folder_is_the_admin_s()
+    {
+        // Row 395 counts the libraries on the folder of a removed server, but not one that was there at switch-on (§10 row 402).
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], libraries.Automatic.Select(folder => folder.Name).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_library_a_removed_server_released_on_its_folder_is_the_admin_s()
+    {
+        // As rows 177 and 202 leave it: dropped from the held registry and listed as released (§10 row 402).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film mio");
+        fixture.Store.Update(config =>
+        {
+            var held = config.RemovedServerLibraries.Single();
+            held.Libraries.Remove(held.Libraries.Single(record => record.Kind == ServerLibraryKind.Movies));
+            held.ReleasedLibraries.Add("Film mio");
+        });
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_library_a_removed_server_found_at_switch_on_stays_the_admin_s_once_the_server_is_added_back()
+    {
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        var server = fixture.AddServerBack("Casa");
+        await fixture.Manager.Enable(_serverId).Job;
+        Assert.Contains(fixture.Libraries.IdOf("Film"), server.PreexistingLibraryIds);
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.DoesNotContain(libraries.Automatic, folder => folder.Name == "Film");
+        Assert.Equal(4, libraries.Automatic.Count);
+    }
+
+    [Fact]
+    public async Task A_crash_after_a_switch_on_recreated_a_library_deleted_in_the_dashboard_holds_placement_back()
+    {
+        // The switch-on, before a sync, releases the deleted name and the creation reuses it: a crash before the record is
+        // saved must leave the library waiting, not exempt as the admin's (§10 rows 384, 393, 403).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Serie"));
+        fixture.Libraries.OnCreate = () => fixture.Hooks.BeforeUpdate = () => throw new InvalidOperationException("crash");
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Contains(fixture.Libraries.Folders, folder => folder.Name == "Casa - Serie");
+        Assert.Equal(["Casa - Film"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Null(fixture.NewManager().FollowForPlacement());
+    }
+
     // Two servers with their switch on, each with its libraries, and a check that recorded them all.
     private static async Task<RemoteServerConfig> TwoServersFollowedAsync(Fixture fixture)
     {

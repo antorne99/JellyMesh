@@ -531,6 +531,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             return false;
         }
 
+        // A released name is taken back first, so a crash before the record is saved leaves the library waiting (§10 row 403).
+        if (_store.Read(config => Owned(config, owner)?.ReleasedAutomaticLibraries.Contains(name, StringComparer.Ordinal) == true))
+        {
+            _store.Update(config => Owned(config, owner)?.ReleasedAutomaticLibraries.Remove(name));
+        }
+
         var path = PathOf(kind, root, serverId);
         try
         {
@@ -1000,13 +1006,15 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             }
             else if (folder is null)
             {
-                // Gone by id and name: renamed if exactly one other library holds the same folder with the same type.
-                var candidates = visible
-                    .Where(other => !claimed.Contains(other) && registry.MayAdopt(other) && Passes(other, record.Kind, root, registry.ServerId))
+                // Gone by id and name: renamed if exactly one other library holds the same folder with the same type. One
+                // that cannot be adopted is released under its current name when it is the only one there (173, 401).
+                var passing = visible
+                    .Where(other => !claimed.Contains(other) && !registry.NotAdopted.Contains(other.ItemId ?? string.Empty) && Passes(other, record.Kind, root, registry.ServerId))
                     .ToList();
+                var candidates = passing.Where(registry.MayAdopt).ToList();
                 changes.Add(candidates.Count == 1
                     ? new FollowChange(record, candidates[0], record.Name, false)
-                    : new FollowChange(record, null, record.Name, false));
+                    : new FollowChange(record, null, passing is [var only] ? only.Name : record.Name, false));
             }
             else if (!Passes(folder, record.Kind, root, registry.ServerId))
             {
