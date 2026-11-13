@@ -606,6 +606,22 @@ public class FederationAdminControllerTests
         Assert.Same(state, Assert.Single(status.Servers).Rename);
     }
 
+    // Q359: the page warns by server name when a rename is held up by a detach, with no path in the status.
+    [Fact]
+    public async Task The_status_says_when_the_rename_of_a_server_is_stuck_on_a_detach()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var controller = ControllerFor(fixture, renamer: renamer.Object);
+        var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
+        renamer.Setup(r => r.GetState(id)).Returns(new ServerRenameState(false, true, false) { Stuck = true });
+
+        var json = ToJson(controller.GetStatus().Value);
+
+        Assert.Contains("\"Rename\":{\"Busy\":false,\"Pending\":true,\"Failed\":false,\"Stuck\":true}", json, StringComparison.Ordinal);
+        Assert.DoesNotContain(".strm", json, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task NoSecretReachesTheXmlTheLogsOrTheApi()
     {

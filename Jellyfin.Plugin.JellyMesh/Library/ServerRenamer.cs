@@ -69,7 +69,10 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     public ServerRenameState GetState(Guid serverId)
     {
         var busy = IsBusy(serverId);
-        return new(busy, _stubs.IsPending(serverId), !busy && _store.Read(config => Find(config, serverId)?.RenameUnfinished ?? false));
+        return new(busy, _stubs.IsPending(serverId), !busy && _store.Read(config => Find(config, serverId)?.RenameUnfinished ?? false))
+        {
+            Stuck = _stubs.IsStuck(serverId)
+        };
     }
 
     /// <inheritdoc />
