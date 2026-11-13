@@ -50,8 +50,9 @@ public static class LogText
     private static bool IsUnsafe(char character)
     {
         return char.IsControl(character)
-            || character is '\u2028' or '\u2029' or '\uFEFF'
+            || character is '\u2028' or '\u2029' or '\uFEFF' or '\u061C'
             or (>= '\u200B' and <= '\u200F')
+            or (>= '\u2060' and <= '\u2064')
             or (>= '\u202A' and <= '\u202E')
             or (>= '\u2066' and <= '\u2069');
     }
