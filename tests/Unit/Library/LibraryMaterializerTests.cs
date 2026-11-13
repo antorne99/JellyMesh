@@ -206,21 +206,6 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
-    public async Task ASeriesRowTheIndexLostRemovesNoImage()
-    {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
-        await _fixture.SyncAndMaterializeAsync();
-        _fixture.Sync.Client.Items[("shows", RemoteItemType.Series)].Clear();
-
-        await _fixture.SyncAndMaterializeAsync();
-
-        Assert.True(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "logo.jpg")));
-        Assert.True(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "poster.jpg")));
-    }
-
-    [Fact]
     public async Task APosterTheRemoteRemovesLeavesTheDisk()
     {
         _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });

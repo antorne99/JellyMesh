@@ -783,6 +783,20 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void ASeriesRowTheIndexLostRemovesNoImage()
+    {
+        var art = SeriesItem("s") with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p", ["Logo"] = "l" } };
+        var first = Assert.Single(Plan([Episode("w", 1, 2, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, art, EpisodeItem("e", "s", 1, 2))]).Series);
+        var state = new StubState { Series = [first.Entry with { ImageTag = first.ImageTag }] };
+
+        var lost = Plan([Episode("w", 1, 2, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, EpisodeItem("e", "s", 1, 2))], state);
+        var dropped = Plan([Episode("w", 1, 2, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s") with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p" } }, EpisodeItem("e", "s", 1, 2))], state);
+
+        Assert.Empty(Assert.Single(lost.Series).RemovedImages);
+        Assert.Equal([ImageType.Logo], Assert.Single(dropped.Series).RemovedImages.Select(image => image.Type));
+    }
+
+    [Fact]
     public void ALocalSeriesWithoutKeyIdsLeavesOnlyItsNameAsTheKey()
     {
         var local = new LocalSeries("Serie Senza ID", 2026, null, new Dictionary<string, string>(), null, null);
