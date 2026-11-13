@@ -581,6 +581,24 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task The_log_of_a_record_set_aside_names_its_libraries_and_ids()
+    {
+        var newId = Guid.NewGuid();
+        MovedToMare(OldId);
+        WriteJournal(Pending(newId: newId));
+        var logger = new CapturingLogger<LibraryRenamer>();
+        _renamer = NewRenamer(logger);
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        var line = Assert.Single(logger.Lines, line => line.Contains("It is set aside", StringComparison.Ordinal));
+        Assert.Contains("Casa - Film", line, StringComparison.Ordinal);
+        Assert.Contains("Mare - Film", line, StringComparison.Ordinal);
+        Assert.Contains(OldId.ToString("N"), line, StringComparison.Ordinal);
+        Assert.Contains(newId.ToString("N"), line, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_damaged_record_file_that_cannot_be_set_aside_is_dropped_without_a_copy()
     {
         Directory.CreateDirectory(_data);
