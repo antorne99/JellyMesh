@@ -18,6 +18,17 @@ public class LogTextTests
         Assert.Equal(expected, LogText.Clean(value));
     }
 
+    [Theory]
+    [InlineData("A​B‌C‍D‎E‏F", "ABCDEF")]
+    [InlineData("A‪B‫C‬D‭E‮F", "ABCDEF")]
+    [InlineData("A⁦B⁧C⁨D⁩E", "ABCDE")]
+    [InlineData("﻿Film", "Film")]
+    [InlineData("A ‐⁥⁪B", "A ‐⁥⁪B")]
+    public void RemovesBidiAndZeroWidthCharacters(string value, string expected)
+    {
+        Assert.Equal(expected, LogText.Clean(value));
+    }
+
     [Fact]
     public void KeepsAPlainNameAsTheSameString()
     {
