@@ -1513,6 +1513,7 @@
                     "The watch state of the old titles moves to the new ones as the libraries are scanned.": "Lo stato di visione dei vecchi titoli passa ai nuovi man mano che le librerie vengono analizzate.",
                     "Old titles left: {count}.": "Vecchi titoli rimasti: {count}.",
                     "Waiting for a scan: {count}.": "In attesa di una scansione: {count}.",
+                    "Held for an empty remote library: {count}.": "Trattenuti per una libreria remota vuota: {count}.",
                     "Blocked titles, tried again at every run: {count}.": "Titoli bloccati, riprovati a ogni passaggio: {count}.",
                     "Remove the old folders from the libraries": "Rimuovi le vecchie cartelle dalle librerie",
                     "The watch state has moved to the new titles and the old folders are empty.": "Lo stato di visione è passato ai nuovi titoli e le vecchie cartelle sono vuote.",
@@ -5240,6 +5241,10 @@
                     var progress = migration.Step === 'Carrying' ? [t('Old titles left: {count}.', { count: migration.OldTitles })] : [];
                     if (migration.Step === 'Carrying' && migration.Waiting) {
                         progress.push(t('Waiting for a scan: {count}.', { count: migration.Waiting }));
+                    }
+
+                    if (migration.Step === 'Carrying' && migration.Held) {
+                        progress.push(t('Held for an empty remote library: {count}.', { count: migration.Held }));
                     }
 
                     if (migration.Step === 'Carrying' && migration.Blocked) {

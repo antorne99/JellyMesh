@@ -88,6 +88,8 @@ public sealed class LayoutMigrationTests : IDisposable
             .Callback((User user, BaseItem item, UserItemData data, UserDataSaveReason _, CancellationToken _) => _rows[(user.Id, item.Id)] = data);
         _servers.Setup(servers => servers.GetServers()).Returns(() =>
             _configured.Select(server => new RemoteServerInfo(server, "Server", "http://" + server.ToString("N"), RemoteMode.Standard, 0, _imported.ToList(), null, null)).ToList());
+        _servers.Setup(servers => servers.GetLibrariesAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>([]));
         _index.Setup(index => index.Snapshot).Returns(() => new IndexSnapshot
         {
             Version = IndexSnapshot.CurrentVersion,
@@ -473,19 +475,61 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
-    public async Task AnImportedLibraryReadEmptyKeepsTheOldStubsWaiting()
+    public async Task AnImportedLibraryReadEmptyHoldsTheOldStubsApartFromTheScanAndTheLogNamesIt()
     {
         _imported.Add("lib");
         var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         _indexed.Remove((_serverA, "a1"));
         AllPathsLinked();
+        _servers.Setup(servers => servers.GetLibrariesAsync(_serverA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>([new RemoteLibrary("lib", "Film di casa", "movies")]));
 
         var migration = await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
 
         Assert.NotNull(_registry.Find(old.Id));
         Assert.True(_items.ContainsKey(oldItem.Id));
-        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Held);
+        Assert.Equal(0, shown.Waiting);
+        var line = Assert.Single(_logger.Lines, line => line.Contains("Film di casa", StringComparison.Ordinal));
+        Assert.Contains("Server", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("http", line, StringComparison.Ordinal);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains(_serverA.ToString("N"), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AHeldLibraryWhoseNameCannotBeReadIsLoggedByServerAndId()
+    {
+        _imported.Add("lib");
+        OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+        _servers.Setup(servers => servers.GetLibrariesAsync(_serverA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(RemoteFailure.Unreachable));
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        var line = Assert.Single(_logger.Lines, line => line.Contains("came back empty", StringComparison.Ordinal));
+        Assert.Contains("Server", line, StringComparison.Ordinal);
+        Assert.Contains("lib", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("http", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATitleStillOnAnotherServerWaitsAndIsNotHeld()
+    {
+        _imported.Add("lib");
+        OldFilm("Dune", (_serverA, "a1"), (_serverB, "b1"));
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        var shown = migration.GetStatus(Root)!;
+        Assert.Equal(1, shown.Waiting);
+        Assert.Equal(0, shown.Held);
     }
 
     [Fact]
@@ -504,7 +548,8 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.NotNull(_registry.Find(episode.Id));
         Assert.Contains(_registry.State.Series, series => series.Id == show.Id);
         Assert.True(_items.ContainsKey(episodeItem.Id) && _items.ContainsKey(showItem.Id));
-        Assert.Equal(1, migration.GetStatus(Root)!.Waiting);
+        Assert.Equal(1, migration.GetStatus(Root)!.Held);
+        Assert.Equal(0, migration.GetStatus(Root)!.Waiting);
     }
 
     [Fact]

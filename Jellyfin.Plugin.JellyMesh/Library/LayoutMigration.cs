@@ -84,75 +84,18 @@ public sealed class LayoutMigration : ILayoutMigration
             return;
         }
 
+        Dictionary<(Guid ServerId, string LibraryId), int> held;
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = _registry.State;
-            var snapshot = _index.Snapshot;
-            if (!HasOldTitles(state) || snapshot.Health == IndexHealth.Corrupt)
-            {
-                return;
-            }
-
-            // Read again under the lock, which a removal from the page takes (decision 44).
-            var configured = _servers.GetServers().DistinctBy(server => server.Id).ToDictionary(server => server.Id);
-            if (configured.Count == 0)
-            {
-                return;
-            }
-
-            var catalog = new Catalog(IndexItemLookup.Build(snapshot), configured, state.RemovedServers.ToHashSet());
-            var moves = new List<WatchStateMove>();
-            var waiting = 0;
-            var blocked = 0;
-            foreach (var stub in state.Stubs.Where(stub => stub.ServerId is null))
-            {
-                Add(TitleMoveOf(root, state, stub, catalog), moves, ref waiting);
-            }
-
-            foreach (var series in state.Series.Where(series => series.ServerId is null))
-            {
-                Add(SeriesMoveOf(root, state, series, catalog), moves, ref waiting);
-            }
-
-            var folderChanged = false;
-            if (moves.Count > 0)
-            {
-                var report = await _carrier.CarryAsync(moves, cancellationToken).ConfigureAwait(false);
-
-                // A refusal is for good only if the carry read this folder and the link of the round did not fail (Q259).
-                folderChanged = report.Root is not null && !string.Equals(report.Root, root, StringComparison.Ordinal);
-                var unsettled = folderChanged || _linker.LastRunFailed;
-                blocked = report.Moves.Count(IsBlocked);
-                waiting += report.Moves.Count(outcome => !IsDone(outcome, unsettled) && !IsBlocked(outcome));
-                var refused = report.Moves.Count(outcome => IsFinalRefusal(outcome, unsettled));
-                if (refused > 0)
-                {
-                    _logger.LogWarning("Migration to the server folders: the watch state carry refused {Refused} old titles, which go without it", refused);
-                }
-
-                var later = report.Moves.Count(outcome => outcome.Status == WatchStateMoveStatus.Refused) - refused;
-                if (later > 0)
-                {
-                    _logger.LogInformation("Migration to the server folders: the watch state carry refused {Refused} old titles for now, tried again at the next sync", later);
-                }
-            }
-
-            // The old folders of a federated folder changed under the run are not the ones to empty.
-            folderChanged |= !string.Equals(_store.Read(config => config.FederatedFolderPath) ?? string.Empty, root, StringComparison.Ordinal);
-            _lastRun = new LastRun(waiting, blocked);
-            if (waiting + blocked > 0 || folderChanged)
-            {
-                _logger.LogInformation("Migration to the server folders: {Waiting} old titles wait for a scan and {Blocked} are blocked", waiting, blocked);
-                return;
-            }
-
-            await EmptyAsync(root, state).ConfigureAwait(false);
+            held = await MigrateAsync(root, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _registry.Exit();
         }
+
+        await LogHeldAsync(held, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -180,6 +123,7 @@ public sealed class LayoutMigration : ILayoutMigration
         {
             Waiting = old == 0 ? null : _lastRun?.Waiting,
             Blocked = old == 0 ? null : _lastRun?.Blocked,
+            Held = old == 0 ? null : _lastRun?.Held,
             UnlinkedFolders = read?.Unlinked ?? []
         };
     }
@@ -203,11 +147,19 @@ public sealed class LayoutMigration : ILayoutMigration
         outcome.Status == WatchStateMoveStatus.Failed
         || (outcome.Status == WatchStateMoveStatus.UsersLeft && !LeftOnlyUnseeing(outcome));
 
-    private static void Add((WatchStateMove? Move, bool Waits) step, List<WatchStateMove> moves, ref int waiting)
+    private static void Add(Step step, List<WatchStateMove> moves, Dictionary<(Guid ServerId, string LibraryId), int> held, ref int waiting, ref int heldTitles)
     {
         if (step.Move is { } move)
         {
             moves.Add(move);
+        }
+        else if (step.Held.Count > 0)
+        {
+            heldTitles++;
+            foreach (var library in step.Held)
+            {
+                held[library] = held.GetValueOrDefault(library) + 1;
+            }
         }
         else if (step.Waits)
         {
@@ -216,16 +168,23 @@ public sealed class LayoutMigration : ILayoutMigration
     }
 
     // Gone as the stub planner decides (decision 44): sources only on unconfigured servers go if the admin removed them all,
-    // otherwise each configured server must be read in full, lack the item and show none of its imported libraries empty.
-    private static bool IsGone(IReadOnlyList<StubSource> sources, Catalog catalog)
+    // otherwise each configured server must be read in full and lack the item. Held when only empty imported libraries keep it (Q270).
+    private static Step FateOf(IReadOnlyList<StubSource> sources, Catalog catalog)
     {
         if (sources.Count > 0 && sources.All(source => !catalog.Configured.ContainsKey(source.ServerId)))
         {
-            return sources.All(source => catalog.Removed.Contains(source.ServerId));
+            return sources.All(source => catalog.Removed.Contains(source.ServerId)) ? Step.None : Step.Waiting;
         }
 
-        return EmptyLibraryHold.Of(catalog.Items.Snapshot, catalog.Configured, sources) is { Count: 0 }
-            && sources.Where(source => catalog.Configured.ContainsKey(source.ServerId)).All(source => catalog.Items.Find(source.ServerId, source.ItemId) is null);
+        if (EmptyLibraryHold.Of(catalog.Items.Snapshot, catalog.Configured, sources) is not { } hold)
+        {
+            return Step.Waiting;
+        }
+
+        var missing = sources
+            .Where(source => catalog.Configured.ContainsKey(source.ServerId) && !(source.LibraryId is { } library && hold.Contains((source.ServerId, library))))
+            .All(source => catalog.Items.Find(source.ServerId, source.ItemId) is null);
+        return !missing ? Step.Waiting : hold.Count > 0 ? new Step(null, false, hold) : Step.None;
     }
 
     private static HashSet<(Guid ServerId, string ItemId)> ItemsOf(IReadOnlyList<StubSource> sources) =>
@@ -259,35 +218,128 @@ public sealed class LayoutMigration : ILayoutMigration
             .ToList();
     }
 
+    // Carries the old titles and empties the old folders once nothing waits; returns the empty libraries holding titles.
+    // Runs under the registry lock.
+    private async Task<Dictionary<(Guid ServerId, string LibraryId), int>> MigrateAsync(string root, CancellationToken cancellationToken)
+    {
+        var held = new Dictionary<(Guid ServerId, string LibraryId), int>();
+        var state = _registry.State;
+        var snapshot = _index.Snapshot;
+        if (!HasOldTitles(state) || snapshot.Health == IndexHealth.Corrupt)
+        {
+            return held;
+        }
+
+        // Read again under the lock, which a removal from the page takes (decision 44).
+        var configured = _servers.GetServers().DistinctBy(server => server.Id).ToDictionary(server => server.Id);
+        if (configured.Count == 0)
+        {
+            return held;
+        }
+
+        var catalog = new Catalog(IndexItemLookup.Build(snapshot), configured, state.RemovedServers.ToHashSet());
+        var moves = new List<WatchStateMove>();
+        var waiting = 0;
+        var blocked = 0;
+        var heldTitles = 0;
+        foreach (var stub in state.Stubs.Where(stub => stub.ServerId is null))
+        {
+            Add(TitleMoveOf(root, state, stub, catalog), moves, held, ref waiting, ref heldTitles);
+        }
+
+        foreach (var series in state.Series.Where(series => series.ServerId is null))
+        {
+            Add(SeriesMoveOf(root, state, series, catalog), moves, held, ref waiting, ref heldTitles);
+        }
+
+        var folderChanged = false;
+        if (moves.Count > 0)
+        {
+            var report = await _carrier.CarryAsync(moves, cancellationToken).ConfigureAwait(false);
+
+            // A refusal is for good only if the carry read this folder and the link of the round did not fail (Q259).
+            folderChanged = report.Root is not null && !string.Equals(report.Root, root, StringComparison.Ordinal);
+            var unsettled = folderChanged || _linker.LastRunFailed;
+            blocked = report.Moves.Count(IsBlocked);
+            waiting += report.Moves.Count(outcome => !IsDone(outcome, unsettled) && !IsBlocked(outcome));
+            var refused = report.Moves.Count(outcome => IsFinalRefusal(outcome, unsettled));
+            if (refused > 0)
+            {
+                _logger.LogWarning("Migration to the server folders: the watch state carry refused {Refused} old titles, which go without it", refused);
+            }
+
+            var later = report.Moves.Count(outcome => outcome.Status == WatchStateMoveStatus.Refused) - refused;
+            if (later > 0)
+            {
+                _logger.LogInformation("Migration to the server folders: the watch state carry refused {Refused} old titles for now, tried again at the next sync", later);
+            }
+        }
+
+        // The old folders of a federated folder changed under the run are not the ones to empty.
+        folderChanged |= !string.Equals(_store.Read(config => config.FederatedFolderPath) ?? string.Empty, root, StringComparison.Ordinal);
+        _lastRun = new LastRun(waiting, blocked, heldTitles);
+        if (waiting + blocked + heldTitles > 0 || folderChanged)
+        {
+            _logger.LogInformation(
+                "Migration to the server folders: {Waiting} old titles wait for a scan, {Held} for an empty remote library and {Blocked} are blocked",
+                waiting,
+                heldTitles,
+                blocked);
+            return held;
+        }
+
+        await EmptyAsync(root, state).ConfigureAwait(false);
+        return held;
+    }
+
+    // Logs each empty library holding old titles by its remote name, or by its id when the server cannot list them.
+    private async Task LogHeldAsync(Dictionary<(Guid ServerId, string LibraryId), int> held, CancellationToken cancellationToken)
+    {
+        var servers = _servers.GetServers().DistinctBy(server => server.Id).ToDictionary(server => server.Id, server => server.Name);
+        foreach (var server in held.GroupBy(entry => entry.Key.ServerId))
+        {
+            var read = await _servers.GetLibrariesAsync(server.Key, cancellationToken).ConfigureAwait(false);
+            var names = read.IsSuccess ? read.Value!.DistinctBy(library => library.Id).ToDictionary(library => library.Id, library => library.Name, StringComparer.Ordinal) : [];
+            foreach (var library in server)
+            {
+                _logger.LogWarning(
+                    "Migration to the server folders: {Count} old titles wait while the library {Library} of remote server {ServerName} came back empty",
+                    library.Value,
+                    names.GetValueOrDefault(library.Key.LibraryId, library.Key.LibraryId),
+                    servers.GetValueOrDefault(server.Key, string.Empty));
+            }
+        }
+    }
+
     // The move of an old film or episode, or whether it still waits: an old stub with no item, or whose title is gone, has
     // nothing to carry.
-    private (WatchStateMove? Move, bool Waits) TitleMoveOf(string root, StubState state, StubEntry old, Catalog catalog)
+    private Step TitleMoveOf(string root, StubState state, StubEntry old, Catalog catalog)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), false) is not Video item)
         {
-            return (null, false);
+            return Step.None;
         }
 
         var news = NewStubsOf(state, old);
         if (news.Count == 0)
         {
-            return (null, !IsGone(old.Sources, catalog));
+            return FateOf(old.Sources, catalog);
         }
 
-        return TargetsOf(root, news) is { } targets ? (WatchStateMove.Of(old, item.Id, targets), false) : (null, true);
+        return TargetsOf(root, news) is { } targets ? new Step(WatchStateMove.Of(old, item.Id, targets), false, []) : Step.Waiting;
     }
 
-    private (WatchStateMove? Move, bool Waits) SeriesMoveOf(string root, StubState state, SeriesStub old, Catalog catalog)
+    private Step SeriesMoveOf(string root, StubState state, SeriesStub old, Catalog catalog)
     {
         if (_library.FindByPath(FederatedPaths.Resolve(root, old.RelativePath), true) is not Series item)
         {
-            return (null, false);
+            return Step.None;
         }
 
         var news = NewSeriesOf(state, old);
         if (news.Count == 0)
         {
-            return (null, !IsGone(old.Sources, catalog));
+            return FateOf(old.Sources, catalog);
         }
 
         var targets = new List<WatchStateTarget>();
@@ -295,13 +347,13 @@ public sealed class LayoutMigration : ILayoutMigration
         {
             if (_library.FindByPath(FederatedPaths.Resolve(root, series.RelativePath), true) is not Series found)
             {
-                return (null, true);
+                return Step.Waiting;
             }
 
             targets.Add(new WatchStateTarget(found.Id, series.ServerId));
         }
 
-        return (WatchStateMove.OfSeries(old, item.Id, targets), false);
+        return new Step(WatchStateMove.OfSeries(old, item.Id, targets), false, []);
     }
 
     // The new versions of the title: the stubs with their groups, and the local copy that is the primary of its group.
@@ -409,7 +461,15 @@ public sealed class LayoutMigration : ILayoutMigration
     // Unlinked: the server folders in no library, less those listed as missing from a library on an old path.
     private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked, List<string> Unlinked);
 
-    private sealed record LastRun(int Waiting, int Blocked);
+    private sealed record LastRun(int Waiting, int Blocked, int Held);
+
+    // An old title's move, or why it has none: it waits, empty imported libraries hold it, or there is nothing to carry.
+    private sealed record Step(WatchStateMove? Move, bool Waits, IReadOnlyList<(Guid ServerId, string LibraryId)> Held)
+    {
+        public static Step None { get; } = new(null, false, []);
+
+        public static Step Waiting { get; } = new(null, true, []);
+    }
 
     // The index with the configured servers and the ones the admin removed, read once per run.
     private sealed record Catalog(IndexItemLookup Items, IReadOnlyDictionary<Guid, RemoteServerInfo> Configured, HashSet<Guid> Removed);
