@@ -63,7 +63,13 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     }
 
     /// <inheritdoc />
-    public async Task<int> RelabelAsync(Guid serverId, string name, CancellationToken cancellationToken)
+    public Task<int> RelabelAsync(Guid serverId, string name, CancellationToken cancellationToken) => RelabelAsync(serverId, name, false, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<int> RelabelInPlaceAsync(Guid serverId, string name, CancellationToken cancellationToken) => RelabelAsync(serverId, name, true, cancellationToken);
+
+    // Writes the stubs under the new label next to the old ones for a scan to carry from, or in place renames their files.
+    private async Task<int> RelabelAsync(Guid serverId, string name, bool inPlace, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
@@ -92,6 +98,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                     && (rename.RemovedItemId is not null || _registry.Find(rename.StubId) is not null || root.Length == 0 || !TryDeleteOld(root, rename, null)))
                 .ToList();
             var written = new List<string>();
+            var renamed = new List<(string From, string To)>();
             var moved = 0;
             try
             {
@@ -103,7 +110,11 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                         continue;
                     }
 
-                    if (root.Length > 0 && CopyFiles(root, stub.RelativePath, path, written))
+                    if (root.Length > 0 && inPlace)
+                    {
+                        MoveFiles(root, stub, path, renamed);
+                    }
+                    else if (root.Length > 0 && CopyFiles(root, stub.RelativePath, path, written))
                     {
                         renames.Add(new StubRename(stub.Id, stub.RelativePath));
                     }
@@ -121,6 +132,11 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 foreach (var file in written)
                 {
                     TryDelete(file);
+                }
+
+                for (var index = renamed.Count - 1; index >= 0; index--)
+                {
+                    TryMove(renamed[index].To, renamed[index].From);
                 }
 
                 throw;
@@ -350,6 +366,34 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         }
 
         return true;
+    }
+
+    // Renames the files of a stub to its new stem, as CopyFiles copies them and TryDeleteOld deletes them.
+    private static void MoveFiles(string root, StubEntry stub, string newPath, List<(string From, string To)> renamed)
+    {
+        var from = FederatedPaths.Resolve(root, stub.RelativePath);
+        var to = FederatedPaths.Resolve(root, newPath);
+        var oldStem = Path.GetFileNameWithoutExtension(from);
+        var newStem = Path.GetFileNameWithoutExtension(to);
+        var folder = Path.GetDirectoryName(to)!;
+        foreach (var file in FilesOf(from, stub.Kind == StubKind.Movie))
+        {
+            var target = Path.Combine(folder, newStem + Path.GetFileName(file)[oldStem.Length..]);
+            File.Move(file, target, overwrite: true);
+            renamed.Add((file, target));
+        }
+    }
+
+    private static void TryMove(string from, string to)
+    {
+        try
+        {
+            File.Move(from, to, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Left at the new name: the next sync writes the stub at its old path again.
+        }
     }
 
     private static void TryDelete(string file)

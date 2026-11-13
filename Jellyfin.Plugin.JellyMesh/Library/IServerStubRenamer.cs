@@ -27,6 +27,17 @@ public interface IServerStubRenamer
     Task<int> RelabelAsync(Guid serverId, string name, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Renames the stub files of a server whose folder is in no library to the label of its new name, and saves their
+    /// paths with the label: there is no item, so no watch state to carry and nothing waits for a scan (row 316).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="name">Its new name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many stubs moved.</returns>
+    /// <exception cref="System.IO.IOException">A file could not be renamed: the others are put back and nothing is saved.</exception>
+    Task<int> RelabelInPlaceAsync(Guid serverId, string name, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Carries the watch state of each renamed stub whose new item a scan has made, deletes its old files, and forgets
     /// the old items once the library no longer has them. Safe to run again: what is left waits for the next scan.
     /// </summary>

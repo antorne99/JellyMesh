@@ -125,6 +125,58 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    // Q316: with the server folder in no library there is no item, so the files are renamed at once and nothing waits.
+    [Fact]
+    public async Task InNoLibrary_TheStubFilesAreRenamedInPlace_AndNothingWaits()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")), Episode("e", EpisodePath("Casa")), Film("n", FilmPath("Casa").Replace("A (2020)", "B (2021)", StringComparison.Ordinal)), Film("o", FilmPath("Altro", _other)));
+        Write(FilmPath("Casa"), "url-f");
+        Write(Path.Combine(Path.GetDirectoryName(FilmPath("Casa"))!, "movie.nfo"), "nfo");
+        Write(EpisodePath("Casa"), "url-e");
+        Write(Path.ChangeExtension(EpisodePath("Casa"), ".nfo"), "nfo-e");
+        Write(Path.ChangeExtension(EpisodePath("Casa"), null) + "-thumb.jpg", "thumb");
+        Write(FilmPath("Altro", _other), "url-o");
+
+        Assert.Equal(3, await _renamer.RelabelInPlaceAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal("url-f", Read(FilmPath("Mare")));
+        Assert.Equal("nfo", Read(Path.Combine(Path.GetDirectoryName(FilmPath("Mare"))!, "movie.nfo")));
+        Assert.Equal(["A (2020) - Mare.strm", "movie.nfo"], Directory.EnumerateFiles(Path.GetDirectoryName(Full(FilmPath("Mare")))!).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["S S01E01 - Mare-thumb.jpg", "S S01E01 - Mare.nfo", "S S01E01 - Mare.strm"],
+            Directory.EnumerateFiles(Path.GetDirectoryName(Full(EpisodePath("Mare")))!).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal("url-o", Read(FilmPath("Altro", _other)));
+
+        var state = _registry.State;
+        Assert.Equal(FilmPath("Mare"), state.Stubs[0].RelativePath);
+        Assert.Equal(EpisodePath("Mare"), state.Stubs[1].RelativePath);
+        Assert.EndsWith("B (2021) - Mare.strm", state.Stubs[2].RelativePath, StringComparison.Ordinal);
+        Assert.Equal(FilmPath("Altro", _other), state.Stubs[3].RelativePath);
+        Assert.Equal((null, null, null), (state.Stubs[0].UrlTag, state.Stubs[0].TechnicalTag, (DateTime?)state.Stubs[0].StrmWrittenUtc));
+        Assert.Empty(state.Renames);
+        Assert.Equal("Mare", state.Labels[_server]);
+        Assert.False(_renamer.IsPending(_server));
+        Assert.Empty(_carries);
+        Assert.Empty(_detached);
+    }
+
+    [Fact]
+    public async Task InNoLibrary_AFileThatCannotMovePutsTheOthersBack_AndKeepsTheOldLabel()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")), Episode("e", EpisodePath("Casa")));
+        Write(FilmPath("Casa"), "url-f");
+        Write(EpisodePath("Casa"), "url-e");
+        Directory.CreateDirectory(Full(EpisodePath("Mare")));
+
+        await Assert.ThrowsAnyAsync<IOException>(() => _renamer.RelabelInPlaceAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal("url-f", Read(FilmPath("Casa")));
+        Assert.False(File.Exists(Full(FilmPath("Mare"))));
+        Assert.Equal("url-e", Read(EpisodePath("Casa")));
+        Assert.Equal([FilmPath("Casa"), EpisodePath("Casa")], _registry.State.Stubs.Select(stub => stub.RelativePath));
+        Assert.Equal("Casa", _registry.State.Labels[_server]);
+    }
+
     [Fact]
     public async Task ALabelTakenByAnotherServerGetsTheGuidDigits()
     {
