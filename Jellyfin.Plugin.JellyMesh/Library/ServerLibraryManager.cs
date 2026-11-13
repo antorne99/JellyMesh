@@ -35,6 +35,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private readonly ILibraryScans _scans;
     private readonly ILibraryMaterializer _materializer;
     private readonly ILibraryRenamer _renamer;
+    private readonly IStubRegistry _stubs;
     private readonly ILogger<ServerLibraryManager> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -54,6 +55,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     /// <param name="scans">The library scans.</param>
     /// <param name="materializer">The materializer, which writes the server folders.</param>
     /// <param name="renamer">The renamer of libraries.</param>
+    /// <param name="stubs">The stub registry, which tells whether a removed server still has titles.</param>
     /// <param name="logger">The logger.</param>
     public ServerLibraryManager(
         IPluginConfigurationStore store,
@@ -62,6 +64,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         ILibraryScans scans,
         ILibraryMaterializer materializer,
         ILibraryRenamer renamer,
+        IStubRegistry stubs,
         ILogger<ServerLibraryManager> logger)
     {
         _store = store;
@@ -70,6 +73,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         _scans = scans;
         _materializer = materializer;
         _renamer = renamer;
+        _stubs = stubs;
         _logger = logger;
     }
 
@@ -637,6 +641,13 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         var serverIds = _store.Read(config => config.RemovedServerLibraries.Where(HasWork).Select(held => held.ServerId).ToList());
         foreach (var serverId in serverIds)
         {
+            // The titles go first, on every try: their libraries wait for a later round (decision 278).
+            if (_store.Read(config => Find(config, serverId) is null) && _stubs.HasTitlesOf(serverId))
+            {
+                _logger.LogInformation("The libraries of a removed server wait until its titles are removed");
+                continue;
+            }
+
             if (!await DeleteAllAsync(config => HeldRegistry(config, serverId), null, cancellationToken).ConfigureAwait(false))
             {
                 continue;

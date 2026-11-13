@@ -35,4 +35,11 @@ public interface IStubRegistry
     /// <param name="itemId">The Jellyfin item of the local copy.</param>
     /// <returns>The group, null if the item is in none.</returns>
     VersionGroup? FindGroupOfLocal(Guid itemId);
+
+    /// <summary>
+    /// Tells whether a stub or a stub series of a server is still in the registry.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>Whether the server still has titles in the federated folder.</returns>
+    bool HasTitlesOf(Guid serverId);
 }

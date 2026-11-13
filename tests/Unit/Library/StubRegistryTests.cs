@@ -249,6 +249,22 @@ public sealed class StubRegistryTests : IDisposable
     }
 
     [Fact]
+    public async Task AServerHasTitlesWhileOneOfItsStubsOrSeriesIsLeft()
+    {
+        var (withStub, withSeries, without) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var registry = Create();
+        await SeedAsync(registry, new StubState
+        {
+            Stubs = [Entry("abc", "S/Film/A/A.strm") with { ServerId = withStub }],
+            Series = [new SeriesStub { Id = "s", ServerId = withSeries, RelativePath = "S/Serie/B", WorkKey = "series|b", Sources = [] }]
+        });
+
+        Assert.True(registry.HasTitlesOf(withStub));
+        Assert.True(registry.HasTitlesOf(withSeries));
+        Assert.False(registry.HasTitlesOf(without));
+    }
+
+    [Fact]
     public async Task AStubIsFoundByIdAndByPath()
     {
         using var registry = Create();
