@@ -345,16 +345,18 @@ public sealed class LibraryRenamer : ILibraryRenamer
     // Takes a record the resume cannot trust out of the pending ones and logs what became of it (rows 329, 357).
     private void PutAside(LibraryRenameRecord record)
     {
+        var (oldName, newName) = (LogText.Clean(record.OldName), LogText.Clean(record.NewName));
+        var (oldId, newId) = (record.OldId.ToString("N"), record.NewId.ToString("N"));
         switch (_journal.SetAside(record))
         {
             case SetAsideOutcome.SetAside:
-                _logger.LogError("A pending library rename does not match the library folders. It is set aside");
+                _logger.LogError("A pending rename of the library {OldName} ({OldId}) to {NewName} ({NewId}) does not match the library folders. It is set aside", oldName, oldId, newName, newId);
                 break;
             case SetAsideOutcome.DroppedWithoutCopy:
-                _logger.LogError("A pending library rename does not match the library folders. It is dropped without a copy");
+                _logger.LogError("A pending rename of the library {OldName} ({OldId}) to {NewName} ({NewId}) does not match the library folders. It is dropped without a copy", oldName, oldId, newName, newId);
                 break;
             default:
-                _logger.LogError("A pending library rename does not match the library folders and cannot be dropped. It stays pending and is not replayed");
+                _logger.LogError("A pending rename of the library {OldName} ({OldId}) to {NewName} ({NewId}) does not match the library folders and cannot be dropped. It stays pending and is not replayed", oldName, oldId, newName, newId);
                 break;
         }
     }
