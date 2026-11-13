@@ -133,6 +133,11 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
             _unsaved = true;
             _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
         }
+        catch
+        {
+            _unsaved = true;
+            throw;
+        }
         finally
         {
             _gate.Release();
@@ -143,7 +148,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <inheritdoc />
-    public Task StopAsync(CancellationToken cancellationToken) => FlushAsync(cancellationToken);
+    public Task StopAsync(CancellationToken cancellationToken) => FlushAsync(CancellationToken.None);
 
     /// <inheritdoc />
     public void Dispose()
@@ -184,6 +189,10 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         catch (ObjectDisposedException)
         {
             // Closed meanwhile: the close wrote it.
+        }
+        catch (Exception exception) when (exception is not ObjectDisposedException)
+        {
+            _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
         }
     }
 

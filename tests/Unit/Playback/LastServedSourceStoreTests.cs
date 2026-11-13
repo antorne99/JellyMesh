@@ -120,6 +120,18 @@ public sealed class LastServedSourceStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AStoppingServerOutOfTime_StillWritesWhatIsPending()
+    {
+        using var store = Store();
+        await store.RecordAsync(_user, "stub", _server, CancellationToken.None);
+
+        await store.StopAsync(new CancellationToken(true));
+
+        using var reloaded = Store();
+        Assert.Equal(_server, reloaded.Find(_user, "stub"));
+    }
+
+    [Fact]
     public async Task EachUserKeepsTheirOwnServer_PerStub()
     {
         using (var store = Store())
