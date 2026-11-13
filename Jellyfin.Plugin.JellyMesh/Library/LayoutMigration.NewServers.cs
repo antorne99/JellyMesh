@@ -39,12 +39,17 @@ public sealed partial class LayoutMigration
                 return LayoutMigrationChoice.Refused(LayoutMigrationChoiceOutcome.NotAllowed);
             }
 
-            if (IsRunning)
+            // Under the lock Kick takes, so that no job starts between the check and the save and reads Automatic.
+            lock (_jobLock)
             {
-                return LayoutMigrationChoice.Refused(LayoutMigrationChoiceOutcome.Busy);
+                if (_job is { IsCompleted: false })
+                {
+                    return LayoutMigrationChoice.Refused(LayoutMigrationChoiceOutcome.Busy);
+                }
+
+                _store.Update(config => config.LayoutMigration.Mode = LayoutMigrationMode.Manual);
             }
 
-            _store.Update(config => config.LayoutMigration.Mode = LayoutMigrationMode.Manual);
             _logger.LogInformation("Migration to the server folders: the admin set the new servers to manual");
             return new LayoutMigrationChoice(LayoutMigrationChoiceOutcome.Chosen, Task.CompletedTask);
         }
