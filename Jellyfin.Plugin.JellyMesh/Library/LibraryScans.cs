@@ -45,6 +45,9 @@ public sealed class LibraryScans : ILibraryScans
     }
 
     /// <inheritdoc />
+    public bool IsScanRunning => IsRunning(Worker());
+
+    /// <inheritdoc />
     public async Task WaitIdleAsync(CancellationToken cancellationToken)
     {
         var start = _time.GetUtcNow();

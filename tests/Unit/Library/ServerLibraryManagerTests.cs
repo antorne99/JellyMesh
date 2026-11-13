@@ -1037,6 +1037,7 @@ public sealed class ServerLibraryManagerTests
         await fixture.Manager.WaitReadyAsync(CancellationToken.None);
 
         Assert.Empty(fixture.Scans.Steps);
+        Assert.Equal([ServerLibraryManager.ReadyLimit], fixture.Scans.ReadyWaits);
     }
 
     [Fact]
@@ -1056,6 +1057,7 @@ public sealed class ServerLibraryManagerTests
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         Assert.Equal(["scan"], fixture.Scans.Steps);
+        Assert.Single(fixture.Scans.ReadyWaits);
         Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
         Assert.Empty(fixture.Server.ReleasedAutomaticLibraries);
         Assert.Contains(fixture.Logger.Lines, line => line.Contains("less than 24 hours ago", StringComparison.Ordinal));
@@ -1064,6 +1066,24 @@ public sealed class ServerLibraryManagerTests
         await fixture.Manager.WaitReadyAsync(CancellationToken.None);
 
         Assert.Equal(["scan", "scan"], fixture.Scans.Steps);
+        Assert.Equal(2, fixture.Scans.ReadyWaits.Count);
+    }
+
+    [Fact]
+    public async Task A_round_with_no_scan_due_still_waits_for_a_running_scan()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Find("Casa - Film").ItemId = null;
+        fixture.Scans.Steps.Clear();
+        fixture.Scans.Ready = false;
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        fixture.Scans.IsScanRunning = true;
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        Assert.Equal(["scan"], fixture.Scans.Steps);
+        Assert.Equal(2, fixture.Scans.ReadyWaits.Count);
     }
 
     [Fact]
@@ -1081,6 +1101,7 @@ public sealed class ServerLibraryManagerTests
         await fixture.Manager.WaitReadyAsync(CancellationToken.None);
 
         Assert.Equal(["scan", "scan"], fixture.Scans.Steps);
+        Assert.Equal(2, fixture.Scans.ReadyWaits.Count);
     }
 
     [Fact]
@@ -1762,6 +1783,8 @@ public sealed class ServerLibraryManagerTests
         public Exception? ScanFailure { get; set; }
 
         public bool Ready { get; set; } = true;
+
+        public bool IsScanRunning { get; set; }
 
         public Task<bool> WaitReadyAsync(TimeSpan limit, CancellationToken cancellationToken)
         {

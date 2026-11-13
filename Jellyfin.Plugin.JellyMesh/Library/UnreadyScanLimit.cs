@@ -26,6 +26,20 @@ internal sealed class UnreadyScanLimit
     public UnreadyScanLimit(TimeProvider time) => _time = time;
 
     /// <summary>
+    /// Tells whether a scan may run for these libraries without an id, without recording it.
+    /// </summary>
+    /// <param name="names">The names of the libraries without an id.</param>
+    /// <returns>Whether a scan is due.</returns>
+    public bool IsDue(IReadOnlyCollection<string> names)
+    {
+        var now = _time.GetUtcNow();
+        lock (_lock)
+        {
+            return names.Any(name => !_scanned.TryGetValue(name, out var scanned) || now - scanned >= Interval);
+        }
+    }
+
+    /// <summary>
     /// Tells whether a scan may run for these libraries without an id and, if so, records it for all of them.
     /// </summary>
     /// <param name="names">The names of the libraries without an id.</param>
