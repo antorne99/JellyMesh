@@ -83,10 +83,8 @@ check "Resolution: the stub of remote stands alone" "" "$(primary_of "$ra")"
 check "Resolution: the stub of remote has no version left" "" "$(alternates_of "$ra")"
 check "Resolution: the stub of remote is visible" 1 "$(visible "$ra")"
 check "the local media files are untouched" "$media_before" "$(sums "! -name '*.nfo'")"
-# Open question: deleting a linked stub lets Jellyfin hand the group over with its savers on, so the NFO saver of the
-# library can rewrite the movie.nfo of a local copy (row 93). Reported, not failed, until it is decided.
-if [ "$nfo_before" = "$(sums "-name '*.nfo'")" ]; then echo "ok   the .nfo of the local copies are untouched"; else
-  echo "KNOWN the NFO saver rewrote a .nfo of a local copy:"; diff <(echo "$nfo_before") <(sums "-name '*.nfo'") || true; fi
+# A stub leaves its group before it is deleted, so Jellyfin hands no group over and its NFO saver rewrites nothing (Q276).
+check "the .nfo of the local copies are untouched" "" "$(diff <(echo "$nfo_before") <(sums "-name '*.nfo'") || true)"
 check "the folder of remote stays" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$A")/Film/.jellymesh"; echo $?)"
 
 echo "--- peer back in the shared libraries Film and Serie, then removed again: a dead path next to live ones"
