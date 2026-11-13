@@ -295,13 +295,17 @@ public sealed class LibraryRenamer : ILibraryRenamer
     {
         if (!IsBound(record, root))
         {
-            if (_journal.SetAside(record))
+            switch (_journal.SetAside(record))
             {
-                _logger.LogError("A pending library rename does not match the library folders. It is set aside");
-            }
-            else
-            {
-                _logger.LogError("A pending library rename does not match the library folders and cannot be set aside. It stays pending and is not replayed");
+                case SetAsideOutcome.SetAside:
+                    _logger.LogError("A pending library rename does not match the library folders. It is set aside");
+                    break;
+                case SetAsideOutcome.DroppedWithoutCopy:
+                    _logger.LogError("A pending library rename does not match the library folders. It is dropped without a copy");
+                    break;
+                default:
+                    _logger.LogError("A pending library rename does not match the library folders and cannot be dropped. It stays pending and is not replayed");
+                    break;
             }
 
             return;

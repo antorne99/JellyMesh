@@ -547,7 +547,7 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
-    public async Task A_record_that_cannot_be_set_aside_stays_pending_and_the_log_says_so()
+    public async Task A_record_that_cannot_be_copied_aside_is_dropped_without_a_copy_and_the_log_says_so()
     {
         MovedToMare(OldId);
         WriteJournal(Pending(newId: Guid.NewGuid()));
@@ -557,10 +557,45 @@ public sealed class LibraryRenamerTests : IDisposable
 
         await _renamer.ResumeAsync(CancellationToken.None);
 
-        Assert.True(_renamer.HasPending);
+        Assert.False(_renamer.HasPending);
+        Assert.False(File.Exists(JournalPath));
+        Assert.False(NewRenamer().HasPending);
         Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
         Assert.DoesNotContain(logger.Lines, line => line.Contains("It is set aside", StringComparison.Ordinal));
-        Assert.Contains(logger.Lines, line => line.Contains("cannot be set aside", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("dropped without a copy", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_damaged_record_file_that_cannot_be_set_aside_is_dropped_without_a_copy()
+    {
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(JournalPath, "{ not json");
+        Directory.CreateDirectory(DamagedPath);
+        var logger = new CapturingLogger<LibraryRenameJournal>();
+        var journal = new LibraryRenameJournal(_data, logger);
+
+        Assert.False(journal.HasPending);
+
+        Assert.False(File.Exists(JournalPath));
+        Assert.Contains(logger.Lines, line => line.Contains("dropped without a copy", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("is set aside", StringComparison.Ordinal));
+        journal.Add(Pending());
+        Assert.True(journal.HasPending);
+    }
+
+    [Fact]
+    public void A_damaged_record_file_set_aside_says_so_only_once_it_is()
+    {
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(JournalPath, "{ not json");
+        var logger = new CapturingLogger<LibraryRenameJournal>();
+
+        Assert.False(new LibraryRenameJournal(_data, logger).HasPending);
+
+        Assert.True(File.Exists(DamagedPath));
+        Assert.False(File.Exists(JournalPath));
+        Assert.Single(logger.Lines, line => line.Contains("is set aside", StringComparison.Ordinal));
     }
 
     [Fact]
