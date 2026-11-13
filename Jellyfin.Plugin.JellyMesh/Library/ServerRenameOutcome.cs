@@ -18,5 +18,11 @@ public enum ServerRenameOutcome
     ConfirmationRequired,
 
     /// <summary>A rename of the server is running, or its stubs still wait for a scan.</summary>
-    Busy
+    Busy,
+
+    /// <summary>The pending stub moves of the server were dropped.</summary>
+    Cancelled,
+
+    /// <summary>An old file of a pending stub move could not be deleted, so that move stays.</summary>
+    CancelFailed
 }

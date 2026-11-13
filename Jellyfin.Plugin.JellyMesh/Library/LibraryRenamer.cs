@@ -39,8 +39,10 @@ public sealed class LibraryRenamer : ILibraryRenamer
     private readonly IUserManager _users;
     private readonly ILibraryViewIds _views;
     private readonly RetiredLibraryIds _retired;
+    private readonly LibraryRenameJournal _journal;
     private readonly ILogger<LibraryRenamer> _logger;
     private readonly ILibraryChangeTracker? _changes;
+    private readonly Action<string, string> _move;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LibraryRenamer"/> class.
@@ -51,6 +53,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     /// <param name="users">The user manager.</param>
     /// <param name="views">The view ids of the running server.</param>
     /// <param name="retired">The retired library ids.</param>
+    /// <param name="journal">The renames whose user lists are not all rewritten yet.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="changes">The library change tracker, told of the new id so the page does not warn (Q53).</param>
     public LibraryRenamer(
@@ -60,8 +63,25 @@ public sealed class LibraryRenamer : ILibraryRenamer
         IUserManager users,
         ILibraryViewIds views,
         RetiredLibraryIds retired,
+        LibraryRenameJournal journal,
         ILogger<LibraryRenamer> logger,
         ILibraryChangeTracker? changes = null)
+        : this(paths, library, monitor, users, views, retired, journal, logger, changes, Directory.Move)
+    {
+    }
+
+    // Takes how a folder is moved, so that tests can stop a rename between its steps.
+    internal LibraryRenamer(
+        IServerApplicationPaths paths,
+        ILibraryManager library,
+        ILibraryMonitor monitor,
+        IUserManager users,
+        ILibraryViewIds views,
+        RetiredLibraryIds retired,
+        LibraryRenameJournal journal,
+        ILogger<LibraryRenamer> logger,
+        ILibraryChangeTracker? changes,
+        Action<string, string> move)
     {
         _paths = paths;
         _library = library;
@@ -69,9 +89,14 @@ public sealed class LibraryRenamer : ILibraryRenamer
         _users = users;
         _views = views;
         _retired = retired;
+        _journal = journal;
         _logger = logger;
         _changes = changes;
+        _move = move;
     }
+
+    /// <inheritdoc />
+    public bool HasPending => _journal.HasPending;
 
     /// <inheritdoc />
     public async Task<Guid?> RenameAsync(string name, Guid? itemId, CollectionType? type, string newName, CancellationToken cancellationToken)
@@ -94,25 +119,26 @@ public sealed class LibraryRenamer : ILibraryRenamer
 
         var oldId = itemId ?? _library.GetNewItemId(currentPath, typeof(CollectionFolder));
         var newId = _library.GetNewItemId(newPath, typeof(CollectionFolder));
+        var record = new LibraryRenameRecord(name, newName, oldId, newId, type, caseOnly ? Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) : null);
+
+        // Who blocks the old id blocks every id the folder takes on its way, and the record is saved, before it moves.
+        await CloseAsync(record, root).ConfigureAwait(false);
+        _journal.Add(record);
         _monitor.Stop();
         try
         {
-            if (caseOnly)
+            if (record.TemporaryName is { } temporaryName)
             {
-                var temporary = Path.Combine(root, Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
-                Directory.Move(currentPath, temporary);
+                var temporary = Path.Combine(root, temporaryName);
+                _move(currentPath, temporary);
+                Retire(oldId, newId);
                 currentPath = temporary;
             }
 
-            Directory.Move(currentPath, newPath);
-            if (!oldId.Equals(newId))
-            {
-                _retired.Retire(oldId);
-            }
-
-            _retired.Restore(newId);
+            _move(currentPath, newPath);
+            Retire(oldId, newId);
             _changes?.Renamed(oldId, newId, newName);
-            await RewritePreferencesAsync(oldId, newId, name, newName, type).ConfigureAwait(false);
+            await FinishAsync(record, root).ConfigureAwait(false);
         }
         finally
         {
@@ -121,6 +147,24 @@ public sealed class LibraryRenamer : ILibraryRenamer
 
         _logger.LogInformation("Renamed the library {Library} to {NewName}", name, newName);
         return newId;
+    }
+
+    /// <inheritdoc />
+    public async Task ResumeAsync(CancellationToken cancellationToken)
+    {
+        var root = _paths.DefaultUserViewsPath;
+        foreach (var record in _journal.Pending())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await ResumeAsync(record, root).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogError("Cannot finish the rename of a library: {Error}", exception.GetType().Name);
+            }
+        }
     }
 
     // The path of a child of the libraries folder, or null for a name that would leave it.
@@ -169,41 +213,161 @@ public sealed class LibraryRenamer : ILibraryRenamer
         return touched;
     }
 
-    private async Task RewritePreferencesAsync(Guid oldId, Guid newId, string oldName, string newName, CollectionType? type)
+    // The exact names in the libraries folder: a check by path cannot tell a change of case on some file systems.
+    private static HashSet<string> FolderNames(string root) => Directory.Exists(root)
+        ? Directory.EnumerateDirectories(root).Select(Path.GetFileName).OfType<string>().ToHashSet(StringComparer.Ordinal)
+        : [];
+
+    private void Retire(Guid oldId, Guid newId)
     {
-        var homeLists = _views.IsAvailable;
-        var shadow = homeLists ? (Old: _views.ShadowViewId(oldName, oldId, type), New: _views.ShadowViewId(newName, newId, type)) : default;
-        if (oldId.Equals(newId) && shadow.Old.Equals(shadow.New))
+        if (!oldId.Equals(newId))
         {
-            return;
+            _retired.Retire(oldId);
         }
 
+        _retired.Restore(newId);
+    }
+
+    // The ids the folder takes after the old one: the temporary one of a change of case, then the new one.
+    private List<Guid> LaterIds(LibraryRenameRecord record, string root)
+    {
+        var ids = new List<Guid>();
+        if (record.TemporaryName is { } temporary)
+        {
+            ids.Add(_library.GetNewItemId(Path.Combine(root, temporary), typeof(CollectionFolder)));
+        }
+
+        ids.Add(record.NewId);
+        return ids.Where(id => !id.Equals(record.OldId)).Distinct().ToList();
+    }
+
+    // Adds the later ids to each list that blocks the old one. Any failure stops the rename before the folder moves.
+    private async Task CloseAsync(LibraryRenameRecord record, string root)
+    {
+        var later = LaterIds(record, root);
         foreach (var user in _users.GetUsers().ToList())
         {
-            var libraries = new Dictionary<Guid, Guid> { [oldId] = newId };
-            var changed = false;
-            foreach (var kind in homeLists ? _accessLists.Concat(_homeLibraryLists) : _accessLists)
+            var blocked = user.GetPreference(PreferenceKind.BlockedMediaFolders);
+            if (!blocked.Any(value => Guid.TryParse(value, out var id) && id.Equals(record.OldId)))
             {
-                changed |= ReplaceIds(user, kind, libraries);
+                continue;
             }
 
-            if (homeLists)
+            var missing = later.Where(id => !blocked.Any(value => Guid.TryParse(value, out var held) && held.Equals(id))).ToList();
+            if (missing.Count == 0)
             {
-                var views = new Dictionary<Guid, Guid>(libraries)
-                {
-                    [shadow.Old] = shadow.New,
-                    [_views.NamedViewId(user, oldId, type)] = _views.NamedViewId(user, newId, type)
-                };
-                foreach (var kind in _homeViewLists)
-                {
-                    changed |= ReplaceIds(user, kind, views);
-                }
+                continue;
             }
 
-            if (changed)
+            user.SetPreference(PreferenceKind.BlockedMediaFolders, [.. blocked, .. missing.Select(id => id.ToString("N", CultureInfo.InvariantCulture))]);
+            try
             {
                 await _users.UpdateUserAsync(user).ConfigureAwait(false);
             }
+            catch
+            {
+                user.SetPreference(PreferenceKind.BlockedMediaFolders, blocked);
+                throw;
+            }
         }
+    }
+
+    private async Task ResumeAsync(LibraryRenameRecord record, string root)
+    {
+        var names = FolderNames(root);
+        if (record.TemporaryName is { } temporary && names.Contains(temporary))
+        {
+            if (names.Contains(record.NewName))
+            {
+                _logger.LogWarning("Cannot finish the rename of the library {Library}: its new name is taken", record.OldName);
+                return;
+            }
+
+            // Only the folder of the library moves, outside every watched path, so the monitor runs on.
+            _move(Path.Combine(root, temporary), Path.Combine(root, record.NewName));
+            CollectionFolder.OnCollectionFolderChange();
+            _retired.Restore(record.NewId);
+            _changes?.Renamed(record.OldId, record.NewId, record.NewName);
+            names = FolderNames(root);
+        }
+
+        if (!names.Contains(record.NewName) && names.Contains(record.OldName))
+        {
+            // The folder never moved, so the old id is still the library's: its lists stay, and a new rename starts over.
+            _journal.Remove(record);
+            return;
+        }
+
+        await FinishAsync(record, root).ConfigureAwait(false);
+    }
+
+    // Drops the record once every user is rewritten. With no user listed, as early in a start, it waits.
+    private async Task FinishAsync(LibraryRenameRecord record, string root)
+    {
+        if (await RewritePreferencesAsync(record, root).ConfigureAwait(false))
+        {
+            _journal.Remove(record);
+        }
+    }
+
+    // Rewrites user by user: one that fails gets its lists back and is left for the next try, and the others go on.
+    private async Task<bool> RewritePreferencesAsync(LibraryRenameRecord record, string root)
+    {
+        var homeLists = _views.IsAvailable;
+        var shadow = homeLists
+            ? (Old: _views.ShadowViewId(record.OldName, record.OldId, record.Type), New: _views.ShadowViewId(record.NewName, record.NewId, record.Type))
+            : default;
+        var users = _users.GetUsers().ToList();
+        if (users.Count == 0)
+        {
+            return false;
+        }
+
+        var libraries = LaterIds(record, root).Prepend(record.OldId).Distinct().ToDictionary(id => id, _ => record.NewId);
+        var done = true;
+        PreferenceKind[] libraryLists = homeLists ? [.. _accessLists, .. _homeLibraryLists] : _accessLists;
+        PreferenceKind[] allLists = homeLists ? [.. libraryLists, .. _homeViewLists] : libraryLists;
+        foreach (var user in users)
+        {
+            var before = allLists.ToDictionary(kind => kind, user.GetPreference);
+            try
+            {
+                var changed = false;
+                foreach (var kind in libraryLists)
+                {
+                    changed |= ReplaceIds(user, kind, libraries);
+                }
+
+                if (homeLists)
+                {
+                    var views = new Dictionary<Guid, Guid>(libraries)
+                    {
+                        [shadow.Old] = shadow.New,
+                        [_views.NamedViewId(user, record.OldId, record.Type)] = _views.NamedViewId(user, record.NewId, record.Type)
+                    };
+                    foreach (var kind in _homeViewLists)
+                    {
+                        changed |= ReplaceIds(user, kind, views);
+                    }
+                }
+
+                if (changed)
+                {
+                    await _users.UpdateUserAsync(user).ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                foreach (var (kind, values) in before)
+                {
+                    user.SetPreference(kind, values);
+                }
+
+                _logger.LogError("Cannot rewrite the library lists of a user after a rename: {Error}", exception.GetType().Name);
+                done = false;
+            }
+        }
+
+        return done;
     }
 }

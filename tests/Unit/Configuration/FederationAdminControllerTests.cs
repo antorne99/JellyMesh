@@ -556,6 +556,40 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task Cancelling_a_pending_rename_answers_with_the_state()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var id = Guid.NewGuid();
+        var state = new ServerRenameState(false, false, false);
+        renamer.Setup(r => r.CancelPendingAsync(id)).ReturnsAsync(ServerRenameOutcome.Cancelled);
+        renamer.Setup(r => r.GetState(id)).Returns(state);
+
+        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(id);
+
+        Assert.Same(state, result.Value);
+    }
+
+    [Theory]
+    [InlineData(ServerRenameOutcome.UnknownServer, 404)]
+    [InlineData(ServerRenameOutcome.Busy, 409)]
+    [InlineData(ServerRenameOutcome.CancelFailed, 500)]
+    public async Task A_refused_cancel_answers_with_its_reason(ServerRenameOutcome outcome, int status)
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        renamer.Setup(r => r.CancelPendingAsync(It.IsAny<Guid>())).ReturnsAsync(outcome);
+
+        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(Guid.NewGuid());
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(status, refused.StatusCode);
+        var body = Assert.IsType<ServerRenameRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
     public async Task The_status_shows_the_rename_of_each_server_and_whether_a_restart_is_needed()
     {
         using var fixture = new RegistryFixture();

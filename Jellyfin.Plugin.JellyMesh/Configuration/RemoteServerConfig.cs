@@ -78,6 +78,12 @@ public class RemoteServerConfig
     public bool FollowSkipped { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a rename of this server started and has not finished, so the page shows it
+    /// after a restart too (§10 row 289).
+    /// </summary>
+    public bool RenameUnfinished { get; set; }
+
+    /// <summary>
     /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.
     /// </summary>
     public Collection<string> ReleasedAutomaticLibraries { get; } = [];

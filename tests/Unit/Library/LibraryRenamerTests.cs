@@ -22,6 +22,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 public sealed class LibraryRenamerTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "jm-renamer-" + Guid.NewGuid().ToString("N"));
+    private readonly string _data = Path.Combine(Path.GetTempPath(), "jm-renamer-data-" + Guid.NewGuid().ToString("N"));
     private readonly Mock<IServerApplicationPaths> _paths = new();
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<ILibraryMonitor> _monitor = new();
@@ -32,7 +33,8 @@ public sealed class LibraryRenamerTests : IDisposable
     private readonly User _limited = new("limited", "auth", "reset");
     private readonly User _blocked = new("blocked", "auth", "reset");
     private readonly User _other = new("other", "auth", "reset");
-    private readonly LibraryRenamer _renamer;
+    private LibraryRenamer _renamer;
+    private Func<string, string, bool> _moveFails = (_, _) => false;
 
     public LibraryRenamerTests()
     {
@@ -40,14 +42,44 @@ public sealed class LibraryRenamerTests : IDisposable
         _paths.SetupGet(paths => paths.DefaultUserViewsPath).Returns(_root);
         _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), typeof(CollectionFolder))).Returns((string key, Type _) => IdOf(key));
         _users.Setup(users => users.GetUsers()).Returns(() => [_limited, _blocked, _other]);
-        _renamer = new LibraryRenamer(_paths.Object, _library.Object, _monitor.Object, _users.Object, _views, _retired, NullLogger<LibraryRenamer>.Instance, _changes.Object);
+        _renamer = NewRenamer();
     }
 
     private Guid OldId => IdOf(Path.Combine(_root, "Casa - Film"));
 
     private Guid NewId => IdOf(Path.Combine(_root, "Mare - Film"));
 
-    public void Dispose() => Directory.Delete(_root, true);
+    public void Dispose()
+    {
+        Directory.Delete(_root, true);
+        if (Directory.Exists(_data))
+        {
+            Directory.Delete(_data, true);
+        }
+    }
+
+    // A renamer over a journal read again from its file, as after a restart.
+    private LibraryRenamer NewRenamer() => new(
+        _paths.Object,
+        _library.Object,
+        _monitor.Object,
+        _users.Object,
+        _views,
+        _retired,
+        new LibraryRenameJournal(_data, NullLogger<LibraryRenameJournal>.Instance),
+        NullLogger<LibraryRenamer>.Instance,
+        _changes.Object,
+        (from, to) =>
+        {
+            if (_moveFails(from, to))
+            {
+                throw new IOException("move");
+            }
+
+            Directory.Move(from, to);
+        });
+
+    private string JournalPath => Path.Combine(_data, LibraryRenameJournal.FileName);
 
     private static Guid IdOf(string key) => new(MD5.HashData(Encoding.UTF8.GetBytes(key.ToLowerInvariant())));
 
@@ -170,6 +202,156 @@ public sealed class LibraryRenamerTests : IDisposable
     public void A_library_manager_of_12_1_has_no_view_ids()
     {
         Assert.False(new LibraryViewIds(_library.Object).IsAvailable);
+    }
+
+    [Fact]
+    public async Task Before_the_folder_moves_who_blocks_the_old_id_also_blocks_the_new_one()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _moveFails = (_, _) => true;
+
+        await Assert.ThrowsAsync<IOException>(() => RenameAsync());
+
+        Assert.Equal([OldId.ToString("N"), NewId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.True(Directory.Exists(Path.Combine(_root, "Casa - Film")));
+    }
+
+    [Fact]
+    public async Task When_a_block_cannot_be_saved_before_the_move_the_folder_stays_and_nothing_is_recorded()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_blocked)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => RenameAsync());
+
+        Assert.True(Directory.Exists(Path.Combine(_root, "Casa - Film")));
+        Assert.False(Directory.Exists(Path.Combine(_root, "Mare - Film")));
+        Assert.False(File.Exists(JournalPath));
+        Assert.False(_renamer.HasPending);
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
+    public async Task A_done_rename_leaves_nothing_pending()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+
+        await RenameAsync();
+
+        Assert.False(_renamer.HasPending);
+        Assert.False(File.Exists(JournalPath));
+        Assert.Equal([NewId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
+    public async Task A_user_who_cannot_be_rewritten_does_not_stop_the_others_and_the_rename_stays_pending()
+    {
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _other.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        Assert.Equal(NewId, await RenameAsync());
+
+        Assert.Equal([NewId.ToString("N")], _other.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.True(_renamer.HasPending);
+        Assert.True(File.Exists(JournalPath));
+    }
+
+    [Fact]
+    public async Task After_a_restart_the_pending_rewrite_is_finished_and_forgotten()
+    {
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+        await RenameAsync();
+        _users.Setup(users => users.UpdateUserAsync(_limited)).Returns(Task.CompletedTask);
+
+        var restarted = NewRenamer();
+        Assert.True(restarted.HasPending);
+        await restarted.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal([NewId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.False(restarted.HasPending);
+        Assert.False(File.Exists(JournalPath));
+    }
+
+    [Fact]
+    public async Task A_record_is_kept_while_the_server_lists_no_user()
+    {
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+        await RenameAsync();
+        _users.Setup(users => users.GetUsers()).Returns([]);
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.True(_renamer.HasPending);
+    }
+
+    [Fact]
+    public async Task A_record_whose_folder_never_moved_is_dropped_and_the_folder_stays()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _moveFails = (_, _) => true;
+        await Assert.ThrowsAsync<IOException>(() => RenameAsync());
+        _moveFails = (_, _) => false;
+
+        await NewRenamer().ResumeAsync(CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, "Casa - Film")));
+        Assert.False(Directory.Exists(Path.Combine(_root, "Mare - Film")));
+        Assert.False(File.Exists(JournalPath));
+        Assert.Contains(OldId.ToString("N"), _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
+    public async Task A_change_of_case_stopped_between_its_two_moves_keeps_access_closed_and_is_finished_later()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        var target = Path.Combine(_root, "CASA - FILM");
+        _moveFails = (_, to) => to == target;
+
+        await Assert.ThrowsAsync<IOException>(() => RenameAsync(to: "CASA - FILM"));
+
+        var temporary = Assert.Single(Directory.GetDirectories(_root));
+        Assert.Contains(IdOf(temporary).ToString("N"), _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.True(File.Exists(JournalPath));
+
+        _moveFails = (_, _) => false;
+        await NewRenamer().ResumeAsync(CancellationToken.None);
+
+        Assert.Equal(["CASA - FILM"], Directory.GetDirectories(_root).Select(Path.GetFileName));
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.False(File.Exists(JournalPath));
+    }
+
+    [Fact]
+    public async Task The_old_id_is_retired_once_the_first_move_of_a_change_of_case_is_done()
+    {
+        _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), typeof(CollectionFolder))).Returns((string key, Type _) => new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key))));
+        var oldId = new Guid(MD5.HashData(Encoding.UTF8.GetBytes(Path.Combine(_root, "Casa - Film"))));
+        var target = Path.Combine(_root, "CASA - FILM");
+        _moveFails = (_, to) => to == target;
+
+        await Assert.ThrowsAsync<IOException>(() => RenameAsync(to: "CASA - FILM", itemId: oldId));
+
+        Assert.True(_retired.Contains(oldId));
+    }
+
+    [Fact]
+    public async Task The_record_file_is_readable_by_its_owner_only()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await RenameAsync();
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(JournalPath));
     }
 
     private sealed class FakeViewIds : ILibraryViewIds

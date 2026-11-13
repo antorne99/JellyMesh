@@ -33,4 +33,13 @@ public interface IServerStubRenamer
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task FinishAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Drops the pending moves of a server and deletes their old files, except those a live stub has or carries from.
+    /// The watch state not carried yet is lost (row 288).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>False when an old file cannot be deleted, so its move stays pending.</returns>
+    Task<bool> CancelAsync(Guid serverId, CancellationToken cancellationToken);
 }

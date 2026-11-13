@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -28,4 +29,11 @@ public interface IServerRenamer
     /// <param name="confirmed">Whether the admin confirmed after the warning.</param>
     /// <returns>The answer.</returns>
     ServerRenameRequest Rename(Guid serverId, string? name, bool confirmed);
+
+    /// <summary>
+    /// Drops the stub moves of a server that wait for a scan, and deletes their old files (row 288).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>Cancelled, CancelFailed when an old file stays, UnknownServer, or Busy while a rename runs.</returns>
+    Task<ServerRenameOutcome> CancelPendingAsync(Guid serverId);
 }

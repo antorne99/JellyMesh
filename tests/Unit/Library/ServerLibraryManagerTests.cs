@@ -1332,6 +1332,40 @@ public sealed class ServerLibraryManagerTests
         Assert.Empty(fixture.Scans.Steps);
     }
 
+    [Fact]
+    public async Task A_rename_first_finishes_the_library_renames_left_halfway_even_with_no_library_of_its_own()
+    {
+        var fixture = new Fixture();
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal(1, fixture.Renamer.Resumes);
+    }
+
+    [Fact]
+    public async Task Users_still_named_by_an_old_id_make_the_rename_fail_until_they_are_rewritten()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Renamer.HasPending = true;
+        fixture.Server.Name = "Mare";
+
+        Assert.False(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal(["Mare - Film", "Mare - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(AutomaticLibrariesError.RenameFailed, fixture.Manager.GetState(_serverId).Error);
+    }
+
+    [Fact]
+    public async Task The_renames_left_halfway_are_finished_on_their_own_too()
+    {
+        var fixture = new Fixture();
+
+        await fixture.Manager.ResumeRenamesAsync(CancellationToken.None);
+
+        Assert.Equal(1, fixture.Renamer.Resumes);
+    }
+
     private sealed class Fixture
     {
         public Fixture(string root = Root, string serverName = "Casa")
@@ -1486,6 +1520,16 @@ public sealed class ServerLibraryManagerTests
         public Exception? Failure { get; set; }
 
         public bool Refuses { get; set; }
+
+        public bool HasPending { get; set; }
+
+        public int Resumes { get; private set; }
+
+        public Task ResumeAsync(CancellationToken cancellationToken)
+        {
+            Resumes++;
+            return Task.CompletedTask;
+        }
 
         public Task<Guid?> RenameAsync(string name, Guid? itemId, Jellyfin.Data.Enums.CollectionType? type, string newName, CancellationToken cancellationToken)
         {

@@ -1,9 +1,9 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
@@ -21,11 +21,12 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     private readonly ILibraryScans _scans;
     private readonly IVersionLinker _linker;
     private readonly RetiredLibraryIds _retired;
+    private readonly IFederatedFolderLinkChecker _links;
+    private readonly IPluginConfigurationStore _store;
     private readonly ILogger<ServerRenamer> _logger;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Lock _jobsLock = new();
     private readonly Dictionary<Guid, Task> _jobs = [];
-    private readonly ConcurrentDictionary<Guid, bool> _failed = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ServerRenamer"/> class.
@@ -36,6 +37,8 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     /// <param name="scans">The library scans.</param>
     /// <param name="linker">The version linker.</param>
     /// <param name="retired">The old ids of renamed libraries.</param>
+    /// <param name="links">The link check of the server folders.</param>
+    /// <param name="store">The configuration store, which keeps a rename that did not finish.</param>
     /// <param name="logger">The logger.</param>
     public ServerRenamer(
         IRemoteServerRegistry registry,
@@ -44,6 +47,8 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         ILibraryScans scans,
         IVersionLinker linker,
         RetiredLibraryIds retired,
+        IFederatedFolderLinkChecker links,
+        IPluginConfigurationStore store,
         ILogger<ServerRenamer> logger)
     {
         _registry = registry;
@@ -52,6 +57,8 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         _scans = scans;
         _linker = linker;
         _retired = retired;
+        _links = links;
+        _store = store;
         _logger = logger;
     }
 
@@ -59,8 +66,11 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     public bool NeedsRestart => !_retired.IsEmpty;
 
     /// <inheritdoc />
-    public ServerRenameState GetState(Guid serverId) =>
-        new(IsBusy(serverId), _stubs.IsPending(serverId), _failed.GetValueOrDefault(serverId));
+    public ServerRenameState GetState(Guid serverId)
+    {
+        var busy = IsBusy(serverId);
+        return new(busy, _stubs.IsPending(serverId), !busy && _store.Read(config => Find(config, serverId)?.RenameUnfinished ?? false));
+    }
 
     /// <inheritdoc />
     public ServerRenameRequest Rename(Guid serverId, string? name, bool confirmed)
@@ -102,11 +112,36 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<ServerRenameOutcome> CancelPendingAsync(Guid serverId)
+    {
+        if (!_registry.GetServers().Any(server => server.Id == serverId))
+        {
+            return ServerRenameOutcome.UnknownServer;
+        }
+
+        Task<ServerRenameOutcome> job;
+        lock (_jobsLock)
+        {
+            if (_jobs.ContainsKey(serverId))
+            {
+                return ServerRenameOutcome.Busy;
+            }
+
+            job = Task.Run(() => CancelAsync(serverId));
+            _jobs[serverId] = job;
+        }
+
+        return await job.ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         _shutdown.Cancel();
         _shutdown.Dispose();
     }
+
+    private static RemoteServerConfig? Find(PluginConfiguration config, Guid serverId) => config.Servers.FirstOrDefault(server => server.Id == serverId);
 
     private bool IsBusy(Guid serverId)
     {
@@ -116,22 +151,19 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         }
     }
 
-    private async Task RunAsync(Guid serverId, string name)
+    private async Task<ServerRenameOutcome> CancelAsync(Guid serverId)
     {
         try
         {
-            _failed.TryRemove(serverId, out _);
-            await RenameAsync(serverId, name, _shutdown.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // The server is shutting down: the next scan finishes the stub moves.
+            return await _stubs.CancelAsync(serverId, _shutdown.Token).ConfigureAwait(false)
+                ? ServerRenameOutcome.Cancelled
+                : ServerRenameOutcome.CancelFailed;
         }
         catch (Exception exception)
         {
             // The type only: a message could hold a path.
-            _logger.LogError("Cannot rename a server: {Error}", exception.GetType().Name);
-            _failed[serverId] = true;
+            _logger.LogError("Cannot cancel the pending rename of a server: {Error}", exception.GetType().Name);
+            return ServerRenameOutcome.CancelFailed;
         }
         finally
         {
@@ -142,18 +174,62 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         }
     }
 
-    private async Task RenameAsync(Guid serverId, string name, CancellationToken cancellationToken)
+    private async Task RunAsync(Guid serverId, string name)
+    {
+        try
+        {
+            // Saved before the first step and cleared only after the last, so a stop of the server leaves it set.
+            MarkUnfinished(serverId, true);
+            if (await RenameAsync(serverId, name, _shutdown.Token).ConfigureAwait(false))
+            {
+                MarkUnfinished(serverId, false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The server is shutting down: the next scan finishes the stub moves.
+        }
+        catch (Exception exception)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Cannot rename a server: {Error}", exception.GetType().Name);
+        }
+        finally
+        {
+            lock (_jobsLock)
+            {
+                _jobs.Remove(serverId);
+            }
+        }
+    }
+
+    // False when a library was left with its old name or users with its old id: the page shows it, the stubs go on.
+    private async Task<bool> RenameAsync(Guid serverId, string name, CancellationToken cancellationToken)
     {
         if (!_registry.Rename(serverId, name))
         {
-            return;
+            return true;
+        }
+
+        // In no library the stubs have no items and no watch state to carry, so they keep their label (row 288).
+        if (InNoLibrary(serverId))
+        {
+            try
+            {
+                return await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                // A renamed library stops the library monitor, which only a scan starts again.
+                await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
         await _stubs.RelabelAsync(serverId, name, cancellationToken).ConfigureAwait(false);
+        bool done;
         try
         {
-            // A false answer is on the page through the state of the libraries; the stubs go on.
-            await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
+            done = await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -168,7 +244,32 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
             await FinishAsync(cancellationToken).ConfigureAwait(false);
         }
+
+        return done;
     }
+
+    // Only when the libraries could be read and none has either folder of the server or one over them.
+    private bool InNoLibrary(Guid serverId)
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (root.Length == 0)
+        {
+            return false;
+        }
+
+        var report = _links.Check(root, [serverId]);
+        return report.IsChecked && report.Servers.Count > 0
+            && report.Covering.Count == 0
+            && report.Servers.All(server => server.Movies.Link == FederatedPathLink.NotLinked && server.Series.Link == FederatedPathLink.NotLinked);
+    }
+
+    private void MarkUnfinished(Guid serverId, bool unfinished) => _store.Update(config =>
+    {
+        if (Find(config, serverId) is { } server)
+        {
+            server.RenameUnfinished = unfinished;
+        }
+    });
 
     private async Task FinishAsync(CancellationToken cancellationToken)
     {

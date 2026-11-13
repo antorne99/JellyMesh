@@ -405,6 +405,38 @@ public class FederationAdminController : ControllerBase
         return StatusCode(status, new ServerRenameRefusal(answer.Outcome, RenameRefusalMessage(answer.Outcome), answer.Libraries));
     }
 
+    /// <summary>
+    /// Drops the stub moves of a server that wait for a scan, and deletes their old files (§10 row 288).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The state of the rename.</returns>
+    [HttpPost("Servers/{serverId:guid}/Rename/Cancel")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId)
+    {
+        if (_renamer is null)
+        {
+            return NotFound();
+        }
+
+        var outcome = await _renamer.CancelPendingAsync(serverId).ConfigureAwait(false);
+        if (outcome == ServerRenameOutcome.Cancelled)
+        {
+            return _renamer.GetState(serverId);
+        }
+
+        var status = outcome switch
+        {
+            ServerRenameOutcome.UnknownServer => StatusCodes.Status404NotFound,
+            ServerRenameOutcome.CancelFailed => StatusCodes.Status500InternalServerError,
+            _ => StatusCodes.Status409Conflict
+        };
+        return StatusCode(status, new ServerRenameRefusal(outcome, RenameRefusalMessage(outcome), []));
+    }
+
     internal static string RenameRefusalMessage(ServerRenameOutcome outcome)
     {
         return outcome switch
@@ -413,6 +445,7 @@ public class FederationAdminController : ControllerBase
             ServerRenameOutcome.UnknownServer => "This server is not configured.",
             ServerRenameOutcome.ConfirmationRequired => "Confirm to rename this server.",
             ServerRenameOutcome.Busy => "This server is being renamed, or its titles wait for a library scan. Try again when it is done.",
+            ServerRenameOutcome.CancelFailed => "Some old files of this server could not be deleted. Try again.",
             _ => "The operation failed."
         };
     }

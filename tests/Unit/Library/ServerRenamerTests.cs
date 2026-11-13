@@ -20,9 +20,12 @@ public sealed class ServerRenamerTests : IDisposable
     private readonly Mock<IServerLibraryManager> _libraries = new();
     private readonly Mock<ILibraryScans> _scans = new();
     private readonly Mock<IVersionLinker> _linker = new();
+    private readonly Mock<IFederatedFolderLinkChecker> _links = new();
     private readonly RetiredLibraryIds _retired = new();
     private readonly CapturingLogger<ServerRenamer> _logger = new();
+    private readonly InMemoryConfigurationStore _store = new();
     private readonly List<string> _steps = [];
+    private readonly List<ServerRenamer> _made = [];
     private readonly ServerRenamer _renamer;
     private bool _pending;
 
@@ -44,10 +47,27 @@ public sealed class ServerRenamerTests : IDisposable
             AutomaticLibrariesError.None));
         _scans.Setup(scans => scans.QueueAndWaitAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("scan")).Returns(Task.CompletedTask);
         _linker.Setup(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("link")).Returns(Task.CompletedTask);
-        _renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _scans.Object, _linker.Object, _retired, _logger);
+        _stubs.Setup(stubs => stubs.CancelAsync(_server, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("cancel")).ReturnsAsync(true);
+        _links.Setup(links => links.Check(It.IsAny<string>(), It.IsAny<IReadOnlyList<Guid>>())).Returns(Report(FederatedPathLink.Linked, FederatedPathLink.NotLinked));
+        _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _server, Name = "Casa" });
+        _renamer = NewRenamer();
     }
 
-    public void Dispose() => _renamer.Dispose();
+    public void Dispose()
+    {
+        foreach (var renamer in _made)
+        {
+            renamer.Dispose();
+        }
+    }
+
+    // A renamer over the same saved configuration, as after a restart.
+    private ServerRenamer NewRenamer()
+    {
+        var renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _scans.Object, _linker.Object, _retired, _links.Object, _store, _logger);
+        _made.Add(renamer);
+        return renamer;
+    }
 
     [Theory]
     [InlineData(null)]
@@ -131,14 +151,74 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenALibraryCannotBeRenamed_TheStubsStillFinish_AndThePageShowsTheLibraryError()
+    public async Task WhenALibraryCannotBeRenamed_TheStubsStillFinish_AndTheRenameStaysUnfinished()
     {
         _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("libraries")).ReturnsAsync(false);
 
         await _renamer.Rename(_server, "Mare", true).Job;
 
         Assert.Equal(["name Mare", "stubs Mare", "libraries", "scan", "finish", "link"], _steps);
+        Assert.True(_renamer.GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task AFailedRename_IsStillShownAfterARestart()
+    {
+        _stubs.Setup(stubs => stubs.RelabelAsync(_server, It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk"));
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.True(NewRenamer().GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task ARenameStoppedByTheShutdown_IsShownAfterARestart()
+    {
+        var entered = new TaskCompletionSource();
+        _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Returns(async (Guid _, CancellationToken token) =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.Infinite, token);
+            return true;
+        });
+        var renamer = NewRenamer();
+        var job = renamer.Rename(_server, "Mare", true).Job;
+        await entered.Task;
+
+        renamer.Dispose();
+        _made.Remove(renamer);
+        await job;
+
+        Assert.True(_store.Configuration.Servers[0].RenameUnfinished);
+        Assert.True(NewRenamer().GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task ACompletedRename_ClearsTheSavedFailure()
+    {
+        _store.Configuration.Servers[0].RenameUnfinished = true;
+        Assert.True(_renamer.GetState(_server).Failed);
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.False(_store.Configuration.Servers[0].RenameUnfinished);
         Assert.False(_renamer.GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task WhileARenameRuns_ItIsNotShownAsFailed()
+    {
+        var release = new TaskCompletionSource();
+        _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            await release.Task;
+            return true;
+        });
+        var job = _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(new ServerRenameState(true, false, false), _renamer.GetState(_server));
+        release.SetResult();
+        await job;
     }
 
     [Fact]
@@ -194,4 +274,132 @@ public sealed class ServerRenamerTests : IDisposable
 
         Assert.True(_renamer.NeedsRestart);
     }
+    [Fact]
+    public async Task WithTheServerFolderInNoLibrary_OnlyTheNameChanges_AndNoStubMoves()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        _links.Setup(links => links.Check("/federated", new[] { _server })).Returns(Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked));
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(["name Mare", "libraries", "scan"], _steps);
+        Assert.Equal(new ServerRenameState(false, false, false), _renamer.GetState(_server));
+    }
+
+    [Fact]
+    public async Task WithTheServerFolderInNoLibrary_TheScanStillRuns_WhenTheLibraryRenameThrows()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        _links.Setup(links => links.Check("/federated", new[] { _server })).Returns(Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked));
+        _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk"));
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(["name Mare", "scan"], _steps);
+        Assert.True(_renamer.GetState(_server).Failed);
+    }
+
+    [Theory]
+    [InlineData(FederatedPathLink.Linked, FederatedPathLink.NotLinked)]
+    [InlineData(FederatedPathLink.NotLinked, FederatedPathLink.DifferentCase)]
+    [InlineData(FederatedPathLink.NotLinked, FederatedPathLink.WrongLibraryType)]
+    public async Task WithTheServerFolderInALibrary_TheStubsMove(FederatedPathLink movies, FederatedPathLink series)
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        _links.Setup(links => links.Check("/federated", new[] { _server })).Returns(Report(movies, series));
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(["name Mare", "stubs Mare", "libraries", "scan", "finish", "link"], _steps);
+    }
+
+    [Fact]
+    public async Task WithALibraryOverTheFederatedFolder_TheStubsMove()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        _links.Setup(links => links.Check("/federated", new[] { _server }))
+            .Returns(Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked) with { Covering = ["Tutto"] });
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Contains("stubs Mare", _steps);
+    }
+
+    [Fact]
+    public async Task WhenTheLibrariesCannotBeRead_TheStubsMove()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        _links.Setup(links => links.Check("/federated", new[] { _server })).Returns(FederatedFolderLinkReport.NotChecked);
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Contains("stubs Mare", _steps);
+    }
+
+    [Fact]
+    public async Task CancellingDropsThePendingMovesOfTheServer()
+    {
+        Assert.Equal(ServerRenameOutcome.Cancelled, await _renamer.CancelPendingAsync(_server));
+
+        Assert.Equal(["cancel"], _steps);
+    }
+
+    [Fact]
+    public async Task WhenAnOldFileCannotBeDeleted_TheCancelFails()
+    {
+        _stubs.Setup(stubs => stubs.CancelAsync(_server, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        Assert.Equal(ServerRenameOutcome.CancelFailed, await _renamer.CancelPendingAsync(_server));
+    }
+
+    [Fact]
+    public async Task WhenCancellingThrows_TheCancelFails_AndTheErrorIsLoggedByItsTypeOnly()
+    {
+        _stubs.Setup(stubs => stubs.CancelAsync(_server, It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/secret/path"));
+
+        Assert.Equal(ServerRenameOutcome.CancelFailed, await _renamer.CancelPendingAsync(_server));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CancellingAnUnknownServer_IsRefused()
+    {
+        Assert.Equal(ServerRenameOutcome.UnknownServer, await _renamer.CancelPendingAsync(Guid.NewGuid()));
+
+        Assert.Empty(_steps);
+    }
+
+    [Fact]
+    public async Task WhileARenameRuns_ACancelIsRefused()
+    {
+        var release = new TaskCompletionSource();
+        _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            await release.Task;
+            return true;
+        });
+        var job = _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(ServerRenameOutcome.Busy, await _renamer.CancelPendingAsync(_server));
+        release.SetResult();
+        await job;
+        Assert.DoesNotContain("cancel", _steps);
+    }
+
+    [Fact]
+    public async Task WhileACancelRuns_ARenameIsRefused()
+    {
+        var release = new TaskCompletionSource<bool>();
+        _stubs.Setup(stubs => stubs.CancelAsync(_server, It.IsAny<CancellationToken>())).Returns(release.Task);
+        var cancel = _renamer.CancelPendingAsync(_server);
+
+        Assert.Equal(ServerRenameOutcome.Busy, _renamer.Rename(_server, "Mare", true).Outcome);
+        release.SetResult(true);
+        Assert.Equal(ServerRenameOutcome.Cancelled, await cancel);
+    }
+
+    private static FederatedFolderLinkReport Report(FederatedPathLink movies, FederatedPathLink series) => new(
+        [new ServerFolderLink(_server, "/m", "/s", new FederatedPathStatus(movies, []), new FederatedPathStatus(series, []), [], [], [])],
+        [],
+        false);
 }

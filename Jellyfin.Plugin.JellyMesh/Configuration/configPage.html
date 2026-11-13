@@ -1127,6 +1127,10 @@
                 display: none;
             }
 
+            .jmRenameCancel[hidden] {
+                display: none;
+            }
+
             .jmMerge {
                 padding: 0.9em 1.1em;
                 overflow-wrap: anywhere;
@@ -1797,6 +1801,11 @@
                     "A library JellyMesh renamed keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.": "Una libreria rinominata da JellyMesh tiene il suo vecchio ID fino al riavvio di Jellyfin: fino ad allora, gli utenti che la aprono con quell'ID ricevono un errore. Riavvia Jellyfin appena puoi.",
                     "This server is being renamed, or its titles wait for a library scan. Try again when it is done.": "Questo server è in fase di rinomina, oppure i suoi titoli aspettano un'analisi delle librerie. Riprova quando ha finito.",
                     "Confirm to rename this server.": "Conferma per rinominare questo server.",
+                    "Cancel the pending rename": "Annulla la rinomina in sospeso",
+                    "Cancel the pending rename?": "Annullare la rinomina in sospeso?",
+                    "The titles of {server} keep the new name. Their old files are deleted now, and the watch state not yet carried to the new name is lost.": "I titoli di {server} tengono il nuovo nome. I loro vecchi file vengono eliminati subito, e lo stato di visione non ancora portato sul nuovo nome va perso.",
+                    "The pending rename of {server} is cancelled.": "La rinomina in sospeso di {server} è annullata.",
+                    "Some old files of this server could not be deleted. Try again.": "Non è stato possibile eliminare alcuni vecchi file di questo server. Riprova.",
                     "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
                     "The missing servers are forgotten. Their folders are being deleted.": "I server mancanti sono stati dimenticati. Le loro cartelle vengono eliminate.",
                     "The Serie folders of the servers are in different libraries, so a series on more than one server stays split.": "Le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa.",
@@ -2860,6 +2869,17 @@
                     var renameNote = create('p');
                     renameNote.className = 'jmLibrariesNote';
                     body.appendChild(renameNote);
+                    var renameCancel = button(t('Cancel the pending rename'), function () {
+                        confirmAction(t('Cancel the pending rename?'), [
+                            t('The titles of {server} keep the new name. Their old files are deleted now, and the watch state not yet carried to the new name is lost.', { server: escapeHtml(server.Name) })
+                        ], function () {
+                            act(api('POST', 'Servers/' + server.Id + '/Rename/Cancel').then(function () {
+                                showMessage(t('The pending rename of {server} is cancelled.', { server: server.Name }));
+                                return loadStatus();
+                            }));
+                        });
+                    }, 'jmRenameCancel');
+                    body.appendChild(renameCancel);
                     var ownPending = false;
                     var ownErrors = {
                         NameTaken: t('A library name was taken, so a library was not created.'),
@@ -2912,9 +2932,11 @@
                         renderOwnNotes(ownNotes, ownCurrent, ownPending, function () {
                             switchOwn(true, false);
                         });
-                        var renameText = renameProblem(renameState(server));
+                        var renameCurrent = renameState(server);
+                        var renameText = renameProblem(renameCurrent);
                         setText(renameNote, renameText);
                         renameNote.hidden = !renameText;
+                        renameCancel.hidden = !renameCurrent.Pending || renameCurrent.Busy;
                     };
                     row.jmUpdate(server, report);
 
