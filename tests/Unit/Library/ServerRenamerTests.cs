@@ -282,8 +282,21 @@ public sealed class ServerRenamerTests : IDisposable
 
         await _renamer.Rename(_server, "Mare", true).Job;
 
-        Assert.Equal(["name Mare", "libraries"], _steps);
+        Assert.Equal(["name Mare", "libraries", "scan"], _steps);
         Assert.Equal(new ServerRenameState(false, false, false), _renamer.GetState(_server));
+    }
+
+    [Fact]
+    public async Task WithTheServerFolderInNoLibrary_TheScanStillRuns_WhenTheLibraryRenameThrows()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        _links.Setup(links => links.Check("/federated", new[] { _server })).Returns(Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked));
+        _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk"));
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(["name Mare", "scan"], _steps);
+        Assert.True(_renamer.GetState(_server).Failed);
     }
 
     [Theory]

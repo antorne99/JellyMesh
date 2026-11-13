@@ -214,7 +214,15 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         // In no library the stubs have no items and no watch state to carry, so they keep their label (row 288).
         if (InNoLibrary(serverId))
         {
-            return await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                // A renamed library stops the library monitor, which only a scan starts again.
+                await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
         await _stubs.RelabelAsync(serverId, name, cancellationToken).ConfigureAwait(false);
