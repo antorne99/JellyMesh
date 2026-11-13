@@ -326,8 +326,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             // The link below takes in what changed until now, so the page warns only about later changes.
             _changes?.Record();
             materialized = await MaterializeAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
-            await MigrateAsync(cancellationToken).ConfigureAwait(false);
+            // The follow comes first, so that placing new servers sees the automatic libraries by their names now (§10 row 385).
             followed = await FollowServerLibrariesAsync(cancellationToken).ConfigureAwait(false);
+            await MigrateAsync(cancellationToken).ConfigureAwait(false);
             PruneLastServed();
             if (servers.Count > 0)
             {
