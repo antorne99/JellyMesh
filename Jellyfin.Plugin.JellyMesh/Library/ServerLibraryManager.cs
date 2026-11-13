@@ -94,6 +94,23 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     }
 
     /// <inheritdoc />
+    public bool IsBusy
+    {
+        get
+        {
+            lock (_jobsLock)
+            {
+                if (_jobs.Count > 0 || _cleaning)
+                {
+                    return true;
+                }
+            }
+
+            return _gate.CurrentCount == 0 || _renamer.HasPending;
+        }
+    }
+
+    /// <inheritdoc />
     public AutomaticLibrariesState GetState(Guid serverId)
     {
         var state = _store.Read(config => Find(config, serverId) is { } server
@@ -104,7 +121,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 server.ReleasedAutomaticLibraries.ToList(),
                 AutomaticLibrariesError.None)
             : new AutomaticLibrariesState(false, false, [], [], AutomaticLibrariesError.None));
-        return state with { Busy = IsBusy(serverId), Error = _errors.GetValueOrDefault(serverId) };
+        return state with { Busy = HasJob(serverId), Error = _errors.GetValueOrDefault(serverId) };
     }
 
     /// <inheritdoc />
@@ -128,7 +145,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             return AutomaticLibrariesRequest.Refused(AutomaticLibrariesOutcome.UnknownServer);
         }
 
-        if (IsBusy(serverId))
+        if (HasJob(serverId))
         {
             return AutomaticLibrariesRequest.Refused(AutomaticLibrariesOutcome.Busy);
         }
@@ -382,7 +399,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         TypeOptions = []
     };
 
-    private bool IsBusy(Guid serverId)
+    private bool HasJob(Guid serverId)
     {
         lock (_jobsLock)
         {

@@ -102,6 +102,13 @@ public sealed partial class LayoutMigration
             return;
         }
 
+        // Checked after the read, so that a library made before it already has its record (§10 row 77, D24).
+        if (AutomaticLibrariesUnsettled())
+        {
+            _logger.LogInformation("Migration to the server folders: the automatic libraries are changing, so the new servers wait for the next sync");
+            return;
+        }
+
         var automatic = AutomaticLibraries(folders);
         var kinds = new Func<Guid, string>[]
         {
@@ -142,6 +149,12 @@ public sealed partial class LayoutMigration
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
+
+    // True while a library may lack its record: the manager works, or a server with the switch on misses a kind.
+    private bool AutomaticLibrariesUnsettled() =>
+        _automaticLibraries.IsBusy
+        || _store.Read(config => config.Servers.Any(server => server.AutomaticLibraries
+            && Enum.GetValues<ServerLibraryKind>().Any(kind => server.AutomaticLibraryRegistry.All(record => record.Kind != kind))));
 
     // The libraries the plugin made for a server, kept or still to delete, found by id first and then by name.
     private HashSet<VirtualFolderInfo> AutomaticLibraries(IReadOnlyList<VirtualFolderInfo> folders)
