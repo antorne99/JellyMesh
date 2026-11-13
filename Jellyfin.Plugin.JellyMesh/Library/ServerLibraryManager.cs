@@ -194,7 +194,30 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         try
         {
             _errors[serverId] = AutomaticLibrariesError.None;
-            return await RenameLibrariesAsync(serverId, cancellationToken).ConfigureAwait(false);
+            await _renamer.ResumeAsync(cancellationToken).ConfigureAwait(false);
+            var done = await RenameLibrariesAsync(serverId, cancellationToken).ConfigureAwait(false);
+            if (_renamer.HasPending)
+            {
+                // Users still named by an old id: the next rename or start finishes them (row 290).
+                _errors[serverId] = AutomaticLibrariesError.RenameFailed;
+                return false;
+            }
+
+            return done;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task ResumeRenamesAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _renamer.ResumeAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {

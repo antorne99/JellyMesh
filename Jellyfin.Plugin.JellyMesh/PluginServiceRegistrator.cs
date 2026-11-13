@@ -67,7 +67,11 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
         serviceCollection.AddSingleton<RetiredLibraryIds>();
         serviceCollection.AddSingleton<ILibraryViewIds, LibraryViewIds>();
+        serviceCollection.AddSingleton(provider => new LibraryRenameJournal(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<LibraryRenameJournal>>()));
         serviceCollection.AddSingleton<ILibraryRenamer, LibraryRenamer>();
+        serviceCollection.AddHostedService<LibraryRenameResumeService>();
         serviceCollection.AddSingleton<RetiredLibraryFilter>();
         serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<RetiredLibraryFilter>());
         serviceCollection.AddSingleton<IVersionLinker, VersionLinker>();
