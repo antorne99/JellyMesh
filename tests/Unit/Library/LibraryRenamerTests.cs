@@ -599,6 +599,7 @@ public sealed class LibraryRenamerTests : IDisposable
 
         Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
         Assert.True(Directory.Exists(Path.Combine(_root, "Mare - Film")));
+        Assert.False(_retired.Contains(OldId));
         Assert.False(restarted.HasPending);
         Assert.False(File.Exists(JournalPath));
         Assert.False(File.Exists(DamagedPath));

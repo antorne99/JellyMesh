@@ -314,7 +314,9 @@ public sealed class LibraryRenamer : ILibraryRenamer
 
         if (names.Contains(record.OldName))
         {
-            // The folder never moved, or a library was made again with the old name and so its id: lists stay (row 331).
+            // The folder never moved, or a library was made again with the old name and so its id: lists stay and the id
+            // is valid again (rows 331, 348).
+            _retired.Restore(record.OldId);
             _journal.Remove(record);
             return;
         }
