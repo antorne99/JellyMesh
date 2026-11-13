@@ -1662,6 +1662,7 @@
                     "Merge undone. The series list changes after the library scan that was queued.": "Unione annullata. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
                     "Merged films": "Film uniti",
                     "Merged on {date}": "Uniti il {date}",
+                    "Merged on {date}|series": "Unite il {date}",
                     "Merged series": "Serie unite",
                     "Merged. The film list changes after the library scan that was queued.": "Uniti. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
                     "Merged. The series list changes after the library scan that was queued.": "Unite. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
@@ -2084,9 +2085,10 @@
                 }
 
                 // Translates an English text, or keeps it when it has no translation, and fills its {names}.
+                // A text ending in |word is the same English with its own translation, for a word such as a gender.
                 function t(text, values) {
                     var strings = translations[pageLanguage] || {};
-                    var shown = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text;
+                    var shown = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text.replace(/\|\w+$/, '');
                     return shown.replace(/\{(\w+)\}/g, function (whole, name) {
                         return values && values[name] !== undefined ? values[name] : whole;
                     });
@@ -3696,6 +3698,7 @@
                         merged: t('Merged. The film list changes after the library scan that was queued.'),
                         undone: t('Merge undone. The film list changes after the library scan that was queued.'),
                         unused: t('Not in effect: a copy is missing, or the IDs already make these one film.'),
+                        mergedOn: t('Merged on {date}'),
                         forecast: describeForecast
                     },
                     series: {
@@ -3709,6 +3712,7 @@
                         merged: t('Merged. The series list changes after the library scan that was queued.'),
                         undone: t('Merge undone. The series list changes after the library scan that was queued.'),
                         unused: t('Not in effect: a copy is missing, or the IDs already make these one series.'),
+                        mergedOn: t('Merged on {date}|series'),
                         forecast: function () {
                             return t('If merged, each episode plays from its best copy, and a local copy always wins. The others stay as backups.');
                         }
@@ -4053,7 +4057,7 @@
                         date.className = 'jmMergeDate';
                         var time = create('time', formatDate(current.CreatedUtc));
                         time.setAttribute('datetime', current.CreatedUtc);
-                        var around = t('Merged on {date}').split('{date}');
+                        var around = kind.mergedOn.split('{date}');
                         date.appendChild(document.createTextNode(around[0]));
                         date.appendChild(time);
                         date.appendChild(document.createTextNode(around[1] || ''));

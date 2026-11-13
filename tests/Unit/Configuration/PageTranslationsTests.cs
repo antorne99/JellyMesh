@@ -154,6 +154,21 @@ public class PageTranslationsTests
     }
 
     [Theory]
+    [MemberData(nameof(Languages))]
+    public void A_translation_shows_no_context_mark(string language)
+    {
+        Assert.Empty(_languages[language].Where(pair => Regex.IsMatch(pair.Value, @"\|\w+$")).Select(pair => pair.Key));
+    }
+
+    [Fact]
+    public void The_merge_date_of_series_has_its_own_text()
+    {
+        Assert.Contains("mergedOn: t('Merged on {date}|series')", _script, StringComparison.Ordinal);
+        Assert.Equal("Unite il {date}", _languages["it"]["Merged on {date}|series"]);
+        Assert.Equal("Uniti il {date}", _languages["it"]["Merged on {date}"]);
+    }
+
+    [Theory]
     [InlineData(@"create\('[a-z0-9]+', '[A-Z]")]
     [InlineData(@"\bbutton\('")]
     [InlineData(@"addFact\(\w+, '")]
