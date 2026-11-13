@@ -25,4 +25,7 @@ public sealed record SeriesWork(
 {
     /// <summary>Gets the season folders of the episodes that have work, each with its own files.</summary>
     public IReadOnlyList<SeasonWork> Seasons { get; init; } = [];
+
+    /// <summary>Gets the images written before whose type the remote row no longer has, to be deleted (Q235).</summary>
+    public IReadOnlyList<StubImage> RemovedImages { get; init; } = [];
 }
