@@ -759,6 +759,30 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void AStubSeriesWithALocalOneTakesNoSeasonFilesFromTheRemote()
+    {
+        var local = new LocalSeries("Local", 2019, null, new Dictionary<string, string>(), "/media/poster.jpg", null);
+        var season = new IndexedItem
+        {
+            ItemId = "ss1",
+            Kind = IndexedItemKind.Season,
+            LibraryId = "shows",
+            LastSeenUtc = _now,
+            Name = "Remote Season",
+            SeriesId = "s",
+            IndexNumber = 1,
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "sp" }
+        };
+        IndexedItem[] items = [SeriesItem("s"), season, EpisodeItem("e", "s", 1, 4) with { SeasonId = "ss1" }];
+
+        var withLocal = Plan([Episode("w", 1, 4, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, items)], localSeries: _ => local);
+        var alone = Plan([Episode("w", 1, 4, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, items)]);
+
+        Assert.Empty(Assert.Single(withLocal.Series).Seasons);
+        Assert.Equal("Remote Season", Assert.Single(Assert.Single(alone.Series).Seasons).Metadata.Title);
+    }
+
+    [Fact]
     public void ALocalSeriesWithoutKeyIdsLeavesOnlyItsNameAsTheKey()
     {
         var local = new LocalSeries("Serie Senza ID", 2026, null, new Dictionary<string, string>(), null, null);

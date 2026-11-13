@@ -570,15 +570,20 @@ public static class StubPlanner
         };
 
         var work = new SeriesWork(entry, stub is null, metadata, nfo, Path.Combine(relative, "tvshow.nfo"), Hash(nfo), images, imageTag);
-        plan = new SeriesPlan(entry, name ?? string.Empty, work, source.Item is null ? null : (source.ServerId, source.Item.ItemId));
+        plan = new SeriesPlan(entry, name ?? string.Empty, work, source.Item is null ? null : (source.ServerId, source.Item.ItemId), local is not null);
         plans[workKey] = plan;
         return plan;
     }
 
     // One season work per season folder that gets episode work. A season that has none now is forgotten, so that it is
-    // written again if it comes back.
+    // written again if it comes back. A series merged with a local one shows its seasons, so it gets none (Q248).
     private static SeriesWork WithSeasons(StubPlanInput input, SeriesPlan plan, IndexItemLookup catalog)
     {
+        if (plan.HasLocal)
+        {
+            return plan.Work with { Seasons = [] };
+        }
+
         var written = new Dictionary<string, SeasonStub>(StringComparer.Ordinal);
         foreach (var season in plan.Entry.Seasons)
         {
@@ -737,8 +742,9 @@ public static class StubPlanner
 
     private static string NewId() => Guid.NewGuid().ToString("N");
 
-    // The remote series the metadata comes from, if the index has it, and the episodes placed in its season folders.
-    private sealed record SeriesPlan(SeriesStub Entry, string FileName, SeriesWork Work, (Guid ServerId, string ItemId)? Source)
+    // The remote series the metadata comes from, if the index has it, whether a local series is merged with it, and the
+    // episodes placed in its season folders.
+    private sealed record SeriesPlan(SeriesStub Entry, string FileName, SeriesWork Work, (Guid ServerId, string ItemId)? Source, bool HasLocal)
     {
         public List<SeasonEpisode> Episodes { get; } = [];
     }
