@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.JellyMesh.Segments;
 public sealed class NewStubSegments : BackgroundService
 {
     /// <summary>
-    /// The most new stubs kept waiting; more wait for the scheduled segment scan.
+    /// The most new stubs kept waiting until the end of the library scan; more wait for the scheduled segment scan.
     /// </summary>
     public const int MaxPending = 10_000;
 
@@ -70,6 +70,11 @@ public sealed class NewStubSegments : BackgroundService
         _queue.Writer.TryComplete();
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Forgets the new stubs whose <c>.strm</c> was not read yet. Called at the end of each library scan (Q311).
+    /// </summary>
+    public void ForgetUnread() => _awaitingRefresh.Clear();
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

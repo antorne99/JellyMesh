@@ -111,6 +111,44 @@ public sealed class NewStubSegmentsTests : IAsyncLifetime, IDisposable
         await ComputedAsync(stub.Id);
     }
 
+    private Task ScanEndedAsync() => new NewStubScanEnd(_service).Run(new Progress<double>(), CancellationToken.None);
+
+    [Fact]
+    public async Task A_stub_still_unread_when_the_scan_ends_is_left_to_the_scheduled_scan()
+    {
+        var stub = Item("/federated/Films/Unread.strm", read: false);
+        Added(stub);
+        Updated(stub);
+
+        await ScanEndedAsync();
+        stub.ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature");
+        Updated(stub);
+        await SettleAsync();
+
+        Assert.DoesNotContain(stub.Id, _computed);
+    }
+
+    [Fact]
+    public async Task The_end_of_a_scan_frees_the_room_of_stubs_never_read()
+    {
+        for (var i = 0; i < NewStubSegments.MaxPending; i++)
+        {
+            Added(new Movie { Id = Guid.NewGuid(), Path = "/federated/Films/Never" + i + ".strm" });
+        }
+
+        var late = Item("/federated/Films/Late.strm");
+        Added(late);
+        Updated(late);
+
+        await ScanEndedAsync();
+        var next = Item("/federated/Films/Next.strm");
+        Added(next);
+        Updated(next);
+        await ComputedAsync(next.Id);
+
+        Assert.DoesNotContain(late.Id, _computed);
+    }
+
     [Fact]
     public async Task A_stub_that_was_only_updated_is_left_to_the_scheduled_scan()
     {
