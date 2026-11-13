@@ -16,6 +16,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -65,7 +66,7 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     // A renamer over a journal read again from its file, as after a restart.
-    private LibraryRenamer NewRenamer() => new(
+    private LibraryRenamer NewRenamer(ILogger<LibraryRenamer>? logger = null) => new(
         _paths.Object,
         _library.Object,
         _monitor.Object,
@@ -74,7 +75,7 @@ public sealed class LibraryRenamerTests : IDisposable
         _retired,
         new LibraryRenameJournal(_data, NullLogger<LibraryRenameJournal>.Instance),
         _store,
-        NullLogger<LibraryRenamer>.Instance,
+        logger ?? NullLogger<LibraryRenamer>.Instance,
         _changes.Object,
         (from, to) =>
         {
@@ -406,6 +407,64 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_resumed_record_whose_temporary_name_is_not_a_guid_is_set_aside()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "Lago - Film"));
+        var lago = IdOf(Path.Combine(_root, "Lago - Film"));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [lago.ToString("N")]);
+        WriteJournal(Pending(
+            oldName: "Riva - Film",
+            newName: "RIVA - FILM",
+            oldId: IdOf(Path.Combine(_root, "Riva - Film")),
+            newId: IdOf(Path.Combine(_root, "RIVA - FILM")),
+            temporary: "lago - film"));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        AssertSetAside(lago);
+    }
+
+    [Fact]
+    public async Task A_resumed_record_with_a_temporary_name_but_not_a_change_of_case_is_set_aside()
+    {
+        var other = Guid.NewGuid().ToString("N");
+        Directory.CreateDirectory(Path.Combine(_root, other));
+        var otherId = IdOf(Path.Combine(_root, other));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [otherId.ToString("N")]);
+        WriteJournal(Pending(
+            oldName: "Riva - Film",
+            newName: "Lago - Film",
+            oldId: IdOf(Path.Combine(_root, "Riva - Film")),
+            newId: IdOf(Path.Combine(_root, "Lago - Film")),
+            temporary: other));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, other)));
+        Assert.False(Directory.Exists(Path.Combine(_root, "Lago - Film")));
+        AssertSetAside(otherId);
+    }
+
+    [Fact]
+    public async Task A_resumed_change_of_case_through_a_guid_folder_is_finished()
+    {
+        var temporary = Guid.NewGuid().ToString("N");
+        Directory.Move(Path.Combine(_root, "Casa - Film"), Path.Combine(_root, temporary));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N"), IdOf(Path.Combine(_root, temporary)).ToString("N")]);
+        WriteJournal(Pending(newName: "CASA - FILM", newId: IdOf(Path.Combine(_root, "CASA - FILM")), temporary: temporary));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal(["CASA - FILM"], Directory.GetDirectories(_root).Select(Path.GetFileName));
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.False(File.Exists(DamagedPath));
+        Assert.False(_renamer.HasPending);
+    }
+
+    [Fact]
     public async Task A_resumed_record_whose_new_id_is_not_that_of_its_new_folder_is_set_aside()
     {
         MovedToMare(OldId);
@@ -459,6 +518,38 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_record_is_set_aside_over_a_damaged_file_that_cannot_be_read()
+    {
+        MovedToMare(OldId);
+        WriteJournal(Pending(newId: Guid.NewGuid()));
+        var folder = Path.Combine(_data, "folder");
+        Directory.CreateDirectory(folder);
+        File.CreateSymbolicLink(DamagedPath, folder);
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        AssertSetAside(OldId);
+    }
+
+    [Fact]
+    public async Task A_record_that_cannot_be_set_aside_stays_pending_and_the_log_says_so()
+    {
+        MovedToMare(OldId);
+        WriteJournal(Pending(newId: Guid.NewGuid()));
+        Directory.CreateDirectory(DamagedPath);
+        var logger = new CapturingLogger<LibraryRenamer>();
+        _renamer = NewRenamer(logger);
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.True(_renamer.HasPending);
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("It is set aside", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("cannot be set aside", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_resumed_record_whose_old_id_is_a_library_of_the_plugin_is_finished()
     {
         var recorded = Guid.NewGuid();
@@ -474,6 +565,25 @@ public sealed class LibraryRenamerTests : IDisposable
         Assert.Equal([NewId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
         Assert.False(File.Exists(DamagedPath));
         Assert.False(_renamer.HasPending);
+    }
+
+    [Fact]
+    public async Task A_resumed_record_pairing_a_library_of_the_plugin_with_another_name_is_set_aside()
+    {
+        var recorded = Guid.NewGuid();
+        var server = new RemoteServerConfig { Id = Guid.NewGuid() };
+        server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = recorded.ToString("N") });
+        _store.Configuration.Servers.Add(server);
+        Directory.CreateDirectory(Path.Combine(_root, "Lago - Film"));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [recorded.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [recorded.ToString("N")]);
+        WriteJournal(Pending(oldName: "Inventato - Film", newName: "Lago - Film", oldId: recorded, newId: IdOf(Path.Combine(_root, "Lago - Film"))));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal([recorded.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        AssertSetAside(recorded);
     }
 
     [Fact]
@@ -522,6 +632,7 @@ public sealed class LibraryRenamerTests : IDisposable
 
         Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
         Assert.True(Directory.Exists(Path.Combine(_root, "Mare - Film")));
+        Assert.False(_retired.Contains(OldId));
         Assert.False(restarted.HasPending);
         Assert.False(File.Exists(JournalPath));
         Assert.False(File.Exists(DamagedPath));
