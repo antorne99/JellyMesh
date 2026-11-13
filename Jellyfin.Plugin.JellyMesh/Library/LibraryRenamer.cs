@@ -314,9 +314,10 @@ public sealed class LibraryRenamer : ILibraryRenamer
             return;
         }
 
-        // The ids are compared, not the names, so a library named in another case is never taken for this one (row 360).
+        // The ids are compared, not the names, so a library named in another case is never taken for this one (row 360),
+        // and the new library must be there by its exact name.
         var temporaryId = record.TemporaryName is { } name ? _library.GetNewItemId(Path.Combine(root, name), typeof(CollectionFolder)) : (Guid?)null;
-        if (temporaryId is { } id && others.Contains(id))
+        if ((temporaryId is { } id && others.Contains(id)) || (!moving && !folders.ContainsKey(record.NewName)))
         {
             PutAside(record);
             return;

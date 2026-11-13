@@ -717,6 +717,23 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_resumed_record_whose_new_name_is_a_live_library_by_another_case_is_set_aside()
+    {
+        Register("Casa - Film", OldId);
+        Directory.Delete(Path.Combine(_root, "Casa - Film"));
+        Directory.CreateDirectory(Path.Combine(_root, "Kids"));
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        WriteJournal(Pending(newName: "kids", newId: IdOf(Path.Combine(_root, "kids"))));
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        AssertSetAside(OldId);
+    }
+
+    [Fact]
     public async Task A_resumed_record_of_a_live_library_of_the_plugin_rewrites_no_list()
     {
         Directory.CreateDirectory(Path.Combine(_root, "Movies"));
