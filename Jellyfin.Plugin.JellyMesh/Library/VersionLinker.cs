@@ -30,7 +30,8 @@ public sealed class VersionLinker : IVersionLinker
     private readonly IUserDataManager _userData;
     private readonly StubItemUpdater _updater;
     private readonly ILogger<VersionLinker> _logger;
-    private volatile bool _lastRunFailed;
+    // Up until the first full run ends, so that a refusal after a restart is not taken as final (Q324).
+    private volatile bool _lastRunFailed = true;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VersionLinker"/> class.
@@ -80,7 +81,8 @@ public sealed class VersionLinker : IVersionLinker
             : LinkGroupsAsync((groups, run) => GroupsReaching(groups, local, run), false, false, cancellationToken);
     }
 
-    // Links the groups chosen, as the full run links them. Only a full run clears the failed flag; any run can set it.
+    // Links the groups chosen, as the full run links them. Only a full run clears the failed flag; any failure of any run
+    // sets it, also one outside the catch of a group (Q324).
     private async Task LinkGroupsAsync(Func<IReadOnlyList<VersionGroup>, Run, IEnumerable<VersionGroup>> choose, bool full, bool thorough, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
@@ -137,7 +139,8 @@ public sealed class VersionLinker : IVersionLinker
 
             if (thorough)
             {
-                await DetachUngroupedAsync(state, state.Stubs.Where(stub => !renaming.Contains(stub.Id)), run, cancellationToken).ConfigureAwait(false);
+                var stuck = await DetachUngroupedAsync(state, state.Stubs.Where(stub => !renaming.Contains(stub.Id)), run, cancellationToken).ConfigureAwait(false);
+                failed |= stuck.Count > 0;
             }
 
             await MoveCollectionEntriesAsync(run, cancellationToken).ConfigureAwait(false);
@@ -147,6 +150,11 @@ public sealed class VersionLinker : IVersionLinker
             }
 
             _lastRunFailed = full ? failed : _lastRunFailed || failed;
+        }
+        catch
+        {
+            _lastRunFailed = true;
+            throw;
         }
         finally
         {

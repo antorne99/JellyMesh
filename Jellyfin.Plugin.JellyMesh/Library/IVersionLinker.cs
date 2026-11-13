@@ -13,7 +13,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface IVersionLinker
 {
     /// <summary>
-    /// Gets a value indicating whether the last link run could not link some group or did not finish; false before the first.
+    /// Gets a value indicating whether a link run failed since the last full run that linked every group; true until the
+    /// first full run ends (Q324).
     /// </summary>
     bool LastRunFailed { get; }
 
