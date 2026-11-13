@@ -300,6 +300,21 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Empty(LinkedIds(itemB));
     }
 
+    // A link of one title reads only the items of the stubs in its groups, not every stub (Q387).
+    [Fact]
+    public async Task ALinkOfOneTitleReadsOnlyTheStubsOfItsGroups()
+    {
+        var local = Local();
+        var (a, b, c) = (Stub("sa", _serverA, 1080), Stub("sb", _serverB, 2160), Stub("sc", _serverC, 720));
+        await SaveAsync([a, b, c], Group("g1", ["sa"], [local.Id]), Group("g2", ["sb", "sc"]));
+        var (itemA, itemB, itemC) = (Scanned(a), Scanned(b), Scanned(c));
+
+        await _linker.LinkLocalAsync([local.Id], CancellationToken.None);
+
+        _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(itemB.Id) || query.ItemIds.Contains(itemC.Id))), Times.Never);
+        _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(itemA.Id))), Times.Once);
+    }
+
     // Q170 holds for one title too: the group with the lower ID claims the film, as in the full run.
     [Fact]
     public async Task ALinkOfOneTitleLetsTheFirstGroupClaimAFilmTwoGroupsShare()
@@ -417,6 +432,24 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Empty(_saves);
         VerifyNoLookupOf(itemA, itemB, itemC);
         _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Length > 0)), Times.Once);
+    }
+
+    // The scale harness reads this line: how many items the run read, how many groups it read again and saved.
+    [Fact]
+    public async Task AFullRunLogsWhatItReadAndSaved()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        Scanned(a);
+        Scanned(b);
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Equal(
+            ["Linked the versions of the titles: 2 items read, 1 groups read again, 2 items saved", "Linked the versions of the titles: 2 items read, 0 groups read again, 0 items saved"],
+            _logger.Lines.Where(line => line.StartsWith("Linked the versions", StringComparison.Ordinal)).Select(line => line.TrimEnd()));
     }
 
     // Q387: what changes is saved on the instance Jellyfin keeps in its cache, not on the copy a block read gave.

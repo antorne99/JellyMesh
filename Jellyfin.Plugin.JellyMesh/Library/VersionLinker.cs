@@ -103,15 +103,19 @@ public sealed class VersionLinker : IVersionLinker
             var failed = false;
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
-            run.KnowItemsOf(state.Stubs);
+
+            // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
+            var chosen = choose(state.Groups, run).OrderBy(group => group.Id, StringComparer.Ordinal).ToList();
+
+            // A link of one title reads only the stubs of its groups.
+            run.KnowItemsOf(full ? state.Stubs : chosen.SelectMany(group => group.StubIds).Select(_registry.Find).OfType<StubEntry>());
             var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
             var changed = false;
 
             // A renamed stub waits until its old item is gone: the old item owns the new one, and its group keeps its links.
             var renaming = state.Renames.Select(rename => rename.StubId).ToHashSet(StringComparer.Ordinal);
 
-            // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
-            foreach (var group in choose(state.Groups, run).OrderBy(group => group.Id, StringComparer.Ordinal))
+            foreach (var group in chosen)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var recorded = group.PrimaryStubId;
@@ -151,6 +155,10 @@ public sealed class VersionLinker : IVersionLinker
             }
 
             _lastRunFailed = full ? failed : _lastRunFailed || failed;
+            if (full)
+            {
+                _logger.LogInformation("Linked the versions of the titles: {Read} items read, {Reloaded} groups read again, {Saved} items saved", run.Read, run.Reloaded, run.Saved);
+            }
         }
         catch
         {
@@ -327,6 +335,7 @@ public sealed class VersionLinker : IVersionLinker
             return plan;
         }
 
+        run.Reloaded++;
         var cached = new Dictionary<Guid, Video>();
         foreach (var id in members.Keys)
         {
@@ -364,6 +373,7 @@ public sealed class VersionLinker : IVersionLinker
         foreach (var update in plan.Updates)
         {
             await SaveLinksAsync(known[update.ItemId], update, cancellationToken).ConfigureAwait(false);
+            run.Saved++;
         }
 
         return plan;
@@ -496,6 +506,13 @@ public sealed class VersionLinker : IVersionLinker
         public HashSet<Guid> ClaimedLocals { get; } = [];
 
         public bool Thorough => thorough;
+
+        // What the run read in blocks, the groups it read again from the cache, and the items it saved.
+        public int Read => _known.Count;
+
+        public int Reloaded { get; set; }
+
+        public int Saved { get; set; }
 
         public bool IsStub(BaseItem item) => FederatedPaths.IsInside(root, item.Path);
 
