@@ -166,13 +166,13 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         switch (outcome.Kind)
         {
             case PlaybackOutcomeKind.Remote:
-                _segments.OfferOnRemote(outcome.Response!, outcome.Served);
+                _segments.OfferOnRemote(outcome.Response!, outcome.Served, route);
                 context.Result = new OkObjectResult(outcome.Response);
                 break;
             case PlaybackOutcomeKind.LocalTranscode when request.DeviceProfile is not null:
                 // After a fallback another version serves, and stock must transcode its .strm.
                 var served = outcome.Served is { } identity ? request with { Identity = identity } : request;
-                await RunLocalTranscodeAsync(context, next, served, outcome).ConfigureAwait(false);
+                await RunLocalTranscodeAsync(context, next, served, outcome, route).ConfigureAwait(false);
                 break;
             default:
                 await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user).ConfigureAwait(false);
@@ -274,7 +274,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
     }
 
-    private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome)
+    private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, Guid route)
     {
         // The stock action builds the local TranscodingUrl. ffmpeg then reads the URL of the .strm, from loopback.
         var noCopy = new Dictionary<string, object?>
@@ -308,6 +308,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
+        _segments.OfferOnLocal(response, request.Identity, outcome.FileSource, route);
     }
 
     private bool CleanLocalResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, PlaybackOutcome outcome)
@@ -321,7 +322,6 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             }
 
             HideFile(source);
-            source.HasSegments &= _segments.Offers(request.Identity.ItemId, outcome.FileSource);
             source.TranscodingUrl = PlaybackUrls.WithoutClientRetry(source.TranscodingUrl);
             foreach (var stream in source.MediaStreams ?? [])
             {
