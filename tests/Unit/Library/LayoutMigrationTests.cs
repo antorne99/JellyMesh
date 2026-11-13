@@ -24,7 +24,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
 // The manual migration from the flat layout: the state goes to the new versions once the admin links the new paths, then
 // the old folders are emptied (Q40, Q41, Q47-Q49, D12, D15).
-public sealed class LayoutMigrationTests : IDisposable
+public sealed partial class LayoutMigrationTests : IDisposable
 {
     private static readonly DateTime _watched = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     private static readonly Guid _serverA = Guid.NewGuid();
@@ -63,6 +63,7 @@ public sealed class LayoutMigrationTests : IDisposable
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Manual;
         _registry = NewRegistry();
+        SetUpLibraryPaths();
         _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
@@ -108,6 +109,7 @@ public sealed class LayoutMigrationTests : IDisposable
 
     public void Dispose()
     {
+        _migration?.Dispose();
         _registry.Dispose();
         _log.Dispose();
         if (Directory.Exists(_data))
@@ -1025,11 +1027,21 @@ public sealed class LayoutMigrationTests : IDisposable
         {
             var fake = new Mock<IWatchStateCarrier>();
             fake.Setup(carry => carry.CarryAsync(It.IsAny<IReadOnlyList<WatchStateMove>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((IReadOnlyList<WatchStateMove> moves, CancellationToken _) => new WatchStateCarryReport(moves.Select(outcome).ToList()));
+                .ReturnsAsync((IReadOnlyList<WatchStateMove> moves, CancellationToken _) => new WatchStateCarryReport(moves.Select(outcome).ToList())
+                {
+                    ForgettableOldItemIds = moves.Where(move => move.RemovesOldItem).Select(move => move.FromItemId).ToList()
+                });
+            fake.Setup(carry => carry.ForgetRemovedAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+                .Callback((IReadOnlyCollection<Guid> ids, CancellationToken _) => _forgotten.AddRange(ids))
+                .ReturnsAsync((IReadOnlyCollection<Guid> ids, CancellationToken _) => ids.ToList());
             carrier = fake.Object;
         }
 
-        return new LayoutMigration(_registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object, _logger);
+        _migration?.Dispose();
+        _migration = new LayoutMigration(
+            _registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object,
+            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _logger);
+        return _migration;
     }
 
     private UserItemData Row(User user, BaseItem item) => _userData.Object.GetUserData(user, item)!;
