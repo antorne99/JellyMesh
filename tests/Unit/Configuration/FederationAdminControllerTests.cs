@@ -1021,6 +1021,68 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public void ChoosingTheAutomaticMigrationStartsItAndShowsTheBanner()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var status = new LayoutMigrationStatus(LayoutMigrationStep.AddPaths, [], 3) { Mode = LayoutMigrationMode.Automatic, Running = true };
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.Choose(LayoutMigrationMode.Automatic)).Returns(new LayoutMigrationChoice(LayoutMigrationChoiceOutcome.Started, Task.CompletedTask));
+        migration.Setup(item => item.GetStatus("/federata")).Returns(status);
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        var accepted = Assert.IsType<AcceptedResult>(result.Result);
+        Assert.Same(status, accepted.Value);
+    }
+
+    [Fact]
+    public void ChoosingTheManualMigrationShowsTheBanner()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var status = new LayoutMigrationStatus(LayoutMigrationStep.AddPaths, [], 3) { Mode = LayoutMigrationMode.Manual };
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.Choose(LayoutMigrationMode.Manual)).Returns(new LayoutMigrationChoice(LayoutMigrationChoiceOutcome.Chosen, Task.CompletedTask));
+        migration.Setup(item => item.GetStatus("/federata")).Returns(status);
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Manual });
+
+        Assert.Same(status, result.Value);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationChoiceOutcome.Busy)]
+    [InlineData(LayoutMigrationChoiceOutcome.NotAllowed)]
+    [InlineData(LayoutMigrationChoiceOutcome.NothingToMigrate)]
+    public void ARefusedChoiceAnswersWithItsReason(LayoutMigrationChoiceOutcome outcome)
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.Choose(It.IsAny<LayoutMigrationMode>())).Returns(LayoutMigrationChoice.Refused(outcome));
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Manual });
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(409, refused.StatusCode);
+        var body = Assert.IsType<LayoutMigrationRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
+    public void WithNoFolderThereIsNoChoice()
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>(MockBehavior.Strict);
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
     public void WithNoFolderThereIsNoMigration()
     {
         using var fixture = new RegistryFixture();

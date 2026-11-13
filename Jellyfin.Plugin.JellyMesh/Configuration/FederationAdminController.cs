@@ -437,6 +437,44 @@ public class FederationAdminController : ControllerBase
         return StatusCode(status, new ServerRenameRefusal(outcome, RenameRefusalMessage(outcome), []));
     }
 
+    /// <summary>
+    /// Records the choice in the migration banner: manual, or automatic, which starts or resumes in the background (Q55, Q57).
+    /// </summary>
+    /// <param name="request">The mode chosen.</param>
+    /// <returns>The migration status.</returns>
+    [HttpPost("Migration")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<LayoutMigrationStatus?> ChooseMigration([FromBody] ChooseMigrationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var path = _store.Read(config => config.FederatedFolderPath);
+        if (_migration is null || string.IsNullOrEmpty(path))
+        {
+            return NotFound();
+        }
+
+        var answer = _migration.Choose(request.Mode);
+        return answer.Outcome switch
+        {
+            LayoutMigrationChoiceOutcome.Started => Accepted(_migration.GetStatus(path)),
+            LayoutMigrationChoiceOutcome.Chosen => _migration.GetStatus(path),
+            _ => StatusCode(StatusCodes.Status409Conflict, new LayoutMigrationRefusal(answer.Outcome, MigrationRefusalMessage(answer.Outcome)))
+        };
+    }
+
+    internal static string MigrationRefusalMessage(LayoutMigrationChoiceOutcome outcome)
+    {
+        return outcome switch
+        {
+            LayoutMigrationChoiceOutcome.Busy => "The automatic migration is running. Try again when it stops.",
+            LayoutMigrationChoiceOutcome.NothingToMigrate => "There is nothing to migrate.",
+            _ => "The automatic migration cannot go back to manual."
+        };
+    }
+
     internal static string RenameRefusalMessage(ServerRenameOutcome outcome)
     {
         return outcome switch

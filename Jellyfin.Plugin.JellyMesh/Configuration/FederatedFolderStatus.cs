@@ -20,7 +20,7 @@ public sealed record FederatedFolderStatus(
     bool SeriesSplit,
     bool FromEnvironment)
 {
-    /// <summary>Gets the manual migration from the flat layout, null when there is none to show.</summary>
+    /// <summary>Gets the migration from the flat layout, manual or automatic, null when there is none to show.</summary>
     public LayoutMigrationStatus? Migration { get; init; }
 
     /// <summary>Gets the libraries that came over the folder or left it since the last sync, whose links it rebuilds.</summary>
