@@ -465,6 +465,34 @@ public class FederationAdminController : ControllerBase
         };
     }
 
+    /// <summary>
+    /// Sets from the settings the mode for the servers linked later, the field of the banner (Q58, §10 row 368). While the
+    /// banner asks, it is the banner's choice.
+    /// </summary>
+    /// <param name="request">The mode chosen.</param>
+    /// <returns>No content, accepted when it started the automatic migration, or the reason of a refusal.</returns>
+    [HttpPost("Migration/NewServers")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult SetNewServerMode([FromBody] ChooseMigrationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (_migration is null)
+        {
+            return NotFound();
+        }
+
+        var answer = _migration.SetMode(request.Mode);
+        return answer.Outcome switch
+        {
+            LayoutMigrationChoiceOutcome.Started => Accepted(),
+            LayoutMigrationChoiceOutcome.Chosen => NoContent(),
+            _ => StatusCode(StatusCodes.Status409Conflict, new LayoutMigrationRefusal(answer.Outcome, MigrationRefusalMessage(answer.Outcome)))
+        };
+    }
+
     internal static string MigrationRefusalMessage(LayoutMigrationChoiceOutcome outcome)
     {
         return outcome switch
@@ -623,7 +651,8 @@ public class FederationAdminController : ControllerBase
             PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null)
         {
             Migration = path.Length == 0 ? null : _migration?.GetStatus(path),
-            Changes = path.Length == 0 ? LibraryChanges.None : _changes?.Compare() ?? LibraryChanges.None
+            Changes = path.Length == 0 ? LibraryChanges.None : _changes?.Compare() ?? LibraryChanges.None,
+            NewServerMode = _migration?.NewServerMode ?? LayoutMigrationMode.Manual
         };
     }
 

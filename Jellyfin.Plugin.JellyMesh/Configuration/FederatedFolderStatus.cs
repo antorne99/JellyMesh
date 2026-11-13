@@ -25,4 +25,7 @@ public sealed record FederatedFolderStatus(
 
     /// <summary>Gets the libraries that came over the folder or left it since the last sync, whose links it rebuilds.</summary>
     public LibraryChanges Changes { get; init; } = LibraryChanges.None;
+
+    /// <summary>Gets the mode for the servers linked later, set in the settings (Q58, D23).</summary>
+    public LayoutMigrationMode NewServerMode { get; init; } = LayoutMigrationMode.Manual;
 }

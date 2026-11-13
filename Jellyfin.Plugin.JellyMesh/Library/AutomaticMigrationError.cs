@@ -24,5 +24,11 @@ public enum AutomaticMigrationError
     RemoveFailed,
 
     /// <summary>A step failed for another reason.</summary>
-    Failed
+    Failed,
+
+    /// <summary>
+    /// The registry has no old title but the old folders still hold stubs, or could not be read, so the old paths stay
+    /// (§10 row 371).
+    /// </summary>
+    OldStubsLeft
 }

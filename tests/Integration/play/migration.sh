@@ -2,9 +2,12 @@
 # Test 8 of the spec (Q40, Q47, Q49, Q55-Q57, D12, D15): a flat layout made by a 0.4.x that records the last server
 # that served each user, an upgrade, the banner and its choice, the old stubs working while the new paths are not linked,
 # then the paths added, the scan, the state carried as Q47 says and the old folders emptied down to their .jellymesh.
-# MODE=manual: the admin adds and removes the paths. MODE=automatic: the plugin does, after a failed step and a restart.
+# MODE=manual: the admin adds and removes the paths. MODE=automatic: the plugin does, after a failed step and a restart,
+# then places a server linked later in the libraries of the others but not in their own (Q58, D21, D24), until the
+# settings set the new servers to manual.
 #   local  $PREFIX-local  $PORT      plugin, consumer of a and b, users alice and bob
 #   a, b   $PREFIX-a/-b   $PORT+1/2  stock Jellyfin with the media of remoto-standard
+#   c, d   $PREFIX-c/-d   $PORT+3/4  the same, linked after the automatic migration
 # OLD is a checkout of a 0.4.x with the last-served record (0.4.2.0 or later), made with archive and tar.
 # usage: MEDIA=<main checkout>/tests/Integration/media OLD=<folder> [MODE=manual|automatic] [PREFIX=jm-migration] [PORT=18720] migration.sh [--keep]
 set -euo pipefail
@@ -17,14 +20,15 @@ OLD=${OLD:?a checkout of a 0.4.x with the last-served record}
 WORK=${WORK_MIGRATION:-${TMPDIR:-/tmp}/$PREFIX-run}
 mkdir -p "$WORK"
 name_of() { case $1 in alice | bob) echo "$PREFIX-local" ;; *) echo "$PREFIX-$1" ;; esac; }
-port_of() { case $1 in local | alice | bob) echo "$PORT" ;; a) echo $((PORT + 1)) ;; b) echo $((PORT + 2)) ;; esac; }
+port_of() { case $1 in local | alice | bob) echo "$PORT" ;; a) echo $((PORT + 1)) ;; b) echo $((PORT + 2)) ;; c) echo $((PORT + 3)) ;; d) echo $((PORT + 4)) ;; esac; }
 # vid_any <path>: the N-format id of the item with exactly that path, of any type.
 vid_any() { sql "select lower(replace(Id, '-', '')) from BaseItems where Path = '$1' limit 1;"; }
 
 down_migration() {
-  docker rm -f "$PREFIX-local" "$PREFIX-a" "$PREFIX-b" >/dev/null 2>&1 || true
+  docker rm -f "$PREFIX-local" "$PREFIX-a" "$PREFIX-b" "$PREFIX-c" "$PREFIX-d" >/dev/null 2>&1 || true
   docker volume rm "$PREFIX-local-config" "$PREFIX-local-cache" "$PREFIX-local-fed" "$PREFIX-local-media" \
-    "$PREFIX-a-config" "$PREFIX-a-cache" "$PREFIX-a-fed" "$PREFIX-b-config" "$PREFIX-b-cache" "$PREFIX-b-fed" >/dev/null 2>&1 || true
+    "$PREFIX-a-config" "$PREFIX-a-cache" "$PREFIX-a-fed" "$PREFIX-b-config" "$PREFIX-b-cache" "$PREFIX-b-fed" \
+    "$PREFIX-c-config" "$PREFIX-c-cache" "$PREFIX-c-fed" "$PREFIX-d-config" "$PREFIX-d-cache" "$PREFIX-d-fed" >/dev/null 2>&1 || true
 }
 [ "${1:-}" = --keep ] || trap down_migration EXIT
 down_migration
@@ -208,6 +212,63 @@ else
     "$(printf '%s\n' /media/film "$(server_folder "$id_a")/Film" "$(server_folder "$id_b")/Film" | sort | paste -sd, -)" "$(locations Film)"
   check "Serie holds the Serie folders of the servers" \
     "$(printf '%s\n' "$(server_folder "$id_a")/Serie" "$(server_folder "$id_b")/Serie" | sort | paste -sd, -)" "$(locations Serie)"
+
+  echo "--- a server linked after the migration joins the libraries of the others, not their own (Q58, D21, D24)"
+  folder_mode() { get local /JellyMesh/Admin/Status | jq -r '.FederatedFolder.NewServerMode'; }
+  own() { get local /JellyMesh/Admin/Status | jq -c --arg id "$1" ".Servers[] | select(.Id == \$id) | .AutomaticLibraries | $2"; }
+  own_on() { # own_on <server id>: switches its libraries on and waits for both
+    local i
+    post local "/JellyMesh/Admin/Servers/$1/AutomaticLibraries" '{"Enabled":true}' >/dev/null
+    check "switching on answers 202" 202 "$(status)"
+    for i in $(seq 1 120); do [ "$(own "$1" '[.Busy, (.Libraries | length)]')" = '[false,2]' ] && return 0; sleep 1; done
+    echo "the libraries of a server did not come" >&2
+  }
+  holds() { locations "$1" | tr ',' '\n' | grep -cx "$2" || true; }
+  link_later() { # link_later <server>: a stock server with the same media, linked, imported and synced; prints its id
+    local id
+    start "$1" "$MEDIA/remoto-standard:/media:ro"
+    library "$1" Film movies /media/film
+    library "$1" Serie tvshows /media/serie
+    user "$1" jellymesh >/dev/null
+    scan "$1"
+    id=$(add_remote local "$1" "http://host.docker.internal:$(port_of "$1")" jellymesh)
+    import_all local "$id"
+    sync_now local
+    echo "$id"
+  }
+  check "the migration set the new servers to automatic (row 368)" Automatic "$(folder_mode)"
+  own_on "$id_a"
+  own_names() { own "$1" '.Libraries[].Name' | jq -r .; }
+  a_libraries=$(own_names "$id_a")
+  echo "own libraries of a: $(paste -sd, - <<<"$a_libraries")"
+  id_c=$(link_later c)
+  for i in $(seq 1 60); do [ "$(holds Film "$(server_folder "$id_c")/Film")$(holds Serie "$(server_folder "$id_c")/Serie")" = 11 ] && break; sleep 3; done
+  check "Film gains the Film folder of c" \
+    "$(printf '%s\n' /media/film "$(server_folder "$id_a")/Film" "$(server_folder "$id_b")/Film" "$(server_folder "$id_c")/Film" | sort | paste -sd, -)" "$(locations Film)"
+  check "Serie gains the Serie folder of c" \
+    "$(printf '%s\n' "$(server_folder "$id_a")/Serie" "$(server_folder "$id_b")/Serie" "$(server_folder "$id_c")/Serie" | sort | paste -sd, -)" "$(locations Serie)"
+  while IFS= read -r library; do
+    check "the own library $library of a holds no folder of c (D24)" 0 "$(locations "$library" | grep -c "$(server_folder "$id_c")" || true)"
+  done <<<"$a_libraries"
+  own_on "$id_c"
+  c_libraries=$(own_names "$id_c")
+  check "c has its own two libraries (D21)" 2 "$(grep -c . <<<"$c_libraries")"
+  while IFS= read -r library; do
+    check "the own library $library of c holds only c (D21)" 1 "$(locations "$library" | tr ',' '\n' | grep -c "^$(server_folder "$id_c")/" || true)"
+    check "and nothing else" "" "$(locations "$library" | tr ',' '\n' | grep -v "^$(server_folder "$id_c")/" || true)"
+  done <<<"$c_libraries"
+  check "the page warns the Serie folders sit in different libraries (D21)" true "$(get local /JellyMesh/Admin/Status | jq -r '.FederatedFolder.SeriesSplit')"
+
+  echo "--- the settings set the new servers to manual (Q58, D23)"
+  post local /JellyMesh/Admin/Migration/NewServers '{"Mode":"Manual"}' >/dev/null
+  check "the settings take manual" 204 "$(status)"
+  check "the status says manual" Manual "$(folder_mode)"
+  id_d=$(link_later d)
+  scan local
+  sleep 20
+  check "the folders of d stay out of Film" 0 "$(holds Film "$(server_folder "$id_d")/Film")"
+  check "and out of Serie" 0 "$(holds Serie "$(server_folder "$id_d")/Serie")"
+  check "the mode stays manual" Manual "$(folder_mode)"
 fi
 check "the status names no remote address" 0 "$(get local /JellyMesh/Admin/Status | jq -c '.FederatedFolder' | grep -c "host.docker.internal" || true)"
 exit "$FAILED"

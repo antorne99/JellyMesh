@@ -111,10 +111,11 @@ public sealed partial class LayoutMigration
 
     private static bool IsDone(LibraryPathOutcome outcome) => outcome is LibraryPathOutcome.Done or LibraryPathOutcome.Unchanged;
 
-    // The hooks after a scan and a sync: the carry at its step, and the job for the others once no error stops it.
+    // The hooks after a scan and a sync: the carry at its step, and the job for the others once no error stops it. Once
+    // done, the job places the servers linked later (Q58).
     private async Task ContinueAsync(string root, LayoutMigrationConfig migration, CancellationToken cancellationToken)
     {
-        if (migration.Error != AutomaticMigrationError.None || migration.Step == AutomaticMigrationStep.Done)
+        if (migration.Error != AutomaticMigrationError.None)
         {
             return;
         }
@@ -179,8 +180,14 @@ public sealed partial class LayoutMigration
             {
                 var (root, migration) = _store.Read(config => (config.FederatedFolderPath ?? string.Empty, Copy(config.LayoutMigration)));
                 step = migration.Step;
-                if (root.Length == 0 || migration.Mode != LayoutMigrationMode.Automatic || migration.Error != AutomaticMigrationError.None || step == AutomaticMigrationStep.Done)
+                if (root.Length == 0 || migration.Mode != LayoutMigrationMode.Automatic || migration.Error != AutomaticMigrationError.None)
                 {
+                    return;
+                }
+
+                if (step == AutomaticMigrationStep.Done)
+                {
+                    await PlaceNewServersAsync(root, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -201,7 +208,10 @@ public sealed partial class LayoutMigration
         {
             // The type only: a message could hold a path.
             _logger.LogError("The automatic migration to the server folders failed at the step {Step}: {Error}", step, exception.GetType().Name);
-            TryStop(AutomaticMigrationError.Failed, null);
+            if (step != AutomaticMigrationStep.Done)
+            {
+                TryStop(AutomaticMigrationError.Failed, null);
+            }
         }
     }
 
@@ -280,6 +290,7 @@ public sealed partial class LayoutMigration
             return false;
         }
 
+        SeedPlaced(servers);
         return true;
     }
 
@@ -315,6 +326,13 @@ public sealed partial class LayoutMigration
             return AutomaticMigrationStep.Carry;
         }
 
+        // An unreadable registry loads empty, so stubs still in the old folders would lose their state (§10 row 371).
+        if (OldFoldersHoldStubs(root))
+        {
+            Stop(AutomaticMigrationError.OldStubsLeft, null);
+            return null;
+        }
+
         if (LibrariesOf(root, _registry.State) is not { } libraries)
         {
             Stop(AutomaticMigrationError.ReadFailed, null);
@@ -331,6 +349,22 @@ public sealed partial class LayoutMigration
         }
 
         return AutomaticMigrationStep.Finish;
+    }
+
+    // Whether a .strm is left under the flat Film or Serie; true as well when they cannot be read.
+    private bool OldFoldersHoldStubs(string root)
+    {
+        try
+        {
+            return new[] { FederatedFolderLayout.MoviesPath(root), FederatedFolderLayout.SeriesPath(root) }
+                .Where(Directory.Exists)
+                .Any(folder => Directory.EnumerateFiles(folder, "*.strm", SearchOption.AllDirectories).Any());
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot read the old folders before removing them from the libraries: {Error}", exception.GetType().Name);
+            return true;
+        }
     }
 
     private List<VirtualFolderInfo>? ReadFolders()
