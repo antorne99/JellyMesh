@@ -187,6 +187,7 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Metadata saving:** tested with Jellyfin's metadata savers off. With the NFO saver on, Jellyfin might rewrite the plugin's `.nfo` files, which hasn't been tested.
 - **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.
+- **Seasons from two servers:** when two servers give different names or plots for a season of the same series, which one Jellyfin shows is effectively random, and stays the same on a given install. Each episode keeps the season name of its own server.
 - **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 only installing and loading the plugin has been checked.
 - **Provider restart:** a stream in progress ends when the provider restarts, and the client has to open the title again.
 
