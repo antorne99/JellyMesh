@@ -305,8 +305,8 @@ public sealed class LayoutMigration : ILayoutMigration
                 _logger.LogWarning(
                     "Migration to the server folders: {Count} old titles wait while the library {Library} of remote server {ServerName} came back empty",
                     library.Value,
-                    names.GetValueOrDefault(library.Key.LibraryId, library.Key.LibraryId),
-                    servers.GetValueOrDefault(server.Key, string.Empty));
+                    LogText.Clean(names.GetValueOrDefault(library.Key.LibraryId, library.Key.LibraryId)),
+                    LogText.Clean(servers.GetValueOrDefault(server.Key, string.Empty)));
             }
         }
     }

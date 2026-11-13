@@ -468,7 +468,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         var unresolved = missing.Count(id => !entries.ContainsKey(id));
         if (unresolved > 0)
         {
-            _logger.LogWarning("Remote server {ServerName} has episodes of {Count} series it does not list", server.Name, unresolved);
+            _logger.LogWarning("Remote server {ServerName} has episodes of {Count} series it does not list", LogText.Clean(server.Name), unresolved);
         }
 
         return RemoteFailure.None;

@@ -419,7 +419,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The type only: a message could hold a remote address.
-            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}", server.Name, exception.GetType().Name);
+            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}", LogText.Clean(server.Name), exception.GetType().Name);
             await MarkFailedAsync(server, RemoteFailure.InvalidResponse, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -543,7 +543,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             return;
         }
 
-        _logger.LogInformation("Read {Count} catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
+        _logger.LogInformation("Read {Count} catalog entries from remote server {ServerName}", read.Value!.Count, LogText.Clean(server.Name));
         _runReads[server.Id] = read.Value.Count;
         var entries = await WithCollectionsAsync(server, read.Value, cancellationToken).ConfigureAwait(false);
         var mark = new SyncMark(started.Value, server.ImportedLibraryIds);
@@ -582,7 +582,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             return;
         }
 
-        _logger.LogInformation("Read {Count} changed catalog entries from remote server {ServerName}", read.Value!.Count, server.Name);
+        _logger.LogInformation("Read {Count} changed catalog entries from remote server {ServerName}", read.Value!.Count, LogText.Clean(server.Name));
         _runReads[server.Id] = read.Value.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
         TrackSave(await _index.MergeServerAsync(server.Id, KeepCollections(read.Value, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false));
@@ -615,12 +615,12 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         if (read.Value!.Reset)
         {
-            _logger.LogInformation("The change feed of remote server {ServerName} cannot be continued, reading it all", server.Name);
+            _logger.LogInformation("The change feed of remote server {ServerName} cannot be continued, reading it all", LogText.Clean(server.Name));
             await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        _logger.LogInformation("Read {Count} entries from the change feed of remote server {ServerName}", read.Value.Items.Count, server.Name);
+        _logger.LogInformation("Read {Count} entries from the change feed of remote server {ServerName}", read.Value.Items.Count, LogText.Clean(server.Name));
         _runReads[server.Id] = read.Value.Items.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
         var saved = await _index.MergeServerAsync(server.Id, KeepCollections(read.Value.Items, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false);
@@ -662,7 +662,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var read = await _reader.ReadCollectionsAsync(server, libraries, filmIds, cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
-            _logger.LogWarning("Could not read the collections of remote server {ServerName}: {Failure}. The ones known are kept", server.Name, read.Failure);
+            _logger.LogWarning("Could not read the collections of remote server {ServerName}: {Failure}. The ones known are kept", LogText.Clean(server.Name), read.Failure);
             return _index.Snapshot.Find(server.Id) is { } catalog ? KeepCollections(entries, catalog) : entries;
         }
 
@@ -694,7 +694,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     // A server already marked failed in the index, also before a restart, is not written to the activity log again.
     private async Task MarkFailedAsync(RemoteServerInfo server, RemoteFailure failure, CancellationToken cancellationToken)
     {
-        _logger.LogWarning("Could not read the catalog of remote server {ServerName}: {Failure}. Its entries are kept", server.Name, failure);
+        _logger.LogWarning("Could not read the catalog of remote server {ServerName}: {Failure}. Its entries are kept", LogText.Clean(server.Name), failure);
         var wasFailing = _index.Snapshot.Find(server.Id) is { State: ServerSyncState.Stale, LastFailure: not null };
         _runFailures[server.Id] = KeyValuePair.Create(server.Name, failure);
         TrackSave(await _index.MarkServerFailedAsync(server.Id, failure, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false));

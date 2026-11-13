@@ -141,7 +141,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot write the folders of the servers in the federated folder: {Error}", ex.Message);
+            _logger.LogWarning("Cannot write the folders of the servers in the federated folder: {Error}", LogText.Clean(ex.Message));
         }
     }
 
@@ -275,7 +275,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             _logger.LogWarning(
                 "A complete read of a library of remote server {ServerName} came back empty. {Count} stubs are kept until it has items again, or it is deselected",
-                held.ServerName,
+                LogText.Clean(held.ServerName),
                 held.Stubs);
         }
 

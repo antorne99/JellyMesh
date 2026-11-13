@@ -76,7 +76,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
         if (!login.IsSuccess)
         {
-            _logger.LogWarning("Login on new remote server {ServerName} failed: {Failure}", name, login.Failure);
+            _logger.LogWarning("Login on new remote server {ServerName} failed: {Failure}", LogText.Clean(name), login.Failure);
             return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
         }
 
@@ -89,7 +89,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             if (known.Configured is { } configured)
             {
                 await EndSessionAsync(endpoint, login.Value, cancellationToken).ConfigureAwait(false);
-                _logger.LogWarning("Remote server {ServerName} is already configured as {ConfiguredName}", name, configured.Name);
+                _logger.LogWarning("Remote server {ServerName} is already configured as {ConfiguredName}", LogText.Clean(name), LogText.Clean(configured.Name));
                 return RemoteResult.Fail(RemoteFailure.AlreadyConfigured, configured);
             }
 
@@ -102,7 +102,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
                 if (!login.IsSuccess)
                 {
-                    _logger.LogWarning("Login on returning remote server {ServerName} failed: {Failure}", name, login.Failure);
+                    _logger.LogWarning("Login on returning remote server {ServerName} failed: {Failure}", LogText.Clean(name), login.Failure);
                     return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
                 }
 
@@ -146,7 +146,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         if (standing is not null)
         {
             await EndSessionAsync(endpoint, login.Value!, cancellationToken).ConfigureAwait(false);
-            _logger.LogWarning("Remote server {ServerName} is already configured as {ConfiguredName}", name, standing.Name);
+            _logger.LogWarning("Remote server {ServerName} is already configured as {ConfiguredName}", LogText.Clean(name), LogText.Clean(standing.Name));
             return RemoteResult.Fail(RemoteFailure.AlreadyConfigured, standing);
         }
 
@@ -156,11 +156,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         if (recognizedAs is null)
         {
-            _logger.LogInformation("Added remote server {ServerName} in {Mode} mode", server.Name, server.Mode);
+            _logger.LogInformation("Added remote server {ServerName} in {Mode} mode", LogText.Clean(server.Name), server.Mode);
         }
         else
         {
-            _logger.LogInformation("Added remote server {ServerName} in {Mode} mode, recognized as {FormerName}", server.Name, server.Mode, recognizedAs);
+            _logger.LogInformation("Added remote server {ServerName} in {Mode} mode, recognized as {FormerName}", LogText.Clean(server.Name), server.Mode, LogText.Clean(recognizedAs));
         }
 
         return RemoteResult.Success<RemoteServerInfo>(_store.Read(_ => ToInfo(server) with { RecognizedAs = recognizedAs }));
@@ -192,7 +192,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var login = await _client.AuthenticateAsync(EndpointOf(serverId, stored.Url), credentials, cancellationToken).ConfigureAwait(false);
         if (!login.IsSuccess)
         {
-            _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", stored.Name, login.Failure);
+            _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", LogText.Clean(stored.Name), login.Failure);
             return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
         }
 
@@ -233,7 +233,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var runtime = RuntimeOf(serverId);
         runtime.Session = login.Value;
         Record(runtime, stored.Name, RemoteFailure.None, countsForActivity: true);
-        _logger.LogInformation("Updated the credentials of remote server {ServerName}", stored.Name);
+        _logger.LogInformation("Updated the credentials of remote server {ServerName}", LogText.Clean(stored.Name));
         return RemoteResult.Success(_store.Read(config => ToInfo(config.Servers.First(server => server.Id == serverId))));
     }
 
@@ -355,7 +355,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
         });
 
-        _logger.LogInformation("Remote server {ServerName} is now in {Mode} mode", known.Name, detected.Value.Mode);
+        _logger.LogInformation("Remote server {ServerName} is now in {Mode} mode", LogText.Clean(known.Name), detected.Value.Mode);
         return GetServers().FirstOrDefault(server => server.Id == serverId);
     }
 
@@ -432,7 +432,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         Record(runtime, server.Name, result.Attempt.Failure, countsForActivity);
         if (!result.Attempt.IsSuccess)
         {
-            _logger.LogWarning("Call to remote server {ServerName} failed: {Failure}", server.Name, result.Attempt.Failure);
+            _logger.LogWarning("Call to remote server {ServerName} failed: {Failure}", LogText.Clean(server.Name), result.Attempt.Failure);
         }
 
         return result.Attempt;
@@ -578,7 +578,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return result.Value!;
         }
 
-        _logger.LogWarning("Capability detection on remote server {ServerName} failed: {Failure}", serverName, result.Failure);
+        _logger.LogWarning("Capability detection on remote server {ServerName} failed: {Failure}", LogText.Clean(serverName), result.Failure);
         return new RemoteCapabilities(RemoteMode.Unknown, 0);
     }
 
@@ -632,7 +632,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The type only: a message could hold a path or an address.
-            _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}", server.Name, exception.GetType().Name);
+            _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}", LogText.Clean(server.Name), exception.GetType().Name);
         }
     }
 
@@ -653,7 +653,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         _logger.LogWarning(
             "Remote server {ServerName} answered with Server Id {RemoteServerId}, which another configured server holds; it is not stored",
-            serverName,
+            LogText.Clean(serverName),
             remoteId);
     }
 
@@ -664,7 +664,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             _logger.LogWarning(
                 "Remote server {ServerName} answered with Server Id {RemoteServerId}, not the stored {StoredServerId}; the stored one is kept",
-                serverName,
+                LogText.Clean(serverName),
                 remoteId,
                 storedId);
         }

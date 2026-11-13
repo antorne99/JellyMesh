@@ -499,6 +499,22 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task AHeldLibraryNameWithControlCharactersCannotForgeALogLine()
+    {
+        _imported.Add("lib");
+        OldFilm("Dune", (_serverA, "a1"));
+        _indexed.Remove((_serverA, "a1"));
+        AllPathsLinked();
+        _servers.Setup(servers => servers.GetLibrariesAsync(_serverA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>([new RemoteLibrary("lib", "Film\r\nForged\u2028line", "movies")]));
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        var line = Assert.Single(_logger.Lines, line => line.Contains("came back empty", StringComparison.Ordinal));
+        Assert.Contains("FilmForgedline", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AHeldLibraryWhoseNameCannotBeReadIsLoggedByServerAndId()
     {
         _imported.Add("lib");
