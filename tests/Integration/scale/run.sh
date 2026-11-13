@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# Measures a consumer's first sync and materialization against a stock remote with a large synthetic catalog
-# (fake_remote.py, no media), then an incremental sync with no changes and a full sync with no changes.
-# One Jellyfin 12.4 with the plugin, the fake on the host. Containers and volumes are removed at the end unless KEEP=1.
-# The catalog size and images come from the SCALE_* variables of fake_remote.py; SCALE_SCAN=1 also links the federated
-# folder to two libraries afterwards, scans them, and repeats the incremental sync on scanned items.
+# Measures a consumer's first sync and materialization against stock remotes with a large synthetic catalog
+# (fake_remote.py, no media), then an incremental sync with no changes, a full sync with no changes and the nightly
+# reconciliation, which also checks every stub and links the versions again.
+# One Jellyfin 12.4 with the plugin, the fakes on the host. Containers and volumes are removed at the end unless KEEP=1.
+# SCALE_REMOTES fakes (default 1) serve the same catalog, each as its own server, so every title has one stub in each
+# server folder and the stubs form one version group. The catalog size and images come from the SCALE_* variables of
+# fake_remote.py; SCALE_SCAN=1 also links the server folders to two libraries afterwards, scans them, and repeats the
+# incremental sync twice (the first links the versions) and the nightly reconciliation on scanned items.
+# SCALE_NAME, SCALE_PORT and SCALE_FAKE_PORT (the first fake; the others follow) override the container and the ports.
 # usage: run.sh   (raw data and results.txt go in WORK, by default ${TMPDIR:-/tmp}/jm-scale-run)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/jm-scale-run}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
-NAME=jm-scale-consumer
-PORT=18460
-FAKE=18461
+NAME=${SCALE_NAME:-jm-scale-consumer}
+PORT=${SCALE_PORT:-18460}
+FAKE=${SCALE_FAKE_PORT:-18461}
+REMOTES=${SCALE_REMOTES:-1}
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshScale", Device="scale", DeviceId="jm-scale-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
@@ -48,7 +53,7 @@ login() {
 
 cleanup() {
   [ -n "${SAMPLER_PID:-}" ] && kill "$SAMPLER_PID" 2>/dev/null
-  [ -n "${FAKE_PID:-}" ] && kill "$FAKE_PID" 2>/dev/null
+  [ -n "${FAKE_PIDS:-}" ] && kill $FAKE_PIDS 2>/dev/null
   if [ "${KEEP:-0}" != 1 ]; then
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" >/dev/null 2>&1 || true
@@ -74,6 +79,7 @@ snapshot() {
   get /JellyMesh/Admin/Sync >"$WORK/$phase-status.json"
   in_box "awk '/VmHWM|VmRSS/ { print \$1, int(\$2 / 1024) }' /proc/$JPID/status; echo cgroup-peak \$(( \$(cat /sys/fs/cgroup/memory.peak) / 1048576 ))" >"$WORK/$phase-memory.txt"
   in_box "for f in \$(find /config -name federation-index.json -o -name federated-stubs.json); do echo \$(basename \$f) \$(stat -c '%s %.3Y' \$f); done" >"$WORK/$phase-files.txt"
+  in_box "grep -o '\"LocalItemIds\"' \$(find /config -name federated-stubs.json) | wc -l" >"$WORK/$phase-groups.txt" 2>/dev/null
   in_box "find /federata -type f | sed -e 's/.*\.//' | sort | uniq -c; echo total \$(find /federata -type f | wc -l); echo kib \$(du -sk /federata | cut -f1)" >"$WORK/$phase-tree.txt"
 }
 
@@ -96,10 +102,16 @@ measure() {
 
 start_full() { post /JellyMesh/Admin/Sync; }
 start_incremental() { post "/ScheduledTasks/Running/$INCREMENTAL_TASK"; }
+start_nightly() { post "/ScheduledTasks/Running/$NIGHTLY_TASK"; }
 
-echo "--- fake remote on :$FAKE"
-python3 "$S/fake_remote.py" "$FAKE" "$WORK/requests.log" >"$WORK/fake.out" 2>&1 &
-FAKE_PID=$!
+# The fakes share one request log: each line is one short append.
+FAKE_PIDS=
+for n in $(seq 1 "$REMOTES"); do
+  echo "--- fake remote $n on :$((FAKE + n - 1))"
+  SCALE_SERVER_ID=$(printf '%032x' $((0x8000 + n))) SCALE_SERVER_NAME="scale-remote-$n" \
+    python3 "$S/fake_remote.py" "$((FAKE + n - 1))" "$WORK/requests.log" >"$WORK/fake-$n.out" 2>&1 &
+  FAKE_PIDS="$FAKE_PIDS $!"
+done
 
 echo "--- consumer $NAME on :$PORT"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
@@ -124,11 +136,20 @@ cfg=$(get "$PLUGIN" | jq '.FederatedFolderPath = "/federata" | .SyncIntervalSeco
 post "$PLUGIN" "$cfg" >/dev/null
 [ "$(get /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Status')" = Active ] || { echo "plugin not active" >&2; exit 1; }
 INCREMENTAL_TASK=$(get /ScheduledTasks | jq -r '.[] | select(.Key == "JellyMeshIncrementalSync") | .Id')
+NIGHTLY_TASK=$(get /ScheduledTasks | jq -r '.[] | select(.Key == "JellyMeshReconciliation") | .Id')
 
-server=$(post /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$FAKE" '{Name:"scale",Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" | jq -r .Id)
-libraries=$(get "/JellyMesh/Admin/Servers/$server/Libraries" | jq -c '{LibraryIds: map(.Id)}')
-post "/JellyMesh/Admin/Servers/$server/Libraries" "$libraries" >/dev/null
-echo "server $server, libraries $libraries"
+SERVERS=
+for n in $(seq 1 "$REMOTES"); do
+  name=scale; [ "$REMOTES" -gt 1 ] && name="scale-$n"
+  server=$(post /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$((FAKE + n - 1))" --arg n "$name" '{Name:$n,Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" | jq -r .Id)
+  [ -n "$server" ] && [ "$server" != null ] || { echo "cannot add server $name" >&2; exit 1; }
+  # The server folder is named by the dashed form of the GUID.
+  server=$(echo "$server" | sed -E 's/^(.{8})-?(.{4})-?(.{4})-?(.{4})-?(.{12})$/\1-\2-\3-\4-\5/')
+  libraries=$(get "/JellyMesh/Admin/Servers/$server/Libraries" | jq -c '{LibraryIds: map(.Id)}')
+  post "/JellyMesh/Admin/Servers/$server/Libraries" "$libraries" >/dev/null
+  echo "server $name $server, libraries $libraries"
+  SERVERS="$SERVERS $server"
+done
 
 sample &
 SAMPLER_PID=$!
@@ -138,11 +159,17 @@ snapshot idle
 measure first start_full
 measure incremental start_incremental
 measure repeat start_full
+measure nightly start_nightly
 
 if [ "${SCALE_SCAN:-0}" = 1 ]; then
-  echo "--- linking the federated folder and scanning"
-  post "/Library/VirtualFolders?name=Films&collectionType=movies&refreshLibrary=false&paths=/federata/Film" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
-  post "/Library/VirtualFolders?name=Shows&collectionType=tvshows&refreshLibrary=false&paths=/federata/Serie" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  echo "--- linking the server folders and scanning"
+  films=; shows=
+  for server in $SERVERS; do
+    films="$films&paths=/federata/$server/Film"
+    shows="$shows&paths=/federata/$server/Serie"
+  done
+  post "/Library/VirtualFolders?name=Films&collectionType=movies&refreshLibrary=false$films" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  post "/Library/VirtualFolders?name=Shows&collectionType=tvshows&refreshLibrary=false$shows" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
   echo "$(now_ms)" >"$WORK/scan-requested"
   post /Library/Refresh >/dev/null
   sleep 10
@@ -155,6 +182,8 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
   get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode,Series&Limit=0' | jq -r .TotalRecordCount >"$WORK/scan-items.txt"
   echo "--- scan done: $(cat "$WORK/scan-items.txt") items"
   measure incremental-scanned start_incremental
+  measure incremental-scanned-again start_incremental
+  measure nightly-scanned start_nightly
 fi
 
 sleep 3

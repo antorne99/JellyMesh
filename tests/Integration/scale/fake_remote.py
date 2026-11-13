@@ -7,7 +7,8 @@ The catalog is generated on demand from the item number, so it costs no memory: 
 with SCALE_SEASONS seasons of SCALE_EPISODES episodes each. Items look like what a 12.4 server sends for the fields the
 plugin asks for (provider IDs, one media source with video, audio and subtitle streams, people, chapters, image tags).
 SCALE_IMAGES=0 sends no image tags, so the plugin downloads no image. SCALE_IMAGE_BYTES pads the JPEG and
-SCALE_IMAGE_DELAY_MS waits before each image, to stand for a real poster over a real link.
+SCALE_IMAGE_DELAY_MS waits before each image, to stand for a real poster over a real link. SCALE_SERVER_ID and
+SCALE_SERVER_NAME set the identity of the fake, so that several of them can be configured on one consumer.
 
 Every request goes to the log as "<epoch ms> <ms spent> <bytes> <kind> <detail>", which is what the phases are cut from.
 """
@@ -27,6 +28,8 @@ SEASONS = int(os.environ.get("SCALE_SEASONS", "5"))
 EPISODES = int(os.environ.get("SCALE_EPISODES", "20"))
 IMAGES = os.environ.get("SCALE_IMAGES", "1") == "1"
 IMAGE_DELAY = int(os.environ.get("SCALE_IMAGE_DELAY_MS", "0")) / 1000
+SERVER_ID = os.environ.get("SCALE_SERVER_ID", "8" * 32)
+SERVER_NAME = os.environ.get("SCALE_SERVER_NAME", "scale-remote")
 
 TOKEN = "scale-remote-token"
 USER_ID = "5" * 32
@@ -238,9 +241,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def route(self, path, query):
         if path == "/Users/AuthenticateByName":
-            return "auth", self.json({"AccessToken": TOKEN, "User": {"Id": USER_ID, "Name": "jellymesh", "Policy": {"IsAdministrator": False}}})
+            return "auth", self.json({"AccessToken": TOKEN, "ServerId": SERVER_ID, "User": {"Id": USER_ID, "Name": "jellymesh", "Policy": {"IsAdministrator": False}}})
         if path == "/System/Info/Public":
-            return "info", self.json({"Version": "12.4.0", "ServerName": "scale-remote", "Id": "8" * 32, "ProductName": "Jellyfin Server"})
+            return "info", self.json({"Version": "12.4.0", "ServerName": SERVER_NAME, "Id": SERVER_ID, "ProductName": "Jellyfin Server"})
         if path == "/JellyMesh/Capabilities":
             return "capabilities", self.send(404)
         if path == "/Users/Me":
