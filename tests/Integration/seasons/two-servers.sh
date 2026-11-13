@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Proof of row 236 (Q236): the same series on two stock remotes, each with its own name and plot for season 1, with both
 # server folders in one local library. Prints which season text Jellyfin shows; checks only what the proof needs.
-# Observed on 12.4 (two runs): the season of the series row Jellyfin shows, whose server changes between installations;
-# each episode keeps the season name of its own server.
+# Observed on 12.4 (two runs): in both, the season came from the server of the series row Jellyfin shows, a different
+# server in each run; each episode keeps the season name of its own server.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-seasons2] [PORT=18850] two-servers.sh   (KEEP=1 keeps it)
 set -euo pipefail
 PREFIX=${PREFIX:-jm-seasons2}
