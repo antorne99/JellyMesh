@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,6 +52,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ILayoutMigration? _migration;
     private readonly ILibraryChangeTracker? _changes;
     private readonly ILastServedSourceStore? _lastServed;
+    private readonly IUnchangedSyncGate? _gate;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
@@ -80,6 +82,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="migration">The migration from the flat layout, which also runs after each sync (Q222).</param>
     /// <param name="changes">What remembers the libraries on the federated folder at each sync, for the page (Q53).</param>
     /// <param name="lastServed">The last server that served each stub, pruned after every sync (Q76).</param>
+    /// <param name="gate">What tells a sync that nothing changed since the last one, so it skips its stubs and links (Q386).</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -96,7 +99,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         IPluginConfigurationStore? store = null,
         ILayoutMigration? migration = null,
         ILibraryChangeTracker? changes = null,
-        ILastServedSourceStore? lastServed = null)
+        ILastServedSourceStore? lastServed = null,
+        IUnchangedSyncGate? gate = null)
     {
         _registry = registry;
         _reader = reader;
@@ -114,6 +118,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _migration = migration;
         _changes = changes;
         _lastServed = lastServed;
+        _gate = gate;
     }
 
     /// <summary>
@@ -216,7 +221,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         try
         {
             await DropRemovedServersAsync(cancellationToken).ConfigureAwait(false);
-            await MaterializeAsync(false, cancellationToken).ConfigureAwait(false);
+            _gate?.Forget();
+            await MaterializeAndLinkAsync(false, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -352,6 +358,12 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
                 MarkLibraryFollowSkipped();
             }
 
+            // Only a run that ended well is the one the next sync compares with (Q386).
+            if (stopped is null && !_run.IndexSaveFailed && materialized.Baseline is { } baseline)
+            {
+                _gate?.Remember(baseline);
+            }
+
             // Before the run shows finished: the page reads the history again when it sees a new end.
             await RecordAsync(kind, started, servers, materialized, stopped).ConfigureAwait(false);
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
@@ -431,12 +443,48 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
     }
 
-    // After every sync, also a failed one: what one server sent is still good, and removals check each server by itself.
+    // A sync that finds nothing changed since the last completed one skips both; the nightly run never does (Q386).
     private async Task<Materialized> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
+    {
+        var started = Stopwatch.GetTimestamp();
+        var inputs = _materializer is null ? null : _gate?.Capture();
+        if (inputs is not null && !verifyEveryStub && _gate!.IsUnchanged(inputs))
+        {
+            _logger.LogInformation(
+                "Nothing changed since the last sync, checked in {Elapsed} ms: materialization and version links skipped",
+                (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            return new Materialized(null, false);
+        }
+
+        _gate?.Forget();
+        var (materialized, linked) = await MaterializeAndLinkAsync(verifyEveryStub, cancellationToken).ConfigureAwait(false);
+        return inputs is null || !linked ? materialized : materialized with { Baseline = BaselineOf(inputs, materialized) };
+    }
+
+    // A run counts as completed when it left nothing for the next one to finish and nobody else saved the registry while
+    // it ran: the inputs then hold the registry as its links left it.
+    private SyncInputs? BaselineOf(SyncInputs inputs, Materialized materialized)
+    {
+        if (materialized is not { Failed: false, Report: { IsFolderSet: true, Failed: 0, AwaitingRefresh: 0, ImagesPending: 0, ScanQueued: false } report })
+        {
+            return null;
+        }
+
+        if (_linker is null)
+        {
+            return inputs.WithRegistryGeneration(report.RegistryGeneration);
+        }
+
+        return _linker.LastFullRun is { } run && run.StartGeneration == report.RegistryGeneration ? inputs.WithRegistryGeneration(run.EndGeneration) : null;
+    }
+
+    // After every sync, also a failed one: what one server sent is still good, and removals check each server by itself.
+    // Also tells whether the links ran to the end with no failure.
+    private async Task<(Materialized Materialized, bool Linked)> MaterializeAndLinkAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
         if (_materializer is null)
         {
-            return new Materialized(null, false);
+            return (new Materialized(null, false), false);
         }
 
         var materialized = new Materialized(null, true);
@@ -452,7 +500,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         if (_linker is null)
         {
-            return materialized;
+            return (materialized, true);
         }
 
         try
@@ -463,9 +511,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Could not link the versions of the titles: {Error}", exception.GetType().Name);
+            return (materialized, false);
         }
 
-        return materialized;
+        return (materialized, !_linker.LastRunFailed);
     }
 
     // After the migration, which reads the records of the old stubs (D15). Removed means what DropRemovedServersAsync
@@ -755,6 +804,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private sealed record RunState(bool IsRunning, bool IndexSaveFailed, DateTimeOffset? StartedUtc, DateTimeOffset? FinishedUtc);
 
-    // The report of this run's materialization, null without one, and whether it threw.
-    private sealed record Materialized(MaterializationReport? Report, bool Failed);
+    // The report of this run's materialization, null without one, and whether it threw. The baseline is what the next
+    // sync compares with once this one ends well.
+    private sealed record Materialized(MaterializationReport? Report, bool Failed)
+    {
+        public SyncInputs? Baseline { get; init; }
+    }
 }

@@ -5,7 +5,8 @@ usage: analyze.py <work folder>
 
 A sync runs from LastStartedUtc to LastFinishedUtc of /JellyMesh/Admin/Sync. Inside it, the read ends with the plugin's
 "Read N ... entries" log line, the index is saved when federation-index.json gets its new mtime, and the
-materialization ends with the "Materialized the federated folder" line. The fake's request log says what was asked for
+materialization ends with the "Materialized the federated folder" line, or with "Nothing changed since the last sync"
+when the sync skips it and the version links. The fake's request log says what was asked for
 and how long the fake itself took to answer.
 """
 import datetime
@@ -116,7 +117,8 @@ def report(phase, previous_files):
     # One line per server: the read ends with the last.
     read_lines = [entry for entry in in_logs if re.match(r"Read \d+ .*entries", entry[3])]
     read_line = read_lines[-1] if read_lines else None
-    done_line = next((entry for entry in in_logs if entry[3].startswith("Materialized the federated folder")), None)
+    done_line = next((entry for entry in in_logs if entry[3].startswith(("Materialized the federated folder", "Nothing changed since the last sync"))), None)
+    link_line = next((entry for entry in in_logs if entry[3].startswith("Linked the versions of the titles")), None)
     index = files_of(phase).get("federation-index.json")
     index_saved = index[1] if index and previous_files.get("federation-index.json") != index and start <= index[1] <= end + 1000 else None
     stubs = files_of(phase).get("federated-stubs.json")
@@ -141,6 +143,7 @@ def report(phase, previous_files):
         f"  after the materialization                {seconds(end - materialize_end) if done_line else '-'}  (version links, migration, libraries)",
         f"  other calls                              {len(others)} ({', '.join(sorted({r[3].split(' ')[0] for r in others}))})",
         f"log                                        {sum_reads(read_lines)} | {done_line[3] if done_line else '-'}",
+        f"version links                              {link_line[3] if link_line else '-'}",
         f"warnings/errors in the window              {sum(1 for e in in_logs if e[1] in ('WRN', 'ERR', 'FTL'))}",
     ]
     if in_samples:
@@ -170,7 +173,8 @@ if remotes > 1:
 idle = memory_of("idle")
 print(f"idle before the first sync: VmHWM {idle.get('VmHWM', '-')} MiB, VmRSS {idle.get('VmRSS', '-')} MiB\n")
 previous = files_of("idle")
-for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-scanned", "incremental-scanned-again", "nightly-scanned"):
+for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-scanned", "incremental-scanned-again",
+              "incremental-scanned-third", "nightly-scanned", "incremental-after-nightly"):
     if phase == "scan":
         if read("scan-seen"):
             requested, seen = int(read("scan-requested")), int(read("scan-seen"))

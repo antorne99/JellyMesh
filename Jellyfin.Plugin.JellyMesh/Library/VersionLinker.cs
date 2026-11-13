@@ -18,7 +18,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// Links the stubs of a title across the server folders, and its local copy, as versions of one item (§3.4, §3.5).
-/// Runs after each materialization, so a link Jellyfin or the administrator undid is made again (D5).
+/// Runs after each sync that finds a change, which an admin split is, and every night, so an undone link is made again (D5).
 /// </summary>
 public sealed class VersionLinker : IVersionLinker
 {
@@ -32,6 +32,7 @@ public sealed class VersionLinker : IVersionLinker
     private readonly ILogger<VersionLinker> _logger;
     // Up until the first full run ends, so that a refusal after a restart is not taken as final (Q324).
     private volatile bool _lastRunFailed = true;
+    private volatile VersionLinkRun? _lastFullRun;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VersionLinker"/> class.
@@ -68,6 +69,9 @@ public sealed class VersionLinker : IVersionLinker
     public bool LastRunFailed => _lastRunFailed;
 
     /// <inheritdoc />
+    public VersionLinkRun? LastFullRun => _lastFullRun;
+
+    /// <inheritdoc />
     public Task LinkAsync(bool thorough, CancellationToken cancellationToken) => LinkGroupsAsync((groups, _) => groups, true, thorough, cancellationToken);
 
     /// <inheritdoc />
@@ -101,17 +105,22 @@ public sealed class VersionLinker : IVersionLinker
             }
 
             var failed = false;
+            var start = _registry.Generation;
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
-            run.KnowItemsOf(state.Stubs);
+
+            // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
+            var chosen = choose(state.Groups, run).OrderBy(group => group.Id, StringComparer.Ordinal).ToList();
+
+            // A link of one title reads only the stubs of its groups.
+            run.KnowItemsOf(full ? state.Stubs : chosen.SelectMany(group => group.StubIds).Select(_registry.Find).OfType<StubEntry>());
             var recordedById = new Dictionary<string, string?>(StringComparer.Ordinal);
             var changed = false;
 
             // A renamed stub waits until its old item is gone: the old item owns the new one, and its group keeps its links.
             var renaming = state.Renames.Select(rename => rename.StubId).ToHashSet(StringComparer.Ordinal);
 
-            // By group ID, so that of two groups that reach one local film the same one links to it every run (Q170).
-            foreach (var group in choose(state.Groups, run).OrderBy(group => group.Id, StringComparer.Ordinal))
+            foreach (var group in chosen)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var recorded = group.PrimaryStubId;
@@ -151,6 +160,11 @@ public sealed class VersionLinker : IVersionLinker
             }
 
             _lastRunFailed = full ? failed : _lastRunFailed || failed;
+            if (full)
+            {
+                _lastFullRun = new VersionLinkRun(start, _registry.Generation);
+                _logger.LogInformation("Linked the versions of the titles: {Read} items read, {Reloaded} groups read again, {Saved} items saved", run.Read, run.Reloaded, run.Saved);
+            }
         }
         catch
         {
@@ -246,6 +260,8 @@ public sealed class VersionLinker : IVersionLinker
         video.PrimaryVersionId,
         video.LinkedAlternateVersions.Select(child => child.ItemId).OfType<Guid>().ToList());
 
+    private static ItemLinks LinksOf(Video video, Run run) => new(StateOf(video), video.OwnerId, run.IsStub(video));
+
     private static LinkedChild[] LinksOf(Video video, IReadOnlyList<Guid> ids)
     {
         var current = new Dictionary<Guid, LinkedChild>();
@@ -263,20 +279,20 @@ public sealed class VersionLinker : IVersionLinker
     // Returns the stub to record as primary.
     private async Task<string?> LinkGroupAsync(VersionGroup group, Run run, CancellationToken cancellationToken)
     {
-        var items = new Dictionary<Guid, Video>();
+        var items = new Dictionary<Guid, ItemLinks>();
         var stubs = new Dictionary<string, Guid>(StringComparer.Ordinal);
         foreach (var stub in group.StubIds.Select(_registry.Find).OfType<StubEntry>())
         {
-            if (run.FindStub(stub) is { } video && items.TryAdd(video.Id, video))
+            if (run.FindStub(stub) is { } links && items.TryAdd(links.Id, links))
             {
-                stubs[stub.Id] = video.Id;
+                stubs[stub.Id] = links.Id;
             }
         }
 
         // Only the first local copy found is linked: two local films are never merged (decision 20). A film an earlier
         // group links to stays out, and this group links its stubs among themselves (Q170).
         var locals = new List<Guid>();
-        if (LocalVersionHead.Of(group.LocalItemIds, _library, run.IsStub) is { } local && run.ClaimedLocals.Add(local.Id) && items.TryAdd(local.Id, local))
+        if (LocalVersionHead.Of(group.LocalItemIds, _library, run.IsStub) is { } local && run.ClaimedLocals.Add(local.Id) && items.TryAdd(local.Id, LinksOf(local, run)))
         {
             locals.Add(local.Id);
         }
@@ -299,14 +315,49 @@ public sealed class VersionLinker : IVersionLinker
         // The nightly run also moves entries added to an alternate after it was linked (Q146).
         foreach (var moved in run.Thorough ? alternates : plan.Joined.Where(id => id != primary.ItemId))
         {
-            run.Moves[moved] = items[primary.ItemId];
+            run.Moves[moved] = primary.ItemId;
         }
 
         return primary.PrimaryStubId;
     }
 
-    // Plans the links of some members against what Jellyfin has, aligns played if one joins, and saves the plan.
-    private async Task<VersionLinkPlan> ApplyAsync(Guid primary, IReadOnlyList<Guid> alternates, IReadOnlyDictionary<Guid, Video> members, Run run, CancellationToken cancellationToken)
+    // Plans the links from the block read; only a group that must change is read again from Jellyfin's cache, planned
+    // again from those instances and saved on them, so the cache never holds a stale copy (Q387).
+    private async Task<VersionLinkPlan> ApplyAsync(Guid primary, IReadOnlyList<Guid> alternates, IReadOnlyDictionary<Guid, ItemLinks> members, Run run, CancellationToken cancellationToken)
+    {
+        var resolved = new Dictionary<Guid, ItemLinks>(members);
+        foreach (var id in members.Values.SelectMany(links => links.State.LinkedIds.Append(links.State.PrimaryVersionId ?? Guid.Empty)))
+        {
+            if (id != Guid.Empty && !resolved.ContainsKey(id) && run.Find(id) is { } other)
+            {
+                resolved[id] = other;
+            }
+        }
+
+        var known = resolved.Values.Where(links => members.ContainsKey(links.Id) || links.OwnerId.Equals(Guid.Empty)).Select(links => links.State).ToList();
+        var plan = VersionLinkPlanner.Plan(primary, alternates, known, id => resolved.TryGetValue(id, out var links) && !links.IsStub);
+        if (plan.Updates.Count == 0)
+        {
+            return plan;
+        }
+
+        run.Reloaded++;
+        var cached = new Dictionary<Guid, Video>();
+        foreach (var id in members.Keys)
+        {
+            if (_library.GetItemById(id) is Video video)
+            {
+                cached[id] = video;
+            }
+        }
+
+        return cached.ContainsKey(primary)
+            ? await ApplyCachedAsync(primary, alternates.Where(cached.ContainsKey).ToList(), cached, run, cancellationToken).ConfigureAwait(false)
+            : new VersionLinkPlan([], []);
+    }
+
+    // Plans the links of some members against the instances Jellyfin caches, aligns played if one joins, and saves the plan.
+    private async Task<VersionLinkPlan> ApplyCachedAsync(Guid primary, IReadOnlyList<Guid> alternates, IReadOnlyDictionary<Guid, Video> members, Run run, CancellationToken cancellationToken)
     {
         var resolved = new Dictionary<Guid, Video>(members);
         foreach (var id in members.Values.SelectMany(video => StateOf(video).LinkedIds.Append(video.PrimaryVersionId ?? Guid.Empty)))
@@ -328,6 +379,7 @@ public sealed class VersionLinker : IVersionLinker
         foreach (var update in plan.Updates)
         {
             await SaveLinksAsync(known[update.ItemId], update, cancellationToken).ConfigureAwait(false);
+            run.Saved++;
         }
 
         return plan;
@@ -350,10 +402,10 @@ public sealed class VersionLinker : IVersionLinker
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                if (run.FindStub(stub) is { OwnerId: var owner } video && owner.Equals(Guid.Empty)
-                    && (video.PrimaryVersionId is not null || video.LinkedAlternateVersions.Length > 0))
+                if (run.FindStub(stub) is { OwnerId: var owner } links && owner.Equals(Guid.Empty)
+                    && (links.State.PrimaryVersionId is not null || links.State.LinkedIds.Count > 0))
                 {
-                    await ApplyAsync(video.Id, [], new Dictionary<Guid, Video> { [video.Id] = video }, run, cancellationToken).ConfigureAwait(false);
+                    await ApplyAsync(links.Id, [], new Dictionary<Guid, ItemLinks> { [links.Id] = links }, run, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -423,7 +475,7 @@ public sealed class VersionLinker : IVersionLinker
             var children = new List<LinkedChild>(collection.LinkedChildren.Length);
             foreach (var child in collection.LinkedChildren)
             {
-                var target = child.ItemId is { } id && run.Moves.TryGetValue(id, out var primary) ? LinkedChild.Create(primary) : child;
+                var target = child.ItemId is { } id && run.Moves.TryGetValue(id, out var primaryId) && _library.GetItemById(primaryId) is { } primary ? LinkedChild.Create(primary) : child;
                 if (target.ItemId is not { } targetId || seen.Add(targetId))
                 {
                     children.Add(target);
@@ -449,37 +501,53 @@ public sealed class VersionLinker : IVersionLinker
     {
         private const int KnownChunk = 1000;
 
+        private readonly Dictionary<Guid, ItemLinks> _known = [];
         private IndexItemLookup? _lookup;
         private List<BoxSet>? _collections;
-        private HashSet<Guid>? _known;
 
         // The primary that each alternate's collection entries move to.
-        public Dictionary<Guid, Video> Moves { get; } = [];
+        public Dictionary<Guid, Guid> Moves { get; } = [];
 
         // The local films a group already links to in this run.
         public HashSet<Guid> ClaimedLocals { get; } = [];
 
         public bool Thorough => thorough;
 
+        // What the run read in blocks, the groups it read again from the cache, and the items it saved.
+        public int Read => _known.Count;
+
+        public int Reloaded { get; set; }
+
+        public int Saved { get; set; }
+
         public bool IsStub(BaseItem item) => FederatedPaths.IsInside(root, item.Path);
 
-        // Asks Jellyfin in a few queries which items the stubs can be, so that a stub with no item costs no lookup of its
-        // own: one per stub was most of a sync on a large catalog.
+        // Reads the links of the stubs' items in a few queries, keeping only their link state: one lookup per stub was most
+        // of a sync on a large catalog (Q387).
         public void KnowItemsOf(IEnumerable<StubEntry> stubs)
         {
-            _known = [];
+            _known.Clear();
             foreach (var chunk in stubs.SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
             {
-                _known.UnionWith(library.GetItemIds(new InternalItemsQuery { ItemIds = chunk }));
+                foreach (var video in library.GetItemList(new InternalItemsQuery { ItemIds = chunk }).OfType<Video>())
+                {
+                    _known[video.Id] = LinksOf(video, this);
+                }
             }
         }
 
-        public Video? FindStub(StubEntry stub)
+        public ItemLinks? FindStub(StubEntry stub)
         {
-            var path = FederatedPaths.Resolve(root, stub.RelativePath);
-            var video = IdsOf(stub).Where(id => _known?.Contains(id) != false).Select(id => library.GetItemById(id)).OfType<Video>().FirstOrDefault();
-            return video ?? (thorough ? library.FindByPath(path, false) as Video : null);
+            if (IdsOf(stub).Select(id => _known.GetValueOrDefault(id)).OfType<ItemLinks>().FirstOrDefault() is { } links)
+            {
+                return links;
+            }
+
+            return thorough && library.FindByPath(FederatedPaths.Resolve(root, stub.RelativePath), false) is Video video ? LinksOf(video, this) : null;
         }
+
+        // The links of any item, from the block read or else looked up.
+        public ItemLinks? Find(Guid id) => _known.TryGetValue(id, out var links) ? links : library.GetItemById(id) is Video video ? LinksOf(video, this) : null;
 
         // The item of the stub's path as Jellyfin names a film or an episode, then as a plain video.
         private Guid[] IdsOf(StubEntry stub)
@@ -503,5 +571,11 @@ public sealed class VersionLinker : IVersionLinker
                 .ToList();
             return _collections;
         }
+    }
+
+    // The link state of one item, without the item: a run keeps one for each stub (Q387).
+    private sealed record ItemLinks(VersionLinkState State, Guid OwnerId, bool IsStub)
+    {
+        public Guid Id => State.ItemId;
     }
 }

@@ -279,7 +279,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             _logger.LogInformation("{Count} groups of films may be duplicates. Review them under Duplicate films on the JellyMesh page", view.MergeCases.Count);
         }
 
-        if (run.NeedsScan || plan.MergedStubs > 0)
+        var scanQueued = run.NeedsScan || plan.MergedStubs > 0;
+        if (scanQueued)
         {
             _library.QueueLibraryScan();
         }
@@ -293,7 +294,11 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return new MaterializationReport(_timeProvider.GetUtcNow(), true, run.Created, run.Updated, run.Removed, run.Failed, plan.Unplaceable, plan.Held)
         {
             Unconfigured = plan.Unconfigured,
-            ByServer = run.ByServer()
+            ByServer = run.ByServer(),
+            RegistryGeneration = _registry.Generation,
+            AwaitingRefresh = view.LocalItemsAwaitingRefresh.Count,
+            ImagesPending = run.ImagesPending,
+            ScanQueued = scanQueued
         };
     }
 
@@ -512,6 +517,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             if (path is null)
             {
                 complete = false;
+                run.ImagesPending++;
             }
             else if (item is not null)
             {
@@ -734,6 +740,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public int Removed { get; set; }
 
         public int Failed { get; set; }
+
+        public int ImagesPending { get; set; }
 
         /// <summary>Adds to the totals and to the counts of the server, if the stub has one.</summary>
         public void Count(Guid? serverId, int created = 0, int updated = 0)
