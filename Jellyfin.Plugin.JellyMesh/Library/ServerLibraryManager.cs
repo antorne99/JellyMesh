@@ -633,6 +633,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 continue;
             }
 
+            // A released name is taken back first, as a creation does (§10 rows 403, 406).
+            if (_store.Read(config => Find(config, serverId)?.ReleasedAutomaticLibraries.Contains(newName, StringComparer.Ordinal) == true))
+            {
+                _store.Update(config => Find(config, serverId)?.ReleasedAutomaticLibraries.Remove(newName));
+            }
+
             if (await RenameOneAsync(folder, kind, newName, cancellationToken).ConfigureAwait(false) is not { } newId)
             {
                 _errors[serverId] = AutomaticLibrariesError.RenameFailed;
