@@ -25,6 +25,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     // How many images of one server are read at once. A choice of Claude's, under the 8 reads per peer of decision 31.
     private const int ImageReadsAtOnce = 4;
 
+    private static readonly string[] _imageExtensions = [".jpg", ".png", ".webp", ".gif"];
+
     private readonly StubRegistry _registry;
     private readonly IFederationResolver _resolver;
     private readonly IFederationIndex _index;
@@ -203,7 +205,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             if (Path.GetFileName(file).StartsWith(name, StringComparison.Ordinal)
                 && !string.Equals(file, keep, StringComparison.Ordinal)
-                && Path.GetExtension(file) is ".jpg" or ".png" or ".webp" or ".gif")
+                && _imageExtensions.Contains(Path.GetExtension(file)))
             {
                 File.Delete(file);
             }
@@ -313,7 +315,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
@@ -354,7 +356,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
@@ -404,7 +406,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
@@ -474,6 +476,27 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         return stale;
+    }
+
+    // Removes the images the remote dropped, then writes the others. True once all of them are on disk.
+    private async Task<bool> UpdateImagesAsync(Run run, IReadOnlyList<StubImage> images, IReadOnlyList<StubImage> removed, BaseItem? item, CancellationToken cancellationToken)
+    {
+        foreach (var image in removed)
+        {
+            var stem = FederatedPaths.Resolve(run.Root, image.RelativeStem);
+            var files = _imageExtensions.Select(extension => stem + extension).ToList();
+            foreach (var file in files.Where(File.Exists))
+            {
+                File.Delete(file);
+            }
+
+            if (item is not null)
+            {
+                await _updater.RemoveImageAsync(item, image.Type, files, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return await WriteImagesAsync(run, images, item, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> WriteImagesAsync(Run run, IReadOnlyList<StubImage> images, BaseItem? item, CancellationToken cancellationToken)

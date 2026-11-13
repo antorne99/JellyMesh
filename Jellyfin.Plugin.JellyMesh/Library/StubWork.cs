@@ -25,4 +25,8 @@ public sealed record StubWork(
     string ContentHash,
     IReadOnlyList<StubImage> Images,
     string ImageTag,
-    string TechnicalTag);
+    string TechnicalTag)
+{
+    /// <summary>Gets the images written before whose type the remote row no longer has, to be deleted (Q235).</summary>
+    public IReadOnlyList<StubImage> RemovedImages { get; init; } = [];
+}

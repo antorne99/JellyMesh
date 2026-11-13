@@ -471,12 +471,16 @@ public static class StubPlanner
         var nfo = NfoDocument.Movie(metadata);
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();
-        foreach (var (type, stem) in _titleImages)
+        var slots = _titleImages.Select(image => (image.Type, Path.Combine(folder, image.Stem))).ToList();
+        foreach (var (type, stem) in slots)
         {
-            AddRemote(images, winner, content.Winner!.ServerId, type, Path.Combine(folder, stem));
+            AddRemote(images, winner, content.Winner!.ServerId, type, stem);
         }
 
-        return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
+        return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner))
+        {
+            RemovedImages = Removed(entry.ImageTag, slots, images)
+        };
     }
 
     private static StubWork EpisodeWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, SeriesPlan series, IndexItemLookup catalog, Guid? serverId, string? label)
@@ -516,7 +520,10 @@ public static class StubPlanner
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();
         AddRemote(images, winner, content.Winner!.ServerId, ImageType.Primary, stem + "-thumb");
-        return new StubWork(entry, stub is null, metadata, nfo, stem + ".nfo", url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner));
+        return new StubWork(entry, stub is null, metadata, nfo, stem + ".nfo", url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner))
+        {
+            RemovedImages = Removed(entry.ImageTag, [(ImageType.Primary, stem + "-thumb")], images)
+        };
     }
 
     private static SeriesPlan SeriesPlanOf(
@@ -569,7 +576,11 @@ public static class StubPlanner
             Sources = known.Select(item => new StubSource(item.ServerId, item.Item.ItemId, string.Empty)).ToList()
         };
 
-        var work = new SeriesWork(entry, stub is null, metadata, nfo, Path.Combine(relative, "tvshow.nfo"), Hash(nfo), images, imageTag);
+        // Without the remote row nothing says an image was removed.
+        var work = new SeriesWork(entry, stub is null, metadata, nfo, Path.Combine(relative, "tvshow.nfo"), Hash(nfo), images, imageTag)
+        {
+            RemovedImages = source.Item is null ? [] : Removed(entry.ImageTag, _titleImages.Select(image => (image.Type, Path.Combine(relative, image.Stem))), images)
+        };
         plan = new SeriesPlan(entry, name ?? string.Empty, work, source.Item is null ? null : (source.ServerId, source.Item.ItemId), local is not null);
         plans[workKey] = plan;
         return plan;
@@ -608,9 +619,13 @@ public static class StubPlanner
             };
             var nfo = NfoDocument.Season(metadata);
             var images = new List<StubImage>();
-            AddRemote(images, found.Season, found.ServerId, ImageType.Primary, Path.Combine(folder.Key, "poster"));
+            var poster = Path.Combine(folder.Key, "poster");
+            AddRemote(images, found.Season, found.ServerId, ImageType.Primary, poster);
             var entry = written.GetValueOrDefault(folder.Key) ?? new SeasonStub { RelativePath = folder.Key };
-            seasons.Add(new SeasonWork(entry, metadata, nfo, Path.Combine(folder.Key, "season.nfo"), Hash(nfo), images, ImageTagOf(found.Season, images)));
+            seasons.Add(new SeasonWork(entry, metadata, nfo, Path.Combine(folder.Key, "season.nfo"), Hash(nfo), images, ImageTagOf(found.Season, images))
+            {
+                RemovedImages = Removed(entry.ImageTag, [(ImageType.Primary, poster)], images)
+            });
         }
 
         return plan.Work with { Seasons = seasons };
@@ -711,6 +726,21 @@ public static class StubPlanner
         {
             images.Add(new StubImage(type, stem, serverId, item.ItemId, null));
         }
+    }
+
+    // The images an earlier tag lists, hence written by the plugin, whose type the remote row no longer has (Q235).
+    private static List<StubImage> Removed(string? writtenTag, IEnumerable<(ImageType Type, string Stem)> slots, List<StubImage> images)
+    {
+        if (string.IsNullOrEmpty(writtenTag))
+        {
+            return [];
+        }
+
+        var written = writtenTag.Split(';').Select(part => part.Split('=', 2)[0]).ToHashSet(StringComparer.Ordinal);
+        return slots
+            .Where(slot => written.Contains(slot.Type.ToString()) && images.TrueForAll(image => image.Type != slot.Type))
+            .Select(slot => new StubImage(slot.Type, slot.Stem, null, null, null))
+            .ToList();
     }
 
     private static string? TagOf(IndexedItem item, ImageType type)

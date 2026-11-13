@@ -142,6 +142,109 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task ALogoBannerAndThumbTheRemoteRemovesLeaveTheDiskAndTheItem()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var folder = _fixture.Path_(a, "Film", "Film (2020)");
+        var path = Path.Combine(folder, "Film (2020) - A.strm");
+        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
+        foreach (var (type, file) in new[] { (ImageType.Logo, "logo.jpg"), (ImageType.Banner, "banner.jpg"), (ImageType.Thumb, "landscape.jpg") })
+        {
+            item.AddImage(new ItemImageInfo { Path = Path.Combine(folder, file), Type = type });
+        }
+
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = FilmWithArt() with { ImageTags = new Dictionary<string, string> { ["Primary"] = "fp" } };
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(
+            ["fanart.jpg", "poster.jpg"],
+            _fixture.Files.Where(file => file.EndsWith(".jpg", StringComparison.Ordinal)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Null(item.GetImageInfo(ImageType.Logo, 0));
+        Assert.Null(item.GetImageInfo(ImageType.Banner, 0));
+        Assert.Null(item.GetImageInfo(ImageType.Thumb, 0));
+    }
+
+    [Fact]
+    public async Task AnImageTheAdminSetElsewhereStaysOnTheItem()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
+        var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
+        item.AddImage(new ItemImageInfo { Path = "/config/metadata/logo.png", Type = ImageType.Logo });
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = FilmWithArt() with { ImageTags = new Dictionary<string, string> { ["Primary"] = "fp" } };
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(File.Exists(_fixture.Path_(a, "Film", "Film (2020)", "logo.jpg")));
+        Assert.Equal("/config/metadata/logo.png", item.GetImagePath(ImageType.Logo, 0));
+    }
+
+    [Theory]
+    [InlineData(RemoteFailure.Unreachable)]
+    [InlineData(RemoteFailure.ServerError)]
+    public async Task ARemoteThatDoesNotAnswerRemovesNoImage(RemoteFailure failure)
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = FilmWithArt();
+        _fixture.Sync.Client.OnPage = (_, _) => failure;
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(
+            ["banner.jpg", "fanart.jpg", "landscape.jpg", "logo.jpg", "poster.jpg"],
+            _fixture.Files.Where(file => file.EndsWith(".jpg", StringComparison.Ordinal)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.True(File.Exists(_fixture.Path_(a, "Film", "Film (2020)", "logo.jpg")));
+    }
+
+    [Fact]
+    public async Task ASeriesRowTheIndexLostRemovesNoImage()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Sync.Client.Items[("shows", RemoteItemType.Series)].Clear();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.True(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "logo.jpg")));
+        Assert.True(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "poster.jpg")));
+    }
+
+    [Fact]
+    public async Task APosterTheRemoteRemovesLeavesTheDisk()
+    {
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss1", 1));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1", ImageTags = AllArt("e") });
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        await _fixture.SyncAndMaterializeAsync();
+        var season = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01");
+        var item = new Season { Id = Guid.NewGuid(), Path = season, Name = "Season 1", IndexNumber = 1 };
+        item.AddImage(new ItemImageInfo { Path = Path.Combine(season, "poster.jpg"), Type = ImageType.Primary });
+        _fixture.Library.Setup(library => library.FindByPath(season, true)).Returns(item);
+        _fixture.Sync.Client.Items[("shows", RemoteItemType.Series)][0] = TestItems.Series("s") with { ImageTags = new Dictionary<string, string> { ["Logo"] = "sl" } };
+        _fixture.Sync.Client.Items[("shows", RemoteItemType.Season)][0] = Season("ss1", 1) with { ImageTags = new Dictionary<string, string>() };
+        _fixture.Sync.Client.Items[("shows", RemoteItemType.Episode)][0] = TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" };
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(
+            [StubFixture.In(a, "Serie", "Show (2020)", "logo.jpg")],
+            _fixture.Files.Where(file => file.EndsWith(".jpg", StringComparison.Ordinal)));
+        Assert.Null(item.GetImageInfo(ImageType.Primary, 0));
+    }
+
+    [Fact]
     public async Task ASeasonGetsItsNfoAndPosterInItsFolder()
     {
         AddSeasonedShow();

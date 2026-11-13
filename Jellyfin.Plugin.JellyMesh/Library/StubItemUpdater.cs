@@ -158,6 +158,27 @@ public sealed class StubItemUpdater
     }
 
     /// <summary>
+    /// Drops an image from an item when it shows one of the given files. An image set by hand elsewhere stays.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="type">The image type.</param>
+    /// <param name="paths">The files the plugin wrote for that image.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public async Task RemoveImageAsync(BaseItem item, ImageType type, IReadOnlyCollection<string> paths, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(paths);
+
+        var images = item.GetImages(type).Where(image => paths.Contains(image.Path, StringComparer.Ordinal)).ToList();
+        if (images.Count > 0)
+        {
+            item.RemoveImages(images);
+            await SaveAsync(item, ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Saves an item.
     /// </summary>
     /// <param name="item">The item.</param>
