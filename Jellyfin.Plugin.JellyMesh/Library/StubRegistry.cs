@@ -33,6 +33,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     private readonly ILogger<StubRegistry> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile Lookup _lookup;
+    private long _generation;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubRegistry"/> class.
@@ -52,6 +53,11 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// Gets the current state. The copy never changes.
     /// </summary>
     public StubState State => _lookup.State;
+
+    /// <summary>
+    /// Gets how many saves succeeded since the start, so that a reader can tell whether the state changed since it looked.
+    /// </summary>
+    public long Generation => Interlocked.Read(ref _generation);
 
     /// <inheritdoc />
     public StubEntry? Find(string stubId) => _lookup.ById.TryGetValue(stubId, out var stub) ? stub : null;
@@ -143,6 +149,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
 
         _lookup = new Lookup(state);
+        Interlocked.Increment(ref _generation);
     }
 
     /// <summary>

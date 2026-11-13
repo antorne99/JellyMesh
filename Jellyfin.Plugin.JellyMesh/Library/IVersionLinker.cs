@@ -19,6 +19,11 @@ public interface IVersionLinker
     bool LastRunFailed { get; }
 
     /// <summary>
+    /// Gets the generations of the stub registry at the start and at the end of the last full run that ended, if any.
+    /// </summary>
+    VersionLinkRun? LastFullRun { get; }
+
+    /// <summary>
     /// Links every group of versions as the registry has it, and saves nothing that is already linked.
     /// </summary>
     /// <param name="thorough">

@@ -636,6 +636,26 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Contains(_fixture.Files, file => file.EndsWith("poster.jpg", StringComparison.Ordinal));
     }
 
+    // The sync keeps a run as the one to compare with only when it left nothing for the next run (Q386).
+    [Fact]
+    public async Task TheReportSaysWhatTheRunLeftForTheNextOne()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.ImageFailure = RemoteFailure.ServerError;
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+
+        var first = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+        _fixture.Sync.Client.ImageFailure = RemoteFailure.None;
+        var second = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+        var third = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal((2, true, 0), (first.ImagesPending, first.ScanQueued, first.AwaitingRefresh));
+        Assert.Equal((0, false), (second.ImagesPending, second.ScanQueued));
+        Assert.Equal(_fixture.Registry.Generation, third.RegistryGeneration);
+        Assert.True(second.RegistryGeneration > first.RegistryGeneration);
+    }
+
     [Fact]
     public async Task AnUnreachableServerIsAskedForOneImageOnly()
     {
@@ -1146,6 +1166,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Equal(awaitsRefresh ? [local] : [], _fixture.Refresher.Requested);
+        Assert.Equal(awaitsRefresh ? 1 : 0, _fixture.Materializer.LastReport!.AwaitingRefresh);
         Assert.Equal(logged, _fixture.Logger.Lines.Exists(line => line.Contains("may be duplicates", StringComparison.Ordinal)));
     }
 

@@ -32,6 +32,7 @@ public sealed class VersionLinker : IVersionLinker
     private readonly ILogger<VersionLinker> _logger;
     // Up until the first full run ends, so that a refusal after a restart is not taken as final (Q324).
     private volatile bool _lastRunFailed = true;
+    private volatile VersionLinkRun? _lastFullRun;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VersionLinker"/> class.
@@ -68,6 +69,9 @@ public sealed class VersionLinker : IVersionLinker
     public bool LastRunFailed => _lastRunFailed;
 
     /// <inheritdoc />
+    public VersionLinkRun? LastFullRun => _lastFullRun;
+
+    /// <inheritdoc />
     public Task LinkAsync(bool thorough, CancellationToken cancellationToken) => LinkGroupsAsync((groups, _) => groups, true, thorough, cancellationToken);
 
     /// <inheritdoc />
@@ -101,6 +105,7 @@ public sealed class VersionLinker : IVersionLinker
             }
 
             var failed = false;
+            var start = _registry.Generation;
             var state = _registry.State;
             var run = new Run(root, thorough, _index, _library);
 
@@ -157,6 +162,7 @@ public sealed class VersionLinker : IVersionLinker
             _lastRunFailed = full ? failed : _lastRunFailed || failed;
             if (full)
             {
+                _lastFullRun = new VersionLinkRun(start, _registry.Generation);
                 _logger.LogInformation("Linked the versions of the titles: {Read} items read, {Reloaded} groups read again, {Saved} items saved", run.Read, run.Reloaded, run.Saved);
             }
         }

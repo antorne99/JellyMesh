@@ -118,6 +118,25 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal("sb", _registry.State.Groups.Single().PrimaryStubId);
     }
 
+    // The sync compares these with the registry it left, to tell whether anyone else saved it (Q386).
+    [Fact]
+    public async Task AFullRunSaysWhichRegistryGenerationsItStartedAndEndedOn()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        Scanned(a);
+        Scanned(b);
+        var start = _registry.Generation;
+        var local = Local();
+
+        await _linker.LinkLocalAsync([local.Id], CancellationToken.None);
+        Assert.Null(_linker.LastFullRun);
+        await _linker.LinkAsync(false, CancellationToken.None);
+
+        Assert.Equal(new VersionLinkRun(start, start + 1), _linker.LastFullRun);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

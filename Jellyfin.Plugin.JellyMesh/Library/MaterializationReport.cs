@@ -34,4 +34,24 @@ public sealed record MaterializationReport(
     /// only in the totals.
     /// </summary>
     public IReadOnlyDictionary<Guid, StubCounts> ByServer { get; init; } = new Dictionary<Guid, StubCounts>();
+
+    /// <summary>
+    /// Gets the generation of the stub registry when the run ended (Q386).
+    /// </summary>
+    public long RegistryGeneration { get; init; }
+
+    /// <summary>
+    /// Gets how many local titles wait for their first refresh, whose wait ends with time (Q243).
+    /// </summary>
+    public int AwaitingRefresh { get; init; }
+
+    /// <summary>
+    /// Gets how many images could not be written. They are tried again at the next run.
+    /// </summary>
+    public int ImagesPending { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the run asked Jellyfin for a scan of the libraries.
+    /// </summary>
+    public bool ScanQueued { get; init; }
 }

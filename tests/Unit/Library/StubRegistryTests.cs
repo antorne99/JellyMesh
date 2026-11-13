@@ -264,6 +264,24 @@ public sealed class StubRegistryTests : IDisposable
         Assert.False(registry.HasTitlesOf(without));
     }
 
+    // The sync tells whether anyone saved the registry since its last run by this number (Q386).
+    [Fact]
+    public async Task EachSaveRaisesTheGenerationAndAFailedOneDoesNot()
+    {
+        using var registry = Create();
+        var start = registry.Generation;
+
+        await registry.SaveAsync(new StubState { Stubs = [Entry("abc", "Film/A/A.strm")] }, CancellationToken.None);
+        await registry.SaveAsync(registry.State, CancellationToken.None);
+        Assert.Equal(start + 2, registry.Generation);
+
+        Directory.Delete(_folder, true);
+        await File.WriteAllTextAsync(_folder, string.Empty);
+        await Assert.ThrowsAnyAsync<IOException>(() => registry.SaveAsync(new StubState(), CancellationToken.None));
+        File.Delete(_folder);
+        Assert.Equal(start + 2, registry.Generation);
+    }
+
     [Fact]
     public async Task AStubIsFoundByIdAndByPath()
     {
