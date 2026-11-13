@@ -18,7 +18,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// Links the stubs of a title across the server folders, and its local copy, as versions of one item (§3.4, §3.5).
-/// Runs after each materialization, so a link Jellyfin or the administrator undid is made again (D5).
+/// Runs after each sync that finds a change, which an admin split is, and every night, so an undone link is made again (D5).
 /// </summary>
 public sealed class VersionLinker : IVersionLinker
 {

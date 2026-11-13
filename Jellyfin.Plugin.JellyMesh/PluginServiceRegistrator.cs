@@ -90,6 +90,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             provider.GetRequiredService<ILogger<SyncHistoryStore>>()));
         serviceCollection.AddSingleton<ILayoutMigration, LayoutMigration>();
         serviceCollection.AddSingleton<ILibraryChangeTracker, LibraryChangeTracker>();
+        serviceCollection.AddSingleton<IUnchangedSyncGate, UnchangedSyncGate>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 
