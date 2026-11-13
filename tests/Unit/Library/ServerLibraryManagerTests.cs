@@ -1557,6 +1557,30 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_rename_to_a_released_name_takes_it_back_before_it_moves_the_library()
+    {
+        // The warning must not list a library the plugin still manages (§10 row 406).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Server.ReleasedAutomaticLibraries.Add("Mare - Film");
+        fixture.Server.ReleasedAutomaticLibraries.Add("Altra");
+        var releasedAtRename = new List<string>();
+        fixture.Renamer.OnRename = () =>
+        {
+            if (releasedAtRename.Count == 0)
+            {
+                releasedAtRename.AddRange(fixture.Server.ReleasedAutomaticLibraries);
+            }
+        };
+        fixture.Server.Name = "Mare";
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal(["Altra"], releasedAtRename);
+        Assert.Equal(["Altra"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
     public async Task A_rename_takes_the_guid_digits_when_the_new_name_is_taken_but_not_for_its_own_old_name()
     {
         var fixture = new Fixture();
@@ -1920,6 +1944,9 @@ public sealed partial class ServerLibraryManagerTests
         // What a resume does to the libraries, such as a rename it finishes.
         public Action? OnResume { get; set; }
 
+        // Runs when a rename starts, before it moves the library.
+        public Action? OnRename { get; set; }
+
         public Task ResumeAsync(CancellationToken cancellationToken)
         {
             Resumes++;
@@ -1931,6 +1958,7 @@ public sealed partial class ServerLibraryManagerTests
         public Task<Guid?> RenameAsync(string name, Guid? itemId, Jellyfin.Data.Enums.CollectionType? type, string newName, CancellationToken cancellationToken)
         {
             Calls.Add((name, newName));
+            OnRename?.Invoke();
             if (Failure is not null)
             {
                 throw Failure;
