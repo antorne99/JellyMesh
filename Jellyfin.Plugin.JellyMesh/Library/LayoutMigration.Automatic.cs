@@ -48,7 +48,7 @@ public sealed partial class LayoutMigration
     public LayoutMigrationChoice Choose(LayoutMigrationMode mode)
     {
         var (root, current) = _store.Read(config => (config.FederatedFolderPath ?? string.Empty, Copy(config.LayoutMigration)));
-        if (mode == LayoutMigrationMode.None || (mode == LayoutMigrationMode.Manual && current.Mode == LayoutMigrationMode.Automatic))
+        if (mode is not (LayoutMigrationMode.Manual or LayoutMigrationMode.Automatic) || (mode == LayoutMigrationMode.Manual && current.Mode == LayoutMigrationMode.Automatic))
         {
             return LayoutMigrationChoice.Refused(LayoutMigrationChoiceOutcome.NotAllowed);
         }
