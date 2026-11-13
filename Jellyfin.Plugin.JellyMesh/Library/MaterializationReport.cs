@@ -51,6 +51,11 @@ public sealed record MaterializationReport(
     public int ImagesPending { get; init; }
 
     /// <summary>
+    /// Gets how many folders of removed servers could not be deleted. They are tried again at the next run.
+    /// </summary>
+    public int FoldersPending { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether the run asked Jellyfin for a scan of the libraries.
     /// </summary>
     public bool ScanQueued { get; init; }
