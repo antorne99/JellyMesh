@@ -142,6 +142,54 @@ public class StreamRelayTests
         Assert.False(await StreamRelay.CopyAsync(silent, context, TimeSpan.FromSeconds(30), left.Token).WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
+    [Fact]
+    public async Task A_break_right_after_a_long_client_pause_is_no_remote_that_stopped()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(2));
+        var aborted = new AbortRecorder();
+        var context = Context(new ClockedStream(clock, write => write == 1 ? TimeSpan.FromMinutes(6) : TimeSpan.Zero));
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock);
+
+        Assert.False(stopped);
+        Assert.True(aborted.Aborted);
+    }
+
+    [Fact]
+    public async Task A_break_while_the_client_reads_is_a_remote_that_stopped()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(3));
+        var context = Context(new ClockedStream(clock, _ => TimeSpan.FromSeconds(5)));
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        Assert.True(await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock));
+    }
+
+    [Fact]
+    public async Task A_short_wait_for_the_client_is_no_pause()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(2));
+        var context = Context(new ClockedStream(clock, write => write == 1 ? RemoteContent.ClientPause - TimeSpan.FromSeconds(1) : TimeSpan.Zero));
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        Assert.True(await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock));
+    }
+
+    [Fact]
+    public async Task A_break_long_after_the_client_resumed_is_a_remote_that_stopped_again()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(30));
+        var context = Context(new ClockedStream(clock, write => write == 1 ? TimeSpan.FromMinutes(6) : TimeSpan.FromSeconds(5)));
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        Assert.True(await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock));
+    }
+
     [Theory]
     [InlineData("text/html", "application/octet-stream")]
     [InlineData("text/html; charset=utf-8", "application/octet-stream")]
@@ -204,6 +252,67 @@ public class StreamRelayTests
         public override void SetLength(long value) => throw new NotSupportedException();
 
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    // A remote body that sends some chunks, then breaks.
+    private sealed class ChunksThenBreak : Stream
+    {
+        private int _left;
+
+        public ChunksThenBreak(int chunks) => _left = chunks;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_left-- <= 0)
+            {
+                throw new IOException("The connection broke.");
+            }
+
+            buffer.Span[0] = 1;
+            return ValueTask.FromResult(1);
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    // A client whose writes take the time given per write, numbered from 1, on a clock moved by hand.
+    private sealed class ClockedStream : MemoryStream
+    {
+        private readonly ManualClock _clock;
+        private readonly Func<int, TimeSpan> _duration;
+        private int _writes;
+
+        public ClockedStream(ManualClock clock, Func<int, TimeSpan> duration)
+        {
+            _clock = clock;
+            _duration = duration;
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _clock.Advance(_duration(++_writes));
+            return base.WriteAsync(buffer, cancellationToken);
+        }
     }
 
     private sealed class SilentStream : Stream

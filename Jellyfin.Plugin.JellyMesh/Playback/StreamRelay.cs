@@ -41,8 +41,10 @@ public static class StreamRelay
     /// <param name="context">The request.</param>
     /// <param name="stallLimit">The longest the remote may send nothing.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>Whether the remote stopped sending, by breaking or going silent: not the client, nor the end.</returns>
-    public static async Task<bool> CopyAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken)
+    /// <param name="clock">The clock that times the client, the system clock if null.</param>
+    /// <returns>Whether the remote stopped sending, by breaking or going silent: not the client, nor the end, nor a break
+    /// soon after a pause of the client (row 273).</returns>
+    public static async Task<bool> CopyAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(context);
@@ -70,7 +72,7 @@ public static class StreamRelay
 
         try
         {
-            await stream.CopyToAsync(response.Body, stallLimit, cancellationToken).ConfigureAwait(false);
+            await stream.CopyToAsync(response.Body, stallLimit, cancellationToken, clock).ConfigureAwait(false);
             return false;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -83,7 +85,10 @@ public static class StreamRelay
             // Either side dropped, or the remote went silent. The headers are gone, so the only signal left is a broken
             // connection.
             context.Abort();
-            return exception is RemoteStreamBrokenException or TimeoutException;
+
+            // A break soon after a pause of the client is put down to the pause, not to the source (row 273).
+            return exception is TimeoutException
+                || (exception is RemoteStreamBrokenException broken && !(broken.SinceClientPause < PlaybackTimeouts.AfterClientPause));
         }
     }
 

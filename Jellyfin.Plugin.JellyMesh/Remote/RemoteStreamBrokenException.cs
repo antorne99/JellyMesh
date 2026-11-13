@@ -33,4 +33,9 @@ public sealed class RemoteStreamBrokenException : IOException
         : base(message, innerException)
     {
     }
+
+    /// <summary>
+    /// Gets the time from the end of the last pause of the client to the break, or null if the client never paused.
+    /// </summary>
+    public TimeSpan? SinceClientPause { get; init; }
 }
