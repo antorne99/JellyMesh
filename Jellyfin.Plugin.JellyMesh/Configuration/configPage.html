@@ -1385,7 +1385,7 @@
                     <div id="jmSyncServers"></div>
 
                     <h3 class="sectionTitle">Duplicate films</h3>
-                    <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
+                    <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: they become versions of one title, the best quality plays unless a user picks another version, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
                     <div id="jmMergeWarning" role="alert" hidden class="jmAlert"></div>
                     <div id="jmMergesFailure" role="alert" hidden class="jmAlert"></div>
                     <div id="jmMergeCases"></div>
@@ -1393,7 +1393,7 @@
                     <div id="jmMerges" class="jmRowList"></div>
 
                     <h3 class="sectionTitle">Duplicate series</h3>
-                    <p>JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.</p>
+                    <p>JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: the copies of each episode become its versions, each episode plays from its best copy unless a user picks another, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.</p>
                     <div id="jmSeriesCases"></div>
                     <h3 class="sectionTitle">Merged series</h3>
                     <div id="jmSeriesMerges" class="jmRowList"></div>
@@ -1684,9 +1684,9 @@
                     "Give the dedicated user access on that server, then test the connection.": "Dai accesso all'utente dedicato su quel server, poi prova la connessione.",
                     "HDR unknown": "HDR sconosciuto",
                     "IDs": "ID",
-                    "If merged, each episode plays from its best copy, and a local copy always wins. The others stay as backups.": "Se le unisci, ogni episodio viene riprodotto dalla sua copia migliore, e una copia locale vince sempre. Le altre restano come riserve.",
+                    "If merged, each episode plays from its best copy, and a local copy always wins. The other copies become versions a user can pick.": "Se le unisci, ogni episodio viene riprodotto dalla sua copia migliore, e una copia locale vince sempre. Le altre copie diventano versioni che l'utente può scegliere.",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
-                    "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
+                    "If merged, {name} plays: {quality}. The others become versions a user can pick.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri diventano versioni che l'utente può scegliere.",
                     "In no library yet": "Ancora in nessuna libreria",
                     "In total: {created} created, {updated} updated, {removed} removed.": "In totale: {created} creati, {updated} aggiornati, {removed} rimossi.",
                     "Incremental": "Incrementale",
@@ -1694,8 +1694,8 @@
                     "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
                     "Its automatic libraries are deleted too: {names}.": "Vengono eliminate anche le sue librerie automatiche: {names}.",
                     "Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai titoli uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
-                    "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: each episode plays from its best copy, the others stay as backups, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: ogni episodio viene riprodotto dalla sua copia migliore, le altre restano come riserve, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
-                    "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
+                    "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: the copies of each episode become its versions, each episode plays from its best copy unless a user picks another, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: le copie di ogni episodio diventano sue versioni, ogni episodio viene riprodotto dalla sua copia migliore se l'utente non ne sceglie un'altra, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
+                    "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: they become versions of one title, the best quality plays unless a user picks another version, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: diventano versioni di un solo titolo, viene riprodotta la qualità migliore se l'utente non sceglie un'altra versione, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
                     "Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.": "Jellyfin mostra questa serie divisa, perché le cartelle Serie dei suoi server sono in librerie diverse: {libraries}. Aggiungile alle stesse librerie.",
                     "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
                     "Hide from this page": "Nascondi da questa pagina",
@@ -3807,7 +3807,7 @@
                         unused: t('Not in effect: a copy is missing, or the IDs already make these one series.'),
                         mergedOn: t('Merged on {date}|series'),
                         forecast: function () {
-                            return t('If merged, each episode plays from its best copy, and a local copy always wins. The others stay as backups.');
+                            return t('If merged, each episode plays from its best copy, and a local copy always wins. The other copies become versions a user can pick.');
                         }
                     }
                 };
@@ -4049,7 +4049,7 @@
                         return t('Which copy would play cannot be known for sure, because some quality values are unknown. As the catalog stands, {name} would be chosen.', { name: name });
                     }
 
-                    return t('If merged, {name} plays: {quality}. The others stay as backups.', { name: name, quality: describeQuality(forecast.Version.Quality) });
+                    return t('If merged, {name} plays: {quality}. The others become versions a user can pick.', { name: name, quality: describeQuality(forecast.Version.Quality) });
                 }
 
                 function renderMergeCase(group, kind) {
