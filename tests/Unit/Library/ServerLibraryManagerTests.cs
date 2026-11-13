@@ -1473,7 +1473,7 @@ public sealed class ServerLibraryManagerTests
 
         Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
 
-        Assert.NotEmpty(fixture.Libraries.Validations);
+        Assert.Equal(2, fixture.Libraries.Validations.Count);
         Assert.All(fixture.Libraries.Validations, seen => Assert.Equal(["Mare - Film", "Mare - Serie"], seen));
     }
 

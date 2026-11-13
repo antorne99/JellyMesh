@@ -64,6 +64,12 @@ scan local
 echo "   after a restart and a scan: database $(folders), views $(views)"
 check "and after a restart and a scan, among the views too" "1 1" "$(has Uno) $(views | tr , '\n' | grep -cx Uno || true)"
 
+echo "--- a library added without refreshLibrary, which validates the top folders once and does not scan"
+library local Tre tvshows /media/uno
+echo "   database $(folders), views $(views)"
+check "that one validation drops the old Uno row" 0 "$(has Uno)"
+check "but the views still list it until the next validation" 1 "$(views | tr , '\n' | grep -cx Uno || true)"
+
 echo "--- Due renamed with refreshLibrary, which validates the top folders before its scan"
 rename Due Due2 true
 check "rename with refresh" 204 "$(status)"
@@ -71,5 +77,4 @@ sleep 3
 scan local
 echo "   database $(folders), views $(views)"
 check "the library renamed with refresh leaves no row" 0 "$(has Due)"
-check "that validation also drops the old Uno row" 0 "$(has Uno)"
 exit "$FAILED"
