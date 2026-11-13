@@ -205,7 +205,7 @@ Inside a library, a title shows once. Its versions are the copies of every serve
 - **The version that starts** when the client picks none is the local copy if the user can see it, otherwise the best version the user can see. A version the client picks always wins among those the user can see.
 - **Watch state:** "watched" is one for the whole title, on every version and in every library. The resume position stays with the version that was played.
 - **Series** don't become versions. Jellyfin merges the same series from several servers when their `Serie` folders are in the same series library, with series merging on. Episodes become versions like films, but only when they cover the same episodes: a double episode in one file on one server and two separate episodes on another stay separate.
-- **JellyMesh keeps the links.** If an admin splits versions apart in Jellyfin (in Italian, "Dividi versioni") or merges versions there, JellyMesh links them back at the next sync. To separate copies you merged, use **Undo merge** on the plugin page. A link lost while nothing else changed comes back at the nightly reconciliation or at the next change.
+- **JellyMesh keeps the links.** If an admin uses Jellyfin's **Split** action on a title (the "Split Media Apart" dialog; in Italian, "Dividi") or merges versions there, JellyMesh links them back at the next sync. To separate copies you merged, use **Undo merge** on the plugin page. A link lost while nothing else changed comes back at the nightly reconciliation or at the next change.
 
 See [Limits](#limits) for what Jellyfin shows of versions in collections, "Latest" and "Continue watching".
 
