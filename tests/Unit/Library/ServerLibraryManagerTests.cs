@@ -1461,6 +1461,68 @@ public sealed class ServerLibraryManagerTests
         await fixture.Manager.ResumeRenamesAsync(CancellationToken.None);
 
         Assert.Equal(1, fixture.Renamer.Resumes);
+        Assert.Empty(fixture.Libraries.Validations);
+    }
+
+    [Fact]
+    public async Task Once_its_libraries_moved_Jellyfin_validates_the_top_folders_so_the_old_ones_leave_its_database()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Server.Name = "Mare";
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.NotEmpty(fixture.Libraries.Validations);
+        Assert.All(fixture.Libraries.Validations, seen => Assert.Equal(["Mare - Film", "Mare - Serie"], seen));
+    }
+
+    [Fact]
+    public async Task A_rename_that_moves_no_library_validates_nothing()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Empty(fixture.Libraries.Validations);
+    }
+
+    [Fact]
+    public async Task A_rename_that_resumes_one_left_halfway_validates_the_top_folders()
+    {
+        var fixture = new Fixture();
+        fixture.Renamer.HasPending = true;
+        fixture.Renamer.ResumeFinishes = true;
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.NotEmpty(fixture.Libraries.Validations);
+    }
+
+    [Fact]
+    public async Task Renames_resumed_on_their_own_validate_the_top_folders()
+    {
+        var fixture = new Fixture();
+        fixture.Renamer.HasPending = true;
+        fixture.Renamer.ResumeFinishes = true;
+
+        await fixture.Manager.ResumeRenamesAsync(CancellationToken.None);
+
+        Assert.NotEmpty(fixture.Libraries.Validations);
+    }
+
+    [Fact]
+    public async Task A_failed_validation_leaves_the_rename_done()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.ValidateFailure = new IOException("busy");
+        fixture.Server.Name = "Mare";
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal(["Mare - Film", "Mare - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
     }
 
     private sealed class Fixture
@@ -1565,6 +1627,12 @@ public sealed class ServerLibraryManagerTests
                     Folders.Remove(Find(name));
                     return Task.CompletedTask;
                 });
+            _mock.Setup(manager => manager.ValidateTopLibraryFolders(It.IsAny<CancellationToken>(), true))
+                .Returns(() =>
+                {
+                    Validations.Add(Folders.Select(folder => folder.Name).Order(StringComparer.Ordinal).ToList());
+                    return ValidateFailure is null ? Task.CompletedTask : Task.FromException(ValidateFailure);
+                });
         }
 
         public ILibraryManager Object => _mock.Object;
@@ -1574,6 +1642,11 @@ public sealed class ServerLibraryManagerTests
         public List<CreateCall> Created { get; } = [];
 
         public List<RemoveCall> Removed { get; } = [];
+
+        // The library names each validation of the top folders saw.
+        public List<List<string>> Validations { get; } = [];
+
+        public Exception? ValidateFailure { get; set; }
 
         public Func<string, string>? RenameOnCreate { get; set; }
 
@@ -1624,9 +1697,13 @@ public sealed class ServerLibraryManagerTests
 
         public int Resumes { get; private set; }
 
+        // When set, a resume finishes every pending rename.
+        public bool ResumeFinishes { get; set; }
+
         public Task ResumeAsync(CancellationToken cancellationToken)
         {
             Resumes++;
+            HasPending &= !ResumeFinishes;
             return Task.CompletedTask;
         }
 
