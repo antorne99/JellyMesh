@@ -42,6 +42,7 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
     private readonly Lock _jobsLock = new();
     private readonly Dictionary<Guid, Task> _jobs = [];
     private readonly ConcurrentDictionary<Guid, AutomaticLibrariesError> _errors = new();
+    private readonly UnreadyScanLimit _scanLimit = new(TimeProvider.System);
     private Task _cleanup = Task.CompletedTask;
     private bool _cleaning;
     private bool _cleanAgain;
@@ -75,6 +76,21 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
         _renamer = renamer;
         _stubs = stubs;
         _logger = logger;
+    }
+
+    internal ServerLibraryManager(
+        IPluginConfigurationStore store,
+        ILibraryManager libraries,
+        IFileSystem fileSystem,
+        ILibraryScans scans,
+        ILibraryMaterializer materializer,
+        ILibraryRenamer renamer,
+        IStubRegistry stubs,
+        ILogger<ServerLibraryManager> logger,
+        TimeProvider time)
+        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, logger)
+    {
+        _scanLimit = new(time);
     }
 
     /// <inheritdoc />
@@ -180,11 +196,16 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
                 return;
             }
 
-            // Only a scan gives an id to a library renamed without a refresh (decision 250).
-            if (ReadFolders()?.Any(folder => string.IsNullOrEmpty(folder.ItemId)) == true)
+            // Only a scan gives an id to a library renamed without a refresh (decision 250), at most once a day each (decision 333).
+            var unready = ReadFolders()?.Where(folder => string.IsNullOrEmpty(folder.ItemId)).Select(folder => folder.Name ?? string.Empty).ToList() ?? [];
+            if (_scanLimit.TryClaim(unready))
             {
                 _logger.LogWarning("A library has no id after {Minutes} minutes, so a library scan runs before the sync", ReadyLimit.TotalMinutes);
                 await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            else if (unready.Count > 0)
+            {
+                _logger.LogWarning("A library still has no id, but its library scan ran less than {Hours} hours ago, so the sync starts", UnreadyScanLimit.Interval.TotalHours);
             }
             else
             {

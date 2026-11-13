@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
@@ -1039,6 +1040,82 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_still_without_an_id_after_its_scan_gets_only_the_check_until_a_day_passed()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+        fixture.Libraries.Find("Film di casa").ItemId = null;
+        fixture.Scans.Steps.Clear();
+        fixture.Scans.Ready = false;
+
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+        fixture.Clock.Now += UnreadyScanLimit.Interval - TimeSpan.FromMinutes(1);
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["scan"], fixture.Scans.Steps);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Empty(fixture.Server.ReleasedAutomaticLibraries);
+        Assert.Contains(fixture.Logger.Lines, line => line.Contains("less than 24 hours ago", StringComparison.Ordinal));
+
+        fixture.Clock.Now += TimeSpan.FromMinutes(1);
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        Assert.Equal(["scan", "scan"], fixture.Scans.Steps);
+    }
+
+    [Fact]
+    public async Task Another_library_that_loses_its_id_within_the_day_gets_its_scan()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Find("Casa - Film").ItemId = null;
+        fixture.Scans.Steps.Clear();
+        fixture.Scans.Ready = false;
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+        fixture.Clock.Now += TimeSpan.FromHours(1);
+
+        fixture.Libraries.Find("Casa - Serie").ItemId = null;
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        Assert.Equal(["scan", "scan"], fixture.Scans.Steps);
+    }
+
+    [Fact]
+    public async Task A_scan_that_failed_still_counts_for_the_day()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Find("Casa - Film").ItemId = null;
+        fixture.Scans.Steps.Clear();
+        fixture.Scans.Ready = false;
+        fixture.Scans.ScanFailure = new InvalidOperationException("scan");
+
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        Assert.Equal(["scan"], fixture.Scans.Steps);
+    }
+
+    [Fact]
+    public async Task The_day_of_a_scan_is_kept_only_in_memory()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Find("Casa - Film").ItemId = null;
+        fixture.Scans.Steps.Clear();
+        fixture.Scans.Ready = false;
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        using var restarted = fixture.NewManager();
+        await restarted.WaitReadyAsync(CancellationToken.None);
+
+        Assert.Equal(["scan", "scan"], fixture.Scans.Steps);
+    }
+
+    [Fact]
     public async Task The_libraries_of_a_removed_server_wait_while_its_titles_are_still_there()
     {
         var fixture = new Fixture();
@@ -1487,6 +1564,8 @@ public sealed class ServerLibraryManagerTests
 
         public RecordingScans Scans { get; } = new();
 
+        public FixedClock Clock { get; } = new(new DateTimeOffset(2026, 11, 13, 10, 0, 0, TimeSpan.Zero));
+
         public Mock<ILibraryMaterializer> Materializer { get; } = new();
 
         public ServerLibraryManager Manager { get; }
@@ -1500,7 +1579,7 @@ public sealed class ServerLibraryManagerTests
         public ServerLibraryManager NewManager()
         {
             Renamer.Libraries = Libraries;
-            return new(Store, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, Logger);
+            return new(Store, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, Logger, Clock);
         }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.
@@ -1671,7 +1750,7 @@ public sealed class ServerLibraryManagerTests
         {
             Steps.Add("scan");
             DuringScan?.Invoke();
-            return Task.CompletedTask;
+            return ScanFailure is null ? Task.CompletedTask : Task.FromException(ScanFailure);
         }
 
         public List<TimeSpan> ReadyWaits { get; } = [];
@@ -1679,6 +1758,8 @@ public sealed class ServerLibraryManagerTests
         public Action? DuringReadyWait { get; set; }
 
         public Action? DuringScan { get; set; }
+
+        public Exception? ScanFailure { get; set; }
 
         public bool Ready { get; set; } = true;
 
