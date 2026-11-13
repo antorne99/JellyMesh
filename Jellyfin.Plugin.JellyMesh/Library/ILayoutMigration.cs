@@ -8,7 +8,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// Q47-Q49, Q55-Q57, D12).
 /// </summary>
 /// <remarks>
-/// It writes the rows of every user, so only the system may run it, never a user request (decision 96).
+/// It writes the rows of every user, so it runs from the system or from an admin request, never from a user request:
+/// the admin acts as admin, and decision 96 covers users (§10 row 372).
 /// </remarks>
 public interface ILayoutMigration
 {
