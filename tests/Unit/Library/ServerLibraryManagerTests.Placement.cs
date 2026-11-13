@@ -420,6 +420,23 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(4, libraries.Automatic.Count);
     }
 
+    [Fact]
+    public async Task A_crash_after_a_switch_on_recreated_a_library_deleted_in_the_dashboard_holds_placement_back()
+    {
+        // The switch-on, before a sync, releases the deleted name and the creation reuses it: a crash before the record is
+        // saved must leave the library waiting, not exempt as the admin's (§10 rows 384, 393, 403).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Serie"));
+        fixture.Libraries.OnCreate = () => fixture.Hooks.BeforeUpdate = () => throw new InvalidOperationException("crash");
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Contains(fixture.Libraries.Folders, folder => folder.Name == "Casa - Serie");
+        Assert.Equal(["Casa - Film"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Null(fixture.NewManager().FollowForPlacement());
+    }
+
     // Two servers with their switch on, each with its libraries, and a check that recorded them all.
     private static async Task<RemoteServerConfig> TwoServersFollowedAsync(Fixture fixture)
     {

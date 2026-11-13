@@ -895,6 +895,37 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task Turning_the_switch_on_again_before_a_sync_recreates_a_library_deleted_in_the_dashboard_and_does_not_list_it_as_released()
+    {
+        // The follow of the switch-on releases the old name, which the creation takes back before it runs (§10 row 403).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Serie"));
+        var releasedAtCreation = new List<string>();
+        fixture.Libraries.OnCreate = () => releasedAtCreation.AddRange(fixture.Server.ReleasedAutomaticLibraries);
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Empty(releasedAtCreation);
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Empty(fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_creation_whose_name_was_not_released_saves_nothing_more()
+    {
+        // Between the two creations only the record of the first one is saved.
+        var fixture = new Fixture();
+        var savesAtCreation = new List<int>();
+        fixture.Libraries.OnCreate = () => savesAtCreation.Add(fixture.Store.Saves);
+
+        await fixture.Manager.Enable(_serverId).Job;
+
+        Assert.Equal(2, savesAtCreation.Count);
+        Assert.Equal(1, savesAtCreation[1] - savesAtCreation[0]);
+    }
+
+    [Fact]
     public async Task After_the_check_that_only_records_the_libraries_a_rename_is_followed_again()
     {
         var fixture = new Fixture();

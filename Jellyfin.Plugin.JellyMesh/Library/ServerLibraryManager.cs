@@ -531,6 +531,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             return false;
         }
 
+        // A released name is taken back first, so a crash before the record is saved leaves the library waiting (§10 row 403).
+        if (_store.Read(config => Owned(config, owner)?.ReleasedAutomaticLibraries.Contains(name, StringComparer.Ordinal) == true))
+        {
+            _store.Update(config => Owned(config, owner)?.ReleasedAutomaticLibraries.Remove(name));
+        }
+
         var path = PathOf(kind, root, serverId);
         try
         {
