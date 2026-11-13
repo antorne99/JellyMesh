@@ -16,6 +16,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -65,7 +66,7 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     // A renamer over a journal read again from its file, as after a restart.
-    private LibraryRenamer NewRenamer() => new(
+    private LibraryRenamer NewRenamer(ILogger<LibraryRenamer>? logger = null) => new(
         _paths.Object,
         _library.Object,
         _monitor.Object,
@@ -74,7 +75,7 @@ public sealed class LibraryRenamerTests : IDisposable
         _retired,
         new LibraryRenameJournal(_data, NullLogger<LibraryRenameJournal>.Instance),
         _store,
-        NullLogger<LibraryRenamer>.Instance,
+        logger ?? NullLogger<LibraryRenamer>.Instance,
         _changes.Object,
         (from, to) =>
         {
@@ -514,6 +515,38 @@ public sealed class LibraryRenamerTests : IDisposable
         Assert.Contains(first.NewId.ToString(), damaged, StringComparison.Ordinal);
         Assert.Contains(second.OldId.ToString(), damaged, StringComparison.Ordinal);
         AssertSetAside(OldId);
+    }
+
+    [Fact]
+    public async Task A_record_is_set_aside_over_a_damaged_file_that_cannot_be_read()
+    {
+        MovedToMare(OldId);
+        WriteJournal(Pending(newId: Guid.NewGuid()));
+        var folder = Path.Combine(_data, "folder");
+        Directory.CreateDirectory(folder);
+        File.CreateSymbolicLink(DamagedPath, folder);
+        _renamer = NewRenamer();
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        AssertSetAside(OldId);
+    }
+
+    [Fact]
+    public async Task A_record_that_cannot_be_set_aside_stays_pending_and_the_log_says_so()
+    {
+        MovedToMare(OldId);
+        WriteJournal(Pending(newId: Guid.NewGuid()));
+        Directory.CreateDirectory(DamagedPath);
+        var logger = new CapturingLogger<LibraryRenamer>();
+        _renamer = NewRenamer(logger);
+
+        await _renamer.ResumeAsync(CancellationToken.None);
+
+        Assert.True(_renamer.HasPending);
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("It is set aside", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("cannot be set aside", StringComparison.Ordinal));
     }
 
     [Fact]

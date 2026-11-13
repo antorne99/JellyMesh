@@ -148,7 +148,8 @@ public sealed class LibraryRenameJournal
         }
     }
 
-    // The records of a damaged file still readable as one, or none: what cannot be read is replaced, as Load does.
+    // The records of a damaged file still readable as one, or none: what cannot be read, even for lack of access, is
+    // replaced (row 352).
     private static List<LibraryRenameRecord> SetAsideBefore(string path)
     {
         try
@@ -158,7 +159,7 @@ public sealed class LibraryRenameJournal
                 ? file.Records.ToList()
                 : [];
         }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException or FileNotFoundException or DirectoryNotFoundException)
+        catch (Exception exception) when (exception is JsonException or NotSupportedException or IOException or UnauthorizedAccessException)
         {
             return [];
         }
