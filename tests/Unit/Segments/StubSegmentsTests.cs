@@ -47,7 +47,7 @@ public class StubSegmentsTests
         Indexed(_backup, 9_000, hasSegments: true);
     }
 
-    private void Indexed(StubSource source, long runTime, bool? hasSegments)
+    private void Indexed(StubSource source, long? runTime, bool? hasSegments)
     {
         var remote = TestItems.Movie(source.ItemId) with
         {
@@ -96,6 +96,45 @@ public class StubSegmentsTests
         Assert.All(result, segment => Assert.Equal(_itemId, segment.ItemId));
         Assert.Equal(["best"], _client.Asked);
         Assert.Equal(new SegmentOrigin(_best, 6_000), segments.OriginOf(_itemId));
+    }
+
+    [Fact]
+    public async Task Segments_are_cut_at_the_end_of_the_title()
+    {
+        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>(
+        [
+            new RemoteSegment(MediaSegmentType.Intro, 0, 900),
+            new RemoteSegment(MediaSegmentType.Outro, 5000, 7000),
+            new RemoteSegment(MediaSegmentType.Preview, 6000, 6500),
+            new RemoteSegment(MediaSegmentType.Recap, 8000, 9000)
+        ]);
+
+        var result = await Segments().GetAsync(Request(), CancellationToken.None);
+
+        Assert.Equal([(MediaSegmentType.Intro, 0L, 900L), (MediaSegmentType.Outro, 5000L, 6000L)], result.Select(segment => (segment.Type, segment.StartTicks, segment.EndTicks)));
+    }
+
+    [Fact]
+    public async Task Segments_that_all_start_after_the_end_clear_the_stub()
+    {
+        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([new RemoteSegment(MediaSegmentType.Outro, 6000, 7000)]);
+        var segments = Segments();
+
+        var result = await segments.GetAsync(Request(Existing(MediaSegmentType.Intro, 0, 900)), CancellationToken.None);
+
+        Assert.Empty(result);
+        Assert.Null(segments.OriginOf(_itemId));
+    }
+
+    [Fact]
+    public async Task Segments_of_a_title_of_unknown_duration_are_kept_whole()
+    {
+        Indexed(_best, null, hasSegments: true);
+        _client.Answer = _ => RemoteResult.Success<IReadOnlyList<RemoteSegment>>([new RemoteSegment(MediaSegmentType.Outro, 5000, 70_000)]);
+
+        var result = await Segments().GetAsync(Request(), CancellationToken.None);
+
+        Assert.Equal([(MediaSegmentType.Outro, 5000L, 70_000L)], result.Select(segment => (segment.Type, segment.StartTicks, segment.EndTicks)));
     }
 
     [Fact]

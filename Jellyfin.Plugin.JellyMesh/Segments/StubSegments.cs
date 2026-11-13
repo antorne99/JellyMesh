@@ -134,7 +134,7 @@ public sealed class StubSegments
         }
 
         _pausedUntil.TryRemove(best.ServerId, out _);
-        var segments = result.Value!;
+        var segments = WithinRunTime(result.Value!, version?.RunTimeTicks);
         if (segments.Count == 0)
         {
             Forget(request.ItemId);
@@ -165,6 +165,20 @@ public sealed class StubSegments
 
         return CurrentLookup().Find(source.ServerId, source.ItemId)?.Versions
             .FirstOrDefault(version => string.Equals(version.MediaSourceId, source.MediaSourceId, StringComparison.Ordinal));
+    }
+
+    // Cuts each segment at the end of the title and drops those that start at or after it (Q262). Unknown duration cuts none.
+    private static List<RemoteSegment> WithinRunTime(IReadOnlyList<RemoteSegment> segments, long? runTimeTicks)
+    {
+        if (runTimeTicks is not { } end || end <= 0)
+        {
+            return [.. segments];
+        }
+
+        return segments
+            .Where(segment => segment.StartTicks < end)
+            .Select(segment => segment.EndTicks > end ? segment with { EndTicks = end } : segment)
+            .ToList();
     }
 
     private async Task<RemoteResult<IReadOnlyList<RemoteSegment>>> ReadAsync(StubSource source, CancellationToken cancellationToken)
