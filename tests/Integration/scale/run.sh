@@ -80,6 +80,9 @@ snapshot() {
   in_box "awk '/VmHWM|VmRSS/ { print \$1, int(\$2 / 1024) }' /proc/$JPID/status; echo cgroup-peak \$(( \$(cat /sys/fs/cgroup/memory.peak) / 1048576 ))" >"$WORK/$phase-memory.txt"
   in_box "for f in \$(find /config -name federation-index.json -o -name federated-stubs.json); do echo \$(basename \$f) \$(stat -c '%s %.3Y' \$f); done" >"$WORK/$phase-files.txt"
   in_box "grep -o '\"LocalItemIds\"' \$(find /config -name federated-stubs.json) | wc -l" >"$WORK/$phase-groups.txt" 2>/dev/null
+  # After the scan: the films and episodes Jellyfin lists, by how many versions each one holds.
+  [ -f "$WORK/scan-requested" ] && get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=MediaSourceCount' |
+    jq -c '[.Items[] | .MediaSourceCount // 0] | group_by(.) | map({versions: .[0], items: length})' >"$WORK/$phase-links.txt"
   in_box "find /federata -type f | sed -e 's/.*\.//' | sort | uniq -c; echo total \$(find /federata -type f | wc -l); echo kib \$(du -sk /federata | cut -f1)" >"$WORK/$phase-tree.txt"
 }
 

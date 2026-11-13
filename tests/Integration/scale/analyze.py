@@ -152,6 +152,9 @@ def report(phase, previous_files):
     groups = (read(f"{phase}-groups.txt") or "").strip()
     if groups:
         lines.append(f"version groups in the registry            {groups}")
+    links = (read(f"{phase}-links.txt") or "").strip()
+    if links:
+        lines.append(f"listed films and episodes by versions     {links}")
     lines.append(f"files in the federated folder             {tree.get('total', 0)} ({', '.join(f'{k} {v}' for k, v in sorted(tree.items()) if k not in ('total', 'kib'))}), {tree.get('kib', 0) / 1024:.0f} MiB")
     servers = status.get("Servers") or []
     lines.append("servers                                   " + "; ".join(
