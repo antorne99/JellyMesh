@@ -72,6 +72,13 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
     // Matching reads only these two IDs on a film.
     private static bool HasNoFilmIds(ContentIds ids) => string.IsNullOrWhiteSpace(ids.Tmdb) && string.IsNullOrWhiteSpace(ids.Imdb);
 
+    // A series is also matched by its TVDB ID.
+    private static bool HasNoSeriesIds(ContentIds ids) => HasNoFilmIds(ids) && string.IsNullOrWhiteSpace(ids.Tvdb);
+
+    // Jellyfin stamps an item at the end of each metadata refresh, so an unstamped one has never had one. The wait ends
+    // after one sync interval even if the refresh never comes (Q243).
+    private bool AwaitsRefresh(BaseItem item) => item.DateLastRefreshed == DateTime.MinValue && !(_refreshes?.IsOverdue(item.Id) ?? false);
+
     private CatalogItem ToCatalogItem(BaseItem item, Dictionary<Guid, BaseItem?> series)
     {
         if (item is not Episode episode)
@@ -85,8 +92,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
                 Title = item.Name,
                 Year = item.ProductionYear,
                 Ids = ids,
-                // Jellyfin stamps an item at the end of each metadata refresh, so an unstamped one has never had one.
-                AwaitsRefresh = HasNoFilmIds(ids) && item.DateLastRefreshed == DateTime.MinValue && !(_refreshes?.IsOverdue(item.Id) ?? false),
+                AwaitsRefresh = HasNoFilmIds(ids) && AwaitsRefresh(item),
                 Metadata = new ComparableMetadata
                 {
                     OriginalTitle = item.OriginalTitle,
@@ -106,6 +112,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             series[episode.SeriesId] = parent;
         }
 
+        var seriesIds = ContentIds.FromProviderIds(parent?.ProviderIds);
         return new CatalogItem
         {
             ServerId = LocalServerId,
@@ -114,7 +121,9 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             SeriesId = episode.SeriesId == Guid.Empty ? null : episode.SeriesId.ToString("N"),
             Title = parent?.Name ?? episode.SeriesName,
             Year = parent?.ProductionYear,
-            Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
+            Ids = seriesIds,
+            // An episode waits for the refresh of its series, which gives it the IDs (Q244).
+            AwaitsRefresh = parent is not null && HasNoSeriesIds(seriesIds) && AwaitsRefresh(parent),
             SeasonNumber = episode.ParentIndexNumber,
             EpisodeNumber = episode.IndexNumber,
             EpisodeNumberEnd = episode.IndexNumberEnd

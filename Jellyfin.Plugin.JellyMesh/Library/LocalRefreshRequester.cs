@@ -61,7 +61,7 @@ public sealed class LocalRefreshRequester : ILocalRefreshRequester
             _providers.QueueRefresh(itemId, options, RefreshPriority.High);
         }
 
-        _logger.LogInformation("Asked Jellyfin to read the metadata of {Count} new local films, so that they can be matched", fresh.Count);
+        _logger.LogInformation("Asked Jellyfin to read the metadata of {Count} new local films or series, so that they can be matched", fresh.Count);
     }
 
     /// <inheritdoc />

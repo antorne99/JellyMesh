@@ -70,7 +70,7 @@ public class LocalRefreshRequesterTests
     {
         Requester().Request([Guid.NewGuid(), Guid.NewGuid()]);
 
-        Assert.Contains(_logger.Lines, line => line.StartsWith("Asked Jellyfin to read the metadata of 2 new local films", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.StartsWith("Asked Jellyfin to read the metadata of 2 new local films or series", StringComparison.Ordinal));
     }
 
     [Fact]

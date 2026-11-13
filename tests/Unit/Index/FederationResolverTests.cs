@@ -162,6 +162,28 @@ public sealed class FederationResolverTests : IDisposable
         Assert.Equal([waiting], Resolver().Resolve().LocalItemsAwaitingRefresh);
     }
 
+    [Fact]
+    public void ALocalSeriesAwaitingARefreshIsNamedOnceByItsSeries()
+    {
+        var series = Guid.NewGuid();
+        foreach (var number in new[] { 1, 2 })
+        {
+            _local.Items.Add(new CatalogItem
+            {
+                ServerId = "local",
+                ItemId = Guid.NewGuid().ToString("N"),
+                Kind = ContentKind.Episode,
+                SeriesId = series.ToString("N"),
+                Title = "Nuova",
+                SeasonNumber = 1,
+                EpisodeNumber = number,
+                AwaitsRefresh = true
+            });
+        }
+
+        Assert.Equal([series], Resolver().Resolve().LocalItemsAwaitingRefresh);
+    }
+
     private sealed class FakeLocalCatalog : ILocalCatalogReader
     {
         public List<CatalogItem> Items { get; } = [];

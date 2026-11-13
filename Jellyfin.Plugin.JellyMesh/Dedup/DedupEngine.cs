@@ -58,7 +58,7 @@ public static class DedupEngine
     // Issues that share a title become one case, or a title would show twice and could be merged two ways. A case needs a
     // title with no local copy: two local films or series cannot become one, because a local item is never touched. An
     // episode whose series is not known names no copy, so its work is in no case unless another copy names it. A work with
-    // a local film awaiting its refresh waits outside the cases (decision 214).
+    // a local film or series awaiting its refresh waits outside the cases (decision 214, Q244).
     private static List<MergeCase> MergeCases(List<CatalogItem> local, List<CatalogItem> remote, WorkResolver works)
     {
         var films = local.Select(item => new WorkCopy(item, true))

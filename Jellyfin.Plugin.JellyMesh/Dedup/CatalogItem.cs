@@ -79,8 +79,8 @@ public sealed record CatalogItem
     public bool IsFederated { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether this is a local film without IDs whose metadata Jellyfin has not read yet (decision
-    /// 214). It still takes part in matching, but the merge cases it is in wait for that refresh.
+    /// Gets a value indicating whether this is a local film, or an episode of a local series, without IDs whose metadata
+    /// Jellyfin has not read yet (decision 214, Q244). It still takes part in matching, but its merge cases wait for that.
     /// </summary>
     public bool AwaitsRefresh { get; init; }
 

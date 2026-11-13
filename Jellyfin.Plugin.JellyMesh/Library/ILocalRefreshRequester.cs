@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// Asks Jellyfin to read the metadata of new local films that have no IDs yet (decision 214), and remembers when, in
-/// memory only (Q246).
+/// Asks Jellyfin to read the metadata of new local films and series that have no IDs yet (decision 214, Q244), and
+/// remembers when, in memory only (Q246).
 /// </summary>
 public interface ILocalRefreshRequester
 {

@@ -140,12 +140,55 @@ public class LocalCatalogReaderTests
         Assert.False(Assert.Single(ReaderOver(film).Read()).AwaitsRefresh);
     }
 
+    private Episode EpisodeOf(Series series)
+    {
+        _library.Setup(library => library.GetItemById(series.Id)).Returns(series);
+        return new Episode { Id = Guid.NewGuid(), SeriesId = series.Id, IndexNumber = 1, Path = "/media/serie/e.mkv" };
+    }
+
     [Fact]
-    public void AnEpisodeAwaitsNoRefresh()
+    public void AnEpisodeOfANewSeriesWithoutIdsAwaitsTheRefreshOfItsSeries()
     {
         var series = new Series { Id = Guid.NewGuid(), Name = "Show" };
-        _library.Setup(library => library.GetItemById(series.Id)).Returns(series);
-        var episode = new Episode { Id = Guid.NewGuid(), SeriesId = series.Id, IndexNumber = 1, Path = "/media/serie/e.mkv" };
+
+        Assert.True(Assert.Single(ReaderOver(EpisodeOf(series)).Read()).AwaitsRefresh);
+    }
+
+    [Theory]
+    [InlineData("Tmdb")]
+    [InlineData("Imdb")]
+    [InlineData("Tvdb")]
+    public void AnEpisodeOfASeriesWithAnIdAwaitsNoRefresh(string provider)
+    {
+        var series = new Series { Id = Guid.NewGuid(), Name = "Show", ProviderIds = new Dictionary<string, string> { [provider] = "1" } };
+
+        Assert.False(Assert.Single(ReaderOver(EpisodeOf(series)).Read()).AwaitsRefresh);
+    }
+
+    [Fact]
+    public void AnEpisodeOfARefreshedSeriesAwaitsNoRefresh()
+    {
+        var series = new Series { Id = Guid.NewGuid(), Name = "Show", DateLastRefreshed = new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc) };
+
+        Assert.False(Assert.Single(ReaderOver(EpisodeOf(series)).Read()).AwaitsRefresh);
+    }
+
+    [Fact]
+    public void AnEpisodeWhoseSeriesRefreshIsOverdueAwaitsItNoLonger()
+    {
+        var series = new Series { Id = Guid.NewGuid(), Name = "Show" };
+        var episode = EpisodeOf(series);
+        var refreshes = new Mock<ILocalRefreshRequester>();
+        refreshes.Setup(requester => requester.IsOverdue(series.Id)).Returns(true);
+        _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>())).Returns([episode]);
+
+        Assert.False(Assert.Single(new LocalCatalogReader(_library.Object, _store, refreshes.Object).Read()).AwaitsRefresh);
+    }
+
+    [Fact]
+    public void AnEpisodeWithoutItsSeriesAwaitsNoRefresh()
+    {
+        var episode = new Episode { Id = Guid.NewGuid(), SeriesId = Guid.NewGuid(), IndexNumber = 1, Path = "/media/serie/e.mkv" };
 
         Assert.False(Assert.Single(ReaderOver(episode).Read()).AwaitsRefresh);
     }
