@@ -64,6 +64,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ILocalRefreshRequester, LocalRefreshRequester>();
         serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
         serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
+        serviceCollection.AddSingleton<ILibraryPaths, LibraryPaths>();
         serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
         serviceCollection.AddSingleton<RetiredLibraryIds>();
         serviceCollection.AddSingleton<ILibraryViewIds, LibraryViewIds>();
