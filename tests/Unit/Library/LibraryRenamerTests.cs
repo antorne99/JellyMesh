@@ -509,6 +509,25 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_library_made_again_with_the_old_name_keeps_its_lists_and_the_record_is_dropped()
+    {
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+        await RenameAsync();
+        _users.Setup(users => users.UpdateUserAsync(_limited)).Returns(Task.CompletedTask);
+        Directory.CreateDirectory(Path.Combine(_root, "Casa - Film"));
+
+        var restarted = NewRenamer();
+        await restarted.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.True(Directory.Exists(Path.Combine(_root, "Mare - Film")));
+        Assert.False(restarted.HasPending);
+        Assert.False(File.Exists(JournalPath));
+        Assert.False(File.Exists(DamagedPath));
+    }
+
+    [Fact]
     public async Task The_record_file_is_readable_by_its_owner_only()
     {
         if (OperatingSystem.IsWindows())

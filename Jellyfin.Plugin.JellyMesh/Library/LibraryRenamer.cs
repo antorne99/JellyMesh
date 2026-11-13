@@ -305,9 +305,9 @@ public sealed class LibraryRenamer : ILibraryRenamer
             names = FolderNames(root);
         }
 
-        if (!names.Contains(record.NewName) && names.Contains(record.OldName))
+        if (names.Contains(record.OldName))
         {
-            // The folder never moved, so the old id is still the library's: its lists stay, and a new rename starts over.
+            // The folder never moved, or a library was made again with the old name and so its id: lists stay (row 331).
             _journal.Remove(record);
             return;
         }
