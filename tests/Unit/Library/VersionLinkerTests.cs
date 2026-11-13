@@ -43,6 +43,10 @@ public sealed class VersionLinkerTests : IDisposable
     private readonly Dictionary<(Guid User, Guid Item), UserItemData> _data_ = [];
     private readonly List<BaseItem> _boxSets = [];
     private readonly List<(Guid Item, ItemUpdateType Reason)> _saves = [];
+    private readonly List<BaseItem> _savedInstances = [];
+
+    // What a block read by id returns instead of a copy of the cached item, as an older row in the database would.
+    private readonly Dictionary<Guid, BaseItem> _rows = [];
     private readonly List<ServerCatalog> _catalogs = [];
     private readonly User _user = new("mario", "auth", "reset");
     private readonly VersionLinker _linker;
@@ -58,10 +62,13 @@ public sealed class VersionLinkerTests : IDisposable
             .Returns((InternalItemsQuery query) => query.ItemIds.Where(_items.ContainsKey).ToList());
         _library.Setup(library => library.FindByPath(It.IsAny<string>(), It.IsAny<bool?>()))
             .Returns((string path, bool? _) => _items.Values.FirstOrDefault(item => string.Equals(item.Path, path, StringComparison.Ordinal)));
-        _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>()))
-            .Returns((InternalItemsQuery query) => query.IncludeItemTypes.SequenceEqual([BaseItemKind.BoxSet]) ? _boxSets.ToList() : []);
+        _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>())).Returns((InternalItemsQuery query) => ListOf(query));
         _library.Setup(library => library.UpdateItemAsync(It.IsAny<BaseItem>(), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
-            .Callback((BaseItem item, BaseItem _, ItemUpdateType reason, CancellationToken _) => _saves.Add((item.Id, reason)))
+            .Callback((BaseItem item, BaseItem _, ItemUpdateType reason, CancellationToken _) =>
+            {
+                _saves.Add((item.Id, reason));
+                _savedInstances.Add(item);
+            })
             .Returns(Task.CompletedTask);
 
         _users.Setup(users => users.GetUsers()).Returns(() => [_user]);
@@ -384,8 +391,88 @@ public sealed class VersionLinkerTests : IDisposable
         _userData.Verify(data => data.GetUserData(It.IsAny<User>(), It.IsAny<BaseItem>()), Times.Never);
         if (!thorough)
         {
-            _library.Verify(library => library.GetItemList(It.IsAny<InternalItemsQuery>()), Times.Never);
+            _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.IncludeItemTypes.Contains(BaseItemKind.BoxSet))), Times.Never);
         }
+    }
+
+    // Q387: the link state comes from block reads; a group already linked costs no lookup of its own.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ALinkedGroupIsCheckedFromBlockReadsAlone(bool thorough)
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        var c = Stub("sc", _serverC, 720);
+        await SaveAsync([a, b, c], Group("g", ["sa", "sb", "sc"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        var itemC = Scanned(c);
+        await _linker.LinkAsync(false, CancellationToken.None);
+        _saves.Clear();
+        _library.Invocations.Clear();
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        Assert.Empty(_saves);
+        VerifyNoLookupOf(itemA, itemB, itemC);
+        _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Length > 0)), Times.Once);
+    }
+
+    // Q387: what changes is saved on the instance Jellyfin keeps in its cache, not on the copy a block read gave.
+    [Fact]
+    public async Task ALinkIsSavedOnTheCachedInstance()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+
+        Assert.Equal(2, _savedInstances.Count);
+        Assert.Contains(_savedInstances, saved => ReferenceEquals(saved, itemA));
+        Assert.Contains(_savedInstances, saved => ReferenceEquals(saved, itemB));
+    }
+
+    // Q387: a block read older than the cache asks for a change the cached instances no longer need, so nothing is saved.
+    [Fact]
+    public async Task AGroupIsPlannedAgainFromTheCachedInstancesBeforeSaving()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        _rows[itemA.Id] = CopyOf(itemA);
+        _rows[itemB.Id] = CopyOf(itemB);
+        await _linker.LinkAsync(false, CancellationToken.None);
+        _saves.Clear();
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+
+        Assert.Empty(_saves);
+        Assert.Equal(itemB.Id, itemA.PrimaryVersionId);
+    }
+
+    // Q387: a stub out of every group is detached on its cached instance.
+    [Fact]
+    public async Task AStubOutOfEveryGroupIsDetachedOnItsCachedInstance()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b]);
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        itemA.SetPrimaryVersionId(itemB.Id);
+        itemB.LinkedAlternateVersions = [Link(itemA.Id)];
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.Null(itemA.PrimaryVersionId);
+        Assert.Empty(itemB.LinkedAlternateVersions);
+        Assert.All(_savedInstances, saved => Assert.True(ReferenceEquals(saved, itemA) || ReferenceEquals(saved, itemB)));
     }
 
     [Fact]
@@ -1157,6 +1244,40 @@ public sealed class VersionLinkerTests : IDisposable
         }
 
         return video;
+    }
+
+    // A block read by id gives new instances, as Jellyfin's database does, never the ones its cache keeps.
+    private static BaseItem CopyOf(BaseItem item)
+    {
+        var copy = (BaseItem)Activator.CreateInstance(item.GetType())!;
+        copy.Id = item.Id;
+        copy.Path = item.Path;
+        copy.OwnerId = item.OwnerId;
+        if (item is Video video && copy is Video target)
+        {
+            target.SetPrimaryVersionId(video.PrimaryVersionId);
+            target.LinkedAlternateVersions = video.LinkedAlternateVersions.Select(child => new LinkedChild { ItemId = child.ItemId, Type = child.Type }).ToArray();
+        }
+
+        return copy;
+    }
+
+    private List<BaseItem> ListOf(InternalItemsQuery query)
+    {
+        if (query.IncludeItemTypes.SequenceEqual([BaseItemKind.BoxSet]))
+        {
+            return _boxSets.ToList();
+        }
+
+        return query.ItemIds.Where(_items.ContainsKey).Select(id => _rows.TryGetValue(id, out var row) ? CopyOf(row) : CopyOf(_items[id])).ToList();
+    }
+
+    private void VerifyNoLookupOf(params BaseItem[] items)
+    {
+        foreach (var item in items)
+        {
+            _library.Verify(library => library.GetItemById(item.Id), Times.Never);
+        }
     }
 
     private T Add<T>(T item, Guid id)
