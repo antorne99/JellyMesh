@@ -1275,6 +1275,15 @@
                                 padding-left: 1.2em;
                             }
 
+                            #jmMigrationActions[hidden],
+                            #jmMigrationActions .emby-button[hidden] {
+                                display: none;
+                            }
+
+                            #jmMigrationNext {
+                                font-weight: 600;
+                            }
+
                             #jmMigrationTitle {
                                 margin-top: 0;
                                 font-weight: 600;
@@ -1291,8 +1300,14 @@
                             <div role="status">
                                 <p id="jmMigrationTitle"></p>
                                 <p id="jmMigrationText"></p>
+                                <p id="jmMigrationNext" hidden></p>
                                 <ul id="jmMigrationLibraries"></ul>
                                 <p id="jmMigrationProgress"></p>
+                                <p id="jmMigrationError" hidden></p>
+                                <div id="jmMigrationActions" class="jmActions" hidden>
+                                    <button type="button" id="jmMigrateAutomatic" is="emby-button" class="raised button-submit emby-button"></button>
+                                    <button type="button" id="jmMigrateManual" is="emby-button" class="raised emby-button"></button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1533,6 +1548,28 @@
                     "Held for an empty remote library: {count}.": "Trattenuti per una libreria remota vuota: {count}.",
                     "Blocked titles, tried again at every run: {count}.": "Titoli bloccati, riprovati a ogni passaggio: {count}.",
                     "Remove the old folders from the libraries": "Rimuovi le vecchie cartelle dalle librerie",
+                    "Choose how to move to the folders of each server": "Scegli come passare alle cartelle di ogni server",
+                    "JellyMesh can add the folders of each server to the libraries that hold the old folders, move the watch state, and remove the old folders, without touching other folders or settings. Or you can change the libraries by hand. Until you choose, the old titles stay as they are.": "JellyMesh può aggiungere le cartelle di ogni server alle librerie che contengono le vecchie cartelle, spostare lo stato di visione e togliere le vecchie cartelle, senza toccare altre cartelle o impostazioni. Oppure puoi cambiare le librerie a mano. Finché non scegli, i vecchi titoli restano come sono.",
+                    "Migrate automatically": "Migra in automatico",
+                    "I'll do it by hand": "Lo faccio a mano",
+                    "Try again": "Riprova",
+                    "Migrating to the folders of each server": "Migrazione alle cartelle di ogni server",
+                    "Adding the folders of each server to the libraries.": "Aggiunta delle cartelle di ogni server alle librerie.",
+                    "Waiting for the library scan.": "In attesa della scansione delle librerie.",
+                    "Moving the watch state to the new titles.": "Spostamento dello stato di visione nei nuovi titoli.",
+                    "Removing the old folders from the libraries.": "Rimozione delle vecchie cartelle dalle librerie.",
+                    "Waiting for the last library scan.": "In attesa dell'ultima scansione delle librerie.",
+                    "The automatic migration stopped": "La migrazione automatica si è fermata",
+                    "The libraries could not be read.": "Non è stato possibile leggere le librerie.",
+                    "The folders of each server could not be added to the library {library}.": "Non è stato possibile aggiungere le cartelle di ogni server alla libreria {library}.",
+                    "No library holds the old folder of a kind with titles to move, so its folders of each server have nowhere to go.": "Nessuna libreria contiene la vecchia cartella di un tipo con titoli da spostare, quindi le sue cartelle di ogni server non hanno dove andare.",
+                    "A folder of a server left the libraries before the watch state moved.": "Una cartella di un server è uscita dalle librerie prima che lo stato di visione fosse spostato.",
+                    "The old folders could not be removed from the library {library}.": "Non è stato possibile togliere le vecchie cartelle dalla libreria {library}.",
+                    "A step failed.": "Un passo non è riuscito.",
+                    "The old folders still work. Do the steps below by hand, or try again: the migration resumes from this step.": "Le vecchie cartelle funzionano ancora. Fai a mano i passi qui sotto, oppure riprova: la migrazione riprende da questo passo.",
+                    "The automatic migration is running. Try again when it stops.": "La migrazione automatica è in corso. Riprova quando si ferma.",
+                    "There is nothing to migrate.": "Non c'è niente da migrare.",
+                    "The automatic migration cannot go back to manual.": "La migrazione automatica non può tornare a quella manuale.",
                     "The watch state has moved to the new titles and the old folders are empty.": "Lo stato di visione è passato ai nuovi titoli e le vecchie cartelle sono vuote.",
                     "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Librerie e salva di nuovo la selezione.",
                     "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
@@ -5274,8 +5311,25 @@
                 var translations = JSON.parse(page.querySelector('#jmTranslations').textContent);
                 var strings = translations[languageOf(document.documentElement.lang)] || {};
                 var pollMilliseconds = 15000;
+                var runningPollMilliseconds = 3000;
                 var timer = null;
                 var shown = false;
+                var running = false;
+                var automaticSteps = {
+                    AddPaths: t('Adding the folders of each server to the libraries.'),
+                    Scan: t('Waiting for the library scan.'),
+                    Carry: t('Moving the watch state to the new titles.'),
+                    RemoveOldPaths: t('Removing the old folders from the libraries.'),
+                    Finish: t('Waiting for the last library scan.')
+                };
+                var errors = {
+                    ReadFailed: function () { return t('The libraries could not be read.'); },
+                    AddFailed: function (library) { return t('The folders of each server could not be added to the library {library}.', { library: library }); },
+                    FoldersInNoLibrary: function () { return t('No library holds the old folder of a kind with titles to move, so its folders of each server have nowhere to go.'); },
+                    NewPathsLeft: function () { return t('A folder of a server left the libraries before the watch state moved.'); },
+                    RemoveFailed: function (library) { return t('The old folders could not be removed from the library {library}.', { library: library }); },
+                    Failed: function () { return t('A step failed.'); }
+                };
                 var steps = {
                     AddPaths: {
                         title: t('Add the folders of each server to the libraries'),
@@ -5332,21 +5386,69 @@
                     list.hidden = list.childElementCount === 0;
                 }
 
+                // The title and text of the banner: the choice, the automatic step or its error, or the manual step.
+                function wordsOf(migration, step, failed) {
+                    if (migration.Mode === 'None') {
+                        return {
+                            title: t('Choose how to move to the folders of each server'),
+                            text: t('JellyMesh can add the folders of each server to the libraries that hold the old folders, move the watch state, and remove the old folders, without touching other folders or settings. Or you can change the libraries by hand. Until you choose, the old titles stay as they are.')
+                        };
+                    }
+
+                    if (failed) {
+                        var error = errors[migration.Error] || errors.Failed;
+                        return {
+                            title: t('The automatic migration stopped'),
+                            text: error(migration.ErrorLibrary || '') + ' ' + t('The old folders still work. Do the steps below by hand, or try again: the migration resumes from this step.')
+                        };
+                    }
+
+                    if (migration.Mode === 'Automatic') {
+                        return { title: t('Migrating to the folders of each server'), text: automaticSteps[migration.AutomaticStep] || '' };
+                    }
+
+                    return step;
+                }
+
+                // Shows the buttons of the banner: the two choices, the switch from manual, or the retry after an error.
+                function renderActions(migration, failed) {
+                    var automatic = page.querySelector('#jmMigrateAutomatic');
+                    var manual = page.querySelector('#jmMigrateManual');
+                    automatic.textContent = failed ? t('Try again') : t('Migrate automatically');
+                    manual.textContent = t('I\'ll do it by hand');
+                    manual.hidden = migration.Mode !== 'None';
+                    automatic.hidden = migration.Running || (migration.Mode === 'Automatic' && !failed);
+                    page.querySelector('#jmMigrationActions').hidden = automatic.hidden && manual.hidden;
+                }
+
                 // Shows the step of the move to the folders of each server, or hides the banner when there is none.
                 function render(migration) {
                     var step = migration && steps[migration.Step];
                     page.querySelector('#jmMigration').hidden = !step;
+                    running = !!(step && migration.Running);
                     if (!step) {
                         return;
                     }
 
+                    var mode = migration.Mode || 'None';
+                    migration.Mode = mode;
+                    var failed = mode === 'Automatic' && !!migration.Error && migration.Error !== 'None';
+                    var quiet = mode === 'Automatic' ? !failed : mode === 'Manual' && migration.Step === 'Carrying';
                     var banner = page.querySelector('#jmMigrationBanner');
-                    banner.classList.toggle('jmToneWarn', migration.Step !== 'Carrying');
-                    banner.classList.toggle('jmToneQuiet', migration.Step === 'Carrying');
-                    page.querySelector('#jmMigrationTitle').textContent = step.title;
-                    page.querySelector('#jmMigrationText').textContent = step.text;
-                    var libraries = (migration.Libraries || []).slice();
-                    if (migration.Step === 'AddPaths' && (migration.UnlinkedFolders || []).length > 0) {
+                    banner.classList.toggle('jmToneWarn', !quiet);
+                    banner.classList.toggle('jmToneQuiet', quiet);
+                    var words = wordsOf(migration, step, failed);
+                    page.querySelector('#jmMigrationTitle').textContent = words.title;
+                    page.querySelector('#jmMigrationText').textContent = words.text;
+                    var next = page.querySelector('#jmMigrationNext');
+                    next.textContent = failed ? step.title : '';
+                    next.hidden = !failed;
+                    renderActions(migration, failed);
+
+                    // The folders to add or remove are the admin's to do in manual mode, or left by hand after an error.
+                    var byHand = mode === 'Manual' || failed;
+                    var libraries = byHand ? (migration.Libraries || []).slice() : [];
+                    if (byHand && migration.Step === 'AddPaths' && (migration.UnlinkedFolders || []).length > 0) {
                         libraries.push({ Name: t('In no library yet'), MissingPaths: migration.UnlinkedFolders });
                     }
 
@@ -5357,16 +5459,17 @@
 
                         return migration.Step === 'RemoveOldPaths' ? library.OldPaths || [] : [];
                     });
-                    var progress = migration.Step === 'Carrying' ? [t('Old titles left: {count}.', { count: migration.OldTitles })] : [];
-                    if (migration.Step === 'Carrying' && migration.Waiting) {
+                    var carrying = migration.Step === 'Carrying' && mode !== 'None' && !failed;
+                    var progress = carrying ? [t('Old titles left: {count}.', { count: migration.OldTitles })] : [];
+                    if (carrying && migration.Waiting) {
                         progress.push(t('Waiting for a scan: {count}.', { count: migration.Waiting }));
                     }
 
-                    if (migration.Step === 'Carrying' && migration.Held) {
+                    if (carrying && migration.Held) {
                         progress.push(t('Held for an empty remote library: {count}.', { count: migration.Held }));
                     }
 
-                    if (migration.Step === 'Carrying' && migration.Blocked) {
+                    if (carrying && migration.Blocked) {
                         progress.push(t('Blocked titles, tried again at every run: {count}.', { count: migration.Blocked }));
                     }
 
@@ -5399,9 +5502,44 @@
                         return null;
                     }).then(function () {
                         window.clearTimeout(timer);
-                        timer = shown ? window.setTimeout(poll, pollMilliseconds) : null;
+                        timer = shown ? window.setTimeout(poll, running ? runningPollMilliseconds : pollMilliseconds) : null;
                     });
                 }
+
+                // Sends the choice in the banner, shows the reason of a refusal, and reads the banner again.
+                function choose(mode) {
+                    var error = page.querySelector('#jmMigrationError');
+                    error.hidden = true;
+                    page.querySelector('#jmMigrationActions').hidden = true;
+                    fetch(ApiClient.getUrl('JellyMesh/Admin/Migration'), {
+                        method: 'POST',
+                        headers: {
+                            Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
+                            Accept: 'application/json; profile="PascalCase"',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ Mode: mode })
+                    }).then(function (response) {
+                        return response.json().catch(function () {
+                            return {};
+                        }).then(function (data) {
+                            if (!response.ok) {
+                                error.textContent = data && data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status });
+                                error.hidden = false;
+                            }
+                        });
+                    }).catch(function () {
+                        return null;
+                    }).then(poll);
+                }
+
+                page.querySelector('#jmMigrateAutomatic').addEventListener('click', function () {
+                    choose('Automatic');
+                });
+
+                page.querySelector('#jmMigrateManual').addEventListener('click', function () {
+                    choose('Manual');
+                });
 
                 page.addEventListener('pageshow', function () {
                     shown = true;
