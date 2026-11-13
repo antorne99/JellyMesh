@@ -213,4 +213,34 @@ public sealed partial class ServerLibraryManagerTests
         Assert.NotNull(libraries);
         Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
     }
+
+    [Fact]
+    public async Task A_library_a_removed_server_left_renamed_in_the_dashboard_still_counts_as_automatic()
+    {
+        // The held registries are not followed, so the library is found by its folder (§10 row 395).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Vecchio film");
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie", "Vecchio film"], libraries.Automatic.Select(folder => folder.Name).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_renamed_library_of_a_removed_server_does_not_hold_back_the_server_added_back_with_its_switch_on()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Vecchio film");
+        fixture.AddServerBack("Casa").AutomaticLibraries = true;
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Contains(libraries.Automatic, folder => folder.Name == "Vecchio film");
+    }
 }

@@ -49,9 +49,11 @@ public sealed partial class ServerLibraryManager
 
         return _store.Read(config =>
         {
+            // A held library renamed in the dashboard is not followed, so it is found by its folder too (§10 row 395).
             var automatic = config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
                 .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
                 .Select(record => FindRecorded(record, folders))
+                .Concat(folders.Where(folder => config.RemovedServerLibraries.Any(held => _kinds.Any(kind => Passes(folder, kind, root, held.ServerId)))))
                 .OfType<VirtualFolderInfo>()
                 .ToHashSet();
 
