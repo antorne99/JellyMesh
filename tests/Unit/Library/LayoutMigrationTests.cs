@@ -229,6 +229,40 @@ public sealed class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task WithNoServerConfiguredTheMigrationDoesNotStart()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        _items.Remove(oldItem.Id);
+        _configured.Clear();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+    }
+
+    [Fact]
+    public async Task AServerListEmptiedBeforeTheLockKeepsTheOldStubs()
+    {
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _items.Remove(oldItem.Id);
+        AllPathsLinked();
+
+        // A removal from the page empties the list once the gate has passed; the run reads the index inside the lock.
+        var snapshot = _index.Object.Snapshot;
+        _index.Setup(index => index.Snapshot).Returns(() =>
+        {
+            _configured.Clear();
+            return snapshot;
+        });
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(old.Id));
+    }
+
+    [Fact]
     public async Task AFreshInstallShowsNoMigration()
     {
         NewFilm(_serverA, "a1");

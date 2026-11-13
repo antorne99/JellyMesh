@@ -67,7 +67,8 @@ public sealed class LayoutMigration : ILayoutMigration
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath) ?? string.Empty;
-        if (root.Length == 0 || !HasOldTitles(_registry.State))
+        // With no server configured every server folder looks linked, so nothing starts (Q260).
+        if (root.Length == 0 || !HasOldTitles(_registry.State) || _servers.GetServers().Count == 0)
         {
             return;
         }
@@ -88,7 +89,13 @@ public sealed class LayoutMigration : ILayoutMigration
                 return;
             }
 
+            // Read again under the lock, which a removal from the page takes (decision 44).
             var configured = _servers.GetServers().DistinctBy(server => server.Id).ToDictionary(server => server.Id);
+            if (configured.Count == 0)
+            {
+                return;
+            }
+
             var catalog = new Catalog(IndexItemLookup.Build(snapshot), configured, state.RemovedServers.ToHashSet());
             var moves = new List<WatchStateMove>();
             var waiting = 0;
