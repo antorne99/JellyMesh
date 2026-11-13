@@ -4583,7 +4583,7 @@
                         return note.text;
                     });
                     (status ? status.Servers : []).forEach(function (server) {
-                        if (renameState(server).Stuck) {
+                        if (renameState(server).Stuck && !renameState(server).Busy) {
                             notes.push({ key: 'renameStuck' + server.Id, text: t('{server}: its rename is held up because an old title cannot leave the versions it was grouped with. JellyMesh tries again after every library scan.', { server: server.Name }), tab: 'servers' });
                         }
                     });
