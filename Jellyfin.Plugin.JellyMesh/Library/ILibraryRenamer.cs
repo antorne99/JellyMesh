@@ -26,7 +26,7 @@ public interface ILibraryRenamer
     /// <param name="type">The library type.</param>
     /// <param name="newName">The new name, a valid file name.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The new library id, or null when the library is not there or the new name is taken.</returns>
+    /// <returns>The new library id, or null when the library is not there, the new name is taken or is the same.</returns>
     Task<Guid?> RenameAsync(string name, Guid? itemId, CollectionType? type, string newName, CancellationToken cancellationToken);
 
     /// <summary>

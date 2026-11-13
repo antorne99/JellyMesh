@@ -118,32 +118,42 @@ public sealed class LibraryRenameJournal
 
     /// <summary>
     /// Moves a rename the resume cannot trust to the damaged file, next to those set aside before, so it is never replayed
-    /// (§10 row 329).
+    /// (§10 row 329). When the damaged file cannot be written, the rename is dropped all the same (row 357).
     /// </summary>
     /// <param name="record">The rename.</param>
-    /// <returns>False when a file cannot be written, so the record stays and the caller leaves it alone.</returns>
-    public bool SetAside(LibraryRenameRecord record)
+    /// <returns>What became of the rename; it stays pending only while this file cannot be read or written.</returns>
+    public SetAsideOutcome SetAside(LibraryRenameRecord record)
     {
         lock (_lock)
         {
             if (Load() is not { } records)
             {
-                return false;
+                return SetAsideOutcome.Pending;
+            }
+
+            var copied = true;
+            try
+            {
+                var damaged = _path + ".damaged";
+                Save(damaged, [.. SetAsideBefore(damaged), record]);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError("Cannot copy a library rename to the damaged file: {Error}", exception.GetType().Name);
+                copied = false;
             }
 
             var left = records.Where(other => other != record).ToList();
             try
             {
-                var damaged = _path + ".damaged";
-                Save(damaged, [.. SetAsideBefore(damaged), record]);
                 Write(left);
                 _records = left;
-                return true;
+                return copied ? SetAsideOutcome.SetAside : SetAsideOutcome.DroppedWithoutCopy;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogError("Cannot set aside a library rename: {Error}", exception.GetType().Name);
-                return false;
+                _logger.LogError("Cannot save the library renames: {Error}", exception.GetType().Name);
+                return SetAsideOutcome.Pending;
             }
         }
     }
@@ -165,7 +175,7 @@ public sealed class LibraryRenameJournal
         }
     }
 
-    // Null while the file cannot be read for now; a damaged one is set aside and counts as empty.
+    // Null while the file cannot be read for now; a damaged one is set aside, or dropped, and counts as empty.
     private List<LibraryRenameRecord>? Load()
     {
         if (_records is not null)
@@ -183,11 +193,11 @@ public sealed class LibraryRenameJournal
                 return _records;
             }
 
-            _logger.LogError("The file of the library renames has an unsupported format. It is set aside");
+            _logger.LogError("The file of the library renames has an unsupported format");
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of the library renames: {Error}. It is set aside", exception.GetType().Name);
+            _logger.LogError("Cannot read the file of the library renames: {Error}", exception.GetType().Name);
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -203,12 +213,26 @@ public sealed class LibraryRenameJournal
         try
         {
             File.Move(_path, _path + ".damaged", overwrite: true);
+            _logger.LogError("The damaged file of the library renames is set aside");
             _records = [];
             return _records;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _logger.LogError("Cannot set aside the damaged file of the library renames: {Error}", exception.GetType().Name);
+        }
+
+        // Dropped all the same, so it is never replayed and later renames are not blocked (row 357).
+        try
+        {
+            File.Delete(_path);
+            _logger.LogError("The damaged file of the library renames is dropped without a copy");
+            _records = [];
+            return _records;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot drop the damaged file of the library renames: {Error}", exception.GetType().Name);
             return null;
         }
     }

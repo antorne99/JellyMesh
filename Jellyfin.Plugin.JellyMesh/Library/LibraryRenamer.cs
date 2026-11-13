@@ -111,6 +111,12 @@ public sealed class LibraryRenamer : ILibraryRenamer
         ArgumentException.ThrowIfNullOrWhiteSpace(newName);
         cancellationToken.ThrowIfCancellationRequested();
 
+        // The same exact name is no rename and must not write a temporary name (row 358).
+        if (string.Equals(name, newName, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
         var root = _paths.DefaultUserViewsPath;
         if (ChildOf(root, name) is not { } currentPath || ChildOf(root, newName) is not { } newPath || !Directory.Exists(currentPath))
         {
@@ -219,11 +225,6 @@ public sealed class LibraryRenamer : ILibraryRenamer
         return touched;
     }
 
-    // The exact names in the libraries folder: a check by path cannot tell a change of case on some file systems.
-    private static HashSet<string> FolderNames(string root) => Directory.Exists(root)
-        ? Directory.EnumerateDirectories(root).Select(Path.GetFileName).OfType<string>().ToHashSet(StringComparer.Ordinal)
-        : [];
-
     // True for no temporary name, or for a guid one on a change of case only, as RenameAsync writes it (row 345).
     private static bool IsTemporaryBound(LibraryRenameRecord record) => record.TemporaryName is not { } temporary
         || (temporary.Length == 32
@@ -289,37 +290,22 @@ public sealed class LibraryRenamer : ILibraryRenamer
     {
         if (!IsBound(record, root))
         {
-            if (_journal.SetAside(record))
-            {
-                _logger.LogError("A pending library rename does not match the library folders. It is set aside");
-            }
-            else
-            {
-                _logger.LogError("A pending library rename does not match the library folders and cannot be set aside. It stays pending and is not replayed");
-            }
-
+            PutAside(record);
             return;
         }
 
-        var names = FolderNames(root);
-        if (record.TemporaryName is { } temporary && names.Contains(temporary))
+        // The folder that is or becomes the new library: the temporary one while a change of case waits for its second move.
+        var folders = LiveFolders(root);
+        var moving = record.TemporaryName is { } temporary && folders.ContainsKey(temporary) && !folders.ContainsKey(record.NewName);
+        var newFolder = moving ? record.TemporaryName : record.NewName;
+        var others = folders.Where(folder => !string.Equals(folder.Key, newFolder, StringComparison.Ordinal)).Select(folder => folder.Value).ToHashSet();
+        if (others.Contains(record.OldId) && !(folders.TryGetValue(record.OldName, out var oldId) && oldId.Equals(record.OldId)))
         {
-            if (names.Contains(record.NewName))
-            {
-                _logger.LogWarning("Cannot finish the rename of the library {Library}: its new name is taken", LogText.Clean(record.OldName));
-                return;
-            }
-
-            // Only the folder of the library moves, outside every watched path, so the monitor runs on.
-            _move(Path.Combine(root, temporary), Path.Combine(root, record.NewName));
-            CollectionFolder.OnCollectionFolderChange();
-            _retired.Retire(_library.GetNewItemId(Path.Combine(root, temporary), typeof(CollectionFolder)));
-            _retired.Restore(record.NewId);
-            _changes?.Renamed(record.OldId, record.NewId, record.NewName);
-            names = FolderNames(root);
+            PutAside(record);
+            return;
         }
 
-        if (names.Contains(record.OldName))
+        if (folders.ContainsKey(record.OldName))
         {
             // The folder never moved, or a library was made again with the old name and so its id: lists stay and the id
             // is valid again (rows 331, 348).
@@ -328,29 +314,72 @@ public sealed class LibraryRenamer : ILibraryRenamer
             return;
         }
 
+        // The ids are compared, not the names, so a library named in another case is never taken for this one (row 360),
+        // and the new library must be there by its exact name.
+        var temporaryId = record.TemporaryName is { } name ? _library.GetNewItemId(Path.Combine(root, name), typeof(CollectionFolder)) : (Guid?)null;
+        if ((temporaryId is { } id && others.Contains(id)) || (!moving && !folders.ContainsKey(record.NewName)))
+        {
+            PutAside(record);
+            return;
+        }
+
+        if (moving)
+        {
+            // Only the folder of the library moves, outside every watched path, so the monitor runs on.
+            _move(Path.Combine(root, record.TemporaryName!), Path.Combine(root, record.NewName));
+            CollectionFolder.OnCollectionFolderChange();
+            _retired.Retire(temporaryId!.Value);
+            _retired.Restore(record.NewId);
+            _changes?.Renamed(record.OldId, record.NewId, record.NewName);
+        }
+
         await FinishAsync(record, root).ConfigureAwait(false);
     }
 
-    // True when the names stay in the libraries folder, the new id is the new folder's and the old id the old folder's or
-    // a library of the plugin's by that old name, so a forged record moves and remaps nothing (rows 329, 346).
+    // Takes a record the resume cannot trust out of the pending ones and logs what became of it (rows 329, 357).
+    private void PutAside(LibraryRenameRecord record)
+    {
+        switch (_journal.SetAside(record))
+        {
+            case SetAsideOutcome.SetAside:
+                _logger.LogError("A pending library rename does not match the library folders. It is set aside");
+                break;
+            case SetAsideOutcome.DroppedWithoutCopy:
+                _logger.LogError("A pending library rename does not match the library folders. It is dropped without a copy");
+                break;
+            default:
+                _logger.LogError("A pending library rename does not match the library folders and cannot be dropped. It stays pending and is not replayed");
+                break;
+        }
+    }
+
+    // The library folders by exact name, with the id each one has.
+    private Dictionary<string, Guid> LiveFolders(string root) => Directory.Exists(root)
+        ? Directory.EnumerateDirectories(root)
+            .Select(path => (Name: Path.GetFileName(path), Path: path))
+            .Where(folder => folder.Name.Length > 0)
+            .ToDictionary(folder => folder.Name, folder => _library.GetNewItemId(folder.Path, typeof(CollectionFolder)), StringComparer.Ordinal)
+        : [];
+
+    // True when the names stay in the libraries folder, the new id is the new folder's, and the registry of the plugin
+    // holds the old or the new library by both id and name, so a forged record moves and remaps nothing (rows 329, 346, 360).
     private bool IsBound(LibraryRenameRecord record, string root)
     {
         try
         {
             if (!IsTemporaryBound(record)
-                || ChildOf(root, record.OldName) is not { } oldPath
+                || ChildOf(root, record.OldName) is null
                 || ChildOf(root, record.NewName) is not { } newPath
                 || !_library.GetNewItemId(newPath, typeof(CollectionFolder)).Equals(record.NewId))
             {
                 return false;
             }
 
-            return _library.GetNewItemId(oldPath, typeof(CollectionFolder)).Equals(record.OldId)
-                || _store.Read(config => config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
-                    .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
-                    .Any(library => Guid.TryParse(library.ItemId, out var id)
-                        && id.Equals(record.OldId)
-                        && string.Equals(library.Name, record.OldName, StringComparison.Ordinal)));
+            return _store.Read(config => config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
+                .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+                .Any(library => Guid.TryParse(library.ItemId, out var id)
+                    && ((id.Equals(record.OldId) && string.Equals(library.Name, record.OldName, StringComparison.Ordinal))
+                        || (id.Equals(record.NewId) && string.Equals(library.Name, record.NewName, StringComparison.Ordinal)))));
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
