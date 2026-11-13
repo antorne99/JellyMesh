@@ -333,6 +333,39 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Contains(libraries.Automatic, folder => folder.Name == "Vecchio film");
     }
 
+    [Fact]
+    public async Task A_library_renamed_under_a_skipped_follow_does_not_hold_placement_back()
+    {
+        // The follow cannot adopt it and releases it under its current name, so it is the admin's (§10 rows 393, 401).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+        Assert.Equal(["Film di casa"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_library_renamed_under_a_skipped_follow_next_to_one_there_at_switch_on_does_not_hold_placement_back()
+    {
+        // The library there at switch-on is never seen by the registry, so the renamed one is still the only one (§10 row 401).
+        var fixture = new Fixture();
+        fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+
+        var libraries = fixture.Manager.FollowForPlacement();
+
+        Assert.NotNull(libraries);
+        Assert.Equal(["Casa - Serie"], libraries.Automatic.Select(folder => folder.Name));
+        Assert.Equal(["Film di casa"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
     // Two servers with their switch on, each with its libraries, and a check that recorded them all.
     private static async Task<RemoteServerConfig> TwoServersFollowedAsync(Fixture fixture)
     {

@@ -306,8 +306,9 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.NewManager().ReconcileAsync(CancellationToken.None);
 
+        // The only library left on the folder is released under its name, so placement treats it as the admin's (§10 row 401).
         Assert.Equal(["Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
-        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+        Assert.Equal(["Mine"], fixture.Server.ReleasedAutomaticLibraries);
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
         Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
@@ -544,7 +545,7 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.False(fixture.Manager.GetState(_serverId).Busy);
         Assert.Equal(["Film di casa"], fixture.Libraries.Folders.Select(folder => folder.Name));
-        Assert.Equal(["Casa - Film"], fixture.Manager.GetState(_serverId).Released);
+        Assert.Equal(["Film di casa"], fixture.Manager.GetState(_serverId).Released);
     }
 
     [Fact]
@@ -967,6 +968,38 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_renamed_after_a_skipped_check_is_not_taken_and_is_released_under_its_new_name()
+    {
+        // No adoption after a skipped check (decision 173), but the name released is the one the Dashboard shows (§10 row 401).
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(["Film di casa"], fixture.Server.ReleasedAutomaticLibraries);
+        await fixture.Manager.Disable(_serverId, true).Job;
+        Assert.Equal(["Film di casa"], fixture.Libraries.Folders.Select(folder => folder.Name));
+    }
+
+    [Fact]
+    public async Task A_library_renamed_after_a_skipped_check_next_to_another_on_its_folder_is_released_under_the_old_name()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Manager.MarkFollowSkipped();
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+        fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
+
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
     public async Task A_check_that_never_started_marks_every_server_and_removed_server_once()
     {
         var fixture = new Fixture();
@@ -998,7 +1031,7 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Equal(["Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
         Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
-        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+        Assert.Equal(["Mine"], fixture.Server.ReleasedAutomaticLibraries);
     }
 
     [Fact]
@@ -1461,7 +1494,7 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.NewManager().ReconcileAsync(CancellationToken.None);
 
         Assert.Equal(["Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
-        Assert.Equal(["Casa - Film"], fixture.Server.ReleasedAutomaticLibraries);
+        Assert.Equal(["Mine"], fixture.Server.ReleasedAutomaticLibraries);
         await fixture.Manager.Disable(_serverId, true).Job;
         Assert.Equal(["Mine"], fixture.Libraries.Folders.Select(folder => folder.Name));
     }
