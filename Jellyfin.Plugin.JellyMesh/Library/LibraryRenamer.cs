@@ -299,6 +299,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
             // Only the folder of the library moves, outside every watched path, so the monitor runs on.
             _move(Path.Combine(root, temporary), Path.Combine(root, record.NewName));
             CollectionFolder.OnCollectionFolderChange();
+            _retired.Retire(_library.GetNewItemId(Path.Combine(root, temporary), typeof(CollectionFolder)));
             _retired.Restore(record.NewId);
             _changes?.Renamed(record.OldId, record.NewId, record.NewName);
             names = FolderNames(root);

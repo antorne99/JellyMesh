@@ -494,6 +494,21 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task Resuming_a_change_of_case_retires_the_id_of_the_temporary_folder()
+    {
+        var target = Path.Combine(_root, "CASA - FILM");
+        _moveFails = (_, to) => to == target;
+        await Assert.ThrowsAsync<IOException>(() => RenameAsync(to: "CASA - FILM"));
+        var temporaryId = IdOf(Assert.Single(Directory.GetDirectories(_root)));
+        _moveFails = (_, _) => false;
+
+        await NewRenamer().ResumeAsync(CancellationToken.None);
+
+        Assert.True(_retired.Contains(temporaryId));
+        Assert.False(_retired.Contains(OldId));
+    }
+
+    [Fact]
     public async Task The_record_file_is_readable_by_its_owner_only()
     {
         if (OperatingSystem.IsWindows())
