@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Serialization;
 using Jellyfin.Extensions.Json;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Model.Serialization;
 using Moq;
@@ -183,6 +184,29 @@ public sealed class PluginSaveTests : IDisposable
         Assert.True(held.FollowSkipped);
         Assert.Equal(["Casa - Serie"], held.ReleasedLibraries);
         Assert.Equal(["Casa - Serie"], held.HiddenReleasedLibraries);
+    }
+
+    [Fact]
+    public void TheMigrationStateSurvivesTheXmlAndAStockSaveAndIsNotShown()
+    {
+        // The choice and the step of the automatic migration resume after a restart (Q57).
+        _plugin.ChangeConfiguration(config =>
+        {
+            config.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
+            config.LayoutMigration.Step = AutomaticMigrationStep.RemoveOldPaths;
+            config.LayoutMigration.Error = AutomaticMigrationError.RemoveFailed;
+            config.LayoutMigration.ErrorLibrary = "Film di casa";
+        });
+        var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
+        _plugin.UpdateConfiguration(JsonSerializer.Deserialize<PluginConfiguration>(json, JsonDefaults.Options)!);
+
+        var loaded = (PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!;
+
+        Assert.DoesNotContain("Film di casa", json, StringComparison.Ordinal);
+        Assert.Equal(LayoutMigrationMode.Automatic, loaded.LayoutMigration.Mode);
+        Assert.Equal(AutomaticMigrationStep.RemoveOldPaths, loaded.LayoutMigration.Step);
+        Assert.Equal(AutomaticMigrationError.RemoveFailed, loaded.LayoutMigration.Error);
+        Assert.Equal("Film di casa", loaded.LayoutMigration.ErrorLibrary);
     }
 
     [Fact]

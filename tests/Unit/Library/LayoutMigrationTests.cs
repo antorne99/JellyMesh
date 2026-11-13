@@ -61,6 +61,7 @@ public sealed class LayoutMigrationTests : IDisposable
     public LayoutMigrationTests()
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Manual;
         _registry = NewRegistry();
         _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
 
@@ -138,6 +139,23 @@ public sealed class LayoutMigrationTests : IDisposable
         Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
         Assert.False(_items.ContainsKey(oldItem.Id));
         Assert.Equal(2, _registry.State.Stubs.Count);
+    }
+
+    [Fact]
+    public async Task NothingIsCarriedBeforeTheAdminChooses()
+    {
+        // Until the choice in the banner the old layout stays as it is, even with the new paths linked (Q55, §10 row 217).
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.None;
+        var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var a = NewFilm(_serverA, "a1");
+        AllPathsLinked();
+        Row(_mario, oldItem).IsFavorite = true;
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.False(Row(_mario, a).IsFavorite);
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.True(_items.ContainsKey(oldItem.Id));
     }
 
     [Fact]

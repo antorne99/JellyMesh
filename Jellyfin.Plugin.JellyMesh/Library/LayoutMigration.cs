@@ -70,9 +70,10 @@ public sealed class LayoutMigration : ILayoutMigration
     /// <inheritdoc />
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        var root = _store.Read(config => config.FederatedFolderPath) ?? string.Empty;
-        // With no server configured every server folder looks linked, so nothing starts (Q260).
-        if (root.Length == 0 || !HasOldTitles(_registry.State) || _servers.GetServers().Count == 0)
+        var (root, mode) = _store.Read(config => (config.FederatedFolderPath ?? string.Empty, config.LayoutMigration.Mode));
+        // Nothing moves before the admin chooses in the banner (Q55, §10 row 217). With no server configured every server
+        // folder looks linked, so nothing starts (Q260).
+        if (mode == LayoutMigrationMode.None || root.Length == 0 || !HasOldTitles(_registry.State) || _servers.GetServers().Count == 0)
         {
             return;
         }
