@@ -176,9 +176,14 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal(0, _scansQueued);
 
         // The hooks do not go past an error; the retry from the banner does.
+        var added = _addedPaths.Count;
         await migration.RunAsync(CancellationToken.None);
         await migration.Running;
         Assert.Equal(0, _scansQueued);
+        Assert.Equal(added, _addedPaths.Count);
+        Assert.Empty(_removedPaths);
+        Assert.NotNull(_registry.Find(old.Id));
+        Assert.False(Row(_mario, a).IsFavorite);
 
         _failingAdds.Clear();
         var retry = migration.Choose(LayoutMigrationMode.Automatic);
