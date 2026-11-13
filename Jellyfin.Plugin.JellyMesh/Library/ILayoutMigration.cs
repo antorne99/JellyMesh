@@ -14,6 +14,12 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface ILayoutMigration
 {
     /// <summary>
+    /// Gets the mode for the servers linked later, read from the field of the banner (§10 row 368): manual until automatic
+    /// is chosen, also on a new install (D23).
+    /// </summary>
+    LayoutMigrationMode NewServerMode { get; }
+
+    /// <summary>
     /// Once every library on an old path holds the new paths of the same kind, and each server folder is in some library,
     /// counting only the kinds with old titles, carries each user's state from the old stubs to the new items, and empties
     /// the old folders when every old title is done. Without the new paths, or any server, it does nothing (Q49, Q215, Q249, Q260).
@@ -30,6 +36,14 @@ public interface ILayoutMigration
     /// <param name="mode">The mode chosen.</param>
     /// <returns>What the choice did.</returns>
     LayoutMigrationChoice Choose(LayoutMigrationMode mode);
+
+    /// <summary>
+    /// Sets the mode from the settings. While the banner asks it is the banner's choice; with nothing to migrate it only
+    /// sets the mode for the servers linked later; from an automatic run it goes back to manual once the run is done (Q58).
+    /// </summary>
+    /// <param name="mode">The mode chosen.</param>
+    /// <returns>What the choice did.</returns>
+    LayoutMigrationChoice SetMode(LayoutMigrationMode mode);
 
     /// <summary>
     /// Gets where the migration stands, for the banner of the page.

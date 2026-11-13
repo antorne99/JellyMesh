@@ -1,3 +1,5 @@
+using System;
+using System.Collections.ObjectModel;
 using Jellyfin.Plugin.JellyMesh.Library;
 
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
@@ -18,4 +20,10 @@ public class LayoutMigrationConfig
 
     /// <summary>Gets or sets the library where it stopped, empty when the error names none.</summary>
     public string ErrorLibrary { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets the servers whose folders need no placement in automatic mode: in the libraries by the migration, there when
+    /// the settings chose automatic, or placed since (Q58, D24).
+    /// </summary>
+    public Collection<Guid> PlacedServers { get; } = [];
 }
