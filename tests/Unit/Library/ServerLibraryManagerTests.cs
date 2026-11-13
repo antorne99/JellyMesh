@@ -1005,6 +1005,40 @@ public sealed class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_still_without_an_id_after_the_wait_gets_a_scan_and_then_its_rename_is_followed()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.Libraries.RenameFromDashboard("Casa - Film", "Film di casa");
+        var renamed = fixture.Libraries.Find("Film di casa");
+        renamed.ItemId = null;
+        fixture.Scans.Steps.Clear();
+        fixture.Scans.Ready = false;
+        fixture.Scans.DuringScan = () => renamed.ItemId = fixture.Libraries.IdOf("Film di casa");
+
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["scan"], fixture.Scans.Steps);
+        Assert.Equal(["Film di casa", "Casa - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Empty(fixture.Server.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public async Task A_wait_that_runs_out_with_every_library_holding_its_id_asks_for_no_scan()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Scans.Steps.Clear();
+        fixture.Scans.Ready = false;
+
+        await fixture.Manager.WaitReadyAsync(CancellationToken.None);
+
+        Assert.Empty(fixture.Scans.Steps);
+    }
+
+    [Fact]
     public async Task A_removed_server_never_deletes_a_library_a_configured_server_found_at_switch_on_and_lists_it_as_released()
     {
         var fixture = new Fixture();
@@ -1527,6 +1561,7 @@ public sealed class ServerLibraryManagerTests
         public Task QueueAndWaitAsync(CancellationToken cancellationToken)
         {
             Steps.Add("scan");
+            DuringScan?.Invoke();
             return Task.CompletedTask;
         }
 
@@ -1534,11 +1569,15 @@ public sealed class ServerLibraryManagerTests
 
         public Action? DuringReadyWait { get; set; }
 
+        public Action? DuringScan { get; set; }
+
+        public bool Ready { get; set; } = true;
+
         public Task<bool> WaitReadyAsync(TimeSpan limit, CancellationToken cancellationToken)
         {
             ReadyWaits.Add(limit);
             DuringReadyWait?.Invoke();
-            return Task.FromResult(true);
+            return Task.FromResult(Ready);
         }
     }
 }

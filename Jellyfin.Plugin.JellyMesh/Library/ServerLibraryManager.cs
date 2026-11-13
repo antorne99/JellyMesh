@@ -171,7 +171,18 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
         try
         {
-            if (!await _scans.WaitReadyAsync(ReadyLimit, cancellationToken).ConfigureAwait(false))
+            if (await _scans.WaitReadyAsync(ReadyLimit, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            // Only a scan gives an id to a library renamed without a refresh (decision 250).
+            if (ReadFolders()?.Any(folder => string.IsNullOrEmpty(folder.ItemId)) == true)
+            {
+                _logger.LogWarning("A library has no id after {Minutes} minutes, so a library scan runs before the sync", ReadyLimit.TotalMinutes);
+                await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            else
             {
                 _logger.LogWarning("The libraries of the server are not ready after {Minutes} minutes, so the sync starts", ReadyLimit.TotalMinutes);
             }
