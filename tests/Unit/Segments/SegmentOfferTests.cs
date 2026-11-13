@@ -201,6 +201,21 @@ public class SegmentOfferTests
     }
 
     [Fact]
+    public void Opening_another_title_on_the_device_keeps_the_copy_that_still_plays()
+    {
+        _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));
+        Indexed(_backup, Hour);
+        var identity = PlaybackValues.Identity() with { ItemId = _itemId };
+        var session = Playing(_backup, identity);
+        var offer = Offer();
+        offer.OfferOnRemote(Answer(session.Id), identity);
+        var next = identity with { ItemId = Guid.NewGuid() };
+        offer.OfferOnRemote(Answer(Playing(_best, next).Id), next);
+
+        Assert.False(offer.ServesDirect(identity.UserId, identity.DeviceId, _itemId));
+    }
+
+    [Fact]
     public void A_device_playing_the_copy_the_segments_came_from_reads_them_directly()
     {
         _segments.Remember(_itemId, new SegmentOrigin(_best, 2 * Hour));

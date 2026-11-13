@@ -22,7 +22,7 @@ public sealed class SegmentOffer
     private readonly StubSegments _segments;
     private readonly StubLookup _stubs;
     private readonly PlaybackSessionStore _sessions;
-    private readonly ConcurrentDictionary<(Guid UserId, string DeviceId), Played> _played = new();
+    private readonly ConcurrentDictionary<(bool Local, string PlaySessionId), Played> _played = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SegmentOffer"/> class.
@@ -134,37 +134,43 @@ public sealed class SegmentOffer
     /// <returns>False only while the device plays a copy of that item the segments do not fit.</returns>
     public bool ServesDirect(Guid userId, string? deviceId, Guid itemId)
     {
-        var key = (userId, (deviceId ?? string.Empty).ToUpperInvariant());
-        if (!_played.TryGetValue(key, out var played) || !played.Items.Contains(itemId))
+        var device = deviceId ?? string.Empty;
+        var served = true;
+        foreach (var (key, played) in _played)
         {
-            return true;
+            if (played.UserId != userId || !string.Equals(played.DeviceId, device, StringComparison.OrdinalIgnoreCase) || !played.Items.Contains(itemId))
+            {
+                continue;
+            }
+
+            if (!IsLive(key))
+            {
+                _played.TryRemove(KeyValuePair.Create(key, played));
+                continue;
+            }
+
+            served &= Offers(itemId, played.Source);
         }
 
-        if (!IsLive(played))
-        {
-            _played.TryRemove(KeyValuePair.Create(key, played));
-            return true;
-        }
-
-        return Offers(itemId, played.Source);
+        return served;
     }
 
-    // Records what a device plays, in place of what it played before, and forgets the plays that ended.
+    // Records what a play session of a device plays, and forgets the play sessions that ended.
     private void Record(PlaybackIdentity identity, StubSource? source, string playSessionId, bool local, params Guid?[] items)
     {
-        foreach (var (key, ended) in _played.Where(entry => !IsLive(entry.Value)).ToList())
+        foreach (var (key, ended) in _played.Where(entry => !IsLive(entry.Key)).ToList())
         {
             _played.TryRemove(KeyValuePair.Create(key, ended));
         }
 
         var named = items.OfType<Guid>().Append(identity.ItemId).ToHashSet();
-        _played[(identity.UserId, identity.DeviceId.ToUpperInvariant())] = new Played(named, source, playSessionId, local);
+        _played[(local, playSessionId)] = new Played(identity.UserId, identity.DeviceId, named, source);
     }
 
-    private bool IsLive(Played played)
+    private bool IsLive((bool Local, string PlaySessionId) key)
     {
-        return played.Local ? _sessions.LocalItemOf(played.PlaySessionId) is not null : _sessions.Find(played.PlaySessionId) is not null;
+        return key.Local ? _sessions.LocalItemOf(key.PlaySessionId) is not null : _sessions.Find(key.PlaySessionId) is not null;
     }
 
-    private sealed record Played(IReadOnlySet<Guid> Items, StubSource? Source, string PlaySessionId, bool Local);
+    private sealed record Played(Guid UserId, string DeviceId, IReadOnlySet<Guid> Items, StubSource? Source);
 }
