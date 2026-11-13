@@ -26,12 +26,15 @@ public sealed class ServerStubRenamerTests : IDisposable
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IWatchStateCarrier> _carrier = new();
+    private readonly Mock<IVersionLinker> _linker = new();
+    private readonly List<string> _detached = [];
     private readonly Dictionary<Guid, BaseItem> _items = [];
     private readonly List<IReadOnlyList<WatchStateMove>> _carries = [];
     private readonly List<IReadOnlyCollection<Guid>> _forgets = [];
     private readonly ServerStubRenamer _renamer;
     private Func<WatchStateMove, WatchStateMoveStatus> _status = _ => WatchStateMoveStatus.Carried;
     private bool _deletesFail;
+    private bool _detachFails;
 
     public ServerStubRenamerTests()
     {
@@ -55,7 +58,13 @@ public sealed class ServerStubRenamerTests : IDisposable
                 _forgets.Add(ids);
                 return ids.ToList();
             });
-        _renamer = new ServerStubRenamer(_registry, _store, _library.Object, _carrier.Object, new CapturingLogger<ServerStubRenamer>(), Delete);
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) =>
+            {
+                _detached.AddRange(stubs.Select(stub => stub.RelativePath + (File.Exists(Full(stub.RelativePath)) ? " on disk" : " gone")));
+                return _detachFails ? stubs.ToList() : [];
+            });
+        _renamer = new ServerStubRenamer(_registry, _store, _library.Object, _carrier.Object, _linker.Object, new CapturingLogger<ServerStubRenamer>(), Delete);
     }
 
     private string Root => _store.Configuration.FederatedFolderPath;
@@ -116,6 +125,58 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    // Q316: with the server folder in no library there is no item, so the files are renamed at once and nothing waits.
+    [Fact]
+    public async Task InNoLibrary_TheStubFilesAreRenamedInPlace_AndNothingWaits()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")), Episode("e", EpisodePath("Casa")), Film("n", FilmPath("Casa").Replace("A (2020)", "B (2021)", StringComparison.Ordinal)), Film("o", FilmPath("Altro", _other)));
+        Write(FilmPath("Casa"), "url-f");
+        Write(Path.Combine(Path.GetDirectoryName(FilmPath("Casa"))!, "movie.nfo"), "nfo");
+        Write(EpisodePath("Casa"), "url-e");
+        Write(Path.ChangeExtension(EpisodePath("Casa"), ".nfo"), "nfo-e");
+        Write(Path.ChangeExtension(EpisodePath("Casa"), null) + "-thumb.jpg", "thumb");
+        Write(FilmPath("Altro", _other), "url-o");
+
+        Assert.Equal(3, await _renamer.RelabelInPlaceAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal("url-f", Read(FilmPath("Mare")));
+        Assert.Equal("nfo", Read(Path.Combine(Path.GetDirectoryName(FilmPath("Mare"))!, "movie.nfo")));
+        Assert.Equal(["A (2020) - Mare.strm", "movie.nfo"], Directory.EnumerateFiles(Path.GetDirectoryName(Full(FilmPath("Mare")))!).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["S S01E01 - Mare-thumb.jpg", "S S01E01 - Mare.nfo", "S S01E01 - Mare.strm"],
+            Directory.EnumerateFiles(Path.GetDirectoryName(Full(EpisodePath("Mare")))!).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal("url-o", Read(FilmPath("Altro", _other)));
+
+        var state = _registry.State;
+        Assert.Equal(FilmPath("Mare"), state.Stubs[0].RelativePath);
+        Assert.Equal(EpisodePath("Mare"), state.Stubs[1].RelativePath);
+        Assert.EndsWith("B (2021) - Mare.strm", state.Stubs[2].RelativePath, StringComparison.Ordinal);
+        Assert.Equal(FilmPath("Altro", _other), state.Stubs[3].RelativePath);
+        Assert.Equal((null, null, null), (state.Stubs[0].UrlTag, state.Stubs[0].TechnicalTag, (DateTime?)state.Stubs[0].StrmWrittenUtc));
+        Assert.Empty(state.Renames);
+        Assert.Equal("Mare", state.Labels[_server]);
+        Assert.False(_renamer.IsPending(_server));
+        Assert.Empty(_carries);
+        Assert.Empty(_detached);
+    }
+
+    [Fact]
+    public async Task InNoLibrary_AFileThatCannotMovePutsTheOthersBack_AndKeepsTheOldLabel()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")), Episode("e", EpisodePath("Casa")));
+        Write(FilmPath("Casa"), "url-f");
+        Write(EpisodePath("Casa"), "url-e");
+        Directory.CreateDirectory(Full(EpisodePath("Mare")));
+
+        await Assert.ThrowsAnyAsync<IOException>(() => _renamer.RelabelInPlaceAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal("url-f", Read(FilmPath("Casa")));
+        Assert.False(File.Exists(Full(FilmPath("Mare"))));
+        Assert.Equal("url-e", Read(EpisodePath("Casa")));
+        Assert.Equal([FilmPath("Casa"), EpisodePath("Casa")], _registry.State.Stubs.Select(stub => stub.RelativePath));
+        Assert.Equal("Casa", _registry.State.Labels[_server]);
+    }
+
     [Fact]
     public async Task ALabelTakenByAnotherServerGetsTheGuidDigits()
     {
@@ -156,6 +217,41 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.True(File.Exists(Full(Path.Combine(Path.GetDirectoryName(FilmPath("Casa"))!, "movie.nfo"))));
         Assert.Equal([new StubRename("f", FilmPath("Casa")) { RemovedItemId = old.Id, Forgets = true }], _registry.State.Renames);
         Assert.True(_renamer.IsPending(_server));
+    }
+
+    // Q327: the old item leaves its version group before its file goes, so Jellyfin rewrites no .nfo of a local copy.
+    [Fact]
+    public async Task TheOldItemLeavesItsVersionGroupBeforeItsFileGoes()
+    {
+        await RenamedFilmAsync();
+        Scanned(FilmPath("Casa"), new Movie());
+        Scanned(FilmPath("Mare"), new Movie());
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal([FilmPath("Casa") + " on disk"], _detached);
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+    }
+
+    // Q326 and Q327: an old item that cannot leave its group keeps its file, and the next scan tries again.
+    [Fact]
+    public async Task AnOldItemThatCannotLeaveItsVersionGroupKeepsItsFileForTheNextScan()
+    {
+        await RenamedFilmAsync();
+        var old = Scanned(FilmPath("Casa"), new Movie());
+        Scanned(FilmPath("Mare"), new Movie());
+        _detachFails = true;
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
+
+        _detachFails = false;
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+        Assert.Equal([new StubRename("f", FilmPath("Casa")) { RemovedItemId = old.Id, Forgets = true }], _registry.State.Renames);
     }
 
     [Fact]
@@ -420,6 +516,30 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Equal("nfo", Read(Path.Combine(Path.GetDirectoryName(FilmPath("Casa"))!, "movie.nfo")));
         Assert.Equal([new StubRename("o", FilmPath("Altro", _other))], _registry.State.Renames);
         Assert.Equal([FilmPath("Mare")], _registry.State.Stubs.Where(stub => stub.ServerId == _server).Select(stub => stub.RelativePath));
+    }
+
+    // Q327: a cancel deletes the old files too, so their items leave their version groups first.
+    [Fact]
+    public async Task CancellingDetachesTheOldItemsBeforeTheirFilesGo()
+    {
+        await RenamedFilmAsync();
+
+        Assert.True(await _renamer.CancelAsync(_server, CancellationToken.None));
+
+        Assert.Equal([FilmPath("Casa") + " on disk"], _detached);
+        Assert.False(File.Exists(Full(FilmPath("Casa"))));
+    }
+
+    [Fact]
+    public async Task CancellingKeepsAPendingMoveWhoseOldItemCannotLeaveItsVersionGroup()
+    {
+        await RenamedFilmAsync();
+        _detachFails = true;
+
+        Assert.False(await _renamer.CancelAsync(_server, CancellationToken.None));
+
+        Assert.True(_renamer.IsPending(_server));
+        Assert.True(File.Exists(Full(FilmPath("Casa"))));
     }
 
     [Fact]

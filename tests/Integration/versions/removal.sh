@@ -53,6 +53,10 @@ film_links "$RES"
 check "Sintel: the local copy is the primary of the stub of peer" "$sl" "$(primary_of "$sp")"
 check "Codec: the local copy holds both stubs" "$(printf '%s\n' "$ca" "$cb" | sort | paste -sd, -)" "$(alternates_of "$cl")"
 check "Resolution: the stub of peer is the primary of the stub of remote" "$rb" "$(primary_of "$ra")"
+# The screen grabber can time out under load and succeed on a later scan, whose image save rewrites the .nfo.
+unframed() { get local '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq '[.Items[] | select((.Path // "" | startswith("/media")) and .ImageTags.Primary == null)] | length'; }
+for _ in 1 2 3 4 5; do [ "$(unframed)" = 0 ] && break; scan local; done
+check "the local copies have their posters" 0 "$(unframed)"
 sums() { docker exec "$PREFIX-local" sh -c "find /media -type f $1 -exec md5sum {} + | sort -k2"; }
 media_before=$(sums "! -name '*.nfo'")
 nfo_before=$(sums "-name '*.nfo'")
@@ -83,10 +87,8 @@ check "Resolution: the stub of remote stands alone" "" "$(primary_of "$ra")"
 check "Resolution: the stub of remote has no version left" "" "$(alternates_of "$ra")"
 check "Resolution: the stub of remote is visible" 1 "$(visible "$ra")"
 check "the local media files are untouched" "$media_before" "$(sums "! -name '*.nfo'")"
-# Open question: deleting a linked stub lets Jellyfin hand the group over with its savers on, so the NFO saver of the
-# library can rewrite the movie.nfo of a local copy (row 93). Reported, not failed, until it is decided.
-if [ "$nfo_before" = "$(sums "-name '*.nfo'")" ]; then echo "ok   the .nfo of the local copies are untouched"; else
-  echo "KNOWN the NFO saver rewrote a .nfo of a local copy:"; diff <(echo "$nfo_before") <(sums "-name '*.nfo'") || true; fi
+# A stub leaves its group before it is deleted, so Jellyfin hands no group over and its NFO saver rewrites nothing (Q276).
+check "the .nfo of the local copies are untouched" "" "$(diff <(echo "$nfo_before") <(sums "-name '*.nfo'") || true)"
 check "the folder of remote stays" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$A")/Film/.jellymesh"; echo $?)"
 
 echo "--- peer back in the shared libraries Film and Serie, then removed again: a dead path next to live ones"

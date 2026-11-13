@@ -778,13 +778,45 @@ public sealed class LibraryMaterializerTests : IDisposable
         var steps = new List<string>();
         _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
             .Callback((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => steps.Add("detach " + string.Join(",", stubs.Select(stub => Path.GetFileName(stub.RelativePath)))))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync([]);
         _fixture.Library.Setup(library => library.DeleteItem(item, It.IsAny<DeleteOptions>())).Callback(() => steps.Add("delete"));
         _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
 
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Equal(["detach Film (2020) - A.strm", "delete"], steps);
+    }
+
+    // Q326: a stub whose detach failed stays, with its file and registry entry, and the next round removes it.
+    [Fact]
+    public async Task AStubWhoseDetachFailedStaysUntilTheNextRound()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"), TestItems.Movie("c", "Third", 2022, "3"));
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var film = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
+        var third = _fixture.Path_(a, "Film", "Third (2022)", "Third (2022) - A.strm");
+        _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.Where(stub => stub.RelativePath.Contains("Film (2020)", StringComparison.Ordinal)).ToList());
+        var items = _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)];
+        items.RemoveAll(item => item.Id is "a" or "c");
+
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.True(File.Exists(film));
+        Assert.False(File.Exists(third));
+        Assert.Contains(_fixture.Registry.State.Stubs, stub => stub.RelativePath.Contains("Film (2020)", StringComparison.Ordinal));
+        Assert.Equal(1, report.Removed);
+        Assert.Equal(1, report.Failed);
+        Assert.Equal(new StubCounts(0, 0, 1, 1), report.ByServer[a.Id]);
+
+        _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(File.Exists(film));
+        Assert.Single(_fixture.Registry.State.Stubs);
     }
 
     // Decision 48: the sync history shows what each server's folder got.

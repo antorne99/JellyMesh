@@ -37,6 +37,9 @@ public sealed class ServerRenamerTests : IDisposable
         _stubs.Setup(stubs => stubs.RelabelAsync(_server, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback((Guid _, string name, CancellationToken _) => _steps.Add("stubs " + name))
             .ReturnsAsync(2);
+        _stubs.Setup(stubs => stubs.RelabelInPlaceAsync(_server, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback((Guid _, string name, CancellationToken _) => _steps.Add("stubs in place " + name))
+            .ReturnsAsync(2);
         _stubs.Setup(stubs => stubs.FinishAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("finish")).Returns(Task.CompletedTask);
         _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("libraries")).ReturnsAsync(true);
         _libraries.Setup(libraries => libraries.GetState(_server)).Returns(new AutomaticLibrariesState(
@@ -275,14 +278,14 @@ public sealed class ServerRenamerTests : IDisposable
         Assert.True(_renamer.NeedsRestart);
     }
     [Fact]
-    public async Task WithTheServerFolderInNoLibrary_OnlyTheNameChanges_AndNoStubMoves()
+    public async Task WithTheServerFolderInNoLibrary_TheStubFilesAreRenamedInPlace_AndNothingWaitsForAScan()
     {
         _store.Configuration.FederatedFolderPath = "/federated";
         _links.Setup(links => links.Check("/federated", new[] { _server })).Returns(Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked));
 
         await _renamer.Rename(_server, "Mare", true).Job;
 
-        Assert.Equal(["name Mare", "libraries", "scan"], _steps);
+        Assert.Equal(["name Mare", "stubs in place Mare", "libraries", "scan"], _steps);
         Assert.Equal(new ServerRenameState(false, false, false), _renamer.GetState(_server));
     }
 
@@ -295,7 +298,20 @@ public sealed class ServerRenamerTests : IDisposable
 
         await _renamer.Rename(_server, "Mare", true).Job;
 
-        Assert.Equal(["name Mare", "scan"], _steps);
+        Assert.Equal(["name Mare", "stubs in place Mare", "scan"], _steps);
+        Assert.True(_renamer.GetState(_server).Failed);
+    }
+
+    [Fact]
+    public async Task WithTheServerFolderInNoLibrary_WhenTheStubFilesCannotMove_NothingElseRuns_AndTheRenameFailed()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        _links.Setup(links => links.Check("/federated", new[] { _server })).Returns(Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked));
+        _stubs.Setup(stubs => stubs.RelabelInPlaceAsync(_server, It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk"));
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(["name Mare"], _steps);
         Assert.True(_renamer.GetState(_server).Failed);
     }
 

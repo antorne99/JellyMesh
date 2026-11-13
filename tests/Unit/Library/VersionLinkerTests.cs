@@ -536,7 +536,6 @@ public sealed class VersionLinkerTests : IDisposable
         var a = Stub("sa", _serverA, 1080);
         await SaveAsync([a], Group("g", ["sa"], [local.Id]));
         var itemA = Scanned(a);
-        Assert.False(_linker.LastRunFailed);
         _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == itemA.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException(TestValues.Host));
 
@@ -549,6 +548,58 @@ public sealed class VersionLinkerTests : IDisposable
 
         Assert.Equal(local.Id, itemA.PrimaryVersionId);
         Assert.False(_linker.LastRunFailed);
+    }
+
+    // Q324: after a restart no full run has finished yet, so a refusal cannot be taken as final.
+    [Fact]
+    public async Task TheFailedFlagIsUpUntilTheFirstFullRunEnds()
+    {
+        var local = Local();
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        Scanned(a);
+
+        Assert.True(_linker.LastRunFailed);
+        await _linker.LinkLocalAsync([local.Id], CancellationToken.None);
+        Assert.True(_linker.LastRunFailed);
+
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.False(_linker.LastRunFailed);
+    }
+
+    // Q324: a scoped run that fails outside the catch of a group raises the flag too.
+    [Fact]
+    public async Task AScopedRunThatFailsOutsideAGroupRaisesTheFailedFlag()
+    {
+        var local = Local();
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a], Group("g", ["sa"], [local.Id]));
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.False(_linker.LastRunFailed);
+        Scanned(a);
+        _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>())).Throws(new IOException(TestValues.Host));
+
+        await Assert.ThrowsAsync<IOException>(() => _linker.LinkLocalAsync([local.Id], CancellationToken.None));
+
+        Assert.True(_linker.LastRunFailed);
+    }
+
+    // Q324: a nightly run that cannot detach a stub out of every group counts as failed.
+    [Fact]
+    public async Task ANightlyRunThatCannotDetachAStubRaisesTheFailedFlag()
+    {
+        var a = Stub("sa", _serverA, 1080);
+        await SaveAsync([a]);
+        var itemA = Scanned(a);
+        var local = Local();
+        itemA.SetPrimaryVersionId(local.Id);
+        local.LinkedAlternateVersions = [Link(itemA.Id)];
+        _library.Setup(library => library.UpdateItemAsync(It.IsAny<BaseItem>(), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(TestValues.Host));
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+
+        Assert.True(_linker.LastRunFailed);
     }
 
     [Fact]
@@ -966,7 +1017,7 @@ public sealed class VersionLinkerTests : IDisposable
         await SaveAsync([a]);
         Scanned(a);
 
-        await _linker.DetachForRemovalAsync([a], CancellationToken.None);
+        Assert.Empty(await _linker.DetachForRemovalAsync([a], CancellationToken.None));
 
         Assert.Empty(_saves);
     }
@@ -988,8 +1039,9 @@ public sealed class VersionLinkerTests : IDisposable
         _library.Setup(library => library.UpdateItemAsync(It.Is<BaseItem>(item => item.Id == local.Id), It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException(TestValues.Host));
 
-        await _linker.DetachForRemovalAsync([a, c], CancellationToken.None);
+        var kept = await _linker.DetachForRemovalAsync([a, c], CancellationToken.None);
 
+        Assert.Equal([a], kept);
         Assert.Null(itemC.PrimaryVersionId);
         Assert.Empty(other.LinkedAlternateVersions);
         Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));

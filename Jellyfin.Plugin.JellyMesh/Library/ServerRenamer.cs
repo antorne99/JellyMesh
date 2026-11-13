@@ -211,9 +211,10 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
             return true;
         }
 
-        // In no library the stubs have no items and no watch state to carry, so they keep their label (row 288).
+        // In no library the stubs have no items or watch state to carry: their files are renamed at once (rows 288, 316).
         if (InNoLibrary(serverId))
         {
+            await _stubs.RelabelInPlaceAsync(serverId, name, cancellationToken).ConfigureAwait(false);
             try
             {
                 return await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
