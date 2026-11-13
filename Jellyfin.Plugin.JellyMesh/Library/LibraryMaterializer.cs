@@ -141,7 +141,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot write the folders of the servers in the federated folder: {Error}", ex.Message);
+            _logger.LogWarning("Cannot write the folders of the servers in the federated folder: {Error}", LogText.Clean(ex.Message));
         }
     }
 
