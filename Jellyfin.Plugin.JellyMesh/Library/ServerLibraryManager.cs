@@ -191,13 +191,21 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
 
         try
         {
+            // With no scan due and none running, the wait cannot give an id, so the check runs at once (decision 337).
+            var unready = UnreadyNames();
+            if (unready.Count > 0 && !_scanLimit.IsDue(unready) && !_scans.IsScanRunning)
+            {
+                _logger.LogWarning("A library still has no id, but its library scan ran less than {Hours} hours ago, so the sync starts", UnreadyScanLimit.Interval.TotalHours);
+                return;
+            }
+
             if (await _scans.WaitReadyAsync(ReadyLimit, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }
 
             // Only a scan gives an id to a library renamed without a refresh (decision 250), at most once a day each (decision 333).
-            var unready = ReadFolders()?.Where(folder => string.IsNullOrEmpty(folder.ItemId)).Select(folder => folder.Name ?? string.Empty).ToList() ?? [];
+            unready = UnreadyNames();
             if (_scanLimit.TryClaim(unready))
             {
                 _logger.LogWarning("A library has no id after {Minutes} minutes, so a library scan runs before the sync", ReadyLimit.TotalMinutes);
@@ -794,6 +802,9 @@ public sealed class ServerLibraryManager : IServerLibraryManager, IDisposable
             server.PreexistingLibraryIds.Add(id);
         }
     });
+
+    private List<string> UnreadyNames() =>
+        ReadFolders()?.Where(folder => string.IsNullOrEmpty(folder.ItemId)).Select(folder => folder.Name ?? string.Empty).ToList() ?? [];
 
     private List<VirtualFolderInfo>? ReadFolders()
     {

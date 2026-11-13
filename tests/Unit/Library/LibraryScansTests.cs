@@ -154,6 +154,18 @@ public sealed class LibraryScansTests
     }
 
     [Fact]
+    public void A_scan_is_running_when_the_library_manager_or_the_scan_task_says_so()
+    {
+        Assert.False(Scans.IsScanRunning);
+
+        Enqueue(true);
+        Assert.True(Scans.IsScanRunning);
+
+        _worker.SetupGet(worker => worker.State).Returns(TaskState.Running);
+        Assert.True(Scans.IsScanRunning);
+    }
+
+    [Fact]
     public async Task Waiting_for_the_libraries_honours_the_cancellation()
     {
         _libraries.SetupGet(manager => manager.IsScanRunning).Returns(true);

@@ -56,6 +56,28 @@ public sealed class UnreadyScanLimitTests
     }
 
     [Fact]
+    public void Asking_whether_a_scan_is_due_does_not_use_it_up()
+    {
+        var limit = new UnreadyScanLimit(_clock);
+
+        Assert.True(limit.IsDue(["Film di casa"]));
+        Assert.True(limit.IsDue(["Film di casa"]));
+        Assert.True(limit.TryClaim(["Film di casa"]));
+        Assert.False(limit.IsDue(["FILM DI CASA"]));
+        Assert.True(limit.IsDue(["Film di casa", "Serie di casa"]));
+        _clock.Now += UnreadyScanLimit.Interval;
+        Assert.True(limit.IsDue(["Film di casa"]));
+    }
+
+    [Fact]
+    public void No_library_without_an_id_has_no_scan_due()
+    {
+        var limit = new UnreadyScanLimit(_clock);
+
+        Assert.False(limit.IsDue([]));
+    }
+
+    [Fact]
     public void No_library_without_an_id_claims_nothing()
     {
         var limit = new UnreadyScanLimit(_clock);

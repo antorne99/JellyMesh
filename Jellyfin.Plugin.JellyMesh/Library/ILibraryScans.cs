@@ -10,6 +10,11 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface ILibraryScans
 {
     /// <summary>
+    /// Gets a value indicating whether a library scan is running.
+    /// </summary>
+    bool IsScanRunning { get; }
+
+    /// <summary>
     /// Waits until no library scan is running.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
