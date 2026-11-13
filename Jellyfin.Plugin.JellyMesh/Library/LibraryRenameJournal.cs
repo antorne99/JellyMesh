@@ -116,6 +116,54 @@ public sealed class LibraryRenameJournal
         }
     }
 
+    /// <summary>
+    /// Moves a rename the resume cannot trust to the damaged file, next to those set aside before, so it is never replayed
+    /// (§10 row 329).
+    /// </summary>
+    /// <param name="record">The rename.</param>
+    /// <returns>False when a file cannot be written, so the record stays and the caller leaves it alone.</returns>
+    public bool SetAside(LibraryRenameRecord record)
+    {
+        lock (_lock)
+        {
+            if (Load() is not { } records)
+            {
+                return false;
+            }
+
+            var left = records.Where(other => other != record).ToList();
+            try
+            {
+                var damaged = _path + ".damaged";
+                Save(damaged, [.. SetAsideBefore(damaged), record]);
+                Write(left);
+                _records = left;
+                return true;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogError("Cannot set aside a library rename: {Error}", exception.GetType().Name);
+                return false;
+            }
+        }
+    }
+
+    // The records of a damaged file still readable as one, or none: what cannot be read is replaced, as Load does.
+    private static List<LibraryRenameRecord> SetAsideBefore(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return JsonSerializer.Deserialize<JournalFile>(stream, _options) is { Version: CurrentVersion } file && file.Records.All(record => record is not null)
+                ? file.Records.ToList()
+                : [];
+        }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException or FileNotFoundException or DirectoryNotFoundException)
+        {
+            return [];
+        }
+    }
+
     // Null while the file cannot be read for now; a damaged one is set aside and counts as empty.
     private List<LibraryRenameRecord>? Load()
     {
@@ -173,8 +221,14 @@ public sealed class LibraryRenameJournal
             return;
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        var temporary = _path + ".tmp";
+        Save(_path, records);
+    }
+
+    // Owner-only, flushed to disk, then moved over the file in one step.
+    private static void Save(string path, List<LibraryRenameRecord> records)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + ".tmp";
         var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None };
         if (!OperatingSystem.IsWindows())
         {
@@ -189,7 +243,7 @@ public sealed class LibraryRenameJournal
                 stream.Flush(true);
             }
 
-            File.Move(temporary, _path, overwrite: true);
+            File.Move(temporary, path, overwrite: true);
         }
         finally
         {
