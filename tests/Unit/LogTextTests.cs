@@ -24,6 +24,8 @@ public class LogTextTests
     [InlineData("A‪B‫C‬D‭E‮F", "ABCDEF")]
     [InlineData("A⁦B⁧C⁨D⁩E", "ABCDE")]
     [InlineData("﻿Film", "Film")]
+    [InlineData("A؜B⁠C⁡D⁢E⁣F⁤G", "ABCDEFG")]
+    [InlineData("A؛B C", "A؛B C")]
     [InlineData("A ‐⁥⁪B", "A ‐⁥⁪B")]
     public void RemovesBidiAndZeroWidthCharacters(string value, string expected)
     {
