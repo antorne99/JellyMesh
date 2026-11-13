@@ -20,6 +20,7 @@ using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Moq;
@@ -1080,6 +1081,60 @@ public class FederationAdminControllerTests
         var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
 
         Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationChoiceOutcome.Chosen, 204)]
+    [InlineData(LayoutMigrationChoiceOutcome.Started, 202)]
+    public void TheSettingsSetTheModeOfTheNewServersEvenWithNoFolder(LayoutMigrationChoiceOutcome outcome, int code)
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.SetMode(LayoutMigrationMode.Automatic)).Returns(new LayoutMigrationChoice(outcome, Task.CompletedTask));
+
+        var result = ControllerFor(fixture, migration: migration.Object).SetNewServerMode(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        Assert.Equal(code, Assert.IsAssignableFrom<IStatusCodeActionResult>(result).StatusCode);
+        migration.Verify(item => item.SetMode(LayoutMigrationMode.Automatic), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationChoiceOutcome.Busy)]
+    [InlineData(LayoutMigrationChoiceOutcome.NotAllowed)]
+    public void ARefusedModeAnswersWithItsReason(LayoutMigrationChoiceOutcome outcome)
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.SetMode(It.IsAny<LayoutMigrationMode>())).Returns(LayoutMigrationChoice.Refused(outcome));
+
+        var result = ControllerFor(fixture, migration: migration.Object).SetNewServerMode(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Manual });
+
+        var refused = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(409, refused.StatusCode);
+        var body = Assert.IsType<LayoutMigrationRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.Equal(FederationAdminController.MigrationRefusalMessage(outcome), body.Message);
+    }
+
+    [Fact]
+    public void WithoutTheMigrationThereIsNoModeToSet()
+    {
+        using var fixture = new RegistryFixture();
+
+        var result = ControllerFor(fixture).SetNewServerMode(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public void TheStatusCarriesTheModeOfTheNewServers()
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.NewServerMode).Returns(LayoutMigrationMode.Automatic);
+
+        Assert.Equal(LayoutMigrationMode.Automatic, ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder.NewServerMode);
+        Assert.Equal(LayoutMigrationMode.Manual, ControllerFor(fixture).GetStatus().Value!.FederatedFolder.NewServerMode);
     }
 
     [Fact]

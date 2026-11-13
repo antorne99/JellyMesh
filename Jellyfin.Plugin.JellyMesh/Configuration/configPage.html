@@ -1520,6 +1520,18 @@
                             </div>
                         </details>
                     </form>
+                    <div id="jmNewServers" class="jmGroup">
+                        <h3 class="sectionTitle">New servers</h3>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="jmNewServerMode">Folders of a server linked later</label>
+                            <select id="jmNewServerMode" is="emby-select">
+                                <option value="Manual">Add them by hand</option>
+                                <option value="Automatic">Add them automatically</option>
+                            </select>
+                            <div class="fieldDescription">Automatically adds the folders of a new server to every library that holds the folders of another server, except the libraries made for one server. Saved when chosen.</div>
+                            <div id="jmNewServerModeError" class="fieldDescription" role="alert" hidden></div>
+                        </div>
+                    </div>
                 </section>
 
                 <div class="jmDock">
@@ -1566,6 +1578,11 @@
                     "A folder of a server left the libraries before the watch state moved.": "Una cartella di un server è uscita dalle librerie prima che lo stato di visione fosse spostato.",
                     "The old folders could not be removed from the library {library}.": "Non è stato possibile togliere le vecchie cartelle dalla libreria {library}.",
                     "A step failed.": "Un passo non è riuscito.",
+                    "New servers": "Nuovi server",
+                    "Folders of a server linked later": "Cartelle di un server collegato in seguito",
+                    "Add them by hand": "Aggiungile a mano",
+                    "Add them automatically": "Aggiungile automaticamente",
+                    "Automatically adds the folders of a new server to every library that holds the folders of another server, except the libraries made for one server. Saved when chosen.": "Aggiunge automaticamente le cartelle di un nuovo server a ogni libreria che contiene le cartelle di un altro server, tranne le librerie create per un solo server. Si salva appena scelto.",
                     "The old folders still hold titles the plugin has no record of, or could not be read, so their watch state would be lost.": "Le vecchie cartelle contengono ancora titoli di cui il plugin non ha traccia, oppure non è stato possibile leggerle, quindi il loro stato di visione andrebbe perso.",
                     "The old folders still work. Do the steps below by hand, or try again: the migration resumes from this step.": "Le vecchie cartelle funzionano ancora. Fai a mano i passi qui sotto, oppure riprova: la migrazione riprende da questo passo.",
                     "The automatic migration is running. Try again when it stops.": "La migrazione automatica è in corso. Riprova quando si ferma.",
@@ -5501,6 +5518,7 @@
                     }).then(function (status) {
                         if (status) {
                             render(status.FederatedFolder && status.FederatedFolder.Migration);
+                            renderNewServerMode(status.FederatedFolder && status.FederatedFolder.NewServerMode);
                         }
                     }).catch(function () {
                         return null;
@@ -5536,6 +5554,48 @@
                         return null;
                     }).then(poll);
                 }
+
+                // Shows the mode for the servers linked later, unless a choice is being sent.
+                function renderNewServerMode(mode) {
+                    var select = page.querySelector('#jmNewServerMode');
+                    if (!select.disabled && (mode === 'Manual' || mode === 'Automatic')) {
+                        select.value = mode;
+                    }
+                }
+
+                // Sends the mode for the servers linked later, shows the reason of a refusal, and reads the status again.
+                function setNewServerMode(mode) {
+                    var select = page.querySelector('#jmNewServerMode');
+                    var error = page.querySelector('#jmNewServerModeError');
+                    error.hidden = true;
+                    select.disabled = true;
+                    fetch(ApiClient.getUrl('JellyMesh/Admin/Migration/NewServers'), {
+                        method: 'POST',
+                        headers: {
+                            Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
+                            Accept: 'application/json; profile="PascalCase"',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ Mode: mode })
+                    }).then(function (response) {
+                        return response.ok ? null : response.json().catch(function () {
+                            return {};
+                        }).then(function (data) {
+                            error.textContent = data && data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status });
+                            error.hidden = false;
+                        });
+                    }).catch(function () {
+                        error.textContent = t('The server cannot be reached.');
+                        error.hidden = false;
+                    }).then(function () {
+                        select.disabled = false;
+                        poll();
+                    });
+                }
+
+                page.querySelector('#jmNewServerMode').addEventListener('change', function (event) {
+                    setNewServerMode(event.target.value);
+                });
 
                 page.querySelector('#jmMigrateAutomatic').addEventListener('click', function () {
                     choose('Automatic');

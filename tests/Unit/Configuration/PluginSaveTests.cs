@@ -189,13 +189,15 @@ public sealed class PluginSaveTests : IDisposable
     [Fact]
     public void TheMigrationStateSurvivesTheXmlAndAStockSaveAndIsNotShown()
     {
-        // The choice and the step of the automatic migration resume after a restart (Q57).
+        // The choice and the step of the automatic migration resume after a restart (Q57), and the servers placed stay (Q58).
+        var placed = Guid.NewGuid();
         _plugin.ChangeConfiguration(config =>
         {
             config.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
             config.LayoutMigration.Step = AutomaticMigrationStep.RemoveOldPaths;
             config.LayoutMigration.Error = AutomaticMigrationError.RemoveFailed;
             config.LayoutMigration.ErrorLibrary = "Film di casa";
+            config.LayoutMigration.PlacedServers.Add(placed);
         });
         var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
         _plugin.UpdateConfiguration(JsonSerializer.Deserialize<PluginConfiguration>(json, JsonDefaults.Options)!);
@@ -207,6 +209,7 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Equal(AutomaticMigrationStep.RemoveOldPaths, loaded.LayoutMigration.Step);
         Assert.Equal(AutomaticMigrationError.RemoveFailed, loaded.LayoutMigration.Error);
         Assert.Equal("Film di casa", loaded.LayoutMigration.ErrorLibrary);
+        Assert.Equal([placed], loaded.LayoutMigration.PlacedServers);
     }
 
     [Fact]
