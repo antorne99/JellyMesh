@@ -284,6 +284,24 @@ public class PlaybackCoordinatorTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => keptCopy.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
+    // A remote that hangs costs the removal one short wait, not one per call.
+    [Fact]
+    public async Task A_server_about_to_go_stops_and_gives_back_within_one_shared_limit()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        fixture.Client.StopsHang = true;
+        fixture.Coordinator.RemovalLimit = TimeSpan.FromMilliseconds(300);
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(fixture.Client.Stopped);
+        Assert.Empty(fixture.Client.Released);
+        Assert.Empty(fixture.Sessions.All);
+    }
+
     [Fact]
     public async Task A_server_about_to_go_opens_nothing_more_until_its_removal_fails()
     {

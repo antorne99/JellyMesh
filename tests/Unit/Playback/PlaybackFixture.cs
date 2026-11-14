@@ -216,8 +216,10 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     {
         Stopped.Add(playSessionId);
         OnStop?.Invoke();
-        return Task.FromResult(RemoteResult.Success(true));
+        return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(RemoteResult.Success(true));
     }
+
+    public bool StopsHang { get; set; }
 
     public List<string> Renewed { get; } = [];
 
@@ -236,7 +238,13 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     public Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         Released.Add(playSessionId);
-        return Task.FromResult(ReleaseFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(ReleaseFailure));
+        return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(ReleaseFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(ReleaseFailure));
+    }
+
+    private static async Task<RemoteResult<bool>> HangAsync(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+        return RemoteResult.Success(true);
     }
 }
 

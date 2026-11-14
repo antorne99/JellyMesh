@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
@@ -84,6 +85,11 @@ public sealed class PlaybackCoordinator
     /// whose disks are waking up.
     /// </summary>
     public TimeSpan StallLimit => Times.Idle;
+
+    /// <summary>
+    /// Gets or sets how long closing one session on the remote may take while its server is removed (413).
+    /// </summary>
+    internal TimeSpan RemovalLimit { get; set; } = PlaybackTimeouts.RemovalStop;
 
     private PlaybackTimes Times => _store.Read(PlaybackTimes.From);
 
@@ -340,7 +346,13 @@ public sealed class PlaybackCoordinator
     /// </summary>
     /// <param name="sessionId">The session.</param>
     /// <returns>A task.</returns>
-    public Task CloseAsync(string sessionId) => CloseAsync(sessionId, PlaybackTimeouts.RemoteStop);
+    public async Task CloseAsync(string sessionId)
+    {
+        if (_sessions.Remove(sessionId) is { } session)
+        {
+            await CloseRemoteAsync(session).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     /// Records the stock play session of a stub played on this server, so that only its user can stop it.
@@ -390,7 +402,7 @@ public sealed class PlaybackCoordinator
 
     /// <summary>
     /// Ends what plays from a server that is about to be removed (413): at once its open streams here and the local
-    /// transcodes of its files, then its sessions, each closed on the remote within <see cref="PlaybackTimeouts.RemovalStop"/>:
+    /// transcodes of its files, then its sessions, each closed on the remote within <see cref="RemovalLimit"/>:
     /// afterwards nothing could reach it to give its slots back. Nothing new opens on it until <see cref="ReopenServer"/>.
     /// </summary>
     /// <param name="serverId">The server.</param>
@@ -401,7 +413,7 @@ public sealed class PlaybackCoordinator
         await CloseLocalTranscodesAsync(serverId).ConfigureAwait(false);
         await Task.WhenAll(_sessions.All
             .Where(session => session.Source.ServerId == serverId)
-            .Select(session => CloseAsync(session.Id, PlaybackTimeouts.RemovalStop))).ConfigureAwait(false);
+            .Select(session => CloseForRemovalAsync(session.Id))).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -820,22 +832,38 @@ public sealed class PlaybackCoordinator
         return policy.Value;
     }
 
-    private async Task CloseAsync(string sessionId, TimeSpan limit)
+    private async Task CloseRemoteAsync(PlaybackSession session)
     {
-        if (_sessions.Remove(sessionId) is { } session)
+        await StopEncodingAsync(session, PlaybackTimeouts.RemoteStop).ConfigureAwait(false);
+        if (session.RemotePlaySessionId is { } playSessionId)
         {
-            await CloseRemoteAsync(session, limit).ConfigureAwait(false);
+            await ReleaseSlotAsync(session.Source.ServerId, playSessionId, PlaybackTimeouts.RemoteStop).ConfigureAwait(false);
         }
     }
 
-    private Task CloseRemoteAsync(PlaybackSession session) => CloseRemoteAsync(session, PlaybackTimeouts.RemoteStop);
-
-    private async Task CloseRemoteAsync(PlaybackSession session, TimeSpan limit)
+    // On removal the stop and the slot share one short limit, so a remote that hangs costs it once.
+    private async Task CloseForRemovalAsync(string sessionId)
     {
-        await StopEncodingAsync(session, limit).ConfigureAwait(false);
-        if (session.RemotePlaySessionId is { } playSessionId)
+        if (_sessions.Remove(sessionId) is not { } session)
         {
-            await ReleaseSlotAsync(session.Source.ServerId, playSessionId, limit).ConfigureAwait(false);
+            return;
+        }
+
+        var watch = Stopwatch.StartNew();
+        await StopEncodingAsync(session, RemovalLimit).ConfigureAwait(false);
+        var left = RemovalLimit - watch.Elapsed;
+        if (session.RemotePlaySessionId is not { } playSessionId)
+        {
+            return;
+        }
+
+        if (left > TimeSpan.Zero)
+        {
+            await ReleaseSlotAsync(session.Source.ServerId, playSessionId, left).ConfigureAwait(false);
+        }
+        else if (IsJellyMesh(session.Source.ServerId))
+        {
+            _logger.LogInformation("Could not give a stream slot back: {Failure}", RemoteFailure.Timeout);
         }
     }
 
