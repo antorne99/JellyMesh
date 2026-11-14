@@ -154,12 +154,15 @@ public sealed class WatchStateKeeperTests : IDisposable
     private StubEntry StubOf(RemoteServerInfo server) => _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id);
 
     // The library item a scan makes of a film stub, with the metadata of its .nfo.
-    private Movie FilmItem(RemoteServerInfo server, long runtime = NinetyMinutes)
+    private Movie FilmItem(RemoteServerInfo server, long runtime = NinetyMinutes) => FilmItem(server, null, runtime);
+
+    private Movie FilmItem(RemoteServerInfo server, string? kind, long runtime = NinetyMinutes)
     {
+        var stub = _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && (kind is null || stub.Kind == StubKind.Movie));
         var item = new Movie
         {
             Id = Guid.NewGuid(),
-            Path = FederatedPaths.Resolve(_fixture.Root, StubOf(server).RelativePath),
+            Path = FederatedPaths.Resolve(_fixture.Root, stub.RelativePath),
             Name = "Sonda Senza ID",
             ProductionYear = 2026,
             RunTimeTicks = runtime
@@ -245,6 +248,60 @@ public sealed class WatchStateKeeperTests : IDisposable
         await RemoveAsync(a);
 
         Assert.True(Row(_anna, other).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task EveryServerThatHasTheContentGetsTheState()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        var a = await _fixture.Sync.AddServerAsync("A", "films", "shows");
+        var b = await _fixture.Sync.AddServerAsync("B", "films", "shows");
+        var c = await _fixture.Sync.AddServerAsync("C", "films", "shows");
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var old = FilmItem(a, "Film");
+        var (oldSeries, oldEpisode) = ShowItems(a);
+        Watch(_anna, old);
+        Watch(_anna, oldEpisode);
+        Row(_anna, oldSeries).IsFavorite = true;
+        var films = new[] { FilmItem(b, "Film"), FilmItem(c, "Film") };
+        var shows = new[] { ShowItems(b), ShowItems(c) };
+
+        await RemoveAsync(a);
+
+        Assert.All(films, film => Assert.True(Row(_anna, film).Played));
+        Assert.All(shows, show => Assert.True(Row(_anna, show.Episode).Played));
+        Assert.All(shows, show => Assert.True(Row(_anna, show.Series).IsFavorite));
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task TheRecordsOfTwoRemovedServersBothComeBack()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", "films");
+        var b = await AddAndMaterializeAsync("B", "films");
+        Watch(_anna, FilmItem(a), 1, _watched);
+        Row(_bruno, FilmItem(b)).IsFavorite = true;
+        using (var sync = SyncWith(_materializer))
+        {
+            await sync.RemoveServerAsync(a.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(a.Id)), CancellationToken.None);
+            await sync.RemoveServerAsync(b.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(b.Id)), CancellationToken.None);
+            await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.Equal(2, (await _kept.ReadAsync(CancellationToken.None)).Count);
+
+        var c = await AddAndMaterializeAsync("C", "films");
+        var fresh = FilmItem(c);
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, fresh).Played);
+        Assert.True(Row(_bruno, fresh).IsFavorite);
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
@@ -482,7 +539,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         var episode = new Episode
         {
             Id = Guid.NewGuid(),
-            Path = FederatedPaths.Resolve(_fixture.Root, StubOf(server).RelativePath),
+            Path = FederatedPaths.Resolve(_fixture.Root, _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Movie).RelativePath),
             Name = "Episode",
             SeriesId = series.Id,
             SeriesName = "Serie Senza ID",
