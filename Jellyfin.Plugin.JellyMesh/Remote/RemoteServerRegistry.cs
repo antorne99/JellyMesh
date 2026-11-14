@@ -80,34 +80,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
         }
 
-        // The Server Id of the remote says whether it is configured already, or was removed and comes back (116, 120).
+        // The Server Id of the remote says whether it is configured already (120). A removed one comes back as new (408).
         var remoteId = login.Value!.ServerId;
-        string? recognizedAs = null;
-        if (remoteId is not null)
+        if (remoteId is not null && _store.Read(config => ConfiguredAs(config, remoteId)) is { } configured)
         {
-            var known = _store.Read(config => Recognize(config, remoteId));
-            if (known.Configured is { } configured)
-            {
-                await EndSessionAsync(endpoint, login.Value, cancellationToken).ConfigureAwait(false);
-                _logger.LogWarning("Remote server {ServerName} is already configured as {ConfiguredName}", LogText.Clean(name), LogText.Clean(configured.Name));
-                return RemoteResult.Fail(RemoteFailure.AlreadyConfigured, configured);
-            }
-
-            if (known.Former is { } former)
-            {
-                // The login so far used a device of its own: the server logs in again as the device it had.
-                await EndSessionAsync(endpoint, login.Value, cancellationToken).ConfigureAwait(false);
-                serverId = former.Id;
-                endpoint = EndpointOf(serverId, normalizedUrl);
-                login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
-                if (!login.IsSuccess)
-                {
-                    _logger.LogWarning("Login on returning remote server {ServerName} failed: {Failure}", LogText.Clean(name), login.Failure);
-                    return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
-                }
-
-                recognizedAs = former.Name;
-            }
+            await EndSessionAsync(endpoint, login.Value, cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning("Remote server {ServerName} is already configured as {ConfiguredName}", LogText.Clean(name), LogText.Clean(configured.Name));
+            return RemoteResult.Fail(RemoteFailure.AlreadyConfigured, configured);
         }
 
         var capabilities = await DetectCapabilitiesAsync(endpoint, login.Value!, name, cancellationToken).ConfigureAwait(false);
@@ -133,15 +112,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         RemoteServerInfo? standing = null;
         _store.Update(config =>
         {
-            standing = remoteId is null ? null : Recognize(config, remoteId).Configured;
-            standing ??= config.Servers.FirstOrDefault(candidate => candidate.Id == serverId) is { } taken ? ToInfo(taken) : null;
-            if (standing is not null)
+            standing = remoteId is null ? null : ConfiguredAs(config, remoteId);
+            if (standing is null)
             {
-                return;
+                config.Servers.Add(server);
             }
-
-            RemoveFormer(config, candidate => candidate.Id == serverId || candidate.JellyfinServerId == remoteId);
-            config.Servers.Add(server);
         });
         if (standing is not null)
         {
@@ -154,16 +129,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         runtime.Session = login.Value;
         Record(runtime, server.Name, RemoteFailure.None, countsForActivity: true);
 
-        if (recognizedAs is null)
-        {
-            _logger.LogInformation("Added remote server {ServerName} in {Mode} mode", LogText.Clean(server.Name), server.Mode);
-        }
-        else
-        {
-            _logger.LogInformation("Added remote server {ServerName} in {Mode} mode, recognized as {FormerName}", LogText.Clean(server.Name), server.Mode, LogText.Clean(recognizedAs));
-        }
-
-        return RemoteResult.Success<RemoteServerInfo>(_store.Read(_ => ToInfo(server) with { RecognizedAs = recognizedAs }));
+        _logger.LogInformation("Added remote server {ServerName} in {Mode} mode", LogText.Clean(server.Name), server.Mode);
+        return RemoteResult.Success<RemoteServerInfo>(_store.Read(_ => ToInfo(server)));
     }
 
     /// <inheritdoc />
@@ -251,7 +218,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 {
                     position = config.Servers.IndexOf(removed);
                     config.Servers.RemoveAt(position);
-                    Remember(config, removed);
                     HoldLibraries(config, removed);
                 }
             });
@@ -454,7 +420,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             _store.Update(config =>
             {
-                RemoveFormer(config, candidate => candidate.Id == server.Id);
                 config.ReleaseHeldAutomaticLibraries(server.Id, server.AutomaticLibraryRegistry);
                 config.Servers.Insert(Math.Min(position, config.Servers.Count), server);
             });
@@ -465,32 +430,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Keeps the Server Id of a removed server, so that the same remote added again gets its identifier back (116).
-    private static void Remember(PluginConfiguration config, RemoteServerConfig removed)
-    {
-        if (removed.JellyfinServerId.Length == 0)
-        {
-            return;
-        }
-
-        RemoveFormer(config, candidate => candidate.Id == removed.Id || candidate.JellyfinServerId == removed.JellyfinServerId);
-        config.FormerServers.Add(new FormerServerConfig { Id = removed.Id, JellyfinServerId = removed.JellyfinServerId, Name = removed.Name });
-    }
-
     // The libraries of the server are deleted after it, including those a switch-on still running adds (140).
     private static void HoldLibraries(PluginConfiguration config, RemoteServerConfig removed)
     {
         if (removed.AutomaticLibraries || removed.AutomaticLibraryRegistry.Count > 0)
         {
             config.HoldAutomaticLibraries(removed.Id, removed.AutomaticLibraryRegistry, removed.PreexistingLibraryIds, removed.FollowedLibraryIds, removed.FollowSkipped);
-        }
-    }
-
-    private static void RemoveFormer(PluginConfiguration config, Func<FormerServerConfig, bool> match)
-    {
-        foreach (var former in config.FormerServers.Where(match).ToList())
-        {
-            config.FormerServers.Remove(former);
         }
     }
 
@@ -582,17 +527,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         return new RemoteCapabilities(RemoteMode.Unknown, 0);
     }
 
-    // The configured server that stands for a remote, or the removed one it was. A record whose server is configured
-    // again, as after a file put back by hand, counts as configured.
-    private Recognition Recognize(PluginConfiguration config, string remoteId)
-    {
-        var configured = config.Servers.FirstOrDefault(server => server.JellyfinServerId == remoteId);
-        var former = config.FormerServers.LastOrDefault(candidate => candidate.JellyfinServerId == remoteId);
-        configured ??= former is null ? null : config.Servers.FirstOrDefault(server => server.Id == former.Id);
-        return configured is null
-            ? new Recognition(null, former is null ? null : new FormerServer(former.Id, former.Name))
-            : new Recognition(ToInfo(configured), null);
-    }
+    // The configured server that stands for a remote with this Server Id, if any (decision 120).
+    private RemoteServerInfo? ConfiguredAs(PluginConfiguration config, string remoteId) =>
+        config.Servers.FirstOrDefault(server => server.JellyfinServerId == remoteId) is { } configured ? ToInfo(configured) : null;
 
     // Ends a login that will not be used, so that its device does not stay listed on the remote.
     private async Task EndSessionAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
@@ -701,10 +638,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private ServerRuntime RuntimeOf(Guid serverId) => _runtimes.GetOrAdd(serverId, _ => new ServerRuntime());
 
     private sealed record StoredServer(Guid Id, string Name, string Url, string EncryptedCredentials);
-
-    private sealed record FormerServer(Guid Id, string Name);
-
-    private sealed record Recognition(RemoteServerInfo? Configured, FormerServer? Former);
 
     private sealed record SessionAttempt<T>(RemoteResult<T> Attempt, RemoteSession? Session);
 

@@ -113,13 +113,6 @@ public class PluginConfiguration : BasePluginConfiguration
     public Collection<RemoteServerConfig> Servers { get; } = [];
 
     /// <summary>
-    /// Gets the servers removed from the page whose Server Id was known, so that one added again gets its identifier back
-    /// (decision 116). Never sent to the browser through this object.
-    /// </summary>
-    [JsonIgnore]
-    public Collection<FormerServerConfig> FormerServers { get; } = [];
-
-    /// <summary>
     /// Gets the libraries of removed servers that are still to delete (decision 140). Never sent to the browser through
     /// this object.
     /// </summary>
@@ -140,7 +133,7 @@ public class PluginConfiguration : BasePluginConfiguration
     public LayoutMigrationConfig LayoutMigration { get; set; } = new();
 
     /// <summary>
-    /// Replaces <see cref="Servers"/>, <see cref="FormerServers"/>, <see cref="RemovedServerLibraries"/>, <see cref="Peers"/> and
+    /// Replaces <see cref="Servers"/>, <see cref="RemovedServerLibraries"/>, <see cref="Peers"/> and
     /// <see cref="LayoutMigration"/> with those of <paramref name="current"/>. The stock save
     /// endpoint deserializes JSON that never holds them, so they would otherwise be erased.
     /// </summary>
@@ -157,12 +150,6 @@ public class PluginConfiguration : BasePluginConfiguration
         foreach (var server in current.Servers)
         {
             Servers.Add(server);
-        }
-
-        FormerServers.Clear();
-        foreach (var former in current.FormerServers)
-        {
-            FormerServers.Add(former);
         }
 
         RemovedServerLibraries.Clear();

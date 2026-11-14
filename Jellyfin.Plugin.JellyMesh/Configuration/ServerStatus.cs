@@ -34,11 +34,6 @@ public sealed record ServerStatus(
     public bool NeedsPassword { get; init; }
 
     /// <summary>
-    /// Gets the former name of a removed server that an add recognized by its Server Id and gave its identity back.
-    /// </summary>
-    public string? RecognizedAs { get; init; }
-
-    /// <summary>
     /// Gets the state of the Film and Serie libraries the plugin keeps for this server.
     /// </summary>
     public AutomaticLibrariesState? AutomaticLibraries { get; init; }

@@ -589,7 +589,6 @@ public class FederationAdminController : ControllerBase
             server.LastCheckedUtc)
         {
             NeedsPassword = server.NeedsPassword,
-            RecognizedAs = server.RecognizedAs,
             AutomaticLibraries = _libraries.GetState(server.Id),
             Rename = _renamer?.GetState(server.Id)
         };
