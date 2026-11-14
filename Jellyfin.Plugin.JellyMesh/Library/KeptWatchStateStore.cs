@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
@@ -103,9 +104,13 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
 
     private const string DeleteEmptyTitles = "DELETE FROM Titles WHERE NOT EXISTS (SELECT 1 FROM UserStates WHERE UserStates.TitleId = Titles.Id);";
 
+    // The side files SQLite may make next to the database: the rollback journal this store uses, and those of WAL mode.
+    private static readonly string[] _sideFiles = ["-journal", "-wal", "-shm"];
+
     private readonly string _path;
     private readonly string _connectionString;
     private readonly ILogger<KeptWatchStateStore> _logger;
+    private readonly IKeyFileGuard _guard;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _ready;
 
@@ -115,9 +120,21 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
     /// <param name="folder">The plugin data folder.</param>
     /// <param name="logger">The logger.</param>
     public KeptWatchStateStore(string folder, ILogger<KeptWatchStateStore> logger)
+        : this(folder, logger, KeyFileGuards.ForThisSystem())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="KeptWatchStateStore"/> class with the given way of keeping its files private.
+    /// </summary>
+    /// <param name="folder">The plugin data folder.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="guard">Keeps the files private.</param>
+    internal KeptWatchStateStore(string folder, ILogger<KeptWatchStateStore> logger, IKeyFileGuard guard)
     {
         _path = Path.Combine(folder, FileName);
         _logger = logger;
+        _guard = guard;
 
         // No pool: the server shares this assembly, and a pooled handle would keep the file open after each call.
         _connectionString = new SqliteConnectionStringBuilder
@@ -394,8 +411,10 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
         return result;
     }
 
+    // The files are private before SQLite opens them; one that cannot be kept private throws, so nothing is saved (row 417).
     private void EnsureSchema()
     {
+        KeepPrivate();
         try
         {
             CreateSchema();
@@ -405,7 +424,30 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
             var aside = _path + ".damaged-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
             File.Move(_path, aside);
             _logger.LogWarning("The file of the watch state kept for removed servers was damaged. It was set aside and a new one made");
+            KeepPrivate();
             CreateSchema();
+        }
+    }
+
+    // Makes the database empty and private if it is missing, as SQLite reads an empty file as a new database. An existing
+    // one, its side files and the copies set aside, maybe left by an earlier build, become private.
+    private void KeepPrivate()
+    {
+        if (File.Exists(_path))
+        {
+            _guard.KeepPrivate(_path);
+        }
+        else
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+            _guard.CreatePrivate(_path).Dispose();
+        }
+
+        var sides = _sideFiles.Select(suffix => _path + suffix).Where(File.Exists)
+            .Concat(Directory.EnumerateFiles(Path.GetDirectoryName(_path)!, FileName + ".damaged-*"));
+        foreach (var side in sides)
+        {
+            _guard.KeepPrivate(side);
         }
     }
 
