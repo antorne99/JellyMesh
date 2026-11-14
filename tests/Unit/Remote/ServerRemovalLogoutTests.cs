@@ -253,10 +253,12 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
-    [Fact]
-    public async Task ALoginEndedForARemovedServerAlsoLogsOutTheLoginItsServerKept()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ALoginEndedForARemovedServerAlsoLogsOutTheLoginItsServerKept(bool remoteRefusesRevokedTokens)
     {
-        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false, refuseRevoked: remoteRefusesRevokedTokens);
         using var fixture = new RegistryFixture(Remote());
         var store = new HookedStore(fixture.Store);
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
@@ -297,10 +299,161 @@ public class ServerRemovalLogoutTests
         Assert.Equal(2, handler.Logins);
         Assert.Equal([added, TestValues.Token + "2"], handler.LoggedOut.Order(StringComparer.Ordinal));
         Assert.Null(handler.Live);
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
         AssertClean(logger);
     }
 
-    // Runs a step once, just before or just after the next change of the configuration, or when its save fails.
+    [Fact]
+    public async Task ALoginThatRacesTheAddAfterItIsSavedIsTheOneKeptAndTheRemovalLogsItOut()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, logger);
+        Task<RemoteResult<int>>? call = null;
+        store.AfterUpdate = () =>
+        {
+            // A background call logs in after the new server is saved and before the add keeps its own login.
+            var id = registry.GetServers().Single().Id;
+            call = Task.Run(() => PingAsync(registry, id));
+            SpinWait.SpinUntil(() => call.IsCompleted, TimeSpan.FromSeconds(5));
+        };
+
+        var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(added.IsSuccess);
+        Assert.True((await call!.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        Assert.Equal(2, handler.Logins);
+        var used = await registry.RunWithSessionAsync(added.Value!.Id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
+        Assert.Equal(handler.Live, used.Value);
+        Assert.True(await registry.RemoveAsync(added.Value.Id));
+        Assert.Equal([TestValues.Token + "2"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task ARemovalRightAfterTheAddIsSavedLogsOutTheLoginOfTheAdd()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, logger);
+        Task<bool>? removal = null;
+        store.AfterUpdate = () => removal = registry.RemoveAsync(registry.GetServers().Single().Id);
+
+        var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(RemoteFailure.UnknownServer, added.Failure);
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        Assert.Empty(registry.GetServers());
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task ACredentialsLoginThatFailsAfterTheRemovalLeavesNoStateForTheServer()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, RefusingLoginClient(), new CapturingLogger<RemoteServerRegistry>());
+        Task<bool>? removal = null;
+        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        var update = await restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(await removal!);
+        Assert.Equal(RemoteFailure.AuthenticationFailed, update.Failure);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+    }
+
+    [Fact]
+    public async Task ACancelledCredentialsUpdateAfterTheRemovalLeavesNoStateForTheServer()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, new CapturingLogger<RemoteServerRegistry>());
+        Task<bool>? removal = null;
+        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, new CancellationToken(true)));
+
+        Assert.True(await removal!);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+    }
+
+    [Fact]
+    public async Task ACancelledCredentialsUpdateDuringTheRemovalLeavesTheLiveLoginToIt()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, new CapturingLogger<RemoteServerRegistry>());
+        var server = (await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None)).Value!;
+        var removalSaved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var updateEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<bool>? removal = null;
+        store.AfterRead = () =>
+        {
+            // The update ends after the removal is saved and before the removal takes the server's login.
+            store.AfterUpdate = () =>
+            {
+                removalSaved.SetResult();
+                SpinWait.SpinUntil(() => updateEnded.Task.IsCompleted, TimeSpan.FromSeconds(5));
+            };
+            removal = Task.Run(() => registry.RemoveAsync(server.Id));
+            SpinWait.SpinUntil(() => removalSaved.Task.IsCompleted, TimeSpan.FromSeconds(5));
+        };
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, new CancellationToken(true)));
+        }
+        finally
+        {
+            updateEnded.SetResult();
+        }
+
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+    }
+
+    [Fact]
+    public async Task ACallWhoseLoginFailsAfterTheRemovalLeavesNoStateForTheServer()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, RefusingLoginClient(), new CapturingLogger<RemoteServerRegistry>());
+        Task<bool>? removal = null;
+        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        var call = await PingAsync(restarted, server.Id);
+
+        Assert.True(await removal!);
+        Assert.Equal(RemoteFailure.AuthenticationFailed, call.Failure);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+    }
+
+    private static JellyfinRemoteClient RefusingLoginClient() => new(new StubHttpClientFactory(new StubHandler(request => request.RequestUri!.AbsolutePath == "/Users/AuthenticateByName"
+        ? StubHandler.Status(HttpStatusCode.Unauthorized)
+        : StubHandler.StockServer_Respond(request))))
+    {
+        Delay = (_, _) => Task.CompletedTask
+    };
+
+    // Runs a step once, just before or just after the next change of the configuration, when its save fails, or after a read.
     private sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
     {
         public event EventHandler? SettingsChanged
@@ -315,7 +468,16 @@ public class ServerRemovalLogoutTests
 
         public Action? FailedUpdate { get; set; }
 
-        public T Read<T>(Func<PluginConfiguration, T> read) => inner.Read(read);
+        public Action? AfterRead { get; set; }
+
+        public T Read<T>(Func<PluginConfiguration, T> read)
+        {
+            var result = inner.Read(read);
+            var after = AfterRead;
+            AfterRead = null;
+            after?.Invoke();
+            return result;
+        }
 
         public void Update(Action<PluginConfiguration> update)
         {
@@ -384,7 +546,8 @@ public class ServerRemovalLogoutTests
     }
 
     // A remote that issues a new token at each login, revoking the earlier one, and can hold the answer to the first login.
-    private sealed class IssuingLoginHandler(bool holdFirstLogin = true) : HttpMessageHandler
+    // It can also refuse the logout of a revoked token, as Jellyfin does.
+    private sealed class IssuingLoginHandler(bool holdFirstLogin = true, bool refuseRevoked = false) : HttpMessageHandler
     {
         private readonly Lock _gate = new();
         private readonly List<string> _loggedOut = [];
@@ -452,16 +615,18 @@ public class ServerRemovalLogoutTests
                     return StubHandler.Json(TestValues.LoginJson.Replace(TestValues.Token, token, StringComparison.Ordinal));
                 case LogoutPath:
                     var sent = TokenOf(request);
+                    bool revoked;
                     lock (_gate)
                     {
                         _loggedOut.Add(sent);
-                        if (_live == sent)
+                        revoked = _live != sent;
+                        if (!revoked)
                         {
                             _live = null;
                         }
                     }
 
-                    return StubHandler.Status(HttpStatusCode.NoContent);
+                    return StubHandler.Status(refuseRevoked && revoked ? HttpStatusCode.Unauthorized : HttpStatusCode.NoContent);
                 default:
                     return StubHandler.StockServer_Respond(request);
             }
