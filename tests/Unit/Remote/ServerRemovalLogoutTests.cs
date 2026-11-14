@@ -578,6 +578,25 @@ public class ServerRemovalLogoutTests
     }
 
     [Fact]
+    public async Task AnAddWhoseCredentialsCannotBeEncryptedLogsOutItsLogin()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger);
+        handler.OnLogin = () => fixture.KeySource.Key = null;
+
+        var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.Suspended, added.Failure);
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        Assert.Empty(registry.GetServers());
+        AssertClean(logger);
+    }
+
+    [Fact]
     public async Task NewCredentialsThatCannotBeSavedCutTheLogoutOfTheirLoginAtTheLimit()
     {
         using var fixture = new RegistryFixture(Remote());

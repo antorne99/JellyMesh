@@ -104,9 +104,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var capabilities = await DetectCapabilitiesAsync(endpoint, login.Value!, name, cancellationToken).ConfigureAwait(false);
 
+        // As for new credentials (419): a login whose credentials cannot be saved is ended.
         var encrypted = _vault.Protect(serverId, credentials);
         if (encrypted is null)
         {
+            await EndUnusedLoginAsync(endpoint, login.Value!, name, refusedIsEnded: false).ConfigureAwait(false);
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
         }
 
