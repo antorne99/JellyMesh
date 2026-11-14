@@ -680,6 +680,35 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
 
+    // Decision 408: a remote added back is a new server, so the libraries the removed one left never become its own.
+    [Fact]
+    public async Task A_remote_added_back_as_a_new_server_never_takes_the_libraries_the_removed_one_left()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Stubs.Setup(stubs => stubs.HasTitlesOf(_serverId)).Returns(true);
+        fixture.RemoveServer();
+        await fixture.Manager.DeleteRemovedServerLibraries();
+        var newId = Guid.Parse("9f8e7d6c-5b4a-4321-8765-0fedcba98765");
+        var back = new RemoteServerConfig { Id = newId, Name = "Casa" };
+        fixture.Store.Update(config => config.Servers.Add(back));
+
+        await fixture.Manager.Enable(newId).Job;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(["Casa 9f8e7d6c - Film", "Casa 9f8e7d6c - Serie"], back.AutomaticLibraryRegistry.Select(record => record.Name));
+        Assert.Equal(2, Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).Libraries.Count);
+
+        fixture.Stubs.Setup(stubs => stubs.HasTitlesOf(_serverId)).Returns(false);
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Casa 9f8e7d6c - Film", "Casa 9f8e7d6c - Serie"], fixture.Libraries.Folders.Select(folder => folder.Name));
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
     [Fact]
     public async Task A_new_federated_folder_lists_as_released_the_libraries_a_removed_server_left()
     {
@@ -1809,7 +1838,7 @@ public sealed partial class ServerLibraryManagerTests
             config.HoldAutomaticLibraries(server.Id, server.AutomaticLibraryRegistry, server.PreexistingLibraryIds, server.FollowedLibraryIds, server.FollowSkipped);
         });
 
-        // Like the registry for a remote that comes back: a new server with the same id.
+        // A server put back with the same id, as by a settings file restored by hand.
         public RemoteServerConfig AddServerBack(string name)
         {
             var server = new RemoteServerConfig { Id = _serverId, Name = name };
