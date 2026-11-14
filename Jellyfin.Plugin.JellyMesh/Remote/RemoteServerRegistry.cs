@@ -657,18 +657,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private async Task EndDeviceWithoutLiveLoginAsync(RemoteServerConfig removed, ServerRuntime? runtime)
     {
         var name = LogText.Clean(removed.Name);
-        if (UnprotectOrNull(removed.Id, removed.EncryptedCredentials) is not { } credentials)
-        {
-            _logger.LogWarning("Removed remote server {ServerName} had no live login and its stored credentials cannot be read; its JellyMesh device may stay listed there", name);
-            return;
-        }
-
-        var endpoint = EndpointOf(removed.Id, removed.Url);
         using var limit = new CancellationTokenSource(LogoutLimit);
         var held = false;
         RemoteFailure failure;
         try
         {
+            if (UnprotectOrNull(removed.Id, removed.EncryptedCredentials) is not { } credentials)
+            {
+                _logger.LogWarning("Removed remote server {ServerName} had no live login and its stored credentials cannot be read; its JellyMesh device may stay listed there", name);
+                return;
+            }
+
+            var endpoint = EndpointOf(removed.Id, removed.Url);
             if (runtime is not null)
             {
                 await runtime.LoginGate.WaitAsync(limit.Token).ConfigureAwait(false);
@@ -677,12 +677,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
             var login = await _client.AuthenticateAsync(endpoint, credentials, limit.Token).ConfigureAwait(false);
             failure = login.Value is { } session ? await LogOutUntilAsync(endpoint, session, limit).ConfigureAwait(false) : login.Failure;
-
-            // A token refused right after it was issued was revoked by a later login of this device, which its path ends.
-            if (failure == RemoteFailure.AuthenticationFailed && login.IsSuccess)
-            {
-                failure = RemoteFailure.None;
-            }
         }
         catch (OperationCanceledException) when (limit.IsCancellationRequested)
         {

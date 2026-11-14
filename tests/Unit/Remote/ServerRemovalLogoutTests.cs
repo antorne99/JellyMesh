@@ -135,6 +135,24 @@ public class ServerRemovalLogoutTests
     }
 
     [Fact]
+    public async Task WithoutALiveLoginAStoredAddressThatCannotBeReadIsLoggedAndTheRemovalStands()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        fixture.Store.Update(config => config.Servers.Single().Url = "not an address");
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, fixture.Client, logger);
+        fixture.Handler.Requests.Clear();
+
+        Assert.True(await restarted.RemoveAsync(server.Id));
+
+        Assert.Empty(fixture.Handler.Requests);
+        Assert.Empty(restarted.GetServers());
+        Assert.Contains(logger.Lines, line => line.Contains("Could not end the login", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Fact]
     public async Task WithoutALiveLoginARefusedLoginIsLoggedAndTheRemovalStands()
     {
         using var fixture = new RegistryFixture(Remote());
