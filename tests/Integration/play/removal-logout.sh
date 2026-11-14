@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Decision 413: removing a server ends what plays from it at once, then ends its login on the remote within a short time.
 # A remote that does not answer keeps the device listed, the removal stays fast and the log shows no token or address.
+# Decision 418: after a local restart there is no live login, so the removal logs in with the same device and out at once.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-rml] [PORT=18480] removal-logout.sh   (KEEP=1 leaves the containers up)
 set -euo pipefail
 PREFIX=${PREFIX:-jm-rml}
@@ -222,17 +223,25 @@ wait_ready remote
 login remote
 check "the device stays listed on the remote" true "$(device_listed "$id")"
 
-echo "== without a live login nothing is sent and the device stays"
+echo "== without a live login the removal logs in and out with the same device"
 id=$(connect)
+token=$(remote_token "$id")
 docker restart "$PREFIX-local" >/dev/null
 sleep 3
 wait_ready local
 login local
+check "the remote lists the plugin's device" true "$(device_listed "$id")"
 since_log=$(stamp)
 t=$(now)
 check "the removal answers" 204 "$(remove "$id")"
-echo "    removal took $(since "$t") s"
-echo "    log: $(log_line "$since_log" "removed remote server")"
-check "the device stays listed on the remote" true "$(device_listed "$id")"
+removal=$(since "$t")
+echo "    removal took $removal s"
+check "the removal is fast" yes "$(under "$removal" 5)"
+line=$(log_line "$since_log" "removed remote server")
+echo "    log: $line"
+check "the removal logged in again to end the device" true "$(yes_no grep -qF "logging in again" <<<"$line")"
+check "the remote no longer lists the plugin's device" false "$(device_listed "$id")"
+check "the old token is refused on the remote" 401 "$(token_works "$token")"
+clean_log "$since_log" "$token"
 
 exit $FAILED

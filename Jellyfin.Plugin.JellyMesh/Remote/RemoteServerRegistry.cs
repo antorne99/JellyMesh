@@ -104,9 +104,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var capabilities = await DetectCapabilitiesAsync(endpoint, login.Value!, name, cancellationToken).ConfigureAwait(false);
 
+        // As for new credentials (419): a login whose credentials cannot be saved is ended.
         var encrypted = _vault.Protect(serverId, credentials);
         if (encrypted is null)
         {
+            await EndUnusedLoginAsync(endpoint, login.Value!, name, refusedIsEnded: false).ConfigureAwait(false);
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
         }
 
@@ -143,10 +145,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         await runtime.LoginGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            // A call that logged in since the save holds the live login: the remote revoked this one.
-            if (runtime.Session is null && (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId)))
+            // A call that logged in since the save holds the kept login. The remote revokes this one only for the same
+            // user, so it is ended here, a refused token counting as ended.
+            if (runtime.Session is not null)
             {
-                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, server.Name).ConfigureAwait(false);
+                await EndUnusedLoginAsync(endpoint, login.Value!, server.Name, refusedIsEnded: true).ConfigureAwait(false);
+            }
+            else if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
+            {
+                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, server.Name, freshMayBeRevoked: true).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
             }
         }
@@ -207,29 +214,40 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
             }
 
+            // New credentials that cannot be saved end their login; the kept one stays and logs in again at its 401 (419).
             var encrypted = _vault.Protect(serverId, credentials);
             if (encrypted is null)
             {
+                await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
             }
 
             var found = false;
             var heldElsewhere = false;
             string? storedId = null;
-            _store.Update(config =>
+            try
             {
-                if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
+                _store.Update(config =>
                 {
-                    server.EncryptedCredentials = encrypted;
-                    storedId = server.JellyfinServerId;
-                    if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
+                    if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
                     {
-                        heldElsewhere = !TryStoreServerId(config, server, remoteId);
-                    }
+                        server.EncryptedCredentials = encrypted;
+                        storedId = server.JellyfinServerId;
+                        if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
+                        {
+                            heldElsewhere = !TryStoreServerId(config, server, remoteId);
+                        }
 
-                    found = true;
-                }
-            });
+                        found = true;
+                    }
+                });
+            }
+            catch
+            {
+                await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
+                throw;
+            }
+
             if (!found)
             {
                 await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
@@ -298,7 +316,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         // Not disposed here: a call may still hold its login gate. The registry disposes the rest.
         var session = _runtimes.TryRemove(serverId, out var runtime) ? runtime.Forget() : null;
-        await EndRemovedSessionAsync(removed, session).ConfigureAwait(false);
+        if (session is null)
+        {
+            await EndDeviceWithoutLiveLoginAsync(removed, runtime).ConfigureAwait(false);
+        }
+        else
+        {
+            await EndRemovedSessionAsync(removed, session).ConfigureAwait(false);
+        }
+
         return true;
     }
 
@@ -549,16 +575,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Success<RemoteSession>(current);
             }
 
-            RemoteCredentials? credentials;
-            try
-            {
-                credentials = _vault.Unprotect(server.Id, server.EncryptedCredentials);
-            }
-            catch (CryptographicException)
-            {
-                credentials = null;
-            }
-
+            var credentials = UnprotectOrNull(server.Id, server.EncryptedCredentials);
             if (credentials is null)
             {
                 DropIfRemoved(server.Id, runtime);
@@ -619,17 +636,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Ends the live login of a removed server within the logout limit. On a failure its device stays (413); without one, a
-    // login that raced the removal may have ended it, which that path logs.
-    private async Task EndRemovedSessionAsync(RemoteServerConfig removed, RemoteSession? session)
+    // Ends the live login of a removed server within the logout limit. On a failure its device stays (413).
+    private async Task EndRemovedSessionAsync(RemoteServerConfig removed, RemoteSession session)
     {
         var name = LogText.Clean(removed.Name);
-        if (session is null)
-        {
-            _logger.LogWarning("Removed remote server {ServerName} had no live login to end; its JellyMesh device may stay listed there unless a login racing the removal is ended", name);
-            return;
-        }
-
         var failure = await LogOutWithinLimitAsync(EndpointOf(removed.Id, removed.Url), session).ConfigureAwait(false);
         if (failure == RemoteFailure.None)
         {
@@ -642,9 +652,76 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
+    // Without a live login, as after a restart, logs in with the same device and out at once, all within the logout limit
+    // and after any login of the forgotten runtime (418). The login is kept nowhere; on a failure the device stays.
+    private async Task EndDeviceWithoutLiveLoginAsync(RemoteServerConfig removed, ServerRuntime? runtime)
+    {
+        var name = LogText.Clean(removed.Name);
+        using var limit = new CancellationTokenSource(LogoutLimit);
+        var held = false;
+        RemoteFailure failure;
+        try
+        {
+            if (UnprotectOrNull(removed.Id, removed.EncryptedCredentials) is not { } credentials)
+            {
+                _logger.LogWarning("Removed remote server {ServerName} had no live login and its stored credentials cannot be read; its JellyMesh device may stay listed there", name);
+                return;
+            }
+
+            var endpoint = EndpointOf(removed.Id, removed.Url);
+            if (runtime is not null)
+            {
+                await runtime.LoginGate.WaitAsync(limit.Token).ConfigureAwait(false);
+                held = true;
+            }
+
+            var login = await _client.AuthenticateAsync(endpoint, credentials, limit.Token).ConfigureAwait(false);
+            failure = login.Value is { } session ? await LogOutUntilAsync(endpoint, session, limit).ConfigureAwait(false) : login.Failure;
+        }
+        catch (OperationCanceledException) when (limit.IsCancellationRequested)
+        {
+            failure = RemoteFailure.Timeout;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold an address. The removal is saved, so it must not fail now.
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Error}; its JellyMesh device may stay listed there", name, exception.GetType().Name);
+            return;
+        }
+        finally
+        {
+            if (held)
+            {
+                runtime!.LoginGate.Release();
+            }
+        }
+
+        if (failure == RemoteFailure.None)
+        {
+            _logger.LogInformation("Ended the JellyMesh device on removed remote server {ServerName} by logging in again, as it had no live login", name);
+        }
+        else
+        {
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // The stored credentials of a server, or null when they do not decrypt or there is no usable key.
+    private RemoteCredentials? UnprotectOrNull(Guid serverId, string encryptedCredentials)
+    {
+        try
+        {
+            return _vault.Unprotect(serverId, encryptedCredentials);
+        }
+        catch (Exception exception) when (exception is CryptographicException or System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
     // Ends a login that finished after the removal of its server, so that no device stays behind (413). The forgotten
     // runtime leaves too, with any other login it kept: if the removal is not saved, the next call builds a new one.
-    private async Task EndLoginOfRemovedAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName)
+    private async Task EndLoginOfRemovedAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName, bool freshMayBeRevoked = false)
     {
         RemoteSession? kept = null;
         if (runtime is not null)
@@ -667,9 +744,26 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             failures[1] = RemoteFailure.None;
         }
 
+        // The add logs in outside the gate, so a later login of this device, which its own path ends, can revoke it.
+        if (freshMayBeRevoked && failures[0] == RemoteFailure.AuthenticationFailed)
+        {
+            failures[0] = RemoteFailure.None;
+        }
+
         foreach (var failure in failures.Where(failure => failure != RemoteFailure.None))
         {
             _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // Ends a login that is not kept, such as one whose credentials could not be saved (419), within the logout limit.
+    // With refusedIsEnded, a refused token was revoked by a later login and counts as ended.
+    private async Task EndUnusedLoginAsync(RemoteEndpoint endpoint, RemoteSession session, string serverName, bool refusedIsEnded)
+    {
+        var failure = await LogOutWithinLimitAsync(endpoint, session).ConfigureAwait(false);
+        if (failure != RemoteFailure.None && !(refusedIsEnded && failure == RemoteFailure.AuthenticationFailed))
+        {
+            _logger.LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login", LogText.Clean(serverName), failure);
         }
     }
 
@@ -693,10 +787,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Lets go of the state of a server removed meanwhile, unless it holds a login that the removal still ends (413).
+    // Lets go of the state of a server removed meanwhile, unless it holds a login that the removal still ends (413). The
+    // runtime is forgotten in the same step as the check, so a login kept later is ended by its own path.
     private void DropIfRemoved(Guid serverId, ServerRuntime runtime)
     {
-        if (runtime.Session is null && !IsConfigured(serverId))
+        if (!IsConfigured(serverId) && runtime.TryForgetIfIdle())
         {
             _runtimes.TryRemove(KeyValuePair.Create(serverId, runtime));
         }
@@ -871,6 +966,20 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 }
 
                 return !_forgotten;
+            }
+        }
+
+        // Forgets the runtime only if it holds no login, in one step: a later login is then not kept.
+        public bool TryForgetIfIdle()
+        {
+            lock (_gate)
+            {
+                if (_session is null)
+                {
+                    _forgotten = true;
+                }
+
+                return _forgotten;
             }
         }
 
