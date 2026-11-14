@@ -662,6 +662,78 @@ public class ServerRemovalLogoutTests
     }
 
     [Fact]
+    public async Task AnAddThatCannotBeSavedLogsOutItsLoginAndKeepsNoServer()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger);
+        handler.OnLogin = () => fixture.Store.SaveFailure = new IOException();
+
+        await Assert.ThrowsAsync<IOException>(() => registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None));
+
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        Assert.Empty(registry.GetServers());
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("Friend", StringComparison.Ordinal) && line.Contains(nameof(IOException), StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task AnAddThatCannotBeSavedCutsTheLogoutOfItsLoginAtTheLimit()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        using var handler = new HangingHandler(LogoutPath) { OnLogin = () => fixture.Store.SaveFailure = new IOException() };
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromMilliseconds(200) };
+        var watch = Stopwatch.StartNew();
+
+        await Assert.ThrowsAsync<IOException>(() => registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None));
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), watch.Elapsed.ToString());
+        Assert.True(handler.Started);
+        Assert.Empty(registry.GetServers());
+        Assert.Contains(logger.Lines, line => line.Contains("Friend", StringComparison.Ordinal) && line.Contains(nameof(RemoteFailure.Timeout), StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnAddThatCannotBeSavedAlsoLogsOutTheLoginACallKeptMeanwhile(bool remoteRefusesRevokedTokens)
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false, refuseRevoked: remoteRefusesRevokedTokens);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, logger);
+        fixture.Store.SaveFailure = new IOException();
+        var id = Guid.Empty;
+        Task<RemoteResult<int>>? call = null;
+        store.FailedUpdate = () =>
+        {
+            // A call logs in for the server still in memory after the failed save, before the add takes it out.
+            id = fixture.Store.Configuration.Servers.Single().Id;
+            call = Task.Run(() => PingAsync(registry, id));
+            SpinWait.SpinUntil(() => call.IsCompleted, TimeSpan.FromSeconds(5));
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None));
+
+        Assert.True((await call!.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        Assert.Equal([TestValues.Token + "1", TestValues.Token + "2"], handler.LoggedOut.Order(StringComparer.Ordinal));
+        Assert.Null(handler.Live);
+        Assert.False(registry.HoldsStateFor(id));
+        Assert.Empty(registry.GetServers());
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Fact]
     public async Task NewCredentialsThatCannotBeSavedCutTheLogoutOfTheirLoginAtTheLimit()
     {
         using var fixture = new RegistryFixture(Remote());
