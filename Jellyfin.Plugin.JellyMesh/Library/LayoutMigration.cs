@@ -36,6 +36,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     private readonly IServerLibraryManager _automaticLibraries;
     private readonly ILogger<LayoutMigration> _logger;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly IMigrationSync? _sync;
     private volatile LastRun? _lastRun;
 
     /// <summary>
@@ -55,6 +56,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     /// <param name="automaticLibraries">The manager of the automatic libraries, which follows them before placement.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="keeper">What keeps the watch state of the old titles of removed servers before they go (row 412).</param>
+    /// <param name="sync">The sync the automatic migration runs before its scan (§10 row 420).</param>
     public LayoutMigration(
         StubRegistry registry,
         IPluginConfigurationStore store,
@@ -69,7 +71,8 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         ILibraryMaterializer materializer,
         IServerLibraryManager automaticLibraries,
         ILogger<LayoutMigration> logger,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        IMigrationSync? sync = null)
     {
         _registry = registry;
         _store = store;
@@ -85,6 +88,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         _automaticLibraries = automaticLibraries;
         _logger = logger;
         _keeper = keeper;
+        _sync = sync;
     }
 
     /// <inheritdoc />

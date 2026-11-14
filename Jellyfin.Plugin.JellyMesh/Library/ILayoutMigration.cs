@@ -20,6 +20,12 @@ public interface ILayoutMigration
     LayoutMigrationMode NewServerMode { get; }
 
     /// <summary>
+    /// Gets a value indicating whether the automatic migration waits at the carry, with no error, for old titles whose new
+    /// stubs only a sync writes, so the plugin syncs at start instead of at the interval (§10 row 420).
+    /// </summary>
+    bool WaitsAtCarry { get; }
+
+    /// <summary>
     /// Once every library on an old path holds the new paths of the same kind, and each server folder is in some library,
     /// counting only the kinds with old titles, carries each user's state from the old stubs to the new items, and empties
     /// the old folders when every old title is done. Without the new paths, or any server, it does nothing (Q49, Q215, Q249, Q260).

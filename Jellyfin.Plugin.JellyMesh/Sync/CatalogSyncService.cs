@@ -61,6 +61,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private TimeSpan _serverReadLimit = MaxServerRead;
     private int _busy;
+    private volatile TaskCompletionSource _idle = Completed();
     private volatile RunState _run = new(false, false, null, null);
 
     /// <summary>
@@ -170,6 +171,17 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task WaitIdleAsync(CancellationToken cancellationToken)
+    {
+        while (Volatile.Read(ref _busy) != 0)
+        {
+            // A claim sets the flag before its task, so a completed task is the run before's: poll until the new one is set.
+            var idle = _idle.Task;
+            await (idle.IsCompleted ? Task.Delay(10, cancellationToken) : idle.WaitAsync(cancellationToken)).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
     public Task<bool> RemoveServerAsync(Guid serverId, Func<Task<bool>> remove, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(remove);
@@ -235,6 +247,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
     }
 
+    private static TaskCompletionSource Completed()
+    {
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        completed.SetResult();
+        return completed;
+    }
+
     private static bool CoversSameLibraries(SyncMark mark, RemoteServerInfo server)
     {
         return new HashSet<string>(mark.LibraryIds, StringComparer.Ordinal).SetEquals(server.ImportedLibraryIds);
@@ -270,6 +289,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             return SyncStartResult.AlreadyRunning;
         }
 
+        _idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _run = _run with { IsRunning = true, IndexSaveFailed = false, StartedUtc = _timeProvider.GetUtcNow() };
         return SyncStartResult.Started;
     }
@@ -367,7 +387,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             // Before the run shows finished: the page reads the history again when it sees a new end.
             await RecordAsync(kind, started, servers, materialized, stopped).ConfigureAwait(false);
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
+            var idle = _idle;
             Interlocked.Exchange(ref _busy, 0);
+            idle.TrySetResult();
         }
     }
 
