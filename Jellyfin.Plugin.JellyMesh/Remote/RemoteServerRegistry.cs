@@ -660,6 +660,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var failures = await Task.WhenAll(
             LogOutUntilAsync(endpoint, fresh, limit),
             other is null ? Task.FromResult(RemoteFailure.None) : LogOutUntilAsync(endpoint, other, limit)).ConfigureAwait(false);
+
+        // The remote revoked the kept, older login of this device at the fresh one, so a refused token there is ended.
+        if (failures[1] == RemoteFailure.AuthenticationFailed)
+        {
+            failures[1] = RemoteFailure.None;
+        }
+
         foreach (var failure in failures.Where(failure => failure != RemoteFailure.None))
         {
             _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);

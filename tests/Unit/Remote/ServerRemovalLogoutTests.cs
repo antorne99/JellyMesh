@@ -253,10 +253,12 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
-    [Fact]
-    public async Task ALoginEndedForARemovedServerAlsoLogsOutTheLoginItsServerKept()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ALoginEndedForARemovedServerAlsoLogsOutTheLoginItsServerKept(bool remoteRefusesRevokedTokens)
     {
-        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false, refuseRevoked: remoteRefusesRevokedTokens);
         using var fixture = new RegistryFixture(Remote());
         var store = new HookedStore(fixture.Store);
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
@@ -298,6 +300,7 @@ public class ServerRemovalLogoutTests
         Assert.Equal([added, TestValues.Token + "2"], handler.LoggedOut.Order(StringComparer.Ordinal));
         Assert.Null(handler.Live);
         Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
         AssertClean(logger);
     }
 
@@ -505,7 +508,8 @@ public class ServerRemovalLogoutTests
     }
 
     // A remote that issues a new token at each login, revoking the earlier one, and can hold the answer to the first login.
-    private sealed class IssuingLoginHandler(bool holdFirstLogin = true) : HttpMessageHandler
+    // It can also refuse the logout of a revoked token, as Jellyfin does.
+    private sealed class IssuingLoginHandler(bool holdFirstLogin = true, bool refuseRevoked = false) : HttpMessageHandler
     {
         private readonly Lock _gate = new();
         private readonly List<string> _loggedOut = [];
@@ -573,16 +577,18 @@ public class ServerRemovalLogoutTests
                     return StubHandler.Json(TestValues.LoginJson.Replace(TestValues.Token, token, StringComparison.Ordinal));
                 case LogoutPath:
                     var sent = TokenOf(request);
+                    bool revoked;
                     lock (_gate)
                     {
                         _loggedOut.Add(sent);
-                        if (_live == sent)
+                        revoked = _live != sent;
+                        if (!revoked)
                         {
                             _live = null;
                         }
                     }
 
-                    return StubHandler.Status(HttpStatusCode.NoContent);
+                    return StubHandler.Status(refuseRevoked && revoked ? HttpStatusCode.Unauthorized : HttpStatusCode.NoContent);
                 default:
                     return StubHandler.StockServer_Respond(request);
             }
