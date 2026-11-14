@@ -533,6 +533,27 @@ public class ServerRemovalLogoutTests
     }
 
     [Fact]
+    public async Task ACallWhoseServerIsRemovedBeforeItTakesTheGateDoesNotLogIn()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, new CapturingLogger<RemoteServerRegistry>());
+        fixture.Handler.Requests.Clear();
+        Task<bool>? removal = null;
+        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        var call = await PingAsync(restarted, server.Id);
+
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(RemoteFailure.UnknownServer, call.Failure);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+
+        // Only the removal logs in, to end the device (418).
+        Assert.Equal([LoginPath, LogoutPath], fixture.Handler.Requests.Select(request => request.Uri.AbsolutePath));
+    }
+
+    [Fact]
     public async Task ACallWhoseLoginFailsAfterTheRemovalLeavesNoStateForTheServer()
     {
         using var fixture = new RegistryFixture(Remote());
