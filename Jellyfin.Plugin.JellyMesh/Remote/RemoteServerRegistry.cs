@@ -525,7 +525,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 var failure = await LogOutWithinLimitAsync(endpoint, fresh).ConfigureAwait(false);
                 if (failure != RemoteFailure.None)
                 {
-                    _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device stays listed there", LogText.Clean(server.Name), failure);
+                    _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", LogText.Clean(server.Name), failure);
                 }
 
                 return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
@@ -587,7 +587,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
         else
         {
-            _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device stays listed there", name, failure);
+            // A logout cut by the limit may still reach the remote later.
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
         }
     }
 
