@@ -227,7 +227,8 @@ echo "--- bodies that stall"
 set_mode catalog-stall
 sync_now
 check "a catalog that stalls" Timeout "$(last_failure)"
-at_most "seconds of that sync" 40 "$(cat "$WORK/sync-seconds")"
+# Decision 47: a sync read that times out is tried twice more, after 1 s and 3 s, so about 94 s in all.
+at_most "seconds of that sync" 110 "$(cat "$WORK/sync-seconds")"
 set_mode pi-stall
 started=$SECONDS
 check "PlaybackInfo that stalls: refused" 503 "$(open s1 "$film")"
