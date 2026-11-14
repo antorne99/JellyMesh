@@ -298,7 +298,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         // Not disposed here: a call may still hold its login gate. The registry disposes the rest.
         var session = _runtimes.TryRemove(serverId, out var runtime) ? runtime.Forget() : null;
-        await EndRemovedSessionAsync(removed, session).ConfigureAwait(false);
+        if (session is null)
+        {
+            await EndDeviceWithoutLiveLoginAsync(removed, runtime).ConfigureAwait(false);
+        }
+        else
+        {
+            await EndRemovedSessionAsync(removed, session).ConfigureAwait(false);
+        }
+
         return true;
     }
 
@@ -549,16 +557,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Success<RemoteSession>(current);
             }
 
-            RemoteCredentials? credentials;
-            try
-            {
-                credentials = _vault.Unprotect(server.Id, server.EncryptedCredentials);
-            }
-            catch (CryptographicException)
-            {
-                credentials = null;
-            }
-
+            var credentials = UnprotectOrNull(server.Id, server.EncryptedCredentials);
             if (credentials is null)
             {
                 DropIfRemoved(server.Id, runtime);
@@ -619,17 +618,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Ends the live login of a removed server within the logout limit. On a failure its device stays (413); without one, a
-    // login that raced the removal may have ended it, which that path logs.
-    private async Task EndRemovedSessionAsync(RemoteServerConfig removed, RemoteSession? session)
+    // Ends the live login of a removed server within the logout limit. On a failure its device stays (413).
+    private async Task EndRemovedSessionAsync(RemoteServerConfig removed, RemoteSession session)
     {
         var name = LogText.Clean(removed.Name);
-        if (session is null)
-        {
-            _logger.LogWarning("Removed remote server {ServerName} had no live login to end; its JellyMesh device may stay listed there unless a login racing the removal is ended", name);
-            return;
-        }
-
         var failure = await LogOutWithinLimitAsync(EndpointOf(removed.Id, removed.Url), session).ConfigureAwait(false);
         if (failure == RemoteFailure.None)
         {
@@ -639,6 +631,79 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             // A logout cut by the limit may still reach the remote later.
             _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // Without a live login, as after a restart, logs in with the same device and out at once, all within the logout limit
+    // and after any login of the forgotten runtime (418). The login is kept nowhere; on a failure the device stays.
+    private async Task EndDeviceWithoutLiveLoginAsync(RemoteServerConfig removed, ServerRuntime? runtime)
+    {
+        var name = LogText.Clean(removed.Name);
+        if (UnprotectOrNull(removed.Id, removed.EncryptedCredentials) is not { } credentials)
+        {
+            _logger.LogWarning("Removed remote server {ServerName} had no live login and its stored credentials cannot be read; its JellyMesh device may stay listed there", name);
+            return;
+        }
+
+        var endpoint = EndpointOf(removed.Id, removed.Url);
+        using var limit = new CancellationTokenSource(LogoutLimit);
+        var held = false;
+        RemoteFailure failure;
+        try
+        {
+            if (runtime is not null)
+            {
+                await runtime.LoginGate.WaitAsync(limit.Token).ConfigureAwait(false);
+                held = true;
+            }
+
+            var login = await _client.AuthenticateAsync(endpoint, credentials, limit.Token).ConfigureAwait(false);
+            failure = login.Value is { } session ? await LogOutUntilAsync(endpoint, session, limit).ConfigureAwait(false) : login.Failure;
+
+            // A token refused right after it was issued was revoked by a later login of this device, which its path ends.
+            if (failure == RemoteFailure.AuthenticationFailed && login.IsSuccess)
+            {
+                failure = RemoteFailure.None;
+            }
+        }
+        catch (OperationCanceledException) when (limit.IsCancellationRequested)
+        {
+            failure = RemoteFailure.Timeout;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold an address. The removal is saved, so it must not fail now.
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Error}; its JellyMesh device may stay listed there", name, exception.GetType().Name);
+            return;
+        }
+        finally
+        {
+            if (held)
+            {
+                runtime!.LoginGate.Release();
+            }
+        }
+
+        if (failure == RemoteFailure.None)
+        {
+            _logger.LogInformation("Ended the JellyMesh device on removed remote server {ServerName} by logging in again, as it had no live login", name);
+        }
+        else
+        {
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // The stored credentials of a server, or null when they do not decrypt or there is no usable key.
+    private RemoteCredentials? UnprotectOrNull(Guid serverId, string encryptedCredentials)
+    {
+        try
+        {
+            return _vault.Unprotect(serverId, encryptedCredentials);
+        }
+        catch (Exception exception) when (exception is CryptographicException or System.Text.Json.JsonException)
+        {
+            return null;
         }
     }
 

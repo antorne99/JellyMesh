@@ -17,6 +17,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Remote;
 // Decision 413: removing a server ends its login on the remote, within a short time, and never fails for it.
 public class ServerRemovalLogoutTests
 {
+    private const string LoginPath = "/Users/AuthenticateByName";
     private const string LogoutPath = "/Sessions/Logout";
 
     private static StubHandler Remote(HttpStatusCode logout = HttpStatusCode.NoContent) => new(request => request.RequestUri!.AbsolutePath == LogoutPath
@@ -64,8 +65,9 @@ public class ServerRemovalLogoutTests
         Assert.Empty(fixture.Handler.Requests);
     }
 
+    // Decision 418: after a restart there is no live login, so the removal logs in with the same device and out at once.
     [Fact]
-    public async Task WithoutALiveLoginNothingIsSentAndTheDeviceIsSaidToStay()
+    public async Task WithoutALiveLoginTheRemovalLogsInAndOutWithTheSameDevice()
     {
         using var fixture = new RegistryFixture(Remote());
         var server = await fixture.AddServerAsync();
@@ -75,8 +77,76 @@ public class ServerRemovalLogoutTests
 
         Assert.True(await restarted.RemoveAsync(server.Id));
 
+        Assert.Equal([LoginPath, LogoutPath], fixture.Handler.Requests.Select(request => request.Uri.AbsolutePath));
+        Assert.All(fixture.Handler.Requests, request => Assert.Contains($"DeviceId=\"jellymesh-{server.Id:N}\"", request.Authorization, StringComparison.Ordinal));
+        Assert.Contains($"Token=\"{TestValues.Token}\"", fixture.Handler.Requests[1].Authorization, StringComparison.Ordinal);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+        Assert.Empty(restarted.GetServers());
+        Assert.Contains(logger.Lines, line => line.Contains("logging in again", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("may stay listed", StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(TestValues.OtherKey)]
+    public async Task WithoutALiveLoginAndWithCredentialsThatDoNotDecryptNothingIsSentAndTheDeviceIsSaidToStay(string? key)
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, fixture.Client, logger);
+        fixture.Handler.Requests.Clear();
+        fixture.KeySource.Key = key;
+
+        Assert.True(await restarted.RemoveAsync(server.Id));
+
         Assert.Empty(fixture.Handler.Requests);
-        Assert.Contains(logger.Lines, line => line.Contains("no live login", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
+        Assert.Empty(restarted.GetServers());
+        Assert.Contains(logger.Lines, line => line.Contains("no live login", StringComparison.Ordinal)
+            && line.Contains("may stay listed", StringComparison.Ordinal)
+            && line.Contains("Friend", StringComparison.Ordinal));
+        Assert.All(logger.Lines, line => Assert.DoesNotContain(TestValues.Password, line, StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Theory]
+    [InlineData(LoginPath)]
+    [InlineData(LogoutPath)]
+    public async Task WithoutALiveLoginARemoteThatHangsIsCutAtTheLimit(string hangingPath)
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        using var handler = new HangingHandler(hangingPath);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromMilliseconds(200) };
+        var watch = Stopwatch.StartNew();
+
+        Assert.True(await restarted.RemoveAsync(server.Id));
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), watch.Elapsed.ToString());
+        Assert.True(handler.Started);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+        Assert.Contains(logger.Lines, line => line.Contains("Could not end the login", StringComparison.Ordinal)
+            && line.Contains(nameof(RemoteFailure.Timeout), StringComparison.Ordinal)
+            && line.Contains("Friend", StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task WithoutALiveLoginARefusedLoginIsLoggedAndTheRemovalStands()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, RefusingLoginClient(), logger);
+
+        Assert.True(await restarted.RemoveAsync(server.Id));
+
+        Assert.Empty(restarted.GetServers());
+        Assert.Contains(logger.Lines, line => line.Contains("Could not end the login", StringComparison.Ordinal)
+            && line.Contains(nameof(RemoteFailure.AuthenticationFailed), StringComparison.Ordinal));
         AssertClean(logger);
     }
 
@@ -119,7 +189,7 @@ public class ServerRemovalLogoutTests
         using var fixture = new RegistryFixture(Remote());
         var server = await fixture.AddServerAsync();
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
-        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, new CapturingLogger<RemoteServerRegistry>());
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, new CapturingLogger<RemoteServerRegistry>()) { LogoutLimit = TimeSpan.FromMilliseconds(200) };
 
         var call = PingAsync(restarted, server.Id);
         await handler.LoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -146,7 +216,9 @@ public class ServerRemovalLogoutTests
 
         Assert.True(await removal!);
         Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
-        var logout = Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LogoutPath);
+        // The update ends its login, then the removal, which found no live login, logs in and out with the same device (418).
+        Assert.Equal([LoginPath, LogoutPath, LoginPath, LogoutPath], fixture.Handler.Requests.Select(request => request.Uri.AbsolutePath));
+        var logout = fixture.Handler.Requests[1];
         Assert.Contains($"Token=\"{TestValues.Token}\"", logout.Authorization, StringComparison.Ordinal);
         Assert.Contains(logger.Lines, line => line.Contains("removed", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
         AssertClean(logger);
@@ -168,7 +240,7 @@ public class ServerRemovalLogoutTests
 
         Assert.True(await removal!);
         Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
-        Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LogoutPath);
+        Assert.Equal([LoginPath, LogoutPath, LoginPath, LogoutPath], fixture.Handler.Requests.Select(request => request.Uri.AbsolutePath));
         Assert.Contains(logger.Lines, line => line.Contains("removed", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
         AssertClean(logger);
     }
@@ -296,8 +368,9 @@ public class ServerRemovalLogoutTests
         Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
         Assert.NotNull(added);
-        Assert.Equal(2, handler.Logins);
-        Assert.Equal([added, TestValues.Token + "2"], handler.LoggedOut.Order(StringComparer.Ordinal));
+        Assert.Equal(3, handler.Logins);
+        // The update took the server's runtime, so the removal finds no live login and logs in and out once more (418).
+        Assert.Equal([added, TestValues.Token + "2", TestValues.Token + "3"], handler.LoggedOut.Order(StringComparer.Ordinal));
         Assert.Null(handler.Live);
         Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
         Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
@@ -351,7 +424,8 @@ public class ServerRemovalLogoutTests
 
         Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(RemoteFailure.UnknownServer, added.Failure);
-        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        // The removal runs before the add holds a runtime: it logs in and out, then the add ends its own login.
+        Assert.Equal([TestValues.Token + "2", TestValues.Token + "1"], handler.LoggedOut);
         Assert.Null(handler.Live);
         Assert.Empty(registry.GetServers());
         Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
@@ -515,6 +589,25 @@ public class ServerRemovalLogoutTests
             }
 
             return StubHandler.StockServer_Respond(request);
+        }
+    }
+
+    // A stock remote whose answers on one path never come.
+    private sealed class HangingHandler(string path) : HttpMessageHandler
+    {
+        private int _started;
+
+        public bool Started => Volatile.Read(ref _started) == 1;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath == path)
+            {
+                Volatile.Write(ref _started, 1);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            return request.RequestUri.AbsolutePath == LogoutPath ? StubHandler.Status(HttpStatusCode.NoContent) : StubHandler.StockServer_Respond(request);
         }
     }
 
