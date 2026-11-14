@@ -463,6 +463,51 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.DoesNotContain(_logger.Lines, message => message.Contains("secret", StringComparison.Ordinal));
     }
 
+    // Row 412 with decision 278: a failed save holds the automatic libraries too, since Jellyfin 12.4 drops the items of a
+    // removed library and the next save would no longer find them.
+    [Fact]
+    public async Task AStoreThatFailsHoldsTheAutomaticLibrariesOfTheRemovedServer()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", "films");
+        Watch(_anna, FilmItem(a));
+        var fails = true;
+        var store = new Mock<IKeptWatchStateStore>();
+        store.Setup(kept => kept.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>()))
+            .Returns((IReadOnlyCollection<KeptTitle> titles, CancellationToken token) => fails ? throw new IOException("/secret") : _kept.SaveAsync(titles, token));
+        using var keeper = Keeper(store.Object);
+        var libraries = new ServerLibraryManagerTests.FakeLibraries();
+        var fileSystem = new Mock<MediaBrowser.Model.IO.IFileSystem>();
+        fileSystem.Setup(system => system.GetValidFilename(It.IsAny<string>())).Returns<string>(name => name);
+        using var manager = new ServerLibraryManager(
+            _fixture.Sync.Store,
+            libraries.Object,
+            fileSystem.Object,
+            new ServerLibraryManagerTests.RecordingScans(),
+            Mock.Of<ILibraryMaterializer>(),
+            new ServerLibraryManagerTests.FakeRenamer { Libraries = libraries },
+            _fixture.Registry,
+            new CapturingLogger<ServerLibraryManager>());
+        await manager.Enable(a.Id).Job;
+        var created = libraries.Folders.Select(folder => folder.Name).ToList();
+
+        await RemoveAsync(a, MaterializerWith(keeper));
+        await manager.DeleteRemovedServerLibraries();
+
+        Assert.Equal(2, created.Count);
+        Assert.Empty(libraries.Removed);
+        Assert.Single(_fixture.Registry.State.Stubs);
+
+        fails = false;
+        using var sync = SyncWith(MaterializerWith(keeper));
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        await manager.DeleteRemovedServerLibraries();
+
+        Assert.Empty(_fixture.Registry.State.Stubs);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+        Assert.Equal(created.Order(StringComparer.Ordinal), libraries.Removed.Select(call => call.Name).Order(StringComparer.Ordinal));
+    }
+
     [Fact]
     public async Task TheStubOfTheRemovedServerItselfGetsNothing()
     {

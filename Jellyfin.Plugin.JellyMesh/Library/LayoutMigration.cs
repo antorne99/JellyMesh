@@ -35,6 +35,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     private readonly ILibraryMaterializer _materializer;
     private readonly IServerLibraryManager _automaticLibraries;
     private readonly ILogger<LayoutMigration> _logger;
+    private readonly IWatchStateKeeper? _keeper;
     private volatile LastRun? _lastRun;
 
     /// <summary>
@@ -53,6 +54,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     /// <param name="materializer">The materializer, which writes the server folders before they are added.</param>
     /// <param name="automaticLibraries">The manager of the automatic libraries, which follows them before placement.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="keeper">What keeps the watch state of the old titles of removed servers before they go (row 412).</param>
     public LayoutMigration(
         StubRegistry registry,
         IPluginConfigurationStore store,
@@ -66,7 +68,8 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         ILibraryScans scans,
         ILibraryMaterializer materializer,
         IServerLibraryManager automaticLibraries,
-        ILogger<LayoutMigration> logger)
+        ILogger<LayoutMigration> logger,
+        IWatchStateKeeper? keeper = null)
     {
         _registry = registry;
         _store = store;
@@ -81,6 +84,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         _materializer = materializer;
         _automaticLibraries = automaticLibraries;
         _logger = logger;
+        _keeper = keeper;
     }
 
     /// <inheritdoc />
@@ -211,6 +215,17 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         return !missing ? Step.Waiting : hold.Count > 0 ? new Step(null, false, hold) : Step.None;
     }
 
+    // The old stubs and series whose sources are all on servers the admin removed, as FateOf tells them (decision 44).
+    private static (List<StubEntry> Stubs, List<SeriesStub> Series) OnlyOnRemoved(StubState state, Catalog catalog)
+    {
+        bool Removed(IReadOnlyList<StubSource> sources) =>
+            sources.Count > 0 && sources.All(source => !catalog.Configured.ContainsKey(source.ServerId) && catalog.Removed.Contains(source.ServerId));
+
+        return (
+            state.Stubs.Where(stub => stub.ServerId is null && Removed(stub.Sources)).ToList(),
+            state.Series.Where(series => series.ServerId is null && Removed(series.Sources)).ToList());
+    }
+
     private static HashSet<(Guid ServerId, string ItemId)> ItemsOf(IReadOnlyList<StubSource> sources) =>
         sources.Select(source => (source.ServerId, source.ItemId)).ToHashSet();
 
@@ -328,6 +343,15 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
                 waiting,
                 heldTitles,
                 blocked);
+            return held;
+        }
+
+        // The old titles of removed servers go with no carry, so their watch state is kept first; while it cannot be, they wait.
+        var (removedStubs, removedSeries) = OnlyOnRemoved(state, catalog);
+        if (_keeper is not null && !await _keeper.KeepAsync(root, removedStubs, removedSeries, cancellationToken).ConfigureAwait(false))
+        {
+            _lastRun = new LastRun(removedStubs.Count + removedSeries.Count, 0, 0);
+            _logger.LogInformation("Migration to the server folders: {Waiting} old titles of removed servers wait until their watch state is kept", removedStubs.Count + removedSeries.Count);
             return held;
         }
 
