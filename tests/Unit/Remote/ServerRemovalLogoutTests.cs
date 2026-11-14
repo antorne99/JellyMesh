@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Xunit;
 
@@ -124,6 +125,76 @@ public class ServerRemovalLogoutTests
 
         Assert.Equal(RemoteFailure.UnknownServer, (await call.WaitAsync(TimeSpan.FromSeconds(5))).Failure);
         Assert.Equal(1, handler.Logouts);
+    }
+
+    [Fact]
+    public async Task ALoginForNewCredentialsThatEndsAfterTheRemovalIsLoggedOut()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, logger);
+        fixture.Handler.Requests.Clear();
+        Task<bool>? removal = null;
+        store.BeforeUpdate = () => removal = restarted.RemoveAsync(server.Id);
+
+        var update = await restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(await removal!);
+        Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
+        var logout = Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LogoutPath);
+        Assert.Contains($"Token=\"{TestValues.Token}\"", logout.Authorization, StringComparison.Ordinal);
+        Assert.Contains(logger.Lines, line => line.Contains("removed", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task ALoginForNewCredentialsIsLoggedOutWhenTheRemovalEndsRightAfterItIsSaved()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, logger);
+        fixture.Handler.Requests.Clear();
+        Task<bool>? removal = null;
+        store.AfterUpdate = () => removal = restarted.RemoveAsync(server.Id);
+
+        var update = await restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(await removal!);
+        Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
+        Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LogoutPath);
+        Assert.Contains(logger.Lines, line => line.Contains("removed", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
+    // Runs a step once, just before or just after the next change of the configuration.
+    private sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
+    {
+        public event EventHandler? SettingsChanged
+        {
+            add => inner.SettingsChanged += value;
+            remove => inner.SettingsChanged -= value;
+        }
+
+        public Action? BeforeUpdate { get; set; }
+
+        public Action? AfterUpdate { get; set; }
+
+        public T Read<T>(Func<PluginConfiguration, T> read) => inner.Read(read);
+
+        public void Update(Action<PluginConfiguration> update)
+        {
+            var before = BeforeUpdate;
+            BeforeUpdate = null;
+            before?.Invoke();
+            inner.Update(update);
+            var after = AfterUpdate;
+            AfterUpdate = null;
+            after?.Invoke();
+        }
     }
 
     private sealed class HangingLogoutHandler : HttpMessageHandler

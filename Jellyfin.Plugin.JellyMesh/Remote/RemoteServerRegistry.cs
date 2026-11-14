@@ -166,7 +166,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
         }
 
-        var login = await _client.AuthenticateAsync(EndpointOf(serverId, stored.Url), credentials, cancellationToken).ConfigureAwait(false);
+        var endpoint = EndpointOf(serverId, stored.Url);
+        var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
         if (!login.IsSuccess)
         {
             _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", LogText.Clean(stored.Name), login.Failure);
@@ -198,6 +199,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         });
         if (!found)
         {
+            await EndLoginOfRemovedAsync(null, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
         }
 
@@ -207,11 +209,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             WarnServerIdHeldElsewhere(stored.Name, login.Value!.ServerId!);
         }
 
+        // As in GetSessionAsync: a removal that ended meanwhile must not leave this login behind (413).
         var runtime = RuntimeOf(serverId);
-        runtime.Session = login.Value;
+        if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
+        {
+            await EndLoginOfRemovedAsync(runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+        }
+
         Record(runtime, stored.Name, RemoteFailure.None, countsForActivity: true);
         _logger.LogInformation("Updated the credentials of remote server {ServerName}", LogText.Clean(stored.Name));
-        return RemoteResult.Success(_store.Read(config => ToInfo(config.Servers.First(server => server.Id == serverId))));
+        var info = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server ? ToInfo(server) : null);
+        return info is null ? RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer) : RemoteResult.Success(info);
     }
 
     /// <inheritdoc />
@@ -521,13 +530,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             // A login that ends after the removal of its server is ended at once, so that no device stays behind (413).
             if (!runtime.TryKeep(fresh) || !IsConfigured(server.Id))
             {
-                runtime.Forget();
-                var failure = await LogOutWithinLimitAsync(endpoint, fresh).ConfigureAwait(false);
-                if (failure != RemoteFailure.None)
-                {
-                    _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", LogText.Clean(server.Name), failure);
-                }
-
+                await EndLoginOfRemovedAsync(runtime, endpoint, fresh, server.Name).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
             }
 
@@ -589,6 +592,19 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             // A logout cut by the limit may still reach the remote later.
             _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // Ends a login that finished after the removal of its server, so that no device stays behind (413).
+    private async Task EndLoginOfRemovedAsync(ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName)
+    {
+        runtime?.Forget();
+        var name = LogText.Clean(serverName);
+        _logger.LogInformation("Remote server {ServerName} was removed while logging in; that login is ended", name);
+        var failure = await LogOutWithinLimitAsync(endpoint, fresh).ConfigureAwait(false);
+        if (failure != RemoteFailure.None)
+        {
+            _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
         }
     }
 
