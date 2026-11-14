@@ -166,55 +166,64 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
         }
 
+        // Under the login gate, as in GetSessionAsync: the remote keeps only the last login, so that must be the one kept (413).
         var endpoint = EndpointOf(serverId, stored.Url);
-        var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
-        if (!login.IsSuccess)
-        {
-            _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", LogText.Clean(stored.Name), login.Failure);
-            return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
-        }
-
-        var encrypted = _vault.Protect(serverId, credentials);
-        if (encrypted is null)
-        {
-            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
-        }
-
-        var found = false;
-        var heldElsewhere = false;
-        string? storedId = null;
-        _store.Update(config =>
-        {
-            if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
-            {
-                server.EncryptedCredentials = encrypted;
-                storedId = server.JellyfinServerId;
-                if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
-                {
-                    heldElsewhere = !TryStoreServerId(config, server, remoteId);
-                }
-
-                found = true;
-            }
-        });
-        if (!found)
-        {
-            await EndLoginOfRemovedAsync(serverId, null, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
-            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
-        }
-
-        WarnIfOtherServerId(stored.Name, storedId, login.Value!.ServerId);
-        if (heldElsewhere)
-        {
-            WarnServerIdHeldElsewhere(stored.Name, login.Value!.ServerId!);
-        }
-
-        // As in GetSessionAsync: a removal that ended meanwhile must not leave this login behind (413).
         var runtime = RuntimeOf(serverId);
-        if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
+        await runtime.LoginGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
-            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+            var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
+            if (!login.IsSuccess)
+            {
+                _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", LogText.Clean(stored.Name), login.Failure);
+                return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
+            }
+
+            var encrypted = _vault.Protect(serverId, credentials);
+            if (encrypted is null)
+            {
+                return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
+            }
+
+            var found = false;
+            var heldElsewhere = false;
+            string? storedId = null;
+            _store.Update(config =>
+            {
+                if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
+                {
+                    server.EncryptedCredentials = encrypted;
+                    storedId = server.JellyfinServerId;
+                    if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
+                    {
+                        heldElsewhere = !TryStoreServerId(config, server, remoteId);
+                    }
+
+                    found = true;
+                }
+            });
+            if (!found)
+            {
+                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+                return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+            }
+
+            WarnIfOtherServerId(stored.Name, storedId, login.Value!.ServerId);
+            if (heldElsewhere)
+            {
+                WarnServerIdHeldElsewhere(stored.Name, login.Value!.ServerId!);
+            }
+
+            // As in GetSessionAsync: a removal that ended meanwhile must not leave this login behind (413).
+            if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
+            {
+                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+                return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+            }
+        }
+        finally
+        {
+            runtime.LoginGate.Release();
         }
 
         Record(runtime, stored.Name, RemoteFailure.None, countsForActivity: true);
@@ -596,19 +605,24 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     // Ends a login that finished after the removal of its server, so that no device stays behind (413). The forgotten
-    // runtime leaves too: if the removal is not saved and the server stays, its next call builds a new one.
+    // runtime leaves too, with any other login it kept: if the removal is not saved, the next call builds a new one.
     private async Task EndLoginOfRemovedAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName)
     {
+        RemoteSession? kept = null;
         if (runtime is not null)
         {
             _runtimes.TryRemove(KeyValuePair.Create(serverId, runtime));
-            runtime.Forget();
+            kept = runtime.Forget();
         }
 
         var name = LogText.Clean(serverName);
         _logger.LogInformation("Remote server {ServerName} was removed while logging in; that login is ended", name);
-        var failure = await LogOutWithinLimitAsync(endpoint, fresh).ConfigureAwait(false);
-        if (failure != RemoteFailure.None)
+        using var limit = new CancellationTokenSource(LogoutLimit);
+        var other = kept is null || ReferenceEquals(kept, fresh) ? null : kept;
+        var failures = await Task.WhenAll(
+            LogOutUntilAsync(endpoint, fresh, limit),
+            other is null ? Task.FromResult(RemoteFailure.None) : LogOutUntilAsync(endpoint, other, limit)).ConfigureAwait(false);
+        foreach (var failure in failures.Where(failure => failure != RemoteFailure.None))
         {
             _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
         }
@@ -618,6 +632,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private async Task<RemoteFailure> LogOutWithinLimitAsync(RemoteEndpoint endpoint, RemoteSession session)
     {
         using var limit = new CancellationTokenSource(LogoutLimit);
+        return await LogOutUntilAsync(endpoint, session, limit).ConfigureAwait(false);
+    }
+
+    // Sends the logout, and gives up when the limit is reached.
+    private async Task<RemoteFailure> LogOutUntilAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationTokenSource limit)
+    {
         try
         {
             return (await _client.LogoutAsync(endpoint, session, limit.Token).ConfigureAwait(false)).Failure;
