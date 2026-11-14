@@ -401,19 +401,19 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Ends what plays from a server that is about to be removed (413): at once its open streams here and the local
-    /// transcodes of its files, then its sessions, each closed on the remote within <see cref="RemovalLimit"/>:
-    /// afterwards nothing could reach it to give its slots back. Nothing new opens on it until <see cref="ReopenServer"/>.
+    /// Ends what plays from a server that is about to be removed (413): at once its open streams here, then together the
+    /// local transcodes of its files and its sessions on the remote, all within one <see cref="RemovalLimit"/>: afterwards
+    /// nothing could reach it to give its slots back. Nothing new opens on it until <see cref="ReopenServer"/>.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <returns>A task.</returns>
     public async Task CloseServerAsync(Guid serverId)
     {
         await EndOf(serverId).CancelAsync().ConfigureAwait(false);
-        await CloseLocalTranscodesAsync(serverId).ConfigureAwait(false);
         await Task.WhenAll(_sessions.All
             .Where(session => session.Source.ServerId == serverId)
-            .Select(session => CloseForRemovalAsync(session.Id))).ConfigureAwait(false);
+            .Select(session => CloseForRemovalAsync(session.Id))
+            .Append(CloseLocalTranscodesAsync(serverId))).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -872,26 +872,45 @@ public sealed class PlaybackCoordinator
 
     private bool IsEnding(Guid serverId) => _serverEnds.TryGetValue(serverId, out var end) && end.IsCancellationRequested;
 
-    // Stock names a play session here, so no device. Its input is already cut; this ends ffmpeg and its files.
+    // Stock names a play session here, so no device. Its input is already cut; this ends ffmpeg and its files, all at once
+    // and within the removal limit: a kill still running then is left to finish.
     private async Task CloseLocalTranscodesAsync(Guid serverId)
     {
-        if (_transcodes is null)
+        if (_transcodes is not { } transcodes)
         {
             return;
         }
 
-        foreach (var playSessionId in _sessions.LocalSessionsReading(serverId))
+        var kills = _sessions.LocalSessionsReading(serverId)
+            .Select(playSessionId => Task.Run(() => KillLocalTranscodeAsync(transcodes, playSessionId)))
+            .ToList();
+        if (kills.Count == 0)
         {
-            try
-            {
-                await _transcodes.KillTranscodingJobs(string.Empty, playSessionId, _ => true).ConfigureAwait(false);
-            }
+            return;
+        }
+
+        try
+        {
+            await Task.WhenAll(kills).WaitAsync(RemovalLimit).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogWarning("A local transcode of a removed server is still closing at the time limit; it is left to finish");
+        }
+    }
+
+    // Closes one local transcode, logging a failure. Started on its own thread: a kill may block before it returns its task.
+    private async Task KillLocalTranscodeAsync(ITranscodeManager transcodes, string playSessionId)
+    {
+        try
+        {
+            await transcodes.KillTranscodingJobs(string.Empty, playSessionId, _ => true).ConfigureAwait(false);
+        }
 #pragma warning disable CA1031 // One transcode that cannot be closed must not stop the others, or the removal.
-            catch (Exception exception)
+        catch (Exception exception)
 #pragma warning restore CA1031
-            {
-                _logger.LogWarning("Could not close a local transcode of a removed server: {Error}", exception.GetType().Name);
-            }
+        {
+            _logger.LogWarning("Could not close a local transcode of a removed server: {Error}", exception.GetType().Name);
         }
     }
 

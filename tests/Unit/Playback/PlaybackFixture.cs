@@ -16,6 +16,7 @@ using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -260,10 +261,10 @@ internal sealed class ManualClock : TimeProvider
 
 internal sealed class CoordinatorFixture
 {
-    public CoordinatorFixture(ILastServedSourceStore? lastServed = null)
+    public CoordinatorFixture(ILastServedSourceStore? lastServed = null, ILogger<PlaybackCoordinator>? logger = null)
     {
         LastServed = lastServed ?? new InMemoryLastServedStore();
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, logger ?? NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
     }
 
     public Mock<ITranscodeManager> Transcodes { get; } = new();
