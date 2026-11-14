@@ -1105,7 +1105,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
             _store, _library.Object, Mock.Of<IFileSystem>(), _scans.Object, _materializer.Object, _renamer.Object, _registry, new CapturingLogger<ServerLibraryManager>());
         _migration = new LayoutMigration(
             _registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object,
-            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _manager, _logger, _keeper?.Object);
+            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _manager, _logger, _keeper?.Object, _sync.Object);
         return _migration;
     }
 
