@@ -33,6 +33,18 @@ public sealed partial class LayoutMigration
         }
     }
 
+    /// <inheritdoc />
+    public bool WaitsAtCarry
+    {
+        get
+        {
+            var migration = _store.Read(config => Copy(config.LayoutMigration));
+            return migration is { Mode: LayoutMigrationMode.Automatic, Step: AutomaticMigrationStep.Carry, Error: AutomaticMigrationError.None }
+                && _servers.GetServers().Count > 0
+                && HasOldTitles(_registry.State);
+        }
+    }
+
     private bool IsRunning
     {
         get

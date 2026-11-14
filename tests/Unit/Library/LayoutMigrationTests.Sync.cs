@@ -10,7 +10,8 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
-// §10 row 420: the automatic migration syncs before it scans, so the scan finds the new stubs.
+// §10 row 420: the automatic migration syncs before it scans, so the scan finds the new stubs, and a migration left at
+// the carry with old titles asks for a sync at start.
 public sealed partial class LayoutMigrationTests
 {
     private readonly Mock<IMigrationSync> _sync = new();
@@ -115,5 +116,56 @@ public sealed partial class LayoutMigrationTests
 
         _sync.Verify(sync => sync.SyncAsync(It.IsAny<CancellationToken>()), Times.Never);
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
+    }
+
+    [Fact]
+    public async Task AMigrationAtTheCarryWithOldTitlesWaitsForASync()
+    {
+        OldFilm("Dune", (_serverA, "a1"));
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
+        _store.Configuration.LayoutMigration.Step = AutomaticMigrationStep.Carry;
+
+        Assert.True((await MigrationAsync()).WaitsAtCarry);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationMode.None, AutomaticMigrationStep.Carry)]
+    [InlineData(LayoutMigrationMode.Manual, AutomaticMigrationStep.Carry)]
+    [InlineData(LayoutMigrationMode.Automatic, AutomaticMigrationStep.AddPaths)]
+    [InlineData(LayoutMigrationMode.Automatic, AutomaticMigrationStep.Scan)]
+    [InlineData(LayoutMigrationMode.Automatic, AutomaticMigrationStep.RemoveOldPaths)]
+    [InlineData(LayoutMigrationMode.Automatic, AutomaticMigrationStep.Finish)]
+    [InlineData(LayoutMigrationMode.Automatic, AutomaticMigrationStep.Done)]
+    public async Task OnlyTheAutomaticCarryWaitsForASync(LayoutMigrationMode mode, AutomaticMigrationStep step)
+    {
+        OldFilm("Dune", (_serverA, "a1"));
+        _store.Configuration.LayoutMigration.Mode = mode;
+        _store.Configuration.LayoutMigration.Step = step;
+
+        Assert.False((await MigrationAsync()).WaitsAtCarry);
+    }
+
+    [Fact]
+    public async Task ACarryWithNoOldTitleOrStoppedByAnErrorWaitsForNoSync()
+    {
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
+        _store.Configuration.LayoutMigration.Step = AutomaticMigrationStep.Carry;
+        NewFilm(_serverA, "a1");
+        Assert.False((await MigrationAsync()).WaitsAtCarry);
+
+        OldFilm("Dune", (_serverA, "a1"));
+        _store.Configuration.LayoutMigration.Error = AutomaticMigrationError.NewPathsLeft;
+        Assert.False((await MigrationAsync()).WaitsAtCarry);
+    }
+
+    [Fact]
+    public async Task ACarryWithNoServerWaitsForNoSync()
+    {
+        OldFilm("Dune", (_serverA, "a1"));
+        _configured.Clear();
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
+        _store.Configuration.LayoutMigration.Step = AutomaticMigrationStep.Carry;
+
+        Assert.False((await MigrationAsync()).WaitsAtCarry);
     }
 }
