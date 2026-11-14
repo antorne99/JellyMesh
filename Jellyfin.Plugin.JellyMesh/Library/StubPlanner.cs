@@ -122,7 +122,7 @@ public static class StubPlanner
         ArgumentNullException.ThrowIfNull(input);
 
         var catalog = IndexItemLookup.Build(input.Snapshot);
-        var labels = FederatedPaths.Labels(input.Servers.Select(server => (server.Id, (string?)server.Name)), input.State.Labels);
+        var labels = FederatedPaths.Labels(input.Servers.Select(server => (server.Id, (string?)server.Name)), KeptLabels(input));
         var works = new List<StubWork>();
         var placed = new List<(StubWork Work, ResolvedContent Content, IndexedItem Winner)>();
         var seriesWorks = new List<SeriesWork>();
@@ -382,6 +382,18 @@ public static class StubPlanner
         }
 
         return unconfigured;
+    }
+
+    // The stored labels still taken: those of configured servers, and of servers left out of the settings without a
+    // removal that still have stubs. A removed server frees its label (decision 408).
+    private static Dictionary<Guid, string> KeptLabels(StubPlanInput input)
+    {
+        var configured = input.Servers.Select(server => server.Id).ToHashSet();
+        var removed = input.State.RemovedServers.ToHashSet();
+        var withStubs = input.State.Stubs.Select(stub => stub.ServerId).Concat(input.State.Series.Select(series => series.ServerId)).OfType<Guid>().ToHashSet();
+        return input.State.Labels
+            .Where(entry => configured.Contains(entry.Key) || (!removed.Contains(entry.Key) && withStubs.Contains(entry.Key)))
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
     }
 
     private static List<HeldLibrary> HeldLibraries(StubPlanInput input, Dictionary<(Guid ServerId, string LibraryId), int> held)

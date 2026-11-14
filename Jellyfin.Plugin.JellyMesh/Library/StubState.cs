@@ -30,7 +30,7 @@ public sealed record StubState
     /// <summary>Gets the version groups, the source of truth for linking the versions of a title.</summary>
     public IReadOnlyList<VersionGroup> Groups { get; init; } = [];
 
-    /// <summary>Gets the label of each server, fixed once given: only a rename of the server changes it.</summary>
+    /// <summary>Gets the label of each server, fixed once given: only a rename changes it, and a removal frees it.</summary>
     public IReadOnlyDictionary<Guid, string> Labels { get; init; } = new Dictionary<Guid, string>();
 
     /// <summary>
