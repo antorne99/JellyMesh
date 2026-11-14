@@ -146,6 +146,11 @@ libraries=$(get "/JellyMesh/Admin/Servers/$server/Libraries" | jq -c '{LibraryId
 post "/JellyMesh/Admin/Servers/$server/Libraries" "$libraries" >/dev/null
 sync_now
 check "sync" null "$(last_failure)"
+# Stubs go to the folder of the server, which an admin adds to the library.
+id=${server//-/}
+folder="/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}/Film"
+post "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg p "$folder" '{Name: "Film", PathInfo: {Path: $p}}')" >/dev/null
+check "the folder of the server is linked" 204 "$(status)"
 scan
 film=$(get '/Items?Recursive=true&IncludeItemTypes=Movie' | jq -r '.Items[0].Id')
 check "the films are in the library" 3 "$(get '/Items?Recursive=true&IncludeItemTypes=Movie' | jq -r .TotalRecordCount)"
