@@ -32,7 +32,7 @@ else
   run first normal loading errors keyboard themes design rows save-bar actions
   run connect-flow connect-failure language
   run overview overview-themes
-  run edits quiet polling migration sections
+  run edits quiet polling migration held-removals sections
   run outcomes outcome-themes
   run confirms confirm-keyboard
   run settings-form

@@ -38,4 +38,9 @@ public sealed record FederationStatus(
     /// those the admin hid.
     /// </summary>
     public IReadOnlyList<ReleasedLibrary> ReleasedLibraries { get; init; } = [];
+
+    /// <summary>
+    /// Gets the removed servers whose removal waits until the watch state of their titles is saved (row 416), by name only.
+    /// </summary>
+    public IReadOnlyList<HeldRemoval> HeldRemovals { get; init; } = [];
 }

@@ -210,6 +210,25 @@ public class ServerStubPlannerTests
         Assert.Equal(0, second.Unconfigured);
     }
 
+    // Row 416: a removed server keeps its name while it has titles, so that the page can name a held removal.
+    [Fact]
+    public void ARemovedServerKeepsItsNameWhileItHasTitles()
+    {
+        var first = Plan([Title("k", OnA("m"), OnB("z"))], [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))]);
+        Assert.Equal("Ufficio", first.State.ServerNames[_serverB]);
+
+        var renamed = Plan([Title("k", OnA("m"), OnB("z"))], [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))], first.State, [Server(_serverA, "Casa"), Server(_serverB, "Ufficio 2")]);
+        Assert.Equal("Ufficio 2", renamed.State.ServerNames[_serverB]);
+
+        var removed = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], renamed.State with { RemovedServers = [_serverB] }, [Server(_serverA, "Casa")]);
+        Assert.Equal("Ufficio 2", removed.State.ServerNames[_serverB]);
+
+        var onB = On(renamed, _serverB).Entry.Id;
+        var gone = removed.State with { Stubs = removed.State.Stubs.Where(stub => stub.Id != onB).ToList() };
+        var after = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], gone, [Server(_serverA, "Casa")]);
+        Assert.Equal([_serverA], after.State.ServerNames.Keys);
+    }
+
     [Fact]
     public void AServerMissingFromTheSettingsKeepsItsStubs()
     {

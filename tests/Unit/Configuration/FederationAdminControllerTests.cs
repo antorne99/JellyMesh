@@ -981,6 +981,33 @@ public class FederationAdminControllerTests
         Assert.Equal(fixture.Store.Configuration.RemovedServerLibraries.Select(held => held.ServerId), status.ReleasedLibraries.Select(library => library.ServerId));
     }
 
+    // Row 416: each removed server whose removal waits for its watch state, by name only.
+    [Fact]
+    public void TheStatusListsTheRemovalsHeldForTheirWatchState()
+    {
+        using var fixture = new RegistryFixture();
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.HeldRemovals).Returns([new HeldRemoval("Vecchio"), new HeldRemoval(null)]);
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            Mock.Of<ICatalogSyncService>(),
+            new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
+            new CapturingLogger<FederationAdminController>(),
+            keeper: keeper.Object);
+
+        var status = controller.GetStatus().Value!;
+
+        Assert.Equal(["Vecchio", null], status.HeldRemovals.Select(held => held.Name));
+        Assert.Contains("\"HeldRemovals\":[{\"Name\":\"Vecchio\"},{", ToJson(status), StringComparison.Ordinal);
+        Assert.Empty(ControllerFor(fixture).GetStatus().Value!.HeldRemovals);
+    }
+
     [Fact]
     public void HidingReleasedLibrariesTakesThemOffTheStatusAndLeavesTheLibrariesAlone()
     {

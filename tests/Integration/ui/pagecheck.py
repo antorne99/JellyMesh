@@ -538,6 +538,36 @@ def fake(page, path, change):
     page.route("**/JellyMesh/Admin/" + path, answer)
 
 
+HELD_REMOVALS = "#jmHeldRemovals"
+
+
+def held_removals(s, width):
+    """A removal held until the watch state of its titles is saved shows one warning per server, its name as text (row 416)."""
+    name = width + " held removals"
+    state = {"held": [{"Name": HOSTILE}, {}]}
+
+    def held(status):
+        status["HeldRemovals"] = state["held"]
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", held), tab="servers")
+    notice = page.locator(HELD_REMOVALS)
+    lines = notice.locator("p")
+    check(name + " shows one warning per server", notice.is_visible() and lines.count() == 2, lines.all_inner_texts())
+    check(name + " names the server as text", lines.nth(0).inner_text().startswith("Warning: the removal of " + HOSTILE + " is on hold")
+          and notice.locator("b").count() == 0, lines.all_inner_texts())
+    check(name + " has a wording without a name", lines.nth(1).inner_text().startswith("Warning: the removal of a server is on hold"), lines.all_inner_texts())
+    healthy(page, name)
+    state["held"] = []
+    page.evaluate("document.querySelector('#JellyMeshConfigPage').dispatchEvent(new CustomEvent('jmstatusneeded'))")
+    check(name + " goes when the save succeeds", until(page, lambda: notice.is_hidden(), 5))
+    page.context.close()
+
+    page = s.open("fresh", width, route=lambda context: fake(context, "Status", lambda status: status.update(HeldRemovals=[{"Name": "Casa"}])), tab="servers", language="it")
+    check(width + " Italian held removal", until(page, lambda: page.locator(HELD_REMOVALS).is_visible())
+          and text(page, HELD_REMOVALS).startswith("Attenzione: la rimozione di Casa è in attesa"), text(page, HELD_REMOVALS))
+    page.context.close()
+
+
 FORGET_MISSING = "#jmForgetMissing"
 
 
@@ -3183,6 +3213,7 @@ SCENARIOS = {
     "quiet": (quiet, ["1280"]),
     "polling": (polling, ["1280"]),
     "migration": (migration, ["1280"]),
+    "held-removals": (held_removals, WIDTHS),
     "sections": (sections, ["1280"]),
     "outcomes": (outcomes, WIDTHS),
     "outcome-themes": (outcome_themes, WIDTHS),

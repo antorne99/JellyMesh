@@ -11,6 +11,11 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface IWatchStateKeeper
 {
     /// <summary>
+    /// Gets the removed servers whose removal waits because the watch state of their titles could not be saved (row 416).
+    /// </summary>
+    IReadOnlyList<HeldRemoval> HeldRemovals { get; }
+
+    /// <summary>
     /// Saves each user's watch state of the stubs and series about to be removed, by the identity of their content.
     /// </summary>
     /// <param name="root">The federated folder.</param>
