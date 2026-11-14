@@ -678,7 +678,6 @@ public sealed partial class LayoutMigrationTests : IDisposable
         _keeper = new Mock<IWatchStateKeeper>();
         _keeper.Setup(keeper => keeper.KeepAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<IReadOnlyCollection<SeriesStub>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
-        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Carried, []);
 
         var migration = await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
@@ -687,7 +686,6 @@ public sealed partial class LayoutMigrationTests : IDisposable
         Assert.NotNull(_registry.Find(alien.Id));
         Assert.Contains(_registry.State.Series, series => series.Id == lost.Id);
         Assert.True(_items.ContainsKey(duneItem.Id));
-        Assert.Empty(_forgotten);
         Assert.Equal(2, migration.GetStatus(Root)!.Waiting);
     }
 

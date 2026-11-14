@@ -121,6 +121,40 @@ public sealed partial class LayoutMigrationTests
         Assert.False(_items.ContainsKey(oldItem.Id));
     }
 
+    // Row 412: the automatic migration keeps the old paths and items while the watch state of a removed server cannot be kept.
+    [Fact]
+    public async Task TheAutomaticMigrationWaitsWhileTheWatchStateOfARemovedServerCannotBeKept()
+    {
+        var (dune, duneItem) = OldFilm("Dune", (_serverB, "b1"));
+        var (alien, alienItem) = OldFilm("Alien", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _configured.Remove(_serverB);
+        _removed.Add(_serverB);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
+        var keeps = false;
+        _keeper = new Mock<IWatchStateKeeper>();
+        _keeper.Setup(keeper => keeper.KeepAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<IReadOnlyCollection<SeriesStub>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => keeps);
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Carried, []);
+
+        var migration = await MigrationAsync();
+        await migration.Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.NotNull(_registry.Find(dune.Id));
+        Assert.NotNull(_registry.Find(alien.Id));
+        Assert.True(_items.ContainsKey(duneItem.Id));
+        Assert.Empty(_forgotten);
+        Assert.Empty(_removedPaths);
+        Assert.Equal(AutomaticMigrationError.None, _store.Configuration.LayoutMigration.Error);
+
+        keeps = true;
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.Null(_registry.Find(dune.Id));
+        Assert.False(_items.ContainsKey(duneItem.Id));
+        Assert.Equal([alienItem.Id], _forgotten);
+    }
+
     [Fact]
     public async Task TheManualCarryLeavesTheSignalOff()
     {
