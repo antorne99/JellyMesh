@@ -58,6 +58,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
     private readonly User _mario = new("mario", "auth", "reset");
     private readonly User _luigi = new("luigi", "auth", "reset");
     private StubRegistry _registry;
+    private Mock<IWatchStateKeeper>? _keeper;
 
     public LayoutMigrationTests()
     {
@@ -634,6 +635,62 @@ public sealed partial class LayoutMigrationTests : IDisposable
         Assert.False(_items.ContainsKey(oldItem.Id));
     }
 
+    // Row 412: an old title of a removed server keeps its watch state by content before the emptying deletes it.
+    [Fact]
+    public async Task TheOldTitlesOnlyOnARemovedServerKeepTheirWatchStateBeforeTheyGo()
+    {
+        var (dune, duneItem) = OldFilm("Dune", (_serverB, "b1"));
+        var (lost, lostItem) = OldShow("Lost", (_serverB, "s1"));
+        var (pilot, _) = OldEpisode(lost, (_serverB, "e1"));
+        var (alien, _) = OldFilm("Alien", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _configured.Remove(_serverB);
+        _removed.Add(_serverB);
+        AllPathsLinked();
+        var kept = new List<(List<string> Stubs, List<string> Series, bool ItemsThere)>();
+        _keeper = new Mock<IWatchStateKeeper>();
+        _keeper.Setup(keeper => keeper.KeepAsync(Root, It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<IReadOnlyCollection<SeriesStub>>(), It.IsAny<CancellationToken>()))
+            .Callback((string _, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken _) =>
+                kept.Add((stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal).ToList(), series.Select(entry => entry.Id).ToList(), _items.ContainsKey(duneItem.Id) && _items.ContainsKey(lostItem.Id))))
+            .ReturnsAsync(true);
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        var call = Assert.Single(kept);
+        Assert.Equal(new[] { dune.Id, pilot.Id }.Order(StringComparer.Ordinal), call.Stubs);
+        Assert.Equal([lost.Id], call.Series);
+        Assert.True(call.ItemsThere);
+        Assert.DoesNotContain(alien.Id, call.Stubs);
+        Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+        Assert.DoesNotContain(_registry.State.Series, series => series.ServerId is null);
+    }
+
+    [Fact]
+    public async Task TheOldFoldersWaitWhileTheWatchStateOfARemovedServerCannotBeKept()
+    {
+        var (dune, duneItem) = OldFilm("Dune", (_serverB, "b1"));
+        var (lost, _) = OldShow("Lost", (_serverB, "s1"));
+        var (alien, _) = OldFilm("Alien", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _configured.Remove(_serverB);
+        _removed.Add(_serverB);
+        AllPathsLinked();
+        _keeper = new Mock<IWatchStateKeeper>();
+        _keeper.Setup(keeper => keeper.KeepAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<IReadOnlyCollection<SeriesStub>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _outcome = move => new WatchStateMoveOutcome(move, WatchStateMoveStatus.Carried, []);
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.NotNull(_registry.Find(dune.Id));
+        Assert.NotNull(_registry.Find(alien.Id));
+        Assert.Contains(_registry.State.Series, series => series.Id == lost.Id);
+        Assert.True(_items.ContainsKey(duneItem.Id));
+        Assert.Empty(_forgotten);
+        Assert.Equal(2, migration.GetStatus(Root)!.Waiting);
+    }
+
     [Fact]
     public async Task ATitleOnlyOnAServerMissingFromTheSettingsWithoutTheRemovalMarkWaits()
     {
@@ -1050,7 +1107,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
             _store, _library.Object, Mock.Of<IFileSystem>(), _scans.Object, _materializer.Object, _renamer.Object, _registry, new CapturingLogger<ServerLibraryManager>());
         _migration = new LayoutMigration(
             _registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object,
-            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _manager, _logger);
+            new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _manager, _logger, _keeper?.Object);
         return _migration;
     }
 
