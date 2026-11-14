@@ -3234,7 +3234,7 @@
                     var checked = folder.Link !== 'NotChecked';
                     var servers = folder.Path ? folder.Servers : [];
                     updateRows(el('#jmFolderPaths'), servers.map(function (server) {
-                        return { key: JSON.stringify(server) + checked, build: renderServerFolder, args: [server, checked] };
+                        return { key: server.Id, build: renderServerFolder, args: [server, checked] };
                     }));
                     if (!folder.Path) {
                         el('#jmFolderHint').textContent = t('Choose a folder to see the paths to link.');
@@ -3262,21 +3262,31 @@
                 }
 
                 // Builds the block of a server in the folder section, with its two paths and what is wrong with them.
+                // A change in the links updates the block in place, so a path row keeps its focus.
                 function renderServerFolder(server, checked) {
                     var block = create('div');
                     block.className = 'jmServerFolder';
-                    var name = create('div', server.Name);
+                    var name = create('div');
                     name.className = 'jmServerFolderName';
+                    var paths = create('div');
+                    var warnings = create('div');
                     block.appendChild(name);
-                    [[t('Film library'), server.MoviesPath], [t('Series library'), server.SeriesPath]].forEach(function (path) {
-                        block.appendChild(renderCopyRow(path[0], path[1], t('Copy the {library} path of {server}', { library: path[0], server: server.Name })));
-                    });
-                    if (checked) {
-                        serverFolderWarnings(server).forEach(function (text) {
-                            block.appendChild(folderWarning(text));
-                        });
-                    }
-
+                    block.appendChild(paths);
+                    block.appendChild(warnings);
+                    block.jmUpdate = function (current, currentChecked) {
+                        setText(name, current.Name);
+                        updateRows(paths, [[t('Film library'), current.MoviesPath], [t('Series library'), current.SeriesPath]].map(function (path) {
+                            var copyLabel = t('Copy the {library} path of {server}', { library: path[0], server: current.Name });
+                            return { key: JSON.stringify([path[0], path[1], copyLabel]), build: renderCopyRow, args: [path[0], path[1], copyLabel] };
+                        }));
+                        warnings.textContent = '';
+                        if (currentChecked) {
+                            serverFolderWarnings(current).forEach(function (text) {
+                                warnings.appendChild(folderWarning(text));
+                            });
+                        }
+                    };
+                    block.jmUpdate(server, checked);
                     return block;
                 }
 
