@@ -28,6 +28,23 @@ add_clip() {
   docker exec "$name" chmod -R a+rwX "$folder"
 }
 list() { get "$1" /JellyMesh/Admin/Merges; }
+
+# flat_paths_off <server>: the Film and Serie libraries without the single folders of 0.4, as on a new 0.5 install.
+flat_paths_off() {
+  local kind
+  for kind in Film Serie; do
+    req "$1" DELETE "/Library/VirtualFolders/Paths?name=$kind&path=/federata/$kind&refreshLibrary=false" >/dev/null
+  done
+}
+
+# link_server_folders <server>: adds the Film and Serie folders of each remote to the library of that kind, as the admin does.
+link_server_folders() {
+  local kind path
+  while read -r kind path; do
+    post "$1" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$path" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
+    [ "$(cat "$WORK/status")" = 204 ] || { echo "linking $path failed: $(cat "$WORK/status")" >&2; return 1; }
+  done < <(get "$1" /JellyMesh/Admin/Status | jq -r '.FederatedFolder.Servers[] | "Film \(.MoviesPath)", "Serie \(.SeriesPath)"')
+}
 # The plugin keeps its credential key in a file now (decision 42), so these servers run without the old variable.
 
 SERVERS="fresh stock peer first"

@@ -127,6 +127,9 @@ def normal(s, width):
     check(name + " lists the connected server", connected.count() == 1)
     check(name + " shows its stream limit", connected.locator(u.NUMBER).input_value() == "4")
     check(name + " shows what it shares", connected.locator(u.CHECKBOX + ":checked").count() == 2)
+    for row in [stock, peer]:
+        own = row.get_by_label(u.OWN_LIBRARIES, exact=True)
+        check(f"{name} offers the automatic libraries of {row.locator('h4').inner_text()}, off", own.count() == 1 and not own.is_checked(), own.count())
     check(name + " offers the free user", page.locator(u.PEERS + " select").locator("option", has_text="friend").count() == 1)
     settings_match(page, "fresh", name)
     healthy(page, name)
@@ -250,8 +253,8 @@ def keyboard(s, width):
     libraries = u.button(u.server_row(page, "stock"), "libraries")
     libraries.focus()
     page.keyboard.press("Enter")
-    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
-    check(name + " Enter opens the libraries", u.server_row(page, "stock").locator(u.CHECKBOX).count() == 2)
+    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    check(name + " Enter opens the libraries", u.server_row(page, "stock").locator(u.LIBRARY).count() == 2)
     box = u.merge_case(page, CHAIN).locator(u.CHECKBOX).first
     box.focus()
     page.keyboard.press("Space")
@@ -342,8 +345,8 @@ def actions(s, width):
     u.clear_message(page)
     stock = u.server_row(page, "stock")
     u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
-    check(name + " the libraries show what is imported", stock.locator(u.CHECKBOX + ":checked").count() == 2)
+    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    check(name + " the libraries show what is imported", stock.locator(u.LIBRARY + ":checked").count() == 2)
     u.button(stock, "save_libraries").click()
     check(name + " the libraries save", "saved" in u.wait_message(page))
 
@@ -429,14 +432,14 @@ def edits(s, width):
     connected = u.peer_row(page, "jellymesh")
     new_peer = u.peer_row(page, u.NEW_PEER)
     u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
-    u.tick(stock.locator(u.CHECKBOX).first, False)
+    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.tick(stock.locator(u.LIBRARY).first, False)
     connected.locator(u.NUMBER).fill("9")
     u.tick(connected.locator(u.CHECKBOX).first, False)
 
     def kept(action, limit="9"):
-        check(f"{name} {action} keeps the open panel", stock.locator(u.CHECKBOX).count() == 2, stock.locator(u.CHECKBOX).count())
-        check(f"{name} {action} keeps the unchecked library", stock.locator(u.CHECKBOX + ":checked").count() == 1)
+        check(f"{name} {action} keeps the open panel", stock.locator(u.LIBRARY).count() == 2, stock.locator(u.LIBRARY).count())
+        check(f"{name} {action} keeps the unchecked library", stock.locator(u.LIBRARY + ":checked").count() == 1)
         check(f"{name} {action} keeps the unsaved limit", connected.locator(u.NUMBER).input_value() == limit, connected.locator(u.NUMBER).input_value())
         check(f"{name} {action} keeps the unchecked peer box", connected.locator(u.CHECKBOX + ":checked").count() == 1)
 
@@ -474,7 +477,7 @@ def edits(s, width):
     u.wait_message(page)
     kept("saved libraries", "7")
     check(name + " saved libraries update their row", u.card_fact(stock, "Libraries to import") == "1", stock.inner_text())
-    u.tick(stock.locator(u.CHECKBOX).first)
+    u.tick(stock.locator(u.LIBRARY).first)
     u.clear_message(page)
     u.button(stock, "save_libraries").click()
     u.wait_message(page)
@@ -787,7 +790,7 @@ def outcomes_shown(page, name):
     error = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
     u.button(u.server_row(page, "stock"), "libraries").click()
     u.wait_idle(page)
-    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
+    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
     check(name + " opening the libraries clears the old error", u.message(page) == "", u.message(page))
 
     u.button(u.server_row(page, "stock"), "test").click()
@@ -1032,7 +1035,7 @@ def control_themes(s, width):
         connected = u.peer_row(page, "jellymesh")
         new_peer = u.peer_row(page, u.NEW_PEER)
         u.button(stock, "libraries").click()
-        page.wait_for_selector(u.SERVER + " " + u.CHECK_MARK, state="attached", timeout=15000)
+        page.wait_for_selector(u.SERVER + " " + u.LIBRARY_MARK, state="attached", timeout=15000)
         page.mouse.move(0, 0)
 
         check(name + " are all upgraded", page.locator(u.NOT_UPGRADED).count() == 0, page.locator(u.NOT_UPGRADED).count())
@@ -1052,7 +1055,7 @@ def control_themes(s, width):
         focus_shows(page, name + " a main button", page.locator(u.SAVE_SETTINGS))
         focus_shows(page, name + " a number", connected.locator(u.NUMBER))
         focus_shows(page, name + " a select", new_peer.locator(u.SELECT))
-        focus_shows(page, name + " a library box", stock.locator(u.CHECKBOX).first, u.CHECK_MARK)
+        focus_shows(page, name + " a library box", stock.locator(u.LIBRARY).first, u.CHECK_MARK)
         focus_shows(page, name + " a settings box", page.locator(u.METADATA_PROTECTION), u.CHECK_MARK)
         page.evaluate("document.activeElement.blur()")
 
@@ -1105,7 +1108,7 @@ def controls(s, width):
     connected = u.peer_row(page, "jellymesh")
     new_peer = u.peer_row(page, u.NEW_PEER)
     u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.CHECK_MARK, state="attached", timeout=15000)
+    page.wait_for_selector(u.SERVER + " " + u.LIBRARY_MARK, state="attached", timeout=15000)
 
     select = new_peer.get_by_label(u.USER_LABEL, exact=True)
     check(name + " the select has its label", select.evaluate("node => node.tagName") == "SELECT")
@@ -1128,8 +1131,8 @@ def controls(s, width):
     check(name + " a long name does not cover the next", box["y"] + box["height"] <= below["y"], [box, below])
 
     long_label.locator(u.CHECK_MARK).click()
-    check(name + " the drawn box selects", stock.locator(u.CHECKBOX + "[value=jm-long]").is_checked())
-    last = stock.locator(u.CHECKBOX).last
+    check(name + " the drawn box selects", stock.locator(u.LIBRARY + "[value=jm-long]").is_checked())
+    last = stock.locator(u.LIBRARY).last
     last.focus()
     page.keyboard.press("Space")
     check(name + " Space selects a library", last.is_checked())
@@ -1592,10 +1595,11 @@ def folder_chosen(page, name):
     u.wait_idle(page)
 
 
-def folder_paths(server):
-    """Returns the two paths to link that the server reports."""
+def folder_paths(server, remote=None):
+    """Returns the paths to link that the server reports: the Film then the Serie folder of each remote, or of the one named."""
     folder = u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["FederatedFolder"]
-    return folder["MoviesPath"], folder["SeriesPath"]
+    remotes = [of_server(folder, remote)] if remote else folder["Servers"]
+    return [path for each in remotes for path in (each["MoviesPath"], each["SeriesPath"])]
 
 
 def copied_over_http(page, name):
@@ -1697,23 +1701,24 @@ def copy_with_api(s, width):
 
 def link_warnings(page, name):
     """A change in the links leaves the path rows and their focus alone, and a long path fits."""
-    button = u.copy_button(page, folder_paths("fresh")[0])
+    button = u.copy_button(page, folder_paths("fresh", "stock")[0])
     u.mark(button)
     button.focus()
+    block = u.server_folder(page, "stock")
 
     def unlinked(status):
-        status["FederatedFolder"]["Link"] = "NotLinked"
-        status["FederatedFolder"]["Movies"]["Link"] = "NotLinked"
+        link_folders(status, "NotLinked", movies=("stock", "NotLinked", []))
 
     fake(page, "Status", unlinked)
-    check(name + " warns about the path", until(page, lambda: "is not linked" in text(page, u.FOLDER_NOTES), 20), text(page, u.FOLDER_NOTES))
+    check(name + " warns about the path of the server", until(page, lambda: "is not linked" in block.inner_text(), 20), block.inner_text())
+    check(name + " leaves the other server alone", "is not linked" not in u.server_folder(page, "peer").inner_text(), u.server_folder(page, "peer").inner_text())
     check(name + " keeps the row", u.is_marked(button))
     check(name + " keeps the focus", u.has_focus(button))
     u.shot(page, f"folder-warning-{page.viewport_size['width']}")
     page.unroute("**/JellyMesh/Admin/Status")
 
     def long_path(status):
-        status["FederatedFolder"]["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
+        of_server(status["FederatedFolder"], "stock")["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
 
     fake(page, "Status", long_path)
     check(name + " shows a long path", until(page, lambda: u.copy_button(page, "a-very-long-folder-name").count() == 1, 20))
@@ -1957,8 +1962,8 @@ def tabs_keep_edits(s, width):
     case = u.merge_case(page, PAIR)
     page.locator(u.ADD_FIELDS["name"]).fill("kept name")
     u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
-    u.tick(stock.locator(u.CHECKBOX).first, False)
+    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.tick(stock.locator(u.LIBRARY).first, False)
     connected.locator(u.NUMBER).fill("9")
     u.tick(connected.locator(u.CHECKBOX).first, False)
     select(case, 2)
@@ -1970,8 +1975,8 @@ def tabs_keep_edits(s, width):
     for tab in u.TABS + u.TABS:
         u.show_tab(page, tab)
     check(name + " keep the add form", page.locator(u.ADD_FIELDS["name"]).input_value() == "kept name")
-    check(name + " keep the open libraries", stock.locator(u.CHECKBOX).count() == 2, stock.locator(u.CHECKBOX).count())
-    check(name + " keep the library choice", stock.locator(u.CHECKBOX + ":checked").count() == 1)
+    check(name + " keep the open libraries", stock.locator(u.LIBRARY).count() == 2, stock.locator(u.LIBRARY).count())
+    check(name + " keep the library choice", stock.locator(u.LIBRARY + ":checked").count() == 1)
     check(name + " keep the stream limit", connected.locator(u.NUMBER).input_value() == "9", connected.locator(u.NUMBER).input_value())
     check(name + " keep the shared box", connected.locator(u.CHECKBOX + ":checked").count() == 1)
     check(name + " keep the selection", case.locator(u.CHECKBOX + ":checked").count() == 2)
@@ -2187,9 +2192,9 @@ def cards_in_place(s, width):
     stock = u.server_row(page, "stock")
     connected = u.peer_row(page, "jellymesh")
     u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
-    u.tick(stock.locator(u.CHECKBOX).first, False)
-    box = stock.locator(u.CHECKBOX).last
+    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.tick(stock.locator(u.LIBRARY).first, False)
+    box = stock.locator(u.LIBRARY).last
     box.focus()
     u.mark(stock)
     u.mark(box)
@@ -2200,8 +2205,8 @@ def cards_in_place(s, width):
     fake(page, "Status", lambda data: of_server(data, "stock").update(Connection="Offline"))
     check(name + " the state follows the status", until(page, lambda: u.state_of(stock) == "Offline", 18), u.state_of(stock))
     check(name + " the card is the same one", u.is_marked(stock))
-    check(name + " the panel stays open", stock.locator(u.CHECKBOX).count() == 2)
-    check(name + " the panel keeps its edit", stock.locator(u.CHECKBOX + ":checked").count() == 1)
+    check(name + " the panel stays open", stock.locator(u.LIBRARY).count() == 2)
+    check(name + " the panel keeps its edit", stock.locator(u.LIBRARY + ":checked").count() == 1)
     check(name + " the panel box is the same one", u.is_marked(box))
     check(name + " the focus stays", u.has_focus(box))
 
@@ -2281,7 +2286,7 @@ def cards(s, width):
         page = s.open("fresh", width, theme=theme)
         cards_online(page, name)
         u.button(u.server_row(page, "stock"), "libraries").click()
-        page.wait_for_selector(u.SERVER + " " + u.CHECKBOX, state="attached", timeout=15000)
+        page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
         healthy(page, name)
         u.show_tab(page, "servers")
         u.shot(page, f"cards-servers-{theme}-{width}")
@@ -2409,19 +2414,31 @@ def opens(page, name, node, tab):
     u.show_tab(page, "overview")
 
 
+def link_folders(status, link, movies=None, series=None, grouping_off=()):
+    """Sets the link of the federated folder, and of the two folders of each server, or of the one named in movies and series."""
+    folder = status["FederatedFolder"]
+    folder.update(Link=link, Path="/federata", Covering=[], SeriesSplit=False, Migration=None)
+    for server in folder["Servers"]:
+        server.update(SeriesGroupingOff=list(grouping_off), Unregistered=[])
+        server["Movies"].update(Link="Linked", Libraries=["Film"])
+        server["Series"].update(Link="Linked", Libraries=["Serie"])
+        if link == "NotLinked" and movies is None and series is None:
+            server["Movies"].update(Link="NotLinked", Libraries=[])
+            server["Series"].update(Link="NotLinked", Libraries=[])
+    for kind, named in [("Movies", movies), ("Series", series)]:
+        if named:
+            of_server(folder, named[0])[kind].update(Link=named[1], Libraries=named[2])
+
+
 def linked(status):
     """Makes the federated folder of a status linked, as on a finished setup."""
-    status["FederatedFolder"].update(Link="Linked", Path="/federata", SeriesGroupingOff=[])
-    status["FederatedFolder"]["Movies"].update(Link="Linked", Libraries=["Film"])
-    status["FederatedFolder"]["Series"].update(Link="Linked", Libraries=["Serie"])
+    link_folders(status, "Linked")
 
 
 def half_done(status):
     """Leaves a server with nothing to import, and the folder chosen but not linked."""
     status["Servers"][0].update(Name=HOSTILE, ImportedLibraryIds=[])
-    status["FederatedFolder"].update(Link="NotLinked", Path="/federata", SeriesGroupingOff=[])
-    status["FederatedFolder"]["Movies"].update(Link="NotLinked", Libraries=[])
-    status["FederatedFolder"]["Series"].update(Link="NotLinked", Libraries=[])
+    link_folders(status, "NotLinked")
 
 
 def no_cases(merges):
@@ -2512,17 +2529,16 @@ def overview_link(s, width):
     name = width + " overview unlinked"
 
     def unlinked(status):
-        status["FederatedFolder"].update(Link="NotLinked", Path="/federata", SeriesGroupingOff=[])
-        status["FederatedFolder"]["Movies"].update(Link="NotLinked", Libraries=[])
-        status["FederatedFolder"]["Series"].update(Link="Linked", Libraries=["Serie"])
+        link_folders(status, "NotLinked", movies=("stock", "NotLinked", []))
 
     page = s.open("fresh", width, route=lambda context: fake(context, "Status", unlinked))
     check(name + " says not linked", fact_value(page, "Federated folder") == "Not linked", fact_value(page, "Federated folder"))
     note = u.fact(page, "Federated folder").locator(u.ALARM)
-    check(name + " says which path", "film path is not linked" in note.inner_text() and "series path" not in note.inner_text(), note.inner_text())
-    check(name + " says it is done by hand", "by hand in Dashboard > Libraries" in note.inner_text(), note.inner_text())
+    shown = note.inner_text()
+    check(name + " says which path of which server", "stock: The film path is not linked" in shown and "series path" not in shown and "peer" not in shown, shown)
+    check(name + " says it is done by hand or by the automatic libraries", "by hand in Dashboard > Libraries, or turn on the automatic libraries" in shown, shown)
     check(name + " counts it", text(page, u.STATUS).startswith("Active. 1 thing needs attention"), text(page, u.STATUS))
-    check(name + " shows the step", step_state(page, "Link the two paths") == "To do", step_state(page, "Link the two paths"))
+    check(name + " shows the step", step_state(page, "Link the folders of each server") == "To do", step_state(page, "Link the folders of each server"))
     check(name + " has the rest done", step_state(page, "Run the first sync") == "Done", step_state(page, "Run the first sync"))
     opens(page, name, note.locator(u.TAB_LINK), "settings")
     healthy(page, name)
@@ -2532,9 +2548,7 @@ def overview_link(s, width):
     name = width + " overview wrong library"
 
     def wrong(status):
-        status["FederatedFolder"].update(Link="NotLinked", Path="/federata", SeriesGroupingOff=["Serie"])
-        status["FederatedFolder"]["Movies"].update(Link="WrongLibraryType", Libraries=["Mixed"])
-        status["FederatedFolder"]["Series"].update(Link="DifferentCase", Libraries=["Serie"])
+        link_folders(status, "NotLinked", ("stock", "WrongLibraryType", ["Mixed"]), ("stock", "DifferentCase", ["Serie"]), ["Serie"])
 
     page = s.open("fresh", width, route=lambda context: fake(context, "Status", wrong))
     note = u.fact(page, "Federated folder").locator(u.ALARM)
@@ -2547,7 +2561,7 @@ def overview_link(s, width):
     name = width + " overview link unknown"
 
     def unknown(status):
-        status["FederatedFolder"].update(Link="NotChecked", Path="/federata", SeriesGroupingOff=[])
+        link_folders(status, "NotChecked")
 
     page = s.open("fresh", width, route=lambda context: fake(context, "Status", unknown))
     check(name + " does not claim", fact_value(page, "Federated folder") == "Not checked", fact_value(page, "Federated folder"))
@@ -2683,20 +2697,21 @@ def overview_half(s, width):
     page = s.open("fresh", width, route=lambda context: fake(context, "Status", half))
     check(name + " has the five steps in order", page.locator(u.STEP_NAME).all_inner_texts() == u.STEPS, page.locator(u.STEP_NAME).all_inner_texts())
     for label, shown in [("Add a remote server", "Done"), ("Choose libraries to import", "To do"),
-                         ("Choose the federated folder", "Done"), ("Run the first sync", "Done"), ("Link the two paths", "To do")]:
+                         ("Choose the federated folder", "Done"), ("Run the first sync", "Done"), ("Link the folders of each server", "To do")]:
         check(f"{name} {label} is {shown}", step_state(page, label) == shown, step_state(page, label))
     libraries = u.step(page, "Choose libraries to import")
     check(name + " names the server waiting", "Still to choose: " + HOSTILE in libraries.inner_text(), libraries.inner_text())
     check(name + " keeps remote text as text", page.locator(u.SETUP + " b").count() == 0)
-    check(name + " says what stays by hand", "by hand in Dashboard > Libraries" in u.step(page, "Link the two paths").inner_text())
+    link_step = u.step(page, "Link the folders of each server").inner_text()
+    check(name + " says what is done by hand or by the automatic libraries", "in Dashboard > Libraries, or turn on the automatic libraries" in link_step, link_step)
     check(name + " marks state in the text and the icon", u.step(page, "Add a remote server").locator(".check_circle").count() == 1)
     for label, tab in [("Add a remote server", "servers"), ("Choose libraries to import", "servers"), ("Choose the federated folder", "settings"),
-                       ("Run the first sync", "catalog"), ("Link the two paths", "settings")]:
+                       ("Run the first sync", "catalog"), ("Link the folders of each server", "settings")]:
         opens(page, f"{name} {label}", u.step(page, label).locator(u.TAB_LINK), tab)
     healthy(page, name)
     u.shot(page, f"overview-half-{width}")
 
-    link = u.step(page, "Link the two paths").locator(u.TAB_LINK)
+    link = u.step(page, "Link the folders of each server").locator(u.TAB_LINK)
     u.reach(page, link)
     state["half"] = False
     check(name + " the list goes once setup is complete", until(page, lambda: not page.locator(u.SETUP).is_visible(), 20))
@@ -2777,18 +2792,18 @@ def connect_flow(s, width):
     page.locator(u.ADD_SUBMIT).click()
     row = u.server_row(page, "stock")
     check(name + " opens the card of the server", until(page, lambda: row.count() == 1 and row.evaluate("node => node.open")))
-    check(name + " lists the libraries of the server", until(page, lambda: row.locator(u.CHECKBOX).count() == 2), row.inner_text())
+    check(name + " lists the libraries of the server", until(page, lambda: row.locator(u.LIBRARY).count() == 2), row.inner_text())
     check(name + " says what the libraries hold", "(films)" in row.inner_text() and "(series)" in row.inner_text(), row.inner_text())
     check(name + " closes the form", not page.locator(u.ADD_PART).evaluate("node => node.open"))
-    check(name + " moves the focus to the choice", page.evaluate("document.activeElement.type") == "checkbox", page.evaluate("document.activeElement.outerHTML"))
+    check(name + " moves the focus to the choice", page.evaluate("s => document.activeElement.matches(s)", u.LIBRARY), page.evaluate("document.activeElement.outerHTML"))
     check(name + " the choice is in view", u.in_view(page, u.SERVER + " label:has(:focus)"))
-    check(name + " chooses nothing by itself", row.locator(u.CHECKBOX + ":checked").count() == 0)
+    check(name + " chooses nothing by itself", row.locator(u.LIBRARY + ":checked").count() == 0)
     check(name + " says nothing is imported yet", "No libraries chosen" in u.cause_of(row), u.cause_of(row))
     outcome(page, name + " adding", "Done", "Choose its libraries")
     u.shot(page, f"connect-libraries-{width}", full_page=False)
     healthy(page, name)
 
-    u.tick(row.locator(u.CHECKBOX).first)
+    u.tick(row.locator(u.LIBRARY).first)
     u.button(row, "save_libraries").click()
     check(name + " saves the choice", until(page, lambda: len(u.api("first", "GET", "/JellyMesh/Admin/Status")[1]["Servers"][0]["ImportedLibraryIds"]) == 1))
     check(name + " the prompt goes", until(page, lambda: u.cause_of(row) == ""), u.cause_of(row))
