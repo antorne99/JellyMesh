@@ -147,7 +147,7 @@ public sealed class FederationResolverTests : IDisposable
         var server = await _fixture.AddServerAsync("A", "films");
         await SyncAsync();
 
-        _fixture.Registry.Remove(server.Id);
+        await _fixture.Registry.RemoveAsync(server.Id);
 
         Assert.Empty(Resolver().Resolve().Contents);
     }

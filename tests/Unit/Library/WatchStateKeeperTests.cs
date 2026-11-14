@@ -147,7 +147,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     private async Task RemoveAsync(RemoteServerInfo server, LibraryMaterializer? materializer = null)
     {
         using var sync = SyncWith(materializer ?? _materializer);
-        await sync.RemoveServerAsync(server.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(server.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(server.Id, () => _fixture.Sync.Registry.RemoveAsync(server.Id), CancellationToken.None);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
     }
 
@@ -289,8 +289,8 @@ public sealed class WatchStateKeeperTests : IDisposable
         Row(_bruno, FilmItem(b)).IsFavorite = true;
         using (var sync = SyncWith(_materializer))
         {
-            await sync.RemoveServerAsync(a.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(a.Id)), CancellationToken.None);
-            await sync.RemoveServerAsync(b.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(b.Id)), CancellationToken.None);
+            await sync.RemoveServerAsync(a.Id, () => _fixture.Sync.Registry.RemoveAsync(a.Id), CancellationToken.None);
+            await sync.RemoveServerAsync(b.Id, () => _fixture.Sync.Registry.RemoveAsync(b.Id), CancellationToken.None);
             await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
         }
 
@@ -473,7 +473,7 @@ public sealed class WatchStateKeeperTests : IDisposable
             [new KeptTitle { OldItemId = Guid.NewGuid(), Kind = KeptTitleKind.Movie, Title = "Sonda Senza ID", Year = 2026, RunTimeTicks = NinetyMinutes, SavedUtc = _fixture.Sync.Clock.Now.UtcDateTime, Users = [new KeptUserState(_anna.Id, true, 1, 0, _watched, false, null)] }],
             CancellationToken.None);
         using var sync = SyncWith(_materializer);
-        await sync.RemoveServerAsync(a.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(a.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(a.Id, () => _fixture.Sync.Registry.RemoveAsync(a.Id), CancellationToken.None);
 
         await _keeper.RestoreAsync(CancellationToken.None);
 

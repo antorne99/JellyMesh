@@ -309,6 +309,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
+        _coordinator.RecordLocalTranscode(response.PlaySessionId, outcome.FileSource);
         _segments.OfferOnLocal(response, request.Identity, outcome.FileSource, route);
     }
 

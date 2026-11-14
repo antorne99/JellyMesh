@@ -11,11 +11,13 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
 
@@ -112,10 +114,10 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public Action? OnRemove { get; set; }
 
-    public bool Remove(Guid serverId)
+    public Task<bool> RemoveAsync(Guid serverId)
     {
         OnRemove?.Invoke();
-        return Servers.RemoveAll(server => server.Id == serverId) > 0;
+        return Task.FromResult(Servers.RemoveAll(server => server.Id == serverId) > 0);
     }
 
     public Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -214,8 +216,10 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     {
         Stopped.Add(playSessionId);
         OnStop?.Invoke();
-        return Task.FromResult(RemoteResult.Success(true));
+        return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(RemoteResult.Success(true));
     }
+
+    public bool StopsHang { get; set; }
 
     public List<string> Renewed { get; } = [];
 
@@ -234,7 +238,13 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     public Task<RemoteResult<bool>> ReleaseStreamAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         Released.Add(playSessionId);
-        return Task.FromResult(ReleaseFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(ReleaseFailure));
+        return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(ReleaseFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(ReleaseFailure));
+    }
+
+    private static async Task<RemoteResult<bool>> HangAsync(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+        return RemoteResult.Success(true);
     }
 }
 
@@ -253,8 +263,10 @@ internal sealed class CoordinatorFixture
     public CoordinatorFixture(ILastServedSourceStore? lastServed = null)
     {
         LastServed = lastServed ?? new InMemoryLastServedStore();
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, NullLogger<PlaybackCoordinator>.Instance);
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
     }
+
+    public Mock<ITranscodeManager> Transcodes { get; } = new();
 
     public ILastServedSourceStore LastServed { get; }
 

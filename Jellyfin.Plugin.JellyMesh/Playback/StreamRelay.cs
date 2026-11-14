@@ -82,8 +82,8 @@ public static class StreamRelay
         }
         catch (Exception exception) when (exception is IOException or TimeoutException)
         {
-            // Either side dropped, or the remote went silent. The headers are gone, so the only signal left is a broken
-            // connection.
+            // Either side dropped, the remote went silent, or its server is being removed (413). The headers are gone, so
+            // the only signal left is a broken connection.
             context.Abort();
 
             // A break soon after a pause of the client is put down to the pause, not to the source (row 273).

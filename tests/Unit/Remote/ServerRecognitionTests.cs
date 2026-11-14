@@ -46,7 +46,7 @@ public class ServerRecognitionTests
     {
         using var fixture = new RegistryFixture(Remote());
         var first = await fixture.AddServerAsync();
-        fixture.Registry.Remove(first.Id);
+        await fixture.Registry.RemoveAsync(first.Id);
         fixture.Handler.Requests.Clear();
 
         var again = await AddAsync(fixture, "Renamed");
@@ -67,7 +67,7 @@ public class ServerRecognitionTests
         using var fixture = new RegistryFixture(Remote());
         var first = await fixture.AddServerAsync();
 
-        fixture.Registry.Remove(first.Id);
+        await fixture.Registry.RemoveAsync(first.Id);
 
         var xml = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
         using var text = new System.IO.StringWriter();
@@ -98,7 +98,8 @@ public class ServerRecognitionTests
         _serverId = null;
         using var fixture = new RegistryFixture(Remote());
         var first = await fixture.AddServerAsync();
-        fixture.Registry.Remove(first.Id);
+        await fixture.Registry.RemoveAsync(first.Id);
+        fixture.Handler.Requests.Clear();
 
         var second = await AddAsync(fixture, "Friend");
         var third = await AddAsync(fixture, "Friend");
@@ -115,7 +116,7 @@ public class ServerRecognitionTests
         var first = await fixture.AddServerAsync();
         fixture.Store.SaveFailure = new System.IO.IOException("disk full");
 
-        Assert.Throws<System.IO.IOException>(() => fixture.Registry.Remove(first.Id));
+        await Assert.ThrowsAsync<System.IO.IOException>(() => fixture.Registry.RemoveAsync(first.Id));
 
         Assert.Single(fixture.Store.Configuration.Servers);
     }

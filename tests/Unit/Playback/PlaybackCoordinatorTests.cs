@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.MediaInfo;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
@@ -259,6 +260,101 @@ public class PlaybackCoordinatorTests
 
         Assert.Equal(staying, Assert.Single(fixture.Sessions.All).Source);
         Assert.Equal(PlaybackValues.RemotePlaySession + "leaving", Assert.Single(fixture.Client.Released));
+    }
+
+    // Decision 413: removing a server ends what plays from it at once, before anything is asked of the remote.
+    [Fact]
+    public async Task A_server_about_to_go_ends_its_open_streams_at_once_and_only_those()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        var staying = PlaybackValues.Source("staying");
+        fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(System.Net.HttpStatusCode.OK, new RemoteContentHeaders("video/mp4", null, null, null), new HangingStream())));
+        using var gone = (await fixture.Coordinator.OpenAsync(leaving.ServerId, new RemoteStreamRequest(HttpMethod.Get, "/Videos/leaving/stream", null), CancellationToken.None)).Value!;
+        using var kept = (await fixture.Coordinator.OpenAsync(staying.ServerId, new RemoteStreamRequest(HttpMethod.Get, "/Videos/staying/stream", null), CancellationToken.None)).Value!;
+        var goneCopy = gone.CopyToAsync(System.IO.Stream.Null, TimeSpan.FromMinutes(5), CancellationToken.None);
+        using var stop = new CancellationTokenSource();
+        var keptCopy = kept.CopyToAsync(System.IO.Stream.Null, TimeSpan.FromMinutes(5), stop.Token);
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+
+        await Assert.ThrowsAsync<RemoteStreamClosedException>(() => goneCopy.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.False(keptCopy.IsCompleted);
+        await stop.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => keptCopy.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    // A remote that hangs costs the removal one short wait, not one per call.
+    [Fact]
+    public async Task A_server_about_to_go_stops_and_gives_back_within_one_shared_limit()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        fixture.Client.StopsHang = true;
+        fixture.Coordinator.RemovalLimit = TimeSpan.FromMilliseconds(300);
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(fixture.Client.Stopped);
+        Assert.Empty(fixture.Client.Released);
+        Assert.Empty(fixture.Sessions.All);
+    }
+
+    [Fact]
+    public async Task A_server_about_to_go_opens_nothing_more_until_its_removal_fails()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        var request = new RemoteStreamRequest(HttpMethod.Get, "/Videos/leaving/stream", null);
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+
+        Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.OpenAsync(leaving.ServerId, request, CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.ReadPlaylistAsync(leaving.ServerId, "/master.m3u8", CancellationToken.None)).Failure);
+        Assert.NotEqual(PlaybackOutcomeKind.Remote, (await fixture.OpenAsync(PlaybackValues.Stub(leaving))).Kind);
+        Assert.Empty(fixture.Client.Opened);
+        Assert.Empty(fixture.Client.Requests);
+
+        fixture.Coordinator.ReopenServer(leaving.ServerId);
+
+        using var opened = (await fixture.Coordinator.OpenAsync(leaving.ServerId, request, CancellationToken.None)).Value;
+        Assert.NotNull(opened);
+        await opened.CopyToAsync(System.IO.Stream.Null, TimeSpan.FromMinutes(5), CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task A_server_about_to_go_closes_the_local_transcodes_of_its_files_and_only_those()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        var staying = PlaybackValues.Source("staying");
+        var user = Guid.NewGuid();
+        fixture.Coordinator.RecordLocalPlaySession(user, Guid.NewGuid(), "local-leaving", ["device"]);
+        fixture.Coordinator.RecordLocalTranscode("local-leaving", leaving);
+        fixture.Coordinator.RecordLocalPlaySession(user, Guid.NewGuid(), "local-staying", ["device"]);
+        fixture.Coordinator.RecordLocalTranscode("local-staying", staying);
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+
+        fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(string.Empty, "local-leaving", It.IsAny<Func<string, bool>>()), Moq.Times.Once);
+        fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "local-staying", It.IsAny<Func<string, bool>>()), Moq.Times.Never);
+    }
+
+    [Fact]
+    public async Task A_local_transcode_its_user_ended_is_not_closed_again()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        var user = Guid.NewGuid();
+        fixture.Coordinator.RecordLocalPlaySession(user, Guid.NewGuid(), "local-leaving", ["device"]);
+        fixture.Coordinator.RecordLocalTranscode("local-leaving", leaving);
+        fixture.Sessions.EndLocal(user, "local-leaving");
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+
+        fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()), Moq.Times.Never);
     }
 
     [Fact]
@@ -959,5 +1055,36 @@ public class PlaybackCoordinatorTests
 
         Assert.Contains(logger.Lines, line => line.Contains("hardware", StringComparison.Ordinal));
         Assert.DoesNotContain(logger.Lines, line => line.Contains("forged", StringComparison.Ordinal));
+    }
+
+    private sealed class HangingStream : System.IO.Stream
+    {
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0;
+        }
+
+        public override long Seek(long offset, System.IO.SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

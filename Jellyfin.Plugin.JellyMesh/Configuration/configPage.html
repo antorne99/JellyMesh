@@ -2047,7 +2047,7 @@
                     "{path} is in the field. Save the settings to use it.": "{path} è nel campo. Salva le impostazioni per usarlo.",
                     "{place}, not in the catalog now": "{place}, ora non è nel catalogo",
                     "{servers}, suspended": "{servers}, sospesi",
-                    "{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.": "{server} e il suo accesso salvato escono subito da JellyMesh. Su quel server l'accesso non viene revocato: il suo dispositivo JellyMesh resta in elenco.",
+                    "{server} and its stored login leave JellyMesh now. On that server the login is revoked if the server can be reached; otherwise its JellyMesh device stays listed.": "{server} e il suo accesso salvato escono subito da JellyMesh. Su quel server l'accesso viene revocato se il server è raggiungibile; altrimenti il suo dispositivo JellyMesh resta in elenco.",
                     "{server} is offline. Titles found only there do not play until it answers.": "{server} è offline. I titoli presenti solo lì non si riproducono finché non risponde.",
                     "{server}: connected, {mode}, importable libraries: {count}.": "{server}: connesso, {mode}, librerie importabili: {count}.",
                     "{server}: the last sync failed ({failure}). Its titles are kept as they were.": "{server}: l'ultima sincronizzazione non è riuscita ({failure}). I suoi titoli restano com'erano.",
@@ -3085,7 +3085,7 @@
                     }));
                     actions.appendChild(button(t('Remove'), function () {
                         var paragraphs = [
-                            t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
+                            t('{server} and its stored login leave JellyMesh now. On that server the login is revoked if the server can be reached; otherwise its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
                             t('The folders of this server are deleted now: its titles leave the libraries, with their images. The same titles from another server stay. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
                             t('Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
                             t('Playback already running may not stop right away.'),

@@ -132,7 +132,7 @@ public class RemoteServerRegistryTests
         fixture.KeySource.Key = TestValues.OtherKey;
         Assert.Equal(KeyState.Wrong, fixture.Vault.GetKeyState());
 
-        Assert.True(fixture.Registry.Remove(server.Id));
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
 
         Assert.Empty(fixture.Registry.GetServers());
         Assert.Equal(KeyState.Ok, fixture.Vault.GetKeyState());
@@ -146,14 +146,16 @@ public class RemoteServerRegistryTests
 
         var result = await fixture.Registry.RunWithSessionAsync(
             server.Id,
-            (_, _, _) =>
+            async (_, _, _) =>
             {
-                fixture.Registry.Remove(server.Id);
-                return Task.FromResult(RemoteResult.Fail<int>(RemoteFailure.AuthenticationFailed));
+                await fixture.Registry.RemoveAsync(server.Id);
+                return RemoteResult.Fail<int>(RemoteFailure.AuthenticationFailed);
             },
             CancellationToken.None);
 
-        Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
+        // The login of the retry comes after the removal, so it is ended at once (413).
+        Assert.Equal(RemoteFailure.UnknownServer, result.Failure);
+        Assert.Equal(2, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Sessions/Logout"));
     }
 
     [Theory]
@@ -168,11 +170,11 @@ public class RemoteServerRegistryTests
         var last = await fixture.AddServerAsync();
         fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(failure)!;
 
-        Assert.Throws(failure, () => fixture.Registry.Remove(server.Id));
+        await Assert.ThrowsAsync(failure, () => fixture.Registry.RemoveAsync(server.Id));
 
         Assert.Equal([first.Id, server.Id, last.Id], fixture.Registry.GetServers().Select(item => item.Id));
         fixture.Store.SaveFailure = null;
-        Assert.True(fixture.Registry.Remove(server.Id));
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
     }
 
     [Fact]
@@ -191,7 +193,7 @@ public class RemoteServerRegistryTests
             stored.FollowSkipped = true;
         });
 
-        Assert.True(fixture.Registry.Remove(server.Id));
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
 
         var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
         Assert.Equal(server.Id, held.ServerId);
@@ -207,7 +209,7 @@ public class RemoteServerRegistryTests
         using var fixture = new RegistryFixture();
         var server = await fixture.AddServerAsync();
 
-        Assert.True(fixture.Registry.Remove(server.Id));
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
 
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
@@ -225,18 +227,18 @@ public class RemoteServerRegistryTests
         });
         fixture.Store.SaveFailure = new IOException("disk full");
 
-        Assert.Throws<IOException>(() => fixture.Registry.Remove(server.Id));
+        await Assert.ThrowsAsync<IOException>(() => fixture.Registry.RemoveAsync(server.Id));
 
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
         Assert.Single(Assert.Single(fixture.Store.Configuration.Servers).AutomaticLibraryRegistry);
     }
 
     [Fact]
-    public void RemovingAnUnknownServerReturnsFalse()
+    public async Task RemovingAnUnknownServerReturnsFalse()
     {
         using var fixture = new RegistryFixture();
 
-        Assert.False(fixture.Registry.Remove(Guid.NewGuid()));
+        Assert.False(await fixture.Registry.RemoveAsync(Guid.NewGuid()));
     }
 
     [Fact]

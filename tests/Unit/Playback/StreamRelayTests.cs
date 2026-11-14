@@ -89,6 +89,39 @@ public class StreamRelayTests
         Assert.False(aborted.Aborted);
     }
 
+    // Decision 413: a stream of a server being removed ends at once, as a broken connection, and is no failure of the source.
+    [Fact]
+    public async Task A_stream_of_a_server_being_removed_breaks_the_connection_at_once_and_is_not_told_as_stopped()
+    {
+        using var ended = new CancellationTokenSource();
+        using var content = Content(new SilentStream()).EndsWith(ended.Token);
+        var aborted = new AbortRecorder();
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var relay = StreamRelay.CopyAsync(content, context, TimeSpan.FromMinutes(5), CancellationToken.None);
+        await ended.CancelAsync();
+        var stopped = await relay.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(aborted.Aborted);
+        Assert.False(stopped);
+    }
+
+    [Fact]
+    public async Task A_stream_opened_after_its_server_was_closed_sends_nothing()
+    {
+        using var content = Content(new MemoryStream([1, 2, 3])).EndsWith(new CancellationToken(canceled: true));
+        var aborted = new AbortRecorder();
+        using var target = new MemoryStream();
+        var context = Context(target);
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        await StreamRelay.CopyAsync(content, context, TimeSpan.FromMinutes(5), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(aborted.Aborted);
+        Assert.Equal(0, target.Length);
+    }
+
     [Fact]
     public async Task A_remote_that_goes_silent_is_told_as_a_remote_that_stopped()
     {

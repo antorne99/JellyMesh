@@ -191,7 +191,8 @@ public class FederationAdminController : ControllerBase
     /// Removes a server and starts deleting its content and its automatic libraries, with no confirmation (decision 140).
     /// Works whatever the state of the key. The removal is recorded before the server leaves the configuration: only
     /// recorded servers lose their content (decision 44). If the removal cannot be saved, the record is taken back and the
-    /// server stays; the answer says whether its playback was already stopped.
+    /// server stays; the answer says whether its playback was already stopped. What plays from it ends first, and its
+    /// login on the remote last, within a short time (413).
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -218,12 +219,18 @@ public class FederationAdminController : ControllerBase
                 {
                     stopping = true;
                     await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
-                    return _registry.Remove(serverId);
+                    return await _registry.RemoveAsync(serverId).ConfigureAwait(false);
                 },
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // The server stays, so it may play again.
+            if (stopping)
+            {
+                _playback.ReopenServer(serverId);
+            }
+
             return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed);
         }
 

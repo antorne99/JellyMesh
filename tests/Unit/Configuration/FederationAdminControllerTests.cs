@@ -134,12 +134,13 @@ public class FederationAdminControllerTests
         var sync = new Mock<ICatalogSyncService>();
         sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
             .Returns<Guid, Func<Task<bool>>, CancellationToken>((_, remove, _) => remove());
+        var playback = new CoordinatorFixture();
         var controller = new FederationAdminController(
             fixture.Registry,
             fixture.Vault,
             fixture.Store,
             new RecordingChecker(FederatedFolderLinkState.NotChecked),
-            new CoordinatorFixture().Coordinator,
+            playback.Coordinator,
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
@@ -156,6 +157,44 @@ public class FederationAdminControllerTests
         Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
         Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+
+        // The server stays, so its login stays and it plays again (413).
+        Assert.DoesNotContain(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        var stream = await playback.Coordinator.OpenAsync(server.Id, new RemoteStreamRequest(System.Net.Http.HttpMethod.Get, "/Videos/a/stream", null), CancellationToken.None);
+        Assert.True(stream.IsSuccess, stream.Failure.ToString());
+        stream.Value!.Dispose();
+    }
+
+    // Decision 413: what plays from the server ends first, then its login on the remote.
+    [Fact]
+    public async Task Removing_a_server_ends_its_streams_then_its_login_on_the_remote()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var playback = new CoordinatorFixture();
+        var loggedOutAtClose = true;
+        playback.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()))
+            .Callback(() => loggedOutAtClose = fixture.Handler.Requests.Any(request => request.Uri.AbsolutePath == "/Sessions/Logout"))
+            .Returns(Task.CompletedTask);
+        playback.Coordinator.RecordLocalPlaySession(Guid.NewGuid(), Guid.NewGuid(), "local", ["device"]);
+        playback.Coordinator.RecordLocalTranscode("local", new StubSource(server.Id, "item", "item-ms"));
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            playback.Coordinator,
+            new FixedFederatedRootSource(null),
+            RemovingSync(server.Id).Object,
+            new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
+            new CapturingLogger<FederationAdminController>());
+
+        Assert.IsType<NoContentResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.False(loggedOutAtClose);
+        playback.Transcodes.Verify(manager => manager.KillTranscodingJobs(string.Empty, "local", It.IsAny<Func<string, bool>>()), Times.Once);
+        Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
     }
 
     [Fact]
@@ -694,7 +733,7 @@ public class FederationAdminControllerTests
         using var fixture = new RegistryFixture(RemoteWithServerId());
         var controller = ControllerFor(fixture);
         var first = (await controller.AddServer(_request, CancellationToken.None)).Value!;
-        fixture.Registry.Remove(first.Id);
+        await fixture.Registry.RemoveAsync(first.Id);
 
         var again = await controller.AddServer(new AddServerRequest { Name = "Renamed", Url = TestValues.Url, Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
 

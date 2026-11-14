@@ -548,7 +548,7 @@ public sealed class ManualMergeStubTests : IDisposable
         await MergeAllAsync();
         var server = _fixture.Sync.Registry.GetServers().Single(entry => entry.Name == "C");
 
-        _fixture.Sync.Registry.Remove(server.Id);
+        await _fixture.Sync.Registry.RemoveAsync(server.Id);
 
         var copy = Assert.Single(Assert.Single(_service.GetList().Merges).Copies, entry => entry.Copy.Title == "Tre");
         Assert.False(copy.IsFound);

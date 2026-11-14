@@ -18,6 +18,11 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// </summary>
 public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 {
+    /// <summary>
+    /// The longest a removal waits for the remote to end its login (413).
+    /// </summary>
+    public static readonly TimeSpan LogoutTimeout = TimeSpan.FromSeconds(3);
+
     private readonly IPluginConfigurationStore _store;
     private readonly ICredentialVault _vault;
     private readonly IJellyfinRemoteClient _client;
@@ -46,6 +51,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         _logger = logger;
         _activity = activity;
     }
+
+    /// <summary>
+    /// Gets the longest a removal waits for the logout. Shorter in tests.
+    /// </summary>
+    internal TimeSpan LogoutLimit { get; init; } = LogoutTimeout;
 
     /// <inheritdoc />
     public IReadOnlyList<RemoteServerInfo> GetServers()
@@ -205,7 +215,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
-    public bool Remove(Guid serverId)
+    public async Task<bool> RemoveAsync(Guid serverId)
     {
         RemoteServerConfig? removed = null;
         var position = -1;
@@ -234,7 +244,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         // Not disposed here: a call may still hold its login gate. The registry disposes the rest.
-        _runtimes.TryRemove(serverId, out _);
+        var session = _runtimes.TryRemove(serverId, out var runtime) ? runtime.Forget() : null;
+        await EndRemovedSessionAsync(removed, session).ConfigureAwait(false);
         return true;
     }
 
@@ -501,8 +512,26 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
 
             var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
-            runtime.Session = login.Value;
-            if (login.Value?.ServerId is { } remoteId)
+            if (login.Value is not { } fresh)
+            {
+                runtime.Session = null;
+                return login;
+            }
+
+            // A login that ends after the removal of its server is ended at once, so that no device stays behind (413).
+            if (!runtime.TryKeep(fresh) || !IsConfigured(server.Id))
+            {
+                runtime.Forget();
+                var failure = await LogOutWithinLimitAsync(endpoint, fresh).ConfigureAwait(false);
+                if (failure != RemoteFailure.None)
+                {
+                    _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", LogText.Clean(server.Name), failure);
+                }
+
+                return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
+            }
+
+            if (fresh.ServerId is { } remoteId)
             {
                 RememberServerId(server, remoteId);
             }
@@ -540,6 +569,44 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             _logger.LogInformation("Could not end an unused login on a remote server: {Failure}", result.Failure);
         }
     }
+
+    // Ends the live login of a removed server within the logout limit. Without one, or on a failure, its device stays (413).
+    private async Task EndRemovedSessionAsync(RemoteServerConfig removed, RemoteSession? session)
+    {
+        var name = LogText.Clean(removed.Name);
+        if (session is null)
+        {
+            _logger.LogWarning("Removed remote server {ServerName} had no live login to end; its JellyMesh device stays listed there", name);
+            return;
+        }
+
+        var failure = await LogOutWithinLimitAsync(EndpointOf(removed.Id, removed.Url), session).ConfigureAwait(false);
+        if (failure == RemoteFailure.None)
+        {
+            _logger.LogInformation("Ended the login on removed remote server {ServerName}", name);
+        }
+        else
+        {
+            // A logout cut by the limit may still reach the remote later.
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // Sends the logout, and gives up at the logout limit: the remote cannot hold a removal up.
+    private async Task<RemoteFailure> LogOutWithinLimitAsync(RemoteEndpoint endpoint, RemoteSession session)
+    {
+        using var limit = new CancellationTokenSource(LogoutLimit);
+        try
+        {
+            return (await _client.LogoutAsync(endpoint, session, limit.Token).ConfigureAwait(false)).Failure;
+        }
+        catch (OperationCanceledException) when (limit.IsCancellationRequested)
+        {
+            return RemoteFailure.Timeout;
+        }
+    }
+
+    private bool IsConfigured(Guid serverId) => _store.Read(config => config.Servers.Any(server => server.Id == serverId));
 
     // Stores the Server Id of a server configured before it was read, at its first login (decision 121).
     private void RememberServerId(StoredServer server, string remoteId)
@@ -645,10 +712,29 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         private readonly Lock _gate = new();
         private bool? _reachable;
+        private RemoteSession? _session;
+        private bool _forgotten;
 
         public SemaphoreSlim LoginGate { get; } = new(1, 1);
 
-        public RemoteSession? Session { get; set; }
+        public RemoteSession? Session
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _session;
+                }
+            }
+
+            set
+            {
+                lock (_gate)
+                {
+                    _session = _forgotten ? null : value;
+                }
+            }
+        }
 
         public RemoteFailure? LastFailure { get; private set; }
 
@@ -675,6 +761,32 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 {
                     onChange!(reachable.Value);
                 }
+            }
+        }
+
+        // Keeps a new login, unless the server was removed meanwhile.
+        public bool TryKeep(RemoteSession session)
+        {
+            lock (_gate)
+            {
+                if (!_forgotten)
+                {
+                    _session = session;
+                }
+
+                return !_forgotten;
+            }
+        }
+
+        // Takes the login out for good: a later one is not kept.
+        public RemoteSession? Forget()
+        {
+            lock (_gate)
+            {
+                _forgotten = true;
+                var session = _session;
+                _session = null;
+                return session;
             }
         }
 
