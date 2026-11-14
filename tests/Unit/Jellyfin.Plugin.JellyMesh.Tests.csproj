@@ -16,6 +16,7 @@
     <!-- The plugin excludes these at runtime because the server provides them; the test host does not. -->
     <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinPackageVersion)" />
     <PackageReference Include="Jellyfin.Model" Version="$(JellyfinPackageVersion)" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="$(SqlitePackageVersion)" />
   </ItemGroup>
 
   <ItemGroup>

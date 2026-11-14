@@ -42,6 +42,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private readonly ILogger<LibraryMaterializer> _logger;
     private readonly ILocalRefreshRequester? _refresher;
     private readonly IVersionLinker? _linker;
+    private readonly IWatchStateKeeper? _keeper;
     private volatile MaterializationReport? _lastReport;
 
     /// <summary>
@@ -62,6 +63,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <param name="logger">The logger.</param>
     /// <param name="refresher">What asks Jellyfin to read the metadata of new local films.</param>
     /// <param name="linker">What detaches a stub from its versions before it is removed.</param>
+    /// <param name="keeper">What keeps the watch state of removed servers and puts it back (row 412).</param>
     public LibraryMaterializer(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -77,7 +79,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         TimeProvider timeProvider,
         ILogger<LibraryMaterializer> logger,
         ILocalRefreshRequester? refresher = null,
-        IVersionLinker? linker = null)
+        IVersionLinker? linker = null,
+        IWatchStateKeeper? keeper = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -94,6 +97,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         _logger = logger;
         _refresher = refresher;
         _linker = linker;
+        _keeper = keeper;
     }
 
     /// <inheritdoc />
@@ -261,10 +265,18 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         run.Commit();
-        RemoveGone(run, await DetachRemovalsAsync(run, plan.Removals, cancellationToken).ConfigureAwait(false));
-        RemoveServerFolders(run, plan.State.RemovedServers);
+        var (removals, kept) = await KeepRemovedAsync(run, plan, cancellationToken).ConfigureAwait(false);
+        RemoveGone(run, await DetachRemovalsAsync(run, removals, cancellationToken).ConfigureAwait(false));
+        if (kept)
+        {
+            RemoveServerFolders(run, plan.State.RemovedServers);
+        }
 
         await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
+        if (_keeper is not null)
+        {
+            await _keeper.RestoreAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         foreach (var held in plan.Held)
         {
@@ -617,6 +629,34 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     // The stubs to remove this round: one that could not leave its version group, also at the old path of a pending server
     // rename, stays, counted as failed, for the next round (Q326, Q351).
+    // The titles of removed servers keep their watch state before they go (row 412); while it cannot be saved they stay.
+    private async Task<(IReadOnlyList<StubEntry> Stubs, bool Kept)> KeepRemovedAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
+    {
+        var removed = plan.State.RemovedServers.ToHashSet();
+        if (_keeper is null || removed.Count == 0)
+        {
+            return (plan.Removals, true);
+        }
+
+        var stubs = plan.Removals
+            .Where(stub => stub.ServerId is { } serverId ? removed.Contains(serverId) : stub.Sources.Count > 0 && stub.Sources.All(source => removed.Contains(source.ServerId)))
+            .ToList();
+        var series = run.State.Series.Where(entry => entry.ServerId is { } serverId && removed.Contains(serverId)).ToList();
+        if (await _keeper.KeepAsync(run.Root, stubs, series, cancellationToken).ConfigureAwait(false))
+        {
+            return (plan.Removals, true);
+        }
+
+        run.Failed += stubs.Count;
+        foreach (var serverId in stubs.Select(stub => stub.ServerId).OfType<Guid>())
+        {
+            run.CountServer(serverId, failed: 1);
+        }
+
+        var held = stubs.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        return (plan.Removals.Where(stub => !held.Contains(stub.Id)).ToList(), false);
+    }
+
     private async Task<IReadOnlyList<StubEntry>> DetachRemovalsAsync(Run run, IReadOnlyList<StubEntry> removals, CancellationToken cancellationToken)
     {
         if (_linker is null || removals.Count == 0)

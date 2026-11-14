@@ -55,6 +55,46 @@ public static class DedupEngine
         };
     }
 
+    /// <summary>
+    /// Pairs saved copies with current copies of the same content, by the identity <see cref="Resolve"/> gives (plan
+    /// §4.1): films and episodes by their identity, series by their work. A copy with no identity pairs with nothing, and
+    /// no manual merge applies.
+    /// </summary>
+    /// <param name="saved">The saved films and episodes.</param>
+    /// <param name="savedSeries">The saved series, each as an episode with no numbers that carries the series' data.</param>
+    /// <param name="current">The current films and episodes.</param>
+    /// <param name="currentSeries">The current series, in the same form.</param>
+    /// <returns>Each saved copy with every current copy of its content.</returns>
+    public static IReadOnlyList<ContentPair> Pair(
+        IReadOnlyCollection<CatalogItem> saved,
+        IReadOnlyCollection<CatalogItem> savedSeries,
+        IReadOnlyCollection<CatalogItem> current,
+        IReadOnlyCollection<CatalogItem> currentSeries)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        ArgumentNullException.ThrowIfNull(savedSeries);
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(currentSeries);
+
+        var works = WorkResolver.Create([.. saved, .. savedSeries, .. current, .. currentSeries], []);
+        var currentByKey = current
+            .SelectMany(item => Identify(item, works).Select(identity => (identity.Key, Item: item)))
+            .ToLookup(entry => entry.Key, entry => entry.Item, StringComparer.Ordinal);
+        var seriesByWork = currentSeries
+            .Select(item => (works.Find(item)?.Key, Item: item))
+            .Where(entry => entry.Key is not null)
+            .ToLookup(entry => entry.Key!, entry => entry.Item, StringComparer.Ordinal);
+
+        var titles = saved.SelectMany(item => Identify(item, works)
+            .SelectMany(identity => currentByKey[identity.Key])
+            .Distinct()
+            .Select(match => new ContentPair(item, match)));
+        var series = savedSeries.SelectMany(item => works.Find(item) is { } work
+            ? seriesByWork[work.Key].Select(match => new ContentPair(item, match))
+            : []);
+        return titles.Concat(series).ToList();
+    }
+
     // Issues that share a title become one case, or a title would show twice and could be merged two ways. A case needs a
     // title with no local copy: two local films or series cannot become one, because a local item is never touched. An
     // episode whose series is not known names no copy, so its work is in no case unless another copy names it. A work with

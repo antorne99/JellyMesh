@@ -44,6 +44,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     private readonly IVersionLinker? _linker;
     private readonly ILayoutMigration? _migration;
     private readonly IServerStubRenamer? _renames;
+    private readonly IWatchStateKeeper? _keeper;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubCleanupTask"/> class.
@@ -63,6 +64,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     /// <param name="linker">The version linker, if any.</param>
     /// <param name="migration">The manual migration from the flat layout, if any.</param>
     /// <param name="renames">The stub moves of renamed servers, if any.</param>
+    /// <param name="keeper">What puts back the watch state of removed servers (row 412).</param>
     public StubCleanupTask(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -78,7 +80,8 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         ILogger<StubCleanupTask> logger,
         IVersionLinker? linker = null,
         ILayoutMigration? migration = null,
-        IServerStubRenamer? renames = null)
+        IServerStubRenamer? renames = null,
+        IWatchStateKeeper? keeper = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -95,6 +98,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         _linker = linker;
         _migration = migration;
         _renames = renames;
+        _keeper = keeper;
     }
 
     /// <inheritdoc />
@@ -125,6 +129,13 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         await FinishRenamesAsync(cancellationToken).ConfigureAwait(false);
         await LinkAsync(cancellationToken).ConfigureAwait(false);
+
+        // The new stubs have their items now, and their versions are linked (row 412).
+        if (_keeper is not null)
+        {
+            await _keeper.RestoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         await MigrateAsync(cancellationToken).ConfigureAwait(false);
         progress.Report(100);
     }

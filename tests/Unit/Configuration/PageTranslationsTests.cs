@@ -189,6 +189,9 @@ public class PageTranslationsTests
         Assert.Contains("t('The folders of this server are deleted now: its titles leave the libraries, with their images.", _script, StringComparison.Ordinal);
         Assert.Contains("t('Restoring the settings brings its folders back, with the same titles and watch state.')", _script, StringComparison.Ordinal);
 
+        // Row 412: the watch state follows the content, not the server.
+        Assert.Contains("t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.')", _script, StringComparison.Ordinal);
+
         // Decision 408: a server added back is a new one, so the page neither promises its folders back nor recognizes it.
         Assert.DoesNotContain("Adding the server back, or restoring", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("RecognizedAs", _script, StringComparison.Ordinal);

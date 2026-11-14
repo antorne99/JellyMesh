@@ -1588,6 +1588,7 @@
                     "The automatic migration is running. Try again when it stops.": "La migrazione automatica è in corso. Riprova quando si ferma.",
                     "There is nothing to migrate.": "Non c'è niente da migrare.",
                     "The automatic migration cannot go back to manual.": "La migrazione automatica non può tornare a quella manuale.",
+                    "The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.": "Lo stato di visione di ogni utente resta legato ai titoli: se gli stessi titoli ricompaiono entro 90 giorni, da questo server aggiunto di nuovo o da un altro, viene ripristinato.",
                     "The watch state has moved to the new titles and the old folders are empty.": "Lo stato di visione è passato ai nuovi titoli e le vecchie cartelle sono vuote.",
                     "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Librerie e salva di nuovo la selezione.",
                     "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
@@ -3089,6 +3090,7 @@
                             t('Playback already running may not stop right away.'),
                             t('Restoring the settings brings its folders back, with the same titles and watch state.')
                         ];
+                        paragraphs.push(t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.'));
 
                         // Removing the server deletes its automatic libraries with no other confirmation (decision 156).
                         var own = ownState(server);
