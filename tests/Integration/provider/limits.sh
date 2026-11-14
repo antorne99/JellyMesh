@@ -305,19 +305,15 @@ give_slot
 docker exec "$PREFIX-a" rm -rf "/extra/film/$SLOW"
 scan a
 
-echo "--- a stream that fails on a: its slot goes, and a retry in time keeps it"
+echo "--- a stream that fails on a: a bad gateway at once, the session ends and its slot goes (row 57)"
 check "open" 200 "$(open_stream c17 "$solo" "$PROFILE_DIRECT")"
 solo_file="/extra/film/$SOLO (2026)/$SOLO (2026).mkv"
 docker exec "$PREFIX-a" mv "$solo_file" "$solo_file.away"
 url=$(stream_url c17)
 status=$(curl -sS -o /dev/null -w '%{http_code}' "$url")
 echo "what the client of the broken stream got: $status"
-check "the failure reached the client" true "$([ "$status" -ge 400 ] && echo true || echo false)"
-sleep 2
-check "held for a retry" 1 "$(active_streams)"
-curl -sS -o /dev/null "$url"
-sleep 2
-check "the retry kept it" 1 "$(active_streams)"
+check "the failure reached the client as a bad gateway" 502 "$status"
+check "a retry of the same URL is a bad gateway too" 502 "$(curl -sS -o /dev/null -w '%{http_code}' "$url")"
 freed=$(wait_free 30)
 echo "slot of the failed stream freed after: $freed s"
 check "freed within seconds" true "$([ "$freed" != never ] && [ "$freed" -le 8 ] && echo true || echo false)"
@@ -867,9 +863,6 @@ message=$(message_during c31 8 direct_back)
 check "the direct stream is refused" 503 "$(cat "$WORK/during-c31")"
 check "with the message of the limit" "$LIMIT_TEXT" "$message"
 give_slot
-gate_mode a down
-check "a server that does not answer stays a bad gateway" 502 "$(read_start c31)"
-gate_mode a up
 check "with the slot free the same URL plays" 206 "$(read_start c31)"
 close_stream c31
 check "free again" 0 "$(wait_free 15)"
@@ -888,6 +881,17 @@ check "nothing of the remote in the answer" 0 "$(curl -sS --max-time 30 "$segmen
 give_slot
 check "with the slot free the same URL plays" 200 "$(hls_back)"
 close_stream c32
+check "free again" 0 "$(wait_free 15)"
+
+echo "--- a server that stops answering during playback: a bad gateway, and the session ends there (row 57)"
+# The title with one source, so that the source put last for 5 minutes changes no later choice.
+check "open direct" 200 "$(open_stream c33 "$solo" "$PROFILE_DIRECT")"
+check "it plays" 206 "$(read_start c33)"
+gate_mode a down
+check "a server that does not answer stays a bad gateway" 502 "$(read_start c33)"
+gate_mode a up
+check "the same URL stays a bad gateway, so the player opens the title again" 502 "$(read_start c33)"
+close_stream c33
 check "free again" 0 "$(wait_free 15)"
 
 # close_at_expiry <true|false>: the setting of a, saved as the page does, with the server running.
