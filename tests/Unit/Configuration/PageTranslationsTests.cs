@@ -187,7 +187,11 @@ public class PageTranslationsTests
     public void Removing_a_server_says_its_folders_go_and_how_they_come_back()
     {
         Assert.Contains("t('The folders of this server are deleted now: its titles leave the libraries, with their images.", _script, StringComparison.Ordinal);
-        Assert.Contains("t('Adding the server back, or restoring the settings, brings its folders back, with the same titles and watch state.')", _script, StringComparison.Ordinal);
+        Assert.Contains("t('Restoring the settings brings its folders back, with the same titles and watch state.')", _script, StringComparison.Ordinal);
+
+        // Decision 408: a server added back is a new one, so the page neither promises its folders back nor recognizes it.
+        Assert.DoesNotContain("Adding the server back, or restoring", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecognizedAs", _script, StringComparison.Ordinal);
     }
 
     [Theory]
