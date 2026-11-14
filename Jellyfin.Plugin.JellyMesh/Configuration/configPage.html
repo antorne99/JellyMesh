@@ -1610,7 +1610,6 @@
                     "Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Librerie nella sua scheda per riprovare.",
                     "Added {server}. Choose its libraries.": "{server} è stato aggiunto. Scegli le sue librerie.",
                     "Added {server}. Open Libraries on its card to choose what to import.": "{server} è stato aggiunto. Apri Librerie nella sua scheda per scegliere cosa importare.",
-                    "Adding the server back, or restoring the settings, brings its folders back, with the same titles and watch state.": "Aggiungendo di nuovo il server, o ripristinando le impostazioni, tornano le sue cartelle, con gli stessi titoli e lo stato di visione.",
                     "Advanced playback times": "Tempi di riproduzione avanzati",
                     "Already merged.": "Già uniti.",
                     "Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.": "Un altro server JellyMesh accede qui con un utente dedicato non amministratore di questo server. Scegli quell'utente, cosa può leggere e quanti stream può tenere insieme. Un utente così non può raggiungere nient'altro su questo server.",
@@ -1779,7 +1778,6 @@
                     "Quality unknown": "Qualità sconosciuta",
                     "Range": "Gamma",
                     "Reading...": "Lettura...",
-                    "Recognized as “{server}”: it takes back its folder and its label.": "Riconosciuto come «{server}»: riprende la sua cartella e la sua etichetta.",
                     "Reconciliation": "Riconciliazione",
                     "Recreate missing libraries": "Ricrea le librerie mancanti",
                     "Reload the page before saving.": "Ricarica la pagina prima di salvare.",
@@ -1792,6 +1790,7 @@
                     "Remove this server?": "Rimuovere questo server?",
                     "Removed {server}. Its titles are leaving the libraries.": "{server} è stato rimosso. I suoi titoli stanno uscendo dalle librerie.",
                     "Resolution": "Risoluzione",
+                    "Restoring the settings brings its folders back, with the same titles and watch state.": "Ripristinando le impostazioni tornano le sue cartelle, con gli stessi titoli e lo stato di visione.",
                     "Restoring the settings brings their folders back, with the same titles and watch state.": "Ripristinando le impostazioni tornano le loro cartelle, con gli stessi titoli e lo stato di visione.",
                     "Run the first sync": "Esegui la prima sincronizzazione",
                     "Running now": "In corso",
@@ -3085,7 +3084,7 @@
                             t('The folders of this server are deleted now: its titles leave the libraries, with their images. The same titles from another server stay. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
                             t('Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
                             t('Playback already running may not stop right away.'),
-                            t('Adding the server back, or restoring the settings, brings its folders back, with the same titles and watch state.')
+                            t('Restoring the settings brings its folders back, with the same titles and watch state.')
                         ];
 
                         // Removing the server deletes its automatic libraries with no other confirmation (decision 156).
@@ -3453,22 +3452,17 @@
                     updateRows(el('#jmServers'), servers);
                 }
 
-                // Says that an added server was recognized as a removed one, before what comes next (decision 122).
-                function recognized(server) {
-                    return server.RecognizedAs ? t('Recognized as “{server}”: it takes back its folder and its label.', { server: server.RecognizedAs }) + ' ' : '';
-                }
-
                 // Opens the card of a server just added with its libraries, and moves the focus to the choice.
                 function chooseLibraries(server) {
                     var row = (el('#jmServers').jmRows || {})[server.Id];
                     if (!row) {
-                        showMessage(recognized(server) + t('Added {server}. Open Libraries on its card to choose what to import.', { server: server.Name }));
+                        showMessage(t('Added {server}. Open Libraries on its card to choose what to import.', { server: server.Name }));
                         return Promise.resolve();
                     }
 
                     row.open = true;
                     return row.jmShowLibraries().then(function () {
-                        showMessage(recognized(server) + t('Added {server}. Choose its libraries.', { server: server.Name }));
+                        showMessage(t('Added {server}. Choose its libraries.', { server: server.Name }));
                         var target = row.querySelector('.jmLibraries input') || row.querySelector('.jmLibrariesNote');
                         target.focus({ preventScroll: true });
                         target.scrollIntoView({ block: 'center' });
@@ -5279,7 +5273,7 @@
                         return Promise.all([loadStatus(), loadSync()]).then(function () {
                             return chooseLibraries(server);
                         }).catch(function (error) {
-                            throw new Error(recognized(server) + t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
+                            throw new Error(t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
                         });
                     }));
                 });

@@ -43,10 +43,9 @@ share=$(get local /JellyMesh/Admin/Peers/Options | jq -c '{SharedLibraryIds: [.L
 req local PUT "/JellyMesh/Admin/Peers/$reader" "$share" >/dev/null
 check "the share is saved" 204 "$(status)"
 req peer DELETE "/JellyMesh/Admin/Servers/$id" >/dev/null
-old_id=$id
 id=$(add_remote peer local "http://host.docker.internal:$PORT" reader)
-# Known by its Server Id, the server takes back its ID and its folder, already in the library (decision 116).
-check "the server comes back with its ID" "$old_id" "$id"
+# A server added back is a new server, in a new folder that the admin adds to the library (decision 408).
+check "the folder of the server joins the library" 204 "$(link_folder peer Film "$(server_folder "$id")/Film")"
 check "the mode is JellyMesh" JellyMesh "$(get peer /JellyMesh/Admin/Status | jq -r --arg i "$id" '.Servers[] | select(.Id == $i) | .Mode')"
 import_all peer "$id"
 sync_now peer

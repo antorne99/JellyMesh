@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -39,6 +40,8 @@ public sealed class ServerStubRenamerTests : IDisposable
     public ServerStubRenamerTests()
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
+        _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _server, Name = "Casa" });
+        _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _other, Name = "Altro" });
         _registry = new StubRegistry(Path.Combine(_data, "plugin"), _store, new CapturingLogger<StubRegistry>());
         _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), It.IsAny<Type>())).Returns((string key, Type type) => IdOf(key, type));
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
@@ -186,6 +189,30 @@ public sealed class ServerStubRenamerTests : IDisposable
 
         Assert.Equal("Altro 1a2b3c4d", _registry.State.Labels[_server]);
         Assert.Equal(FilmPath("Altro 1a2b3c4d"), _registry.State.Stubs.Single().RelativePath);
+    }
+
+    [Fact]
+    public async Task TheLabelOfARemovedServerIsFreeForARename()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")));
+        await SaveAsync(_registry.State with { RemovedServers = [_other] });
+        _store.Configuration.Servers.Remove(_store.Configuration.Servers.Single(server => server.Id == _other));
+
+        await _renamer.RelabelAsync(_server, "Altro", CancellationToken.None);
+
+        Assert.Equal("Altro", _registry.State.Labels[_server]);
+        Assert.Equal(FilmPath("Altro"), _registry.State.Stubs.Single().RelativePath);
+    }
+
+    [Fact]
+    public async Task TheLabelOfAServerMissingFromTheSettingsWithStubsStaysTaken()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")), Film("g", FilmPath("Altro", _other)));
+        _store.Configuration.Servers.Remove(_store.Configuration.Servers.Single(server => server.Id == _other));
+
+        await _renamer.RelabelAsync(_server, "Altro", CancellationToken.None);
+
+        Assert.Equal("Altro 1a2b3c4d", _registry.State.Labels[_server]);
     }
 
     [Fact]

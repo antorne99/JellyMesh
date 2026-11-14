@@ -127,7 +127,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <inheritdoc />
     public AutomaticLibrariesRequest Enable(Guid serverId)
     {
-        // The job is bound to this server: one removed and added back with the same id is another (decision 116).
+        // The job is bound to this server: one removed and put back with the same id, as by a restored file, is another.
         var (outcome, owner) = _store.Read(config => Find(config, serverId) is not { } server
             ? (AutomaticLibrariesOutcome.UnknownServer, null)
             : (config.FederatedFolderPath.Length == 0 ? AutomaticLibrariesOutcome.NoFederatedFolder : AutomaticLibrariesOutcome.Started, server));

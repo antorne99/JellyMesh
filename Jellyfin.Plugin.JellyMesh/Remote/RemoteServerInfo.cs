@@ -28,9 +28,4 @@ public sealed record RemoteServerInfo(
     /// Gets a value indicating whether the stored password no longer decrypts and must be entered again.
     /// </summary>
     public bool NeedsPassword { get; init; }
-
-    /// <summary>
-    /// Gets the name a removed server had when an add recognized it and gave it its identifier back, null otherwise.
-    /// </summary>
-    public string? RecognizedAs { get; init; }
 }

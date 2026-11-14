@@ -122,7 +122,7 @@ public static class StubPlanner
         ArgumentNullException.ThrowIfNull(input);
 
         var catalog = IndexItemLookup.Build(input.Snapshot);
-        var labels = FederatedPaths.Labels(input.Servers.Select(server => (server.Id, (string?)server.Name)), input.State.Labels);
+        var labels = FederatedPaths.Labels(input.Servers.Select(server => (server.Id, (string?)server.Name)), input.State.TakenLabels(input.Servers.Select(server => server.Id)));
         var works = new List<StubWork>();
         var placed = new List<(StubWork Work, ResolvedContent Content, IndexedItem Winner)>();
         var seriesWorks = new List<SeriesWork>();

@@ -664,7 +664,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    // A server added back during the run keeps its folder (decision 116): the servers are read again before each delete.
+    // A server put back in the settings during the run keeps its folder: the servers are read again before each delete.
     private void RemoveServerFolders(Run run, IReadOnlyList<Guid> removedServers)
     {
         var removal = _remover.RemoveServerFolders(run.Root, run.State, removedServers, serverId => _servers.GetServers().Any(server => server.Id == serverId));

@@ -689,7 +689,7 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public async Task ARemovedServerAddedAgainSaysWhatItWasCalled()
+    public async Task ARemovedServerAddedAgainIsAddedAsANewServer()
     {
         using var fixture = new RegistryFixture(RemoteWithServerId());
         var controller = ControllerFor(fixture);
@@ -698,10 +698,10 @@ public class FederationAdminControllerTests
 
         var again = await controller.AddServer(new AddServerRequest { Name = "Renamed", Url = TestValues.Url, Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
 
-        Assert.Equal(first.Id, again.Value!.Id);
-        Assert.Equal("Friend", again.Value.RecognizedAs);
-        Assert.Null(first.RecognizedAs);
-        Assert.Null(controller.GetStatus().Value!.Servers.Single().RecognizedAs);
+        Assert.NotEqual(first.Id, again.Value!.Id);
+        Assert.Equal("Renamed", again.Value.Name);
+        Assert.DoesNotContain("Recognized", ToJson(again.Value), StringComparison.Ordinal);
+        Assert.Equal(again.Value.Id, controller.GetStatus().Value!.Servers.Single().Id);
     }
 
     [Fact]

@@ -30,7 +30,7 @@ public sealed record StubState
     /// <summary>Gets the version groups, the source of truth for linking the versions of a title.</summary>
     public IReadOnlyList<VersionGroup> Groups { get; init; } = [];
 
-    /// <summary>Gets the label of each server, fixed once given: only a rename of the server changes it.</summary>
+    /// <summary>Gets the label of each server, fixed once given: only a rename changes it, and a removal frees it.</summary>
     public IReadOnlyDictionary<Guid, string> Labels { get; init; } = new Dictionary<Guid, string>();
 
     /// <summary>
@@ -57,5 +57,21 @@ public sealed record StubState
                 .Select(rename => stub with { RelativePath = rename.OldPath })
                 .Prepend(stub))
             .ToList();
+    }
+
+    /// <summary>
+    /// Gets the stored labels still taken: those of configured servers, and of servers left out of the settings without a
+    /// removal that still have stubs. A removed server frees its label (decision 408).
+    /// </summary>
+    /// <param name="configured">The servers in the settings.</param>
+    /// <returns>The labels still taken, by server.</returns>
+    public Dictionary<Guid, string> TakenLabels(IEnumerable<Guid> configured)
+    {
+        var kept = configured.ToHashSet();
+        var removed = RemovedServers.ToHashSet();
+        var withStubs = Stubs.Select(stub => stub.ServerId).Concat(Series.Select(series => series.ServerId)).OfType<Guid>().ToHashSet();
+        return Labels
+            .Where(entry => kept.Contains(entry.Key) || (!removed.Contains(entry.Key) && withStubs.Contains(entry.Key)))
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
     }
 }

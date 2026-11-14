@@ -21,8 +21,8 @@ public interface IRemoteServerRegistry
 
     /// <summary>
     /// Adds a server, once the login on it succeeded. On failure nothing is saved. A remote whose Server Id belongs to a
-    /// configured server fails with <see cref="RemoteFailure.AlreadyConfigured"/> and that server as the value; one that
-    /// was removed gets its identifier back, with its former name in <see cref="RemoteServerInfo.RecognizedAs"/>.
+    /// configured server fails with <see cref="RemoteFailure.AlreadyConfigured"/> and that server as the value. A server
+    /// added again after a removal is a new one, with a new identifier (decision 408).
     /// </summary>
     /// <param name="name">The display name.</param>
     /// <param name="url">The base URL.</param>

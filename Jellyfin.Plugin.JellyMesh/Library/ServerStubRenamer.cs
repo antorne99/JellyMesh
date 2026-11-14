@@ -83,6 +83,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     private async Task<int> RelabelAsync(Guid serverId, string name, bool inPlace, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
+        var configured = _store.Read(config => config.Servers.Select(server => server.Id).Append(serverId).ToList());
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -93,7 +94,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 return 0;
             }
 
-            var label = FederatedPaths.Relabel(serverId, name, state.Labels);
+            var label = FederatedPaths.Relabel(serverId, name, state.TakenLabels(configured));
             if (string.Equals(label, old, StringComparison.Ordinal))
             {
                 return 0;

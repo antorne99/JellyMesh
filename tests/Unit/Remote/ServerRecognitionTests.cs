@@ -9,7 +9,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Remote;
 
-// Decisions 116, 120, 121 and 122: a remote is known by the Server Id it gives itself at login.
+// Decisions 120, 121 and 408: the Server Id a remote gives itself at login refuses a second add of it.
 public class ServerRecognitionTests
 {
     private const string FirstId = "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b";
@@ -40,60 +40,39 @@ public class ServerRecognitionTests
         Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
     }
 
+    // Decision 408: a server added again is always a new server, with an identifier of its own and one login.
     [Fact]
-    public async Task ARemovedServerAddedAgainGetsItsIdBackAndSaysWhatItWasCalled()
-    {
-        using var fixture = new RegistryFixture(Remote());
-        var first = await fixture.AddServerAsync();
-        fixture.Registry.Remove(first.Id);
-
-        var again = await AddAsync(fixture, "Renamed");
-
-        Assert.True(again.IsSuccess, again.Failure.ToString());
-        Assert.Equal(first.Id, again.Value!.Id);
-        Assert.Equal("Friend", again.Value.RecognizedAs);
-        Assert.Equal("Renamed", again.Value.Name);
-        Assert.Empty(fixture.Store.Configuration.FormerServers);
-        Assert.Equal(TestValues.Password, fixture.Vault.Unprotect(first.Id, fixture.Store.Configuration.Servers.Single().EncryptedCredentials)!.Password);
-    }
-
-    [Fact]
-    public async Task AServerAddedAgainUsesItsOwnDeviceAndEndsTheFirstLogin()
+    public async Task ARemovedServerAddedAgainIsANewServer()
     {
         using var fixture = new RegistryFixture(Remote());
         var first = await fixture.AddServerAsync();
         fixture.Registry.Remove(first.Id);
         fixture.Handler.Requests.Clear();
 
-        await AddAsync(fixture, "Friend");
-        await PingAsync(fixture, first.Id);
+        var again = await AddAsync(fixture, "Renamed");
 
-        var logins = fixture.Handler.Requests.Where(request => request.Uri.AbsolutePath == "/Users/AuthenticateByName").ToList();
-        var logout = Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
-        Assert.Equal(2, logins.Count);
-        Assert.Equal(HttpMethod.Post, logout.Method);
-        Assert.Equal(DeviceOf(logins[0]), DeviceOf(logout));
-        Assert.NotEqual($"jellymesh-{first.Id:N}", DeviceOf(logins[0]));
-        Assert.Equal($"jellymesh-{first.Id:N}", DeviceOf(logins[1]));
-        Assert.All(
-            fixture.Handler.Requests.Where(request => request.Uri.AbsolutePath != "/Sessions/Logout").Skip(1),
-            request => Assert.Equal($"jellymesh-{first.Id:N}", DeviceOf(request)));
+        Assert.True(again.IsSuccess, again.Failure.ToString());
+        Assert.NotEqual(first.Id, again.Value!.Id);
+        Assert.Equal("Renamed", again.Value.Name);
+        var stored = Assert.Single(fixture.Store.Configuration.Servers);
+        Assert.Equal((again.Value.Id, FirstId), (stored.Id, stored.JellyfinServerId));
+        var login = Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+        Assert.Equal($"jellymesh-{again.Value.Id:N}", DeviceOf(login));
+        Assert.DoesNotContain(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
     }
 
     [Fact]
-    public async Task AnotherRemoteGetsANewIdWhileTheRemovedOneStaysKnown()
+    public async Task ARemovedServerLeavesNoRecordOfItsServerId()
     {
         using var fixture = new RegistryFixture(Remote());
         var first = await fixture.AddServerAsync();
+
         fixture.Registry.Remove(first.Id);
-        _serverId = OtherId;
 
-        var other = await AddAsync(fixture, "Friend");
-
-        Assert.NotEqual(first.Id, other.Value!.Id);
-        Assert.Null(other.Value.RecognizedAs);
-        var former = Assert.Single(fixture.Store.Configuration.FormerServers);
-        Assert.Equal((first.Id, FirstId, "Friend"), (former.Id, former.JellyfinServerId, former.Name));
+        var xml = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
+        using var text = new System.IO.StringWriter();
+        xml.Serialize(text, fixture.Store.Configuration);
+        Assert.DoesNotContain(FirstId, text.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -114,7 +93,7 @@ public class ServerRecognitionTests
     }
 
     [Fact]
-    public async Task ARemoteWithNoServerIdIsNeitherRecognizedNorRefused()
+    public async Task ARemoteWithNoServerIdIsNotRefused()
     {
         _serverId = null;
         using var fixture = new RegistryFixture(Remote());
@@ -126,7 +105,6 @@ public class ServerRecognitionTests
 
         Assert.NotEqual(first.Id, second.Value!.Id);
         Assert.NotEqual(second.Value.Id, third.Value!.Id);
-        Assert.Empty(fixture.Store.Configuration.FormerServers);
         Assert.DoesNotContain(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
     }
 
@@ -140,7 +118,6 @@ public class ServerRecognitionTests
         Assert.Throws<System.IO.IOException>(() => fixture.Registry.Remove(first.Id));
 
         Assert.Single(fixture.Store.Configuration.Servers);
-        Assert.Empty(fixture.Store.Configuration.FormerServers);
     }
 
     [Fact]
@@ -286,21 +263,5 @@ public class ServerRecognitionTests
 
         Assert.True(result.IsSuccess);
         Assert.DoesNotContain(fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task ARecordWhoseServerIsConfiguredAgainRefusesTheAdd()
-    {
-        using var fixture = new RegistryFixture(Remote());
-        var server = await fixture.AddServerAsync();
-        var stored = fixture.Store.Configuration.Servers.Single();
-        stored.JellyfinServerId = string.Empty;
-        fixture.Store.Configuration.FormerServers.Add(new FormerServerConfig { Id = server.Id, JellyfinServerId = FirstId, Name = "Old" });
-
-        var again = await AddAsync(fixture, "Again");
-
-        Assert.Equal(RemoteFailure.AlreadyConfigured, again.Failure);
-        Assert.Equal("Friend", again.Value!.Name);
-        Assert.Single(fixture.Store.Configuration.Servers);
     }
 }
