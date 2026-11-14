@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Task 828 and decision 408: a server removed and added back is a new server, in a new folder. Proves on series that
-# its titles come back, and that the watch state of those with provider IDs stays, while those without IDs lose it.
+# its titles come back with every user's watch state, those without provider IDs too, kept by content in the
+# plugin's SQLite file while the server is gone (rows 412 and 414).
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-rms] [PORT=18470] removal-series.sh   (KEEP=1 leaves the containers up)
 set -euo pipefail
 PREFIX=${PREFIX:-jm-rms}
@@ -141,6 +142,32 @@ if command -v sqlite3 >/dev/null; then
   sqlite3 -header "$WORK/db/jellyfin.db" 'SELECT CustomDataKey, ItemId, Played, PlayCount, PlaybackPositionTicks, IsFavorite, RetentionDate FROM UserData ORDER BY CustomDataKey;' || true
 fi
 
+# Row 412: the plugin keeps the watch state of the removed titles by content, keyed by local user, in its own SQLite file.
+kept_db=$(docker exec "$PREFIX-local" sh -c 'find /config -name watch-state.db | head -1')
+check "the watch state of the removed titles is kept in the plugin data folder" 1 "$([ -n "$kept_db" ] && echo 1 || echo 0)"
+# kept_copy: a copy of the kept file, in $WORK/kept.
+kept_copy() {
+  rm -rf "$WORK/kept" && mkdir -p "$WORK/kept"
+  docker exec "$PREFIX-local" sh -c "ls '$kept_db'*" | while read -r f; do docker cp "$PREFIX-local:$f" "$WORK/kept/" >/dev/null; done
+}
+kept_copy
+check "the kept file holds no remote address" 0 "$(grep -ac -e host.docker.internal -e :// "$WORK/kept/watch-state.db" || true)"
+if command -v sqlite3 >/dev/null; then
+  sqlite3 -header "$WORK/kept/watch-state.db" 'SELECT Kind, Title, Year, Tmdb, Imdb, Tvdb, SeasonNumber, EpisodeNumber,
+    (SELECT COUNT(*) FROM UserStates WHERE TitleId = Titles.Id) AS Users FROM Titles ORDER BY Title, SeasonNumber, EpisodeNumber;'
+  check "the series without IDs is kept with its episode" 2 "$(sqlite3 "$WORK/kept/watch-state.db" "SELECT COUNT(*) FROM Titles WHERE Title = 'Serie Senza ID';")"
+  check "the kept rows are those of the local users" "$(printf '%s\n' "$(user_id local alice)" "$(user_id local bob)" | tr -d - | tr 'A-F' 'a-f' | sort)" \
+    "$(sqlite3 "$WORK/kept/watch-state.db" 'SELECT DISTINCT UserId FROM UserStates;' | sort)"
+  # The tokens the remote gave the plugin, read from a copy of its database.
+  rm -rf "$WORK/rdb" && mkdir -p "$WORK/rdb"
+  docker exec "$PREFIX-remote" sh -c 'ls /config/data/jellyfin.db*' | while read -r f; do docker cp "$PREFIX-remote:$f" "$WORK/rdb/" >/dev/null; done
+  leaks=0
+  for token in $(sqlite3 "$WORK/rdb/jellyfin.db" 'SELECT AccessToken FROM Devices;'); do
+    grep -aqF "$token" "$WORK/kept/watch-state.db" && leaks=$((leaks + 1))
+  done
+  check "the kept file holds no remote token" 0 "$leaks"
+fi
+
 # Jellyfin 12.4 schedules no run of its user data cleanup, which drops what stayed detached 90 days. A run now keeps it.
 task=$(get local /ScheduledTasks | jq -r '.[] | select(.Key == "CleanupUserDataTask") | .Id')
 echo "user data cleanup triggers: $(get local "/ScheduledTasks/$task" | jq -c .Triggers)"
@@ -175,14 +202,30 @@ check "the same series come back at the same paths in the folder" "$(cut -f1,3 "
 check "the episodes come back in the new folder" 5 "$(grep -cF "$(server_folder "$id")/" "$WORK/episodes-after" || true)"
 echo "item ids changed: episodes $(cut -f2 "$WORK/episodes-before" | grep -cvxFf <(cut -f2 "$WORK/episodes-after") || true) of 5, series $(cut -f2 "$WORK/series-before" | grep -cvxFf <(cut -f2 "$WORK/series-after") || true) of 2"
 
-# Jellyfin finds the user data of a title with provider IDs again by key; a title without IDs starts again (decision 408).
-state | tee "$WORK/state-after"
+# Every title gets its state back, the series without IDs too: the plugin puts it back after the scan (row 412).
+for _ in $(seq 1 30); do
+  state >"$WORK/state-after"
+  cmp -s "$WORK/state-before" "$WORK/state-after" && break
+  sleep 2
+done
+cat "$WORK/state-after"
 while IFS= read -r line; do
-  case $line in
-    *"Serie Senza ID"*) echo "without provider IDs: before '$line', after '$(grep -F "${line%%:*}:" "$WORK/state-after" || true)'" ;;
-    *) check "${line%%:*} keeps its state" "$line" "$(grep -F "${line%%:*}:" "$WORK/state-after" || true)" ;;
-  esac
+  check "${line%%:*} keeps its state" "$line" "$(grep -F "${line%%:*}:" "$WORK/state-after" || true)"
 done <"$WORK/state-before"
+check "alice's episode without IDs is played again" 1 "$(grep -c '^alice Serie Senza ID S1E2: played=true' "$WORK/state-after" || true)"
+check "bob's resume point without IDs is back" 1 "$(grep -Ec '^bob Serie Senza ID S1E2: played=false count=0 pos=[1-9]' "$WORK/state-after" || true)"
+check "bob's favorite series without IDs is back" 1 "$(grep -c '^bob Serie Senza ID series: .* fav=true' "$WORK/state-after" || true)"
+if command -v sqlite3 >/dev/null; then
+  kept_copy
+  check "the kept records are forgotten once put back" 0 "$(sqlite3 "$WORK/kept/watch-state.db" 'SELECT COUNT(*) FROM Titles;')"
+fi
+
+# Row 414: the SQLite the server ships loads in the plugin.
+check "the plugin is active" Active "$(get local /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Status')"
+check "the plugin kept the watch state" 1 "$(docker logs "$PREFIX-local" 2>&1 | grep -cm1 'Kept the watch state of' || true)"
+check "the plugin put the watch state back" 1 "$(docker logs "$PREFIX-local" 2>&1 | grep -cm1 'Put back the kept watch state of' || true)"
+check "no load or watch state error is logged" 0 \
+  "$(docker logs "$PREFIX-local" 2>&1 | grep -cE 'FileLoadException|TypeInitializationException|DllNotFoundException|MissingMethodException|Cannot keep the watch state|Cannot put back the kept watch state' || true)"
 
 echo "=== failed: $FAILED"
 exit $FAILED
