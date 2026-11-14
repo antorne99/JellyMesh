@@ -377,10 +377,12 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
-    [Fact]
-    public async Task ALoginThatRacesTheAddAfterItIsSavedIsTheOneKeptAndTheRemovalLogsItOut()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ALoginThatRacesTheAddAfterItIsSavedIsTheOneKeptAndTheRemovalLogsItOut(bool remoteRefusesRevokedTokens)
     {
-        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false, refuseRevoked: remoteRefusesRevokedTokens);
         using var fixture = new RegistryFixture(Remote());
         var store = new HookedStore(fixture.Store);
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
@@ -403,8 +405,11 @@ public class ServerRemovalLogoutTests
         var used = await registry.RunWithSessionAsync(added.Value!.Id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
         Assert.Equal(handler.Live, used.Value);
         Assert.True(await registry.RemoveAsync(added.Value.Id));
-        Assert.Equal([TestValues.Token + "2"], handler.LoggedOut);
+
+        // The add ends its own login, which a remote may already have revoked, and the removal the kept one.
+        Assert.Equal([TestValues.Token + "1", TestValues.Token + "2"], handler.LoggedOut);
         Assert.Null(handler.Live);
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
         AssertClean(logger);
     }
 

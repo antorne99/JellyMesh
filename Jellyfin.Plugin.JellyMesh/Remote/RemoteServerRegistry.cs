@@ -143,8 +143,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         await runtime.LoginGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            // A call that logged in since the save holds the live login: the remote revoked this one.
-            if (runtime.Session is null && (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId)))
+            // A call that logged in since the save holds the kept login. The remote revokes this one only for the same
+            // user, so it is ended here, a refused token counting as ended.
+            if (runtime.Session is not null)
+            {
+                await EndUnusedLoginAsync(endpoint, login.Value!, server.Name, refusedIsEnded: true).ConfigureAwait(false);
+            }
+            else if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
             {
                 await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, server.Name, freshMayBeRevoked: true).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
@@ -211,7 +216,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             var encrypted = _vault.Protect(serverId, credentials);
             if (encrypted is null)
             {
-                await EndUnsavedLoginAsync(endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+                await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
             }
 
@@ -237,7 +242,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
             catch
             {
-                await EndUnsavedLoginAsync(endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+                await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 throw;
             }
 
@@ -755,13 +760,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Ends a login whose credentials could not be saved, within the logout limit (419).
-    private async Task EndUnsavedLoginAsync(RemoteEndpoint endpoint, RemoteSession session, string serverName)
+    // Ends a login that is not kept, such as one whose credentials could not be saved (419), within the logout limit.
+    // With refusedIsEnded, a refused token was revoked by a later login and counts as ended.
+    private async Task EndUnusedLoginAsync(RemoteEndpoint endpoint, RemoteSession session, string serverName, bool refusedIsEnded)
     {
         var failure = await LogOutWithinLimitAsync(endpoint, session).ConfigureAwait(false);
-        if (failure != RemoteFailure.None)
+        if (failure != RemoteFailure.None && !(refusedIsEnded && failure == RemoteFailure.AuthenticationFailed))
         {
-            _logger.LogWarning("Could not end the login with unsaved credentials on remote server {ServerName}: {Failure}; it may stay open there until the next login", LogText.Clean(serverName), failure);
+            _logger.LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login", LogText.Clean(serverName), failure);
         }
     }
 
