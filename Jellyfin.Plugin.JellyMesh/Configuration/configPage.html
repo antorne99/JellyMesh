@@ -2109,6 +2109,7 @@
                 var syncPollMilliseconds = 2000;
                 var idlePollMilliseconds = 5000;
                 var statusPollMilliseconds = 15000;
+                var migrationPollMilliseconds = 3000;
                 var optionsPollMilliseconds = 60000;
                 var readTimeoutMilliseconds = 15000;
                 var keepsTrying = t('What is shown here may be out of date, and the page keeps trying.');
@@ -2121,6 +2122,8 @@
                 var polling = false;
                 var pollTimer = null;
                 var nextStatusPoll = 0;
+                var migrationRunning = false;
+                var nextMigrationPoll = 0;
                 var peerOptions = null;
                 var nextOptionsRead = 0;
                 var fieldNotes = 0;
@@ -3369,6 +3372,10 @@
                     if (mergesSection.data) {
                         renderMergeLists(mergesSection.data);
                     }
+
+                    var migration = status.FederatedFolder.Migration;
+                    migrationRunning = !!(migration && migration.Running);
+                    page.dispatchEvent(new CustomEvent('jmstatus', { detail: status }));
                 }
 
                 // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed,
@@ -5120,12 +5127,11 @@
                     return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges(), loadHistory()]);
                 }
 
-                // Plans the next read while the page is open and its tab is shown, sooner while a sync runs.
+                // Plans the next read while the page is open and its tab is shown, sooner while a sync or a migration runs.
                 function schedule() {
                     window.clearTimeout(pollTimer);
-                    pollTimer = visible && !document.hidden
-                        ? window.setTimeout(poll, syncRunning ? syncPollMilliseconds : idlePollMilliseconds)
-                        : null;
+                    var wait = syncRunning ? syncPollMilliseconds : migrationRunning ? migrationPollMilliseconds : idlePollMilliseconds;
+                    pollTimer = visible && !document.hidden ? window.setTimeout(poll, wait) : null;
                 }
 
                 // Reads the sync, and what else is due or needs reading again, then plans the next read.
@@ -5139,8 +5145,15 @@
                         nextStatusPoll = Date.now() + statusPollMilliseconds;
                     }
 
+                    // A running migration has its status read sooner, for the banner, and the rest at the usual pace.
+                    var migrationDue = due || (migrationRunning && Date.now() >= nextMigrationPoll);
+                    if (migrationDue) {
+                        nextMigrationPoll = Date.now() + migrationPollMilliseconds;
+                    }
+
                     var parts = [syncSection, statusSection, peersSection, mergesSection, historySection].filter(function (part) {
-                        return part.pending === 0 && (part === syncSection || part.stale || (due && part !== mergesSection && part !== historySection));
+                        return part.pending === 0 && (part === syncSection || part.stale || (part === statusSection && migrationDue)
+                            || (due && part !== mergesSection && part !== historySection));
                     });
                     polling = true;
                     Promise.all(parts.map(refresh)).then(function () {
@@ -5239,6 +5252,13 @@
                     hideTabs();
                     document.removeEventListener('visibilitychange', tabChanged);
                     schedule();
+                });
+
+                // The migration banner asks for the status after its own actions, and shows it from the render above.
+                page.addEventListener('jmstatusneeded', function () {
+                    if (visible) {
+                        loadStatus();
+                    }
                 });
 
                 el('#jmDismiss').addEventListener('click', function () {
@@ -5349,11 +5369,6 @@
                 var page = document.querySelector('#JellyMeshConfigPage');
                 var translations = JSON.parse(page.querySelector('#jmTranslations').textContent);
                 var strings = translations[languageOf(document.documentElement.lang)] || {};
-                var pollMilliseconds = 15000;
-                var runningPollMilliseconds = 3000;
-                var timer = null;
-                var shown = false;
-                var running = false;
                 var sendingMode = false;
                 var automaticSteps = {
                     AddPaths: t('Adding the folders of each server to the libraries.'),
@@ -5467,7 +5482,6 @@
                 function render(migration) {
                     var step = migration && steps[migration.Step];
                     page.querySelector('#jmMigration').hidden = !step;
-                    running = !!(step && migration.Running);
                     if (!step) {
                         return;
                     }
@@ -5521,33 +5535,9 @@
                     progressNode.hidden = progress.length === 0;
                 }
 
-                // Reads the migration from the status, keeps the banner as it is on a failed read, and plans the next one.
-                function poll() {
-                    window.clearTimeout(timer);
-                    timer = null;
-                    if (!shown || document.hidden) {
-                        return;
-                    }
-
-                    fetch(ApiClient.getUrl('JellyMesh/Admin/Status'), {
-                        headers: {
-                            Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
-                            Accept: 'application/json; profile="PascalCase"'
-                        },
-                        signal: AbortSignal.timeout(pollMilliseconds)
-                    }).then(function (response) {
-                        return response.ok ? response.json() : null;
-                    }).then(function (status) {
-                        if (status) {
-                            render(status.FederatedFolder && status.FederatedFolder.Migration);
-                            renderNewServerMode(status.FederatedFolder && status.FederatedFolder.NewServerMode);
-                        }
-                    }).catch(function () {
-                        return null;
-                    }).then(function () {
-                        window.clearTimeout(timer);
-                        timer = shown ? window.setTimeout(poll, running ? runningPollMilliseconds : pollMilliseconds) : null;
-                    });
+                // Asks the page for a new read of the status, which reaches the banner through the jmstatus event.
+                function readStatus() {
+                    page.dispatchEvent(new CustomEvent('jmstatusneeded'));
                 }
 
                 // Sends the choice in the banner, shows the reason of a refusal, and reads the banner again.
@@ -5574,7 +5564,7 @@
                         });
                     }).catch(function () {
                         return null;
-                    }).then(poll);
+                    }).then(readStatus);
                 }
 
                 // Shows the mode for the servers linked later, and allows a change once it is known, unless a choice is being sent.
@@ -5613,7 +5603,7 @@
                         error.hidden = false;
                     }).then(function () {
                         sendingMode = false;
-                        poll();
+                        readStatus();
                     });
                 }
 
@@ -5629,21 +5619,11 @@
                     choose('Manual');
                 });
 
-                page.addEventListener('pageshow', function () {
-                    shown = true;
-                    poll();
-                });
-
-                page.addEventListener('pagehide', function () {
-                    shown = false;
-                    window.clearTimeout(timer);
-                    timer = null;
-                });
-
-                document.addEventListener('visibilitychange', function () {
-                    if (shown && !document.hidden) {
-                        poll();
-                    }
+                // Shows the migration and the mode for later servers from each status the page reads; a failed read leaves them.
+                page.addEventListener('jmstatus', function (event) {
+                    var folder = event.detail.FederatedFolder;
+                    render(folder && folder.Migration);
+                    renderNewServerMode(folder && folder.NewServerMode);
                 });
             })();
         </script>

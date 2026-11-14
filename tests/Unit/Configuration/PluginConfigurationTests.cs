@@ -293,6 +293,30 @@ public class PluginConfigurationTests
         Assert.DoesNotContain("insertAdjacentHTML", views, StringComparison.Ordinal);
     }
 
+    // Q411: the migration banner shows what the main Status read brings, and reads no Status of its own.
+    [Fact]
+    public void TheMigrationBannerReadsNoStatusOfItsOwn()
+    {
+        var page = ConfigPage();
+        var banner = Slice(page, "var automaticSteps = {", "</script>");
+
+        Assert.Equal(1, Count(page, "read('Status')"));
+        Assert.DoesNotContain("Admin/Status", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("setTimeout", banner, StringComparison.Ordinal);
+        Assert.Contains("page.addEventListener('jmstatus'", banner, StringComparison.Ordinal);
+    }
+
+    private static int Count(string text, string part)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(part, StringComparison.Ordinal); at >= 0; at = text.IndexOf(part, at + part.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
     private static string Slice(string page, string start, string end)
     {
         var from = page.IndexOf(start, StringComparison.Ordinal);

@@ -5,6 +5,7 @@ Usage: pagecheck.py <scenario>...   Run it through check.sh, which puts the serv
 import json
 import re
 import sys
+import time
 
 import uipage as u
 
@@ -152,7 +153,10 @@ def loading(s, width):
     check(name + " shows the spinner while it waits", page.locator(u.LOADING).is_visible())
     u.shot(page, f"loading-{width}")
     until(page, lambda: hold)
-    hold.pop().continue_()
+    page.wait_for_timeout(1500)
+    check(name + " reads the status once", len(hold) == 1, len(hold))
+    for route in hold:
+        route.continue_()
     u.wait_loaded(page)
     check(name + " ends with the data", page.locator(u.SERVER).count() == 2)
     healthy(page, name)
@@ -577,6 +581,7 @@ def quiet(s, width):
     counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges"]}
     check(name + " reads the sync every 5 seconds", 5 <= counts["Sync"] <= 7, counts)
     check(name + " reads status and streams every 15 seconds", 1 <= counts["Status"] <= 3 and 1 <= counts["Peers"] <= 3, counts)
+    check(name + " reads the status only with the streams, the migration banner too", counts["Status"] == counts["Peers"], counts)
     check(name + " reads the peer options at most once a minute", counts["Peers/Options"] <= 1, counts)
     check(name + " leaves the merges alone", counts["Merges"] == 0, counts)
     check(name + " reads nothing else", len(reads) == sum(counts.values()), reads)
@@ -594,8 +599,94 @@ def quiet(s, width):
       document.dispatchEvent(new Event('visibilitychange'));
     }""")
     check(name + " a shown tab catches up at once", until(page, lambda: "Status" in reads and "Peers" in reads and "Sync" in reads, 2), reads)
+    page.wait_for_timeout(1000)
+    check(name + " a shown tab reads the status once", reads.count("Status") == 1, reads)
     healthy(page, name)
     page.context.close()
+
+
+MIGRATION_STEP = {"Step": "RemoveOldPaths", "Libraries": [{"Name": "Film", "OldPaths": ["/federata/Film"], "MissingPaths": []}],
+                  "OldTitles": 0, "UnlinkedFolders": [], "Mode": "None", "AutomaticStep": None, "Running": False, "Error": "None"}
+
+
+def migration(s, width):
+    """The migration banner follows the main read of the status: its steps, its choices, and sooner reads while it runs."""
+    name = width + " migration"
+    state = {"migration": dict(MIGRATION_STEP), "mode": "Manual", "fail": False}
+    reads = []
+    times = []
+
+    def status(route):
+        if route.request.method == "GET":
+            times.append(time.monotonic())
+        if route.request.method != "GET":
+            route.continue_()
+        elif state["fail"]:
+            route.fulfill(status=500, json={})
+        else:
+            response = route.fetch()
+            data = response.json()
+            data["FederatedFolder"].update(Migration=state["migration"], NewServerMode=state["mode"])
+            route.fulfill(response=response, json=data)
+
+    def answer(mode=None, new_servers=None):
+        def run(route):
+            if mode:
+                state["migration"] = dict(state["migration"], **mode)
+            if new_servers:
+                state["mode"] = new_servers
+            route.fulfill(status=200, json={})
+        return run
+
+    def routes(context):
+        context.route("**/JellyMesh/Admin/Status", status)
+
+    page = s.open("fresh", width, route=routes)
+    page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
+    banner = page.locator(u.MIGRATION)
+    check(name + " shows the choice", banner.is_visible() and text(page, u.MIGRATION_TITLE) == "Choose how to move to the folders of each server", text(page, u.MIGRATION_TITLE))
+    check(name + " offers both ways", page.locator(u.MIGRATE_AUTOMATIC).is_visible() and page.locator(u.MIGRATE_MANUAL).is_visible())
+    mode = page.locator(u.NEW_SERVER_MODE)
+    check(name + " shows the mode of the servers linked later", mode.is_enabled() and mode.input_value() == "Manual", mode.input_value())
+
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Manual"}))
+    reads.clear()
+    page.locator(u.MIGRATE_MANUAL).click()
+    check(name + " a choice reads the status at once", until(page, lambda: "Status" in reads, 3), reads)
+    check(name + " by hand names the step", until(page, lambda: text(page, u.MIGRATION_TITLE) == "Remove the old folders from the libraries", 3), text(page, u.MIGRATION_TITLE))
+    check(name + " by hand lists the old folders", "/federata/Film" in text(page, u.MIGRATION_LIBRARIES), text(page, u.MIGRATION_LIBRARIES))
+    check(name + " by hand drops its own choice", page.locator(u.MIGRATE_MANUAL).is_hidden())
+    page.unroute("**/JellyMesh/Admin/Migration")
+
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Step": "Carrying", "OldTitles": 3, "AutomaticStep": "Carry", "Running": True}))
+    page.locator(u.MIGRATE_AUTOMATIC).click()
+    check(name + " a running migration says its step", until(page, lambda: text(page, u.MIGRATION_TEXT) == "Moving the watch state to the new titles.", 3), text(page, u.MIGRATION_TEXT))
+    page.wait_for_timeout(500)
+    reads.clear()
+    times.clear()
+    page.wait_for_timeout(13000)
+    gaps = [round(later - earlier, 1) for earlier, later in zip(times, times[1:])]
+    check(name + " a running migration reads the status every 3 seconds", len(gaps) >= 2 and all(2.5 <= gap <= 4.5 for gap in gaps), gaps)
+    check(name + " a running migration leaves the streams at their pace", reads.count("Peers") <= 1, reads)
+    state["fail"] = True
+    page.wait_for_timeout(7000)
+    check(name + " a failed read keeps the banner", banner.is_visible() and text(page, u.MIGRATION_TEXT) == "Moving the watch state to the new titles.", text(page, u.MIGRATION_TEXT))
+    state["fail"] = False
+    state["migration"] = None
+    check(name + " the end of the migration hides the banner", until(page, lambda: banner.is_hidden(), 5))
+    page.wait_for_timeout(500)
+    reads.clear()
+    page.wait_for_timeout(9500)
+    check(name + " after it the status goes back to every 15 seconds", reads.count("Status") <= 1, reads)
+    page.unroute("**/JellyMesh/Admin/Migration")
+
+    page.route("**/JellyMesh/Admin/Migration/NewServers", answer(new_servers="Automatic"))
+    reads.clear()
+    mode.select_option("Automatic")
+    check(name + " a new mode reads the status at once", until(page, lambda: "Status" in reads, 3), reads)
+    check(name + " a new mode is shown", until(page, lambda: mode.is_enabled() and mode.input_value() == "Automatic", 3), mode.input_value())
+    healthy(page, name)
+    u.close(page)
 
 
 def polling(s, width):
@@ -3091,6 +3182,7 @@ SCENARIOS = {
     "edits": (edits, ["1280"]),
     "quiet": (quiet, ["1280"]),
     "polling": (polling, ["1280"]),
+    "migration": (migration, ["1280"]),
     "sections": (sections, ["1280"]),
     "outcomes": (outcomes, WIDTHS),
     "outcome-themes": (outcome_themes, WIDTHS),
