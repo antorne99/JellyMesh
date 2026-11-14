@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -42,6 +43,9 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     private readonly ILogger<WatchStateKeeper> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    // The servers whose last save failed, in memory only: a restart lists them again at the next failed run.
+    private readonly ConcurrentDictionary<Guid, byte> _held = new();
+
     /// <summary>
     /// Initializes a new instance of the <see cref="WatchStateKeeper"/> class.
     /// </summary>
@@ -80,6 +84,22 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<HeldRemoval> HeldRemovals
+    {
+        get
+        {
+            // Only servers still removed and with titles: one configured again, or whose titles went, is held no more.
+            var state = _registry.State;
+            var configured = _servers.GetServers().Select(server => server.Id).ToHashSet();
+            return _held.Keys
+                .Where(serverId => state.RemovedServers.Contains(serverId) && !configured.Contains(serverId) && state.HasTitlesOf(serverId))
+                .Select(serverId => new HeldRemoval(state.ServerNames.GetValueOrDefault(serverId)))
+                .OrderBy(held => held.Name ?? string.Empty, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> KeepAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stubs);
@@ -89,57 +109,20 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             return true;
         }
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        var kept = await SaveAsync(root, stubs, series, cancellationToken).ConfigureAwait(false);
+        foreach (var serverId in ServersOf(stubs, series))
         {
-            // No users may mean they cannot be read for now (decision 165), and the stubs would go with their state.
-            var users = _users.GetUsers().ToList();
-            if (users.Count == 0)
+            if (kept)
             {
-                _logger.LogWarning("The users cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
-                return false;
+                _held.TryRemove(serverId, out _);
             }
-
-            var now = _timeProvider.GetUtcNow().UtcDateTime;
-            var parents = new Dictionary<Guid, BaseItem?>();
-            var titles = new List<KeptTitle>();
-            foreach (var path in stubs.Select(stub => (Path: stub.RelativePath, IsFolder: false)).Concat(series.Select(entry => (Path: entry.RelativePath, IsFolder: true))))
+            else
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (_library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder) is not { } item)
-                {
-                    continue;
-                }
-
-                var rows = users
-                    .Select(user => (user.Id, Data: _userData.GetUserData(user, item)))
-                    .Where(row => row.Data is not null && HasAnything(row.Data))
-                    .Select(row => StateOf(row.Id, row.Data!))
-                    .ToList();
-                if (rows.Count > 0)
-                {
-                    titles.Add(TitleOf(item, parents, now) with { Users = rows });
-                }
+                _held.TryAdd(serverId, 0);
             }
+        }
 
-            await _kept.SaveAsync(titles, cancellationToken).ConfigureAwait(false);
-            if (titles.Count > 0)
-            {
-                _logger.LogInformation("Kept the watch state of {Count} titles of removed servers", titles.Count);
-            }
-
-            return true;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            // The type only: a message could hold a path.
-            _logger.LogError("Cannot keep the watch state of the titles of removed servers, so they stay for now: {Error}", exception.GetType().Name);
-            return false;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        return kept;
     }
 
     /// <inheritdoc />
@@ -188,6 +171,12 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
+
+    // The servers of these titles: that of a server folder, or every server of a title of the flat layout.
+    private static HashSet<Guid> ServersOf(IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series)
+        => stubs.SelectMany(stub => stub.ServerId is { } serverId ? [serverId] : stub.Sources.Select(source => source.ServerId))
+            .Concat(series.SelectMany(entry => entry.ServerId is { } serverId ? [serverId] : entry.Sources.Select(source => source.ServerId)))
+            .ToHashSet();
 
     private static bool HasAnything(UserItemData data) =>
         data.Played || data.PlayCount > 0 || data.PlaybackPositionTicks > 0 || data.LastPlayedDate is not null || data.IsFavorite || data.Rating is not null;
@@ -409,5 +398,61 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         return (titles, series.Values.Where(item => paths.ContainsKey(item.ItemId)).ToList(), paths);
+    }
+
+    // Saves the state of the titles, or says why not in the log; false when they must stay.
+    private async Task<bool> SaveAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // No users may mean they cannot be read for now (decision 165), and the stubs would go with their state.
+            var users = _users.GetUsers().ToList();
+            if (users.Count == 0)
+            {
+                _logger.LogWarning("The users cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                return false;
+            }
+
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var parents = new Dictionary<Guid, BaseItem?>();
+            var titles = new List<KeptTitle>();
+            foreach (var path in stubs.Select(stub => (Path: stub.RelativePath, IsFolder: false)).Concat(series.Select(entry => (Path: entry.RelativePath, IsFolder: true))))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder) is not { } item)
+                {
+                    continue;
+                }
+
+                var rows = users
+                    .Select(user => (user.Id, Data: _userData.GetUserData(user, item)))
+                    .Where(row => row.Data is not null && HasAnything(row.Data))
+                    .Select(row => StateOf(row.Id, row.Data!))
+                    .ToList();
+                if (rows.Count > 0)
+                {
+                    titles.Add(TitleOf(item, parents, now) with { Users = rows });
+                }
+            }
+
+            await _kept.SaveAsync(titles, cancellationToken).ConfigureAwait(false);
+            if (titles.Count > 0)
+            {
+                _logger.LogInformation("Kept the watch state of {Count} titles of removed servers", titles.Count);
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Cannot keep the watch state of the titles of removed servers, so they stay for now: {Error}", exception.GetType().Name);
+            return false;
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 }

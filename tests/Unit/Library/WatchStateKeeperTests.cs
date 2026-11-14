@@ -463,6 +463,120 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.DoesNotContain(_logger.Lines, message => message.Contains("secret", StringComparison.Ordinal));
     }
 
+    // Row 416: the page names each removed server whose removal waits for the save, until the save succeeds.
+    [Fact]
+    public async Task AHeldRemovalIsListedByNameUntilTheSaveSucceeds()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("Casa di <b>Anna</b>", "films");
+        Watch(_anna, FilmItem(a));
+        var fails = true;
+        var store = new Mock<IKeptWatchStateStore>();
+        store.Setup(kept => kept.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>()))
+            .Returns((IReadOnlyCollection<KeptTitle> titles, CancellationToken token) => fails ? throw new IOException("/secret") : _kept.SaveAsync(titles, token));
+        using var keeper = Keeper(store.Object);
+        Assert.Empty(keeper.HeldRemovals);
+
+        await RemoveAsync(a, MaterializerWith(keeper));
+
+        Assert.Equal("Casa di <b>Anna</b>", Assert.Single(keeper.HeldRemovals).Name);
+
+        // Held across runs: the name stays in the registry while the titles do.
+        using (var again = SyncWith(MaterializerWith(keeper)))
+        {
+            await again.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.Equal("Casa di <b>Anna</b>", Assert.Single(keeper.HeldRemovals).Name);
+
+        fails = false;
+        using var sync = SyncWith(MaterializerWith(keeper));
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.Empty(_fixture.Registry.State.Stubs);
+        Assert.Empty(keeper.HeldRemovals);
+    }
+
+    [Fact]
+    public async Task ARemovalHeldForUsersThatCannotBeReadIsListedToo()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", "films");
+        Watch(_anna, FilmItem(a));
+        _everyone = [];
+
+        await RemoveAsync(a);
+
+        Assert.Equal("A", Assert.Single(_keeper.HeldRemovals).Name);
+
+        _everyone = [_anna, _bruno];
+        using var sync = SyncWith(_materializer);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+
+        Assert.Empty(_keeper.HeldRemovals);
+    }
+
+    [Fact]
+    public async Task AServerThatRemovesWithNoTroubleIsNeverListed()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", "films");
+        Watch(_anna, FilmItem(a));
+
+        await RemoveAsync(a);
+
+        Assert.Empty(_keeper.HeldRemovals);
+    }
+
+    // The old titles of the flat layout name their servers through their sources (row 412, migration from 0.4).
+    [Fact]
+    public async Task AFlatTitleHeldByTheMigrationListsTheServersOfItsSources()
+    {
+        var gone = Guid.NewGuid();
+        var flat = new StubEntry
+        {
+            Id = "flat",
+            Kind = StubKind.Movie,
+            RelativePath = "Film/Sonda (2026)/Sonda (2026).strm",
+            Sources = [new StubSource(gone, "i", "m")],
+            IdentityKey = "k"
+        };
+        await _fixture.Registry.SaveAsync(
+            StubState.Empty with { Stubs = [flat], RemovedServers = [gone], ServerNames = new Dictionary<Guid, string> { [gone] = "Vecchio" } },
+            CancellationToken.None);
+        var failing = new Mock<IKeptWatchStateStore>();
+        failing.Setup(store => store.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/secret"));
+        using var keeper = Keeper(failing.Object);
+
+        Assert.False(await keeper.KeepAsync(_fixture.Root, [flat], [], CancellationToken.None));
+
+        Assert.Equal("Vecchio", Assert.Single(keeper.HeldRemovals).Name);
+    }
+
+    // A server removed by an older build has no stored name; the page then says so without one.
+    [Fact]
+    public async Task AHeldServerWithNoStoredNameIsListedWithoutOne()
+    {
+        var gone = Guid.NewGuid();
+        var stub = new StubEntry
+        {
+            Id = "old",
+            ServerId = gone,
+            Kind = StubKind.Movie,
+            RelativePath = gone.ToString("N") + "/Film/Sonda (2026)/Sonda (2026) - Vecchio.strm",
+            Sources = [new StubSource(gone, "i", "m")],
+            IdentityKey = "k"
+        };
+        await _fixture.Registry.SaveAsync(StubState.Empty with { Stubs = [stub], RemovedServers = [gone] }, CancellationToken.None);
+        var failing = new Mock<IKeptWatchStateStore>();
+        failing.Setup(store => store.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/secret"));
+        using var keeper = Keeper(failing.Object);
+
+        Assert.False(await keeper.KeepAsync(_fixture.Root, [stub], [], CancellationToken.None));
+
+        Assert.Null(Assert.Single(keeper.HeldRemovals).Name);
+    }
+
     // Row 412 with decision 278: a failed save holds the automatic libraries too, since Jellyfin 12.4 drops the items of a
     // removed library and the next save would no longer find them.
     [Fact]

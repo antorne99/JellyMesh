@@ -191,7 +191,8 @@ public static class StubPlanner
 
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
         var groups = Groups(input, placed, stubs, removals.Select(stub => stub.Id).Concat(merged));
-        var state = input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups, Labels = labels };
+        var state = (input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups, Labels = labels })
+            .WithServerNames(input.Servers.Select(server => (server.Id, server.Name)));
         return new StubPlan(state, works, seriesWorks, removals, HeldLibraries(input, held), unplaceable.Count)
         {
             MergedStubs = merged.Count,

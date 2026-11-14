@@ -693,6 +693,18 @@
                 margin-top: 0.75em;
             }
 
+            .jmHeldRemovals {
+                margin-top: 1em;
+            }
+
+            .jmHeldRemovals p {
+                margin: 0;
+            }
+
+            .jmHeldRemovals p + p {
+                margin-top: 0.5em;
+            }
+
             .jmCopyField {
                 position: fixed;
                 top: 0;
@@ -1326,6 +1338,7 @@
                     <h3 class="sectionTitle">Remote servers</h3>
                     <div id="jmServersSyncFailure" hidden class="jmAlert"></div>
                     <div id="jmServers" class="jmRowList"></div>
+                    <div id="jmHeldRemovals" class="jmAlert jmHeldRemovals" hidden></div>
                     <div id="jmReleasedLibraries" class="jmAlert jmReleasedLibraries" hidden></div>
                     <details id="jmAddServerPart" class="jmDisclosure">
                         <summary>
@@ -1700,6 +1713,8 @@
                     "Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.": "Jellyfin mostra questa serie divisa, perché le cartelle Serie dei suoi server sono in librerie diverse: {libraries}. Aggiungile alle stesse librerie.",
                     "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
                     "Hide from this page": "Nascondi da questa pagina",
+                    "Warning: the removal of {server} is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.": "Attenzione: la rimozione di {server} è in attesa finché non si salva lo stato di visione dei suoi titoli. Fino ad allora i suoi titoli e le sue cartelle restano, e JellyMesh riprova a ogni sincronizzazione.",
+                    "Warning: the removal of a server is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.": "Attenzione: la rimozione di un server è in attesa finché non si salva lo stato di visione dei suoi titoli. Fino ad allora i suoi titoli e le sue cartelle restano, e JellyMesh riprova a ogni sincronizzazione.",
                     "These libraries are no longer listed here. They stay in Dashboard > Libraries.": "Queste librerie non sono più elencate qui. Restano nel Pannello di controllo > Librerie.",
                     "These libraries are no longer listed. The page reads them again.": "Queste librerie non sono più elencate. La pagina le legge di nuovo.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
@@ -3369,6 +3384,7 @@
                     showServers();
                     renderFolder(status.FederatedFolder);
                     renderReleasedLibraries(status.ReleasedLibraries || []);
+                    renderHeldRemovals(status.HeldRemovals || []);
                     if (mergesSection.data) {
                         renderMergeLists(mergesSection.data);
                     }
@@ -3376,6 +3392,24 @@
                     var migration = status.FederatedFolder.Migration;
                     migrationRunning = !!(migration && migration.Running);
                     page.dispatchEvent(new CustomEvent('jmstatus', { detail: status }));
+                }
+
+                // Warns about each removed server whose removal waits until the watch state of its titles is saved (row 416).
+                function renderHeldRemovals(removals) {
+                    var notice = el('#jmHeldRemovals');
+                    var key = JSON.stringify(removals);
+                    notice.hidden = removals.length === 0;
+                    if (notice.jmKey === key) {
+                        return;
+                    }
+
+                    notice.jmKey = key;
+                    notice.textContent = '';
+                    removals.forEach(function (removal) {
+                        notice.appendChild(create('p', removal.Name
+                            ? t('Warning: the removal of {server} is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.', { server: removal.Name })
+                            : t('Warning: the removal of a server is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.')));
+                    });
                 }
 
                 // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed,

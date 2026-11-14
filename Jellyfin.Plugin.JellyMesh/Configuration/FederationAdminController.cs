@@ -43,6 +43,7 @@ public class FederationAdminController : ControllerBase
     private readonly ILayoutMigration? _migration;
     private readonly ILibraryChangeTracker? _changes;
     private readonly IServerRenamer? _renamer;
+    private readonly IWatchStateKeeper? _keeper;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -60,6 +61,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="migration">The manual migration from the flat layout, for the banner.</param>
     /// <param name="changes">The libraries that changed on the federated folder since the last sync.</param>
     /// <param name="renamer">The server rename.</param>
+    /// <param name="keeper">The watch state kept for removed servers, for the removals it holds.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -73,7 +75,8 @@ public class FederationAdminController : ControllerBase
         ILogger<FederationAdminController> logger,
         ILayoutMigration? migration = null,
         ILibraryChangeTracker? changes = null,
-        IServerRenamer? renamer = null)
+        IServerRenamer? renamer = null,
+        IWatchStateKeeper? keeper = null)
     {
         _registry = registry;
         _vault = vault;
@@ -88,6 +91,7 @@ public class FederationAdminController : ControllerBase
         _migration = migration;
         _changes = changes;
         _renamer = renamer;
+        _keeper = keeper;
     }
 
     /// <summary>
@@ -115,7 +119,8 @@ public class FederationAdminController : ControllerBase
                 .SelectMany(held => held.ReleasedLibraries
                     .Where(name => !held.HiddenReleasedLibraries.Contains(name, StringComparer.Ordinal))
                     .Select(name => new ReleasedLibrary(held.ServerId, name)))
-                .ToList())
+                .ToList()),
+            HeldRemovals = _keeper?.HeldRemovals ?? []
         };
     }
 

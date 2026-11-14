@@ -39,6 +39,12 @@ public sealed record StubState
     /// </summary>
     public IReadOnlyList<Guid> RemovedServers { get; init; } = [];
 
+    /// <summary>
+    /// Gets the name of each configured server, and of each removed server that still has titles, so that the page can name
+    /// a removal held for its watch state (row 416).
+    /// </summary>
+    public IReadOnlyDictionary<Guid, string> ServerNames { get; init; } = new Dictionary<Guid, string>();
+
     /// <summary>Gets the stubs of renamed servers whose old files and items are not gone yet.</summary>
     public IReadOnlyList<StubRename> Renames { get; init; } = [];
 
@@ -58,6 +64,33 @@ public sealed record StubState
                 .Prepend(stub))
             .ToList();
     }
+
+    /// <summary>
+    /// Gets this state with the current names of the configured servers. A server that left them keeps its last name while
+    /// it still has titles here; one with none loses it.
+    /// </summary>
+    /// <param name="configured">The id and name of each configured server.</param>
+    /// <returns>The state with the names.</returns>
+    public StubState WithServerNames(IEnumerable<(Guid ServerId, string Name)> configured)
+    {
+        ArgumentNullException.ThrowIfNull(configured);
+        var names = ServerNames.Where(entry => HasTitlesOf(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value);
+        foreach (var (serverId, name) in configured)
+        {
+            names[serverId] = name;
+        }
+
+        return this with { ServerNames = names };
+    }
+
+    /// <summary>
+    /// Tells whether a server still has titles here: stubs or series of its folder, or of the flat layout with a copy on it.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>True when it has some.</returns>
+    public bool HasTitlesOf(Guid serverId)
+        => Stubs.Any(stub => stub.ServerId is { } owner ? owner == serverId : stub.Sources.Any(source => source.ServerId == serverId))
+            || Series.Any(series => series.ServerId is { } owner ? owner == serverId : series.Sources.Any(source => source.ServerId == serverId));
 
     /// <summary>
     /// Gets the stored labels still taken: those of configured servers, and of servers left out of the settings without a
