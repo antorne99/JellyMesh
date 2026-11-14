@@ -25,6 +25,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan RemoteStop = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// Limit on closing a transcode on a remote that is being removed, so that a dead remote cannot hold the removal up
+    /// (413). Its streams here are already ended by then.
+    /// </summary>
+    public static readonly TimeSpan RemovalStop = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// Limit on closing all sessions at shutdown, so that a dead remote cannot hold the server up.
     /// </summary>
     public static readonly TimeSpan Shutdown = TimeSpan.FromSeconds(5);

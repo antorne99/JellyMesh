@@ -12,6 +12,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -35,12 +36,16 @@ public sealed class PlaybackCoordinator
     private readonly ILastServedSourceStore _lastServed;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
+    private readonly ITranscodeManager? _transcodes;
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
     private readonly SourceFailures _failures = new();
+
+    // Fired when a server is being removed: its open streams end and nothing new opens on it (413).
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _serverEnds = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackCoordinator"/> class.
@@ -52,6 +57,7 @@ public sealed class PlaybackCoordinator
     /// <param name="lastServed">The last server that served each stub to each user.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="transcodes">The transcode manager, which closes the local transcodes of a removed server.</param>
     public PlaybackCoordinator(
         IRemoteServerRegistry registry,
         IRemotePlaybackClient client,
@@ -59,7 +65,8 @@ public sealed class PlaybackCoordinator
         IPluginConfigurationStore store,
         ILastServedSourceStore lastServed,
         TimeProvider clock,
-        ILogger<PlaybackCoordinator> logger)
+        ILogger<PlaybackCoordinator> logger,
+        ITranscodeManager? transcodes = null)
     {
         _registry = registry;
         _client = client;
@@ -68,6 +75,7 @@ public sealed class PlaybackCoordinator
         _lastServed = lastServed;
         _clock = clock;
         _logger = logger;
+        _transcodes = transcodes;
     }
 
     /// <summary>
@@ -288,7 +296,7 @@ public sealed class PlaybackCoordinator
                 (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
                 cancellationToken).ConfigureAwait(false);
             handedOver = opened.IsSuccess;
-            return handedOver ? RemoteResult.Success(opened.Value!.HoldUntilDisposed(place)) : opened;
+            return handedOver ? RemoteResult.Success(opened.Value!.HoldUntilDisposed(place).EndsWith(EndOf(serverId).Token)) : opened;
         }
         finally
         {
@@ -332,13 +340,7 @@ public sealed class PlaybackCoordinator
     /// </summary>
     /// <param name="sessionId">The session.</param>
     /// <returns>A task.</returns>
-    public async Task CloseAsync(string sessionId)
-    {
-        if (_sessions.Remove(sessionId) is { } session)
-        {
-            await CloseRemoteAsync(session).ConfigureAwait(false);
-        }
-    }
+    public Task CloseAsync(string sessionId) => CloseAsync(sessionId, PlaybackTimeouts.RemoteStop);
 
     /// <summary>
     /// Records the stock play session of a stub played on this server, so that only its user can stop it.
@@ -374,13 +376,41 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Ends the sessions on a server that is about to be removed: afterwards nothing could reach it to give its slots back.
+    /// Records the remote file a local transcode reads, so that the removal of its server closes it (413).
+    /// </summary>
+    /// <param name="playSessionId">The local play session.</param>
+    /// <param name="file">The source of the file, null if none.</param>
+    public void RecordLocalTranscode(string? playSessionId, StubSource? file)
+    {
+        if (!string.IsNullOrEmpty(playSessionId) && file is not null)
+        {
+            _sessions.RecordLocalSource(playSessionId, file.ServerId);
+        }
+    }
+
+    /// <summary>
+    /// Ends what plays from a server that is about to be removed (413): at once its open streams here and the local
+    /// transcodes of its files, then its sessions, each closed on the remote within <see cref="PlaybackTimeouts.RemovalStop"/>:
+    /// afterwards nothing could reach it to give its slots back. Nothing new opens on it until <see cref="ReopenServer"/>.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <returns>A task.</returns>
-    public Task CloseServerAsync(Guid serverId)
+    public async Task CloseServerAsync(Guid serverId)
     {
-        return Task.WhenAll(_sessions.All.Where(session => session.Source.ServerId == serverId).Select(session => CloseAsync(session.Id)));
+        await EndOf(serverId).CancelAsync().ConfigureAwait(false);
+        await CloseLocalTranscodesAsync(serverId).ConfigureAwait(false);
+        await Task.WhenAll(_sessions.All
+            .Where(session => session.Source.ServerId == serverId)
+            .Select(session => CloseAsync(session.Id, PlaybackTimeouts.RemovalStop))).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lets a server play again after its removal failed: it stays.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    public void ReopenServer(Guid serverId)
+    {
+        _serverEnds.TryRemove(serverId, out _);
     }
 
     /// <summary>
@@ -644,7 +674,7 @@ public sealed class PlaybackCoordinator
 
         if (info.ErrorCode is not null || remote is null)
         {
-            await ReleaseSlotAsync(source.ServerId, info.PlaySessionId).ConfigureAwait(false);
+            await ReleaseSlotAsync(source.ServerId, info.PlaySessionId, PlaybackTimeouts.RemoteStop).ConfigureAwait(false);
             return new Attempt(null, true);
         }
 
@@ -658,7 +688,7 @@ public sealed class PlaybackCoordinator
             // Also for a client that left during the probe: nothing else knows of this slot.
             if (session is null)
             {
-                await ReleaseSlotAsync(source.ServerId, info.PlaySessionId).ConfigureAwait(false);
+                await ReleaseSlotAsync(source.ServerId, info.PlaySessionId, PlaybackTimeouts.RemoteStop).ConfigureAwait(false);
             }
         }
 
@@ -717,11 +747,11 @@ public sealed class PlaybackCoordinator
         catch (OperationCanceledException)
         {
             // The client left during the probe, and nothing else would close what it started.
-            await StopEncodingAsync(session).ConfigureAwait(false);
+            await StopEncodingAsync(session, PlaybackTimeouts.RemoteStop).ConfigureAwait(false);
             throw;
         }
 
-        await StopEncodingAsync(session).ConfigureAwait(false);
+        await StopEncodingAsync(session, PlaybackTimeouts.RemoteStop).ConfigureAwait(false);
         return null;
     }
 
@@ -790,12 +820,50 @@ public sealed class PlaybackCoordinator
         return policy.Value;
     }
 
-    private async Task CloseRemoteAsync(PlaybackSession session)
+    private async Task CloseAsync(string sessionId, TimeSpan limit)
     {
-        await StopEncodingAsync(session).ConfigureAwait(false);
+        if (_sessions.Remove(sessionId) is { } session)
+        {
+            await CloseRemoteAsync(session, limit).ConfigureAwait(false);
+        }
+    }
+
+    private Task CloseRemoteAsync(PlaybackSession session) => CloseRemoteAsync(session, PlaybackTimeouts.RemoteStop);
+
+    private async Task CloseRemoteAsync(PlaybackSession session, TimeSpan limit)
+    {
+        await StopEncodingAsync(session, limit).ConfigureAwait(false);
         if (session.RemotePlaySessionId is { } playSessionId)
         {
-            await ReleaseSlotAsync(session.Source.ServerId, playSessionId).ConfigureAwait(false);
+            await ReleaseSlotAsync(session.Source.ServerId, playSessionId, limit).ConfigureAwait(false);
+        }
+    }
+
+    // The end of the streams of a server, fired when it is being removed.
+    private CancellationTokenSource EndOf(Guid serverId) => _serverEnds.GetOrAdd(serverId, _ => new CancellationTokenSource());
+
+    private bool IsEnding(Guid serverId) => _serverEnds.TryGetValue(serverId, out var end) && end.IsCancellationRequested;
+
+    // Stock names a play session here, so no device. Its input is already cut; this ends ffmpeg and its files.
+    private async Task CloseLocalTranscodesAsync(Guid serverId)
+    {
+        if (_transcodes is null)
+        {
+            return;
+        }
+
+        foreach (var playSessionId in _sessions.LocalSessionsReading(serverId))
+        {
+            try
+            {
+                await _transcodes.KillTranscodingJobs(string.Empty, playSessionId, _ => true).ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // One transcode that cannot be closed must not stop the others, or the removal.
+            catch (Exception exception)
+#pragma warning restore CA1031
+            {
+                _logger.LogWarning("Could not close a local transcode of a removed server: {Error}", exception.GetType().Name);
+            }
         }
     }
 
@@ -814,7 +882,7 @@ public sealed class PlaybackCoordinator
     }
 
     // A failure here costs nothing but time: the remote frees the slot by itself.
-    private async Task ReleaseSlotAsync(Guid serverId, string playSessionId)
+    private async Task ReleaseSlotAsync(Guid serverId, string playSessionId, TimeSpan limit)
     {
         if (!IsJellyMesh(serverId))
         {
@@ -823,7 +891,7 @@ public sealed class PlaybackCoordinator
 
         var result = await WithinAsync(
             serverId,
-            PlaybackTimeouts.RemoteStop,
+            limit,
             (endpoint, remote, token) => _client.ReleaseStreamAsync(endpoint, remote, playSessionId, token),
             CancellationToken.None).ConfigureAwait(false);
         if (!result.IsSuccess)
@@ -832,7 +900,7 @@ public sealed class PlaybackCoordinator
         }
     }
 
-    private async Task StopEncodingAsync(PlaybackSession session)
+    private async Task StopEncodingAsync(PlaybackSession session, TimeSpan limit)
     {
         if (session.Kind == PlaybackStreamKind.Direct || session.RemotePlaySessionId is not { } playSessionId)
         {
@@ -841,7 +909,7 @@ public sealed class PlaybackCoordinator
 
         var result = await WithinAsync(
             session.Source.ServerId,
-            PlaybackTimeouts.RemoteStop,
+            limit,
             (endpoint, remote, token) => _client.StopEncodingAsync(endpoint, remote, playSessionId, token),
             CancellationToken.None).ConfigureAwait(false);
         if (!result.IsSuccess)
@@ -858,6 +926,11 @@ public sealed class PlaybackCoordinator
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken)
     {
+        if (IsEnding(serverId))
+        {
+            return RemoteResult.Fail<T>(RemoteFailure.UnknownServer);
+        }
+
         var gate = _callGates.GetOrAdd(serverId, _ => new SemaphoreSlim(PlaybackLimits.CallsPerServer, PlaybackLimits.CallsPerServer));
         if (!await gate.WaitAsync(PlaybackLimits.QueueWait, cancellationToken).ConfigureAwait(false))
         {
