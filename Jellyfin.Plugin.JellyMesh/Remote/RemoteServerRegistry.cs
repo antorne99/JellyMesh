@@ -199,7 +199,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         });
         if (!found)
         {
-            await EndLoginOfRemovedAsync(null, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+            await EndLoginOfRemovedAsync(serverId, null, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
         }
 
@@ -213,7 +213,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var runtime = RuntimeOf(serverId);
         if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
         {
-            await EndLoginOfRemovedAsync(runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+            await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
         }
 
@@ -530,7 +530,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             // A login that ends after the removal of its server is ended at once, so that no device stays behind (413).
             if (!runtime.TryKeep(fresh) || !IsConfigured(server.Id))
             {
-                await EndLoginOfRemovedAsync(runtime, endpoint, fresh, server.Name).ConfigureAwait(false);
+                await EndLoginOfRemovedAsync(server.Id, runtime, endpoint, fresh, server.Name).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
             }
 
@@ -595,10 +595,16 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Ends a login that finished after the removal of its server, so that no device stays behind (413).
-    private async Task EndLoginOfRemovedAsync(ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName)
+    // Ends a login that finished after the removal of its server, so that no device stays behind (413). The forgotten
+    // runtime leaves too: if the removal is not saved and the server stays, its next call builds a new one.
+    private async Task EndLoginOfRemovedAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName)
     {
-        runtime?.Forget();
+        if (runtime is not null)
+        {
+            _runtimes.TryRemove(KeyValuePair.Create(serverId, runtime));
+            runtime.Forget();
+        }
+
         var name = LogText.Clean(serverName);
         _logger.LogInformation("Remote server {ServerName} was removed while logging in; that login is ended", name);
         var failure = await LogOutWithinLimitAsync(endpoint, fresh).ConfigureAwait(false);

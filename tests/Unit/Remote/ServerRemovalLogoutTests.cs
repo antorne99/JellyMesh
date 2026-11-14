@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -170,7 +171,35 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
-    // Runs a step once, just before or just after the next change of the configuration.
+    [Fact]
+    public async Task ALoginEndingWhileAFailedRemovalIsUndoneLeavesTheServerWorking()
+    {
+        using var handler = new HeldLoginHandler();
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, client, new CapturingLogger<RemoteServerRegistry>());
+        var call = Task.Run(() => PingAsync(restarted, server.Id));
+        await handler.LoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        fixture.Store.SaveFailure = new IOException();
+        store.FailedUpdate = () =>
+        {
+            // The login ends after the failed save and before the server is put back.
+            handler.ReleaseLogin.SetResult();
+            SpinWait.SpinUntil(() => call.IsCompleted, TimeSpan.FromSeconds(5));
+            fixture.Store.SaveFailure = null;
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => restarted.RemoveAsync(server.Id));
+
+        Assert.Equal(RemoteFailure.UnknownServer, (await call.WaitAsync(TimeSpan.FromSeconds(5))).Failure);
+        Assert.Equal(1, handler.Logouts);
+        Assert.Single(restarted.GetServers());
+        Assert.True((await PingAsync(restarted, server.Id)).IsSuccess);
+    }
+
+    // Runs a step once, just before or just after the next change of the configuration, or when its save fails.
     private sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
     {
         public event EventHandler? SettingsChanged
@@ -183,6 +212,8 @@ public class ServerRemovalLogoutTests
 
         public Action? AfterUpdate { get; set; }
 
+        public Action? FailedUpdate { get; set; }
+
         public T Read<T>(Func<PluginConfiguration, T> read) => inner.Read(read);
 
         public void Update(Action<PluginConfiguration> update)
@@ -190,7 +221,18 @@ public class ServerRemovalLogoutTests
             var before = BeforeUpdate;
             BeforeUpdate = null;
             before?.Invoke();
-            inner.Update(update);
+            try
+            {
+                inner.Update(update);
+            }
+            catch
+            {
+                var failed = FailedUpdate;
+                FailedUpdate = null;
+                failed?.Invoke();
+                throw;
+            }
+
             var after = AfterUpdate;
             AfterUpdate = null;
             after?.Invoke();
