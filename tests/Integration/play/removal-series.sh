@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Task 828: the remove dialog promises that adding a server back brings the same titles and watch state.
-# Proves it on series: two consumer users watch episodes, the server is removed, its stubs leave, then it comes back.
+# Task 828 and decision 408: a server removed and added back is a new server, in a new folder. Proves on series that
+# its titles come back, and that the watch state of those with provider IDs stays, while those without IDs lose it.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-rms] [PORT=18470] removal-series.sh   (KEEP=1 leaves the containers up)
 set -euo pipefail
 PREFIX=${PREFIX:-jm-rms}
@@ -154,10 +154,10 @@ check "the user data cleanup ran" Completed "$(get local "/ScheduledTasks/$task"
 echo "--- the server comes back"
 old_id=$id
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
-# Known by its Server Id, the server takes back its ID, so its folder, which is still in the library (decision 116).
-check "the server comes back with its ID" "$old_id" "$id"
-check "the add says which server it recognized" remote "$(jq -r .RecognizedAs "$WORK/body")"
-check "its folder is still in the library" 1 "$(get local /Library/VirtualFolders | jq --arg p "$(server_folder "$id")/Serie" '[.[].Locations[] | select(. == $p)] | length')"
+# A server added back is a new server, so in a folder of its own: the admin adds it to the library (decision 408).
+check "the server comes back as a new server" 1 "$([ -n "$id" ] && [ "$id" != null ] && [ "$id" != "$old_id" ] && echo 1 || echo 0)"
+check "the add recognizes no removed server" null "$(jq -r .RecognizedAs "$WORK/body")"
+check "the new folder joins the library" 204 "$(link_folder local Serie "$(server_folder "$id")/Serie")"
 # A remote already configured is refused under any name (decision 120).
 post local /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$(port_of remote)" '{Name:"twice",Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" >/dev/null
 check "adding it a second time is refused" 409 "$(status)"
@@ -168,14 +168,20 @@ check "its folder is written again" 0 "$(docker exec "$PREFIX-local" test -f "$(
 scan local
 episodes | tee "$WORK/episodes-after"
 series_rows | tee "$WORK/series-after"
-check "the same episodes come back at the same paths" "$(cut -f1,3 "$WORK/episodes-before")" "$(cut -f1,3 "$WORK/episodes-after")"
-check "the same series come back at the same paths" "$(cut -f1,3 "$WORK/series-before")" "$(cut -f1,3 "$WORK/series-after")"
-check "the episodes keep their item IDs" "$(cut -f1,2 "$WORK/episodes-before")" "$(cut -f1,2 "$WORK/episodes-after")"
-check "the series keep their item IDs" "$(cut -f1,2 "$WORK/series-before")" "$(cut -f1,2 "$WORK/series-after")"
+# in_folder: the paths with the folder of the server taken off.
+in_folder() { sed -E 's#/federata/[0-9a-f-]{36}/#/federata/<server>/#'; }
+check "the same episodes come back at the same paths in the folder" "$(cut -f1,3 "$WORK/episodes-before" | in_folder)" "$(cut -f1,3 "$WORK/episodes-after" | in_folder)"
+check "the same series come back at the same paths in the folder" "$(cut -f1,3 "$WORK/series-before" | in_folder)" "$(cut -f1,3 "$WORK/series-after" | in_folder)"
+check "the episodes come back in the new folder" 5 "$(grep -cF "$(server_folder "$id")/" "$WORK/episodes-after" || true)"
+echo "item ids changed: episodes $(cut -f2 "$WORK/episodes-before" | grep -cvxFf <(cut -f2 "$WORK/episodes-after") || true) of 5, series $(cut -f2 "$WORK/series-before" | grep -cvxFf <(cut -f2 "$WORK/series-after") || true) of 2"
 
+# Jellyfin finds the user data of a title with provider IDs again by key; a title without IDs starts again (decision 408).
 state | tee "$WORK/state-after"
 while IFS= read -r line; do
-  check "${line%%:*} keeps its state" "$line" "$(grep -F "${line%%:*}:" "$WORK/state-after" || true)"
+  case $line in
+    *"Serie Senza ID"*) echo "without provider IDs: before '$line', after '$(grep -F "${line%%:*}:" "$WORK/state-after" || true)'" ;;
+    *) check "${line%%:*} keeps its state" "$line" "$(grep -F "${line%%:*}:" "$WORK/state-after" || true)" ;;
+  esac
 done <"$WORK/state-before"
 
 echo "=== failed: $FAILED"

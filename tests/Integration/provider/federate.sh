@@ -17,14 +17,12 @@ share a 1 Film Serie
 share b 2 Film Serie
 
 # The stock remote must sort after a for the limit test: ties between equal copies fall to the server ID. A remote
-# removed and added again takes back its ID (decision 116), so only a stock remote with a new Server Id draws again.
+# removed and added again is a new server with a new ID (decision 408), so removing it and adding it again draws again.
 from_a=$(add_remote b a "http://$HOST_GATE:$GATE_A" peer)
 from_stock=$(add_remote b stock "http://$HOST_GATE:$GATE_STOCK" jellymesh)
-for attempt in 1 2 3 4 5 6 7; do
+for attempt in 1 2 3 4 5 6 7 8; do
   [[ "${from_a//-/}" < "${from_stock//-/}" ]] && break
-  [ "$STOCK" = own ] || { echo "the stock remote sorts before a; run with STOCK=own to draw again" >&2; exit 1; }
   req b DELETE "/JellyMesh/Admin/Servers/$from_stock" >/dev/null
-  stock_up
   from_stock=$(add_remote b stock "http://$HOST_GATE:$GATE_STOCK" jellymesh)
 done
 check "a sorts before the stock remote" 1 "$([[ "${from_a//-/}" < "${from_stock//-/}" ]] && echo 1 || echo 0)"
