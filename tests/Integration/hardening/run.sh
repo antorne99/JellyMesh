@@ -3,16 +3,16 @@
 # host, stalled bodies, poisoned URLs. The proof in every scenario is what arrived at the third host (nothing), what the
 # fake sent, the memory of a container capped at 1500 MB, and the log at its most verbose.
 # Takes about 6 minutes, because it waits for real timeouts. Containers and volumes are removed at the end.
-# usage: run.sh   (scratch goes in WORK, by default ${TMPDIR:-/tmp}/jm-hard-run)
+# usage: run.sh   (scratch goes in WORK, by default ${TMPDIR:-/tmp}/jm-hard-run; NAME, PORT, FAKE and THIRD move it)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/jm-hard-run}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
-NAME=jm-hard-a
-PORT=18458
-FAKE=18455
-THIRD=18456
+NAME=${NAME:-jm-hard-a}
+PORT=${PORT:-18458}
+FAKE=${FAKE:-18455}
+THIRD=${THIRD:-18456}
 REMOTE_PASSWORD=hostile-password-sentinel
 REMOTE_TOKEN=hostile-remote-token-sentinel
 FAKE_URL=http://host.docker.internal:$FAKE

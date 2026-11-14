@@ -3,7 +3,8 @@
 # private servers. PREFIX and PORT_A move their names and ports, because they would collide with anything else using
 # them, and a private stock server stands in for the shared stack. Then what those proofs do not cover about a
 # peer. Takes about 15 minutes. Containers and volumes are removed at the end.
-# usage: proofs.sh   (MEDIA points at tests/Integration/media of the main checkout, scratch goes in WORK)
+# usage: proofs.sh   (MEDIA points at tests/Integration/media of the main checkout, scratch goes in WORK;
+#   PREFIX, PORT_A, STOCK_NAME and STOCK_PORT move it)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
@@ -15,15 +16,15 @@ fi
 export MEDIA
 export WORK=${WORK:-${TMPDIR:-/tmp}/jm-hard-proofs}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
-STOCK=jm-hard-s
-STOCK_PORT=18457
+STOCK=${STOCK_NAME:-jm-hard-s}
+STOCK_PORT=${STOCK_PORT:-18457}
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshHard", Device="hard", DeviceId="jm-hard-stock", Version="0.1"'
 FAILED=0
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
-export PREFIX=jm-hard-p PORT_A=18450 STOCK_PORT
+export PREFIX=${PREFIX:-jm-hard-p} PORT_A=${PORT_A:-18450} STOCK_PORT
 PROOFS=$WT/tests/Integration/provider
 
 cleanup() {
