@@ -125,14 +125,26 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         // Checked again in the change that adds it: another add of the same remote may have ended meanwhile.
         RemoteServerInfo? standing = null;
-        _store.Update(config =>
+        var added = false;
+        try
         {
-            standing = remoteId is null ? null : ConfiguredAs(config, remoteId);
-            if (standing is null)
+            _store.Update(config =>
             {
-                config.Servers.Add(server);
-            }
-        });
+                standing = remoteId is null ? null : ConfiguredAs(config, remoteId);
+                if (standing is null)
+                {
+                    config.Servers.Add(server);
+                    added = true;
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            // The store keeps the change in memory when the save fails: the server leaves it, then the login ends (419).
+            await EndUnsavedAddAsync(server, endpoint, login.Value!, added, exception).ConfigureAwait(false);
+            throw;
+        }
+
         if (standing is not null)
         {
             await EndSessionAsync(endpoint, login.Value!, cancellationToken).ConfigureAwait(false);
@@ -225,17 +237,21 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             var found = false;
             var heldElsewhere = false;
             string? storedId = null;
+            string? previous = null;
+            string? savedId = null;
             try
             {
                 _store.Update(config =>
                 {
                     if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
                     {
+                        previous = server.EncryptedCredentials;
                         server.EncryptedCredentials = encrypted;
                         storedId = server.JellyfinServerId;
                         if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
                         {
                             heldElsewhere = !TryStoreServerId(config, server, remoteId);
+                            savedId = heldElsewhere ? null : remoteId;
                         }
 
                         found = true;
@@ -244,6 +260,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
             catch
             {
+                // Memory goes back to what is saved before the logout, so no call picks up the unsaved credentials.
+                if (previous is not null)
+                {
+                    RestoreCredentials(serverId, stored.Name, encrypted, previous, savedId);
+                }
+
                 await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 throw;
             }
@@ -520,6 +542,29 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
+    // Puts back in memory the credentials and Server Id of a server whose new credentials were not saved (419).
+    private void RestoreCredentials(Guid serverId, string serverName, string unsaved, string previous, string? unsavedServerId)
+    {
+        try
+        {
+            _store.Update(config =>
+            {
+                if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server && server.EncryptedCredentials == unsaved)
+                {
+                    server.EncryptedCredentials = previous;
+                    if (unsavedServerId is not null && server.JellyfinServerId == unsavedServerId)
+                    {
+                        server.JellyfinServerId = string.Empty;
+                    }
+                }
+            });
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot save the configuration again after unsaved credentials of remote server {ServerName}: {Error}", LogText.Clean(serverName), exception.GetType().Name);
+        }
+    }
+
     // The libraries of the server are deleted after it, including those a switch-on still running adds (140).
     private static void HoldLibraries(PluginConfiguration config, RemoteServerConfig removed)
     {
@@ -723,6 +768,48 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // runtime leaves too, with any other login it kept: if the removal is not saved, the next call builds a new one.
     private async Task EndLoginOfRemovedAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName, bool freshMayBeRevoked = false)
     {
+        var name = LogText.Clean(serverName);
+        _logger.LogInformation("Remote server {ServerName} was removed while logging in; that login is ended", name);
+        foreach (var failure in await EndFreshAndKeptAsync(serverId, runtime, endpoint, fresh, freshMayBeRevoked).ConfigureAwait(false))
+        {
+            _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // Takes an add that was not saved out of memory and ends its login, with any login a call kept meanwhile (419).
+    private async Task EndUnsavedAddAsync(RemoteServerConfig server, RemoteEndpoint endpoint, RemoteSession login, bool added, Exception error)
+    {
+        var name = LogText.Clean(server.Name);
+        _logger.LogWarning("Cannot save new remote server {ServerName}: {Error}; its login is ended", name, error.GetType().Name);
+        if (added)
+        {
+            try
+            {
+                _store.Update(config =>
+                {
+                    if (config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id) is { } unsaved)
+                    {
+                        config.Servers.Remove(unsaved);
+                    }
+                });
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogError("Cannot save the configuration again after a failed add: {Error}", exception.GetType().Name);
+            }
+        }
+
+        var runtime = _runtimes.TryGetValue(server.Id, out var held) ? held : null;
+        foreach (var failure in await EndFreshAndKeptAsync(server.Id, runtime, endpoint, login, freshMayBeRevoked: true).ConfigureAwait(false))
+        {
+            _logger.LogWarning("Could not end a login on unsaved remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // Forgets the runtime and ends the fresh login and the one the runtime kept, under one logout limit. Returns the
+    // failures left; a refused token revoked by a later login of this device counts as ended.
+    private async Task<IReadOnlyList<RemoteFailure>> EndFreshAndKeptAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, bool freshMayBeRevoked)
+    {
         RemoteSession? kept = null;
         if (runtime is not null)
         {
@@ -730,15 +817,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             kept = runtime.Forget();
         }
 
-        var name = LogText.Clean(serverName);
-        _logger.LogInformation("Remote server {ServerName} was removed while logging in; that login is ended", name);
         using var limit = new CancellationTokenSource(LogoutLimit);
         var other = kept is null || ReferenceEquals(kept, fresh) ? null : kept;
         var failures = await Task.WhenAll(
             LogOutUntilAsync(endpoint, fresh, limit),
             other is null ? Task.FromResult(RemoteFailure.None) : LogOutUntilAsync(endpoint, other, limit)).ConfigureAwait(false);
 
-        // The remote revoked the kept, older login of this device at the fresh one, so a refused token there is ended.
+        // A refused kept token was revoked by another login of this device: the fresh one, or one its own path ends.
         if (failures[1] == RemoteFailure.AuthenticationFailed)
         {
             failures[1] = RemoteFailure.None;
@@ -750,10 +835,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             failures[0] = RemoteFailure.None;
         }
 
-        foreach (var failure in failures.Where(failure => failure != RemoteFailure.None))
-        {
-            _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
-        }
+        return failures.Where(failure => failure != RemoteFailure.None).ToArray();
     }
 
     // Ends a login that is not kept, such as one whose credentials could not be saved (419), within the logout limit.
