@@ -1314,7 +1314,7 @@ def confirms(s, width):
     remove = u.button(u.server_row(page, HOSTILE), "remove")
     remove.click()
     confirm_shows(page, name + " remove", "Remove this server?", [
-        HOSTILE + " and its stored login leave JellyMesh now", "login is not revoked", "folders of this server are deleted now",
+        HOSTILE + " and its stored login leave JellyMesh now", "login is revoked if the server can be reached", "folders of this server are deleted now",
         "same titles from another server stay", "Doubtful titles", "local files are not touched",
         "Restoring the settings brings its folders back, with the same titles and watch state"], viewport)
     u.shot(page, f"confirm-remove-{width}", full_page=False)
