@@ -597,13 +597,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Ends the live login of a removed server within the logout limit. Without one, or on a failure, its device stays (413).
+    // Ends the live login of a removed server within the logout limit. On a failure its device stays (413); without one, a
+    // login that raced the removal may have ended it, which that path logs.
     private async Task EndRemovedSessionAsync(RemoteServerConfig removed, RemoteSession? session)
     {
         var name = LogText.Clean(removed.Name);
         if (session is null)
         {
-            _logger.LogWarning("Removed remote server {ServerName} had no live login to end; its JellyMesh device stays listed there", name);
+            _logger.LogWarning("Removed remote server {ServerName} had no live login to end; its JellyMesh device may stay listed there unless a login racing the removal is ended", name);
             return;
         }
 

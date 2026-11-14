@@ -297,6 +297,7 @@ public class ServerRemovalLogoutTests
         Assert.Equal(2, handler.Logins);
         Assert.Equal([added, TestValues.Token + "2"], handler.LoggedOut.Order(StringComparer.Ordinal));
         Assert.Null(handler.Live);
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
         AssertClean(logger);
     }
 
@@ -350,6 +351,7 @@ public class ServerRemovalLogoutTests
         Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
         Assert.Null(handler.Live);
         Assert.Empty(registry.GetServers());
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
         AssertClean(logger);
     }
 
