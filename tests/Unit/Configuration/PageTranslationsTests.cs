@@ -166,6 +166,13 @@ public class PageTranslationsTests
     }
 
     [Fact]
+    public void Forgetting_missing_servers_says_the_watch_state_stays_with_the_titles()
+    {
+        // Row 412: forgetting goes through the same removal, so the watch state is kept as when a server is removed.
+        Assert.Contains("t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from those servers added back or from another one, it comes back.')", _script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_merge_date_of_series_has_its_own_text()
     {
         Assert.Contains("mergedOn: t('Merged on {date}|series')", _script, StringComparison.Ordinal);

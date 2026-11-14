@@ -1589,6 +1589,7 @@
                     "There is nothing to migrate.": "Non c'è niente da migrare.",
                     "The automatic migration cannot go back to manual.": "La migrazione automatica non può tornare a quella manuale.",
                     "The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.": "Lo stato di visione di ogni utente resta legato ai titoli: se gli stessi titoli ricompaiono entro 90 giorni, da questo server aggiunto di nuovo o da un altro, viene ripristinato.",
+                    "The watch state of each user stays with the titles: if the same titles appear again within 90 days, from those servers added back or from another one, it comes back.": "Lo stato di visione di ogni utente resta legato ai titoli: se gli stessi titoli ricompaiono entro 90 giorni, da quei server aggiunti di nuovo o da un altro, viene ripristinato.",
                     "The watch state has moved to the new titles and the old folders are empty.": "Lo stato di visione è passato ai nuovi titoli e le vecchie cartelle sono vuote.",
                     "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Librerie e salva di nuovo la selezione.",
                     "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
@@ -5265,7 +5266,8 @@
                     var count = syncSection.data ? syncSection.data.UnconfiguredStubs : 0;
                     confirmAction(t('Forget the servers missing from the settings?'), [
                         t('The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.', { count: escapeHtml(String(count)) }),
-                        t('Restoring the settings brings their folders back, with the same titles and watch state.')
+                        t('Restoring the settings brings their folders back, with the same titles and watch state.'),
+                        t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from those servers added back or from another one, it comes back.')
                     ], function () {
                         act(api('POST', 'MissingServers/Forget').then(function (result) {
                             showMessage(result.Servers > 0
