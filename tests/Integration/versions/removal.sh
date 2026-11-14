@@ -91,9 +91,12 @@ check "the local media files are untouched" "$media_before" "$(sums "! -name '*.
 check "the .nfo of the local copies are untouched" "" "$(diff <(echo "$nfo_before") <(sums "-name '*.nfo'") || true)"
 check "the folder of remote stays" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$A")/Film/.jellymesh"; echo $?)"
 
-echo "--- peer back in the shared libraries Film and Serie, then removed again: a dead path next to live ones"
+echo "--- peer back as a new server in the shared libraries Film and Serie, then removed again: a dead path next to live ones"
 B2=$(add_remote local peer "http://host.docker.internal:$(port_of peer)" jellymesh)
-check "peer comes back with its ID" "$B" "$B2"
+# A server added again is a new server, in a new folder (decision 408).
+check "peer comes back as a new server" new "$([ -n "$B2" ] && [ "$B2" != "$B" ] && echo new || echo same)"
+B=$B2
+folder_b=$(server_folder "$B")
 import_all local "$B"
 sync_now local
 check "the Film folder of peer is linked to Film" 204 "$(link_folder local Film "$folder_b/Film")"
