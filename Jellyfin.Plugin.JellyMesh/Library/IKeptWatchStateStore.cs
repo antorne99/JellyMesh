@@ -16,7 +16,7 @@ public interface IKeptWatchStateStore
     bool Exists { get; }
 
     /// <summary>
-    /// Saves the titles in one transaction, each replacing the record of the same old item.
+    /// Saves the titles in one transaction, each replacing the record of the same old item but keeping its first saved date.
     /// </summary>
     /// <param name="titles">The titles with their users.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
