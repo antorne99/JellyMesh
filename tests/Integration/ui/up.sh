@@ -11,6 +11,7 @@ HD="$MEDIA/remoto-jellymesh/film/Sonda Senza ID (2026)/Sonda Senza ID (2026).mkv
 docker network create "$NETWORK" >/dev/null 2>&1 || true
 start stock
 start peer
+flat_paths_off peer
 install_plugin peer
 configure peer true
 share_all peer
@@ -25,16 +26,22 @@ scan stock
 scan peer
 
 start fresh
+flat_paths_off fresh
 install_plugin fresh
 configure fresh true
 add_remote fresh stock "http://$(container_of stock):8096" >"$WORK/id-fresh-stock"
 add_remote fresh peer "http://$(container_of peer):8096" >"$WORK/id-fresh-peer"
 sync_and_scan fresh
+# The page is checked on the layout of 0.5: the folders of each server in the libraries, with no migration to do.
+link_server_folders fresh
+scan fresh
+settle fresh
 # The user of a connected server, and one left free for the form that connects the next.
 share_all fresh
 post fresh /Users/New '{"Name":"friend","Password":"jellymesh-test"}' >/dev/null
 
 start first
+flat_paths_off first
 install_plugin first
 
 status=$(get fresh /JellyMesh/Admin/Status)
@@ -42,6 +49,8 @@ check "the stock remote is standard" Standard "$(jq -r --arg i "$(cat "$WORK/id-
 check "the peer is JellyMesh" JellyMesh "$(jq -r --arg i "$(cat "$WORK/id-fresh-peer")" '.Servers[] | select(.Id == $i) | .Mode' <<<"$status")"
 check "the catalog is synced" true "$(get fresh /JellyMesh/Admin/Sync | jq '[.Servers[].Movies > 0] | all')"
 check "there are doubtful films" true "$(list fresh | jq '.Cases | length > 0')"
+check "the folders of each server are linked" Linked "$(jq -r .FederatedFolder.Link <<<"$status")"
+check "there is no migration to do" null "$(jq -c .FederatedFolder.Migration <<<"$status")"
 check "a server is connected" jellymesh "$(get fresh /JellyMesh/Admin/Peers | jq -r '.[0].UserName')"
 check "the first server has no servers" 0 "$(get first /JellyMesh/Admin/Status | jq '.Servers | length')"
 exit "$FAILED"

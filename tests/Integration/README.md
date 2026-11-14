@@ -281,10 +281,10 @@ bash ui/down.sh                   # removes containers, volumes, network and scr
 
 | Server | Port | Media | What it shows |
 |---|---|---|---|
-| `fresh` | `UI_PORT` | `locale` | Plugin, consumer of the two below, a synced catalog, doubtful films, the connected server `jellymesh`, the free user `friend` |
+| `fresh` | `UI_PORT` | `locale` | Plugin, consumer of the two below, a synced catalog, doubtful films, the connected server `jellymesh`, the free user `friend`. The Film and Serie folders of each remote are in the libraries, and the single folders of 0.4 are not, so there is no migration to do |
 | `stock` | `UI_PORT+1` | `remoto-standard` | No plugin |
 | `peer` | `UI_PORT+2` | `remoto-jellymesh` | Plugin, shares its libraries |
-| `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured |
+| `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured, libraries without the single folders of 0.4 |
 
 `check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), `nokey` to delete the credential key file (on `fresh` by default), `blockkey` to put a folder where the key file goes (on `first` by default), and `key` to fix either, entering the logins again. Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
 
