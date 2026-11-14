@@ -21,6 +21,8 @@ public class ServerRemovalLogoutTests
     private const string LoginPath = "/Users/AuthenticateByName";
     private const string LogoutPath = "/Sessions/Logout";
 
+    private static readonly RemoteCredentials OtherCredentials = new() { Username = "other-user", Password = "other-pass" };
+
     private static StubHandler Remote(HttpStatusCode logout = HttpStatusCode.NoContent) => new(request => request.RequestUri!.AbsolutePath == LogoutPath
         ? StubHandler.Status(logout)
         : StubHandler.StockServer_Respond(request));
@@ -265,7 +267,7 @@ public class ServerRemovalLogoutTests
     }
 
     [Fact]
-    public async Task ALoginEndingWhileAFailedRemovalIsUndoneLeavesTheServerWorking()
+    public async Task ALoginEndingRightAfterAFailedRemovalKeepsTheServerWorking()
     {
         using var handler = new HeldLoginHandler();
         using var fixture = new RegistryFixture(Remote());
@@ -278,7 +280,7 @@ public class ServerRemovalLogoutTests
         fixture.Store.SaveFailure = new IOException();
         store.FailedUpdate = () =>
         {
-            // The login ends after the failed save and before the server is put back.
+            // The login ends after the failed save, which has put the server back already.
             handler.ReleaseLogin.SetResult();
             SpinWait.SpinUntil(() => call.IsCompleted, TimeSpan.FromSeconds(5));
             fixture.Store.SaveFailure = null;
@@ -286,8 +288,8 @@ public class ServerRemovalLogoutTests
 
         await Assert.ThrowsAsync<IOException>(() => restarted.RemoveAsync(server.Id));
 
-        Assert.Equal(RemoteFailure.UnknownServer, (await call.WaitAsync(TimeSpan.FromSeconds(5))).Failure);
-        Assert.Equal(1, handler.Logouts);
+        Assert.True((await call.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        Assert.Equal(0, handler.Logouts);
         Assert.Single(restarted.GetServers());
         Assert.True((await PingAsync(restarted, server.Id)).IsSuccess);
     }
@@ -642,6 +644,101 @@ public class ServerRemovalLogoutTests
         AssertClean(fixture.Logger);
     }
 
+    // A call that reads the server right after the failed save waits for the gate, then logs in with the saved credentials.
+    [Fact]
+    public async Task ACallRightAfterAFailedSaveOfNewCredentialsLogsInWithTheSavedOnes()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, logger);
+        fixture.Store.SaveFailure = new IOException();
+        var before = 0;
+        var read = false;
+        Task<RemoteResult<int>>? call = null;
+        store.FailedUpdate = () =>
+        {
+            before = fixture.Handler.Requests.Count;
+            store.AfterRead = () => Volatile.Write(ref read, true);
+            call = Task.Run(() => PingAsync(restarted, server.Id));
+            SpinWait.SpinUntil(() => Volatile.Read(ref read), TimeSpan.FromSeconds(5));
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => restarted.UpdateCredentialsAsync(server.Id, OtherCredentials, CancellationToken.None));
+
+        Assert.True((await call!.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        var login = Assert.Single(fixture.Handler.Requests.Skip(before), request => request.Uri.AbsolutePath == LoginPath);
+        Assert.Contains(TestValues.Username, login.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain(OtherCredentials.Username, login.Body, StringComparison.Ordinal);
+        AssertClean(logger);
+    }
+
+    // Decision 418 after a failed save of new credentials: the removed server carries the saved credentials.
+    [Fact]
+    public async Task ARemovalRightAfterAFailedSaveOfNewCredentialsEndsTheDeviceWithTheSavedOnes()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, logger);
+        fixture.Store.SaveFailure = new IOException();
+        var before = 0;
+        Task<bool>? removal = null;
+        store.FailedUpdate = () =>
+        {
+            // The removal is saved, then waits for the login gate the change holds.
+            before = fixture.Handler.Requests.Count;
+            fixture.Store.SaveFailure = null;
+            removal = Task.Run(() => restarted.RemoveAsync(server.Id));
+            SpinWait.SpinUntil(() => fixture.Store.Read(config => config.Servers.Count == 0), TimeSpan.FromSeconds(5));
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => restarted.UpdateCredentialsAsync(server.Id, OtherCredentials, CancellationToken.None));
+
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        var login = Assert.Single(fixture.Handler.Requests.Skip(before), request => request.Uri.AbsolutePath == LoginPath);
+        Assert.Contains(TestValues.Username, login.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain(OtherCredentials.Username, login.Body, StringComparison.Ordinal);
+        Assert.Empty(restarted.GetServers());
+        AssertClean(logger);
+    }
+
+    // A removal whose save also fails puts the server back with the saved credentials, whatever ends first.
+    [Fact]
+    public async Task AFailedRemovalRightAfterAFailedSaveOfNewCredentialsKeepsTheSavedOnes()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var stored = fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials);
+        var store = new HookedStore(fixture.Store);
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, logger);
+        fixture.Store.SaveFailure = new IOException();
+        var removalFailed = false;
+        Task? change = null;
+        Task<bool>? removal = null;
+        store.FailedUpdate = () =>
+        {
+            // The removal fails to save too, and goes on only once the change of credentials has ended.
+            store.FailedUpdate = () =>
+            {
+                Volatile.Write(ref removalFailed, true);
+                SpinWait.SpinUntil(() => Volatile.Read(ref change)?.IsCompleted == true, TimeSpan.FromSeconds(5));
+            };
+            removal = Task.Run(() => restarted.RemoveAsync(server.Id));
+            SpinWait.SpinUntil(() => Volatile.Read(ref removalFailed), TimeSpan.FromSeconds(5));
+        };
+
+        Volatile.Write(ref change, Task.Run(() => restarted.UpdateCredentialsAsync(server.Id, OtherCredentials, CancellationToken.None)));
+
+        await Assert.ThrowsAsync<IOException>(() => change!);
+        await Assert.ThrowsAsync<IOException>(() => removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(stored, fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials));
+        AssertClean(logger);
+    }
+
     [Fact]
     public async Task AnAddWhoseCredentialsCannotBeEncryptedLogsOutItsLogin()
     {
@@ -700,34 +797,25 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task AnAddThatCannotBeSavedAlsoLogsOutTheLoginACallKeptMeanwhile(bool remoteRefusesRevokedTokens)
+    [Fact]
+    public async Task AnAddThatCannotBeSavedIsOutOfMemoryBeforeAnyCallCanSeeIt()
     {
-        using var handler = new IssuingLoginHandler(holdFirstLogin: false, refuseRevoked: remoteRefusesRevokedTokens);
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
         using var fixture = new RegistryFixture(Remote());
         var store = new HookedStore(fixture.Store);
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
         var logger = new CapturingLogger<RemoteServerRegistry>();
         using var registry = new RemoteServerRegistry(store, fixture.Vault, client, logger);
         fixture.Store.SaveFailure = new IOException();
-        var id = Guid.Empty;
-        Task<RemoteResult<int>>? call = null;
-        store.FailedUpdate = () =>
-        {
-            // A call logs in for the server still in memory after the failed save, before the add takes it out.
-            id = fixture.Store.Configuration.Servers.Single().Id;
-            call = Task.Run(() => PingAsync(registry, id));
-            SpinWait.SpinUntil(() => call.IsCompleted, TimeSpan.FromSeconds(5));
-        };
+        var seen = -1;
+        store.FailedUpdate = () => seen = registry.GetServers().Count;
 
         await Assert.ThrowsAsync<IOException>(() => registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None));
 
-        Assert.True((await call!.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
-        Assert.Equal([TestValues.Token + "1", TestValues.Token + "2"], handler.LoggedOut.Order(StringComparer.Ordinal));
+        Assert.Equal(0, seen);
+        Assert.Equal(1, handler.Logins);
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
         Assert.Null(handler.Live);
-        Assert.False(registry.HoldsStateFor(id));
         Assert.Empty(registry.GetServers());
         Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
         AssertClean(logger);
@@ -835,14 +923,19 @@ public class ServerRemovalLogoutTests
             return result;
         }
 
-        public void Update(Action<PluginConfiguration> update)
+        public void Update(Action<PluginConfiguration> update) => Update(() => inner.Update(update));
+
+        // The rollback runs in the inner store, so FailedUpdate sees the configuration already put back.
+        public void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback) => Update(() => inner.Update(update, rollback));
+
+        private void Update(Action change)
         {
             var before = BeforeUpdate;
             BeforeUpdate = null;
             before?.Invoke();
             try
             {
-                inner.Update(update);
+                change();
             }
             catch
             {

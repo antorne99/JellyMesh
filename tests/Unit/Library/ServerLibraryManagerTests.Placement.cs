@@ -475,5 +475,16 @@ public sealed partial class ServerLibraryManagerTests
             AfterUpdate = null;
             after?.Invoke();
         }
+
+        public void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback)
+        {
+            var before = BeforeUpdate;
+            BeforeUpdate = null;
+            before?.Invoke();
+            inner.Update(update, rollback);
+            var after = AfterUpdate;
+            AfterUpdate = null;
+            after?.Invoke();
+        }
     }
 }

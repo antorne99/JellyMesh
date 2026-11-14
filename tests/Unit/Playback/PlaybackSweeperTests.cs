@@ -172,5 +172,7 @@ public class PlaybackSweeperTests
         }
 
         public void Update(Action<PluginConfiguration> update) => inner.Update(update);
+
+        public void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback) => inner.Update(update, rollback);
     }
 }

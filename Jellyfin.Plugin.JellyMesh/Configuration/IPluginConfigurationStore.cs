@@ -26,4 +26,11 @@ public interface IPluginConfigurationStore
     /// </summary>
     /// <param name="update">The change to apply.</param>
     void Update(Action<PluginConfiguration> update);
+
+    /// <summary>
+    /// Changes the configuration and saves it; if that fails, undoes the change before any other reader sees it.
+    /// </summary>
+    /// <param name="update">The change to apply.</param>
+    /// <param name="rollback">Puts the configuration back as saved, run under the same lock when the change or its save throws.</param>
+    void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback);
 }
