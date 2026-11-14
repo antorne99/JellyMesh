@@ -33,6 +33,18 @@ public sealed partial class LayoutMigration
         }
     }
 
+    /// <inheritdoc />
+    public bool WaitsAtCarry
+    {
+        get
+        {
+            var migration = _store.Read(config => Copy(config.LayoutMigration));
+            return migration is { Mode: LayoutMigrationMode.Automatic, Step: AutomaticMigrationStep.Carry, Error: AutomaticMigrationError.None }
+                && _servers.GetServers().Count > 0
+                && HasOldTitles(_registry.State);
+        }
+    }
+
     private bool IsRunning
     {
         get
@@ -223,6 +235,8 @@ public sealed partial class LayoutMigration
             case AutomaticMigrationStep.AddPaths:
                 return await AddPathsAsync(root, cancellationToken).ConfigureAwait(false) ? AutomaticMigrationStep.Scan : null;
             case AutomaticMigrationStep.Scan:
+                // The scan finds the new stubs only once a sync wrote them (§10 row 420).
+                await SyncAsync(cancellationToken).ConfigureAwait(false);
                 await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
                 return AutomaticMigrationStep.Carry;
             case AutomaticMigrationStep.Carry:
@@ -237,6 +251,25 @@ public sealed partial class LayoutMigration
                 return AutomaticMigrationStep.Done;
             default:
                 return null;
+        }
+    }
+
+    // A sync that fails leaves the titles waiting, as a failed server does, so the job goes on to the scan.
+    private async Task SyncAsync(CancellationToken cancellationToken)
+    {
+        if (_sync is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _sync.SyncAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("The sync before the scan of the automatic migration failed: {Error}", exception.GetType().Name);
         }
     }
 

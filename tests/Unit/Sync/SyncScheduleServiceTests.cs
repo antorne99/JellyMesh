@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Model.Tasks;
 using Moq;
@@ -18,11 +19,12 @@ public sealed class SyncScheduleServiceTests : IDisposable
     private readonly InMemoryConfigurationStore _store = new();
     private readonly Mock<ITaskManager> _taskManager = new();
     private readonly CapturingLogger<SyncScheduleService> _logger = new();
+    private readonly Mock<ILayoutMigration> _migration = new();
     private readonly SyncScheduleService _service;
 
     public SyncScheduleServiceTests()
     {
-        _service = new SyncScheduleService(_taskManager.Object, _store, _logger);
+        _service = new SyncScheduleService(_taskManager.Object, _store, _logger, _migration.Object);
     }
 
     public void Dispose() => _service.Dispose();
@@ -205,5 +207,54 @@ public sealed class SyncScheduleServiceTests : IDisposable
         _store.RaiseSettingsChanged();
 
         AssertSets(incremental, Times.Never());
+    }
+
+    // §10 row 420: a migration left at the carry waits for new stubs that only a sync writes.
+    [Fact]
+    public async Task AMigrationWaitingAtTheCarrySyncsAtStartInsteadOfWaitingForTheInterval()
+    {
+        WithTasks(_lastRun);
+        _migration.SetupGet(migration => migration.WaitsAtCarry).Returns(true);
+
+        await StartAndSettleAsync();
+
+        _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AMigrationWaitingAtTheCarrySyncsOnceAtStartEvenIfTheTaskNeverRan()
+    {
+        WithTasks(null);
+        _migration.SetupGet(migration => migration.WaitsAtCarry).Returns(true);
+
+        await StartAndSettleAsync();
+        _store.Configuration.SyncIntervalSeconds = 600;
+        _store.RaiseSettingsChanged();
+
+        _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AMigrationNotWaitingAtTheCarryLeavesTheSyncToItsTrigger()
+    {
+        WithTasks(_lastRun);
+        _migration.SetupGet(migration => migration.WaitsAtCarry).Returns(false);
+
+        await StartAndSettleAsync();
+
+        _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AMigrationThatCannotBeReadLeavesTheSyncToItsTrigger()
+    {
+        WithTasks(_lastRun);
+        _migration.SetupGet(migration => migration.WaitsAtCarry).Throws(new IOException("/config/secret"));
+
+        await StartAndSettleAsync();
+
+        _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Never);
+        Assert.True(_service.ExecuteTask!.IsCompletedSuccessfully);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("/config/secret", StringComparison.Ordinal));
     }
 }

@@ -33,6 +33,13 @@ public interface ICatalogSyncService
     Task<SyncStartResult> RunIncrementalAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Waits until no sync of any kind runs.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when no sync runs.</returns>
+    Task WaitIdleAsync(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Records that the administrator removed a server, then runs the removal: only such servers lose their catalogs and
     /// stubs. Waits for a materialization that is running. If the removal fails, the record is taken back.
     /// </summary>
