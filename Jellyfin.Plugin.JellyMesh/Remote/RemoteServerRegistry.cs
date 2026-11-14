@@ -135,8 +135,23 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return RemoteResult.Fail(RemoteFailure.AlreadyConfigured, standing);
         }
 
+        // Under the login gate, not cancelled: the server is saved, so its login must be kept or ended (413).
         var runtime = RuntimeOf(serverId);
-        runtime.Session = login.Value;
+        await runtime.LoginGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            // A call that logged in since the save holds the live login: the remote revoked this one.
+            if (runtime.Session is null && (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId)))
+            {
+                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, server.Name).ConfigureAwait(false);
+                return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
+            }
+        }
+        finally
+        {
+            runtime.LoginGate.Release();
+        }
+
         Record(runtime, server.Name, RemoteFailure.None, countsForActivity: true);
 
         _logger.LogInformation("Added remote server {ServerName} in {Mode} mode", LogText.Clean(server.Name), server.Mode);

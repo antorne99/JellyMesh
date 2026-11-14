@@ -300,6 +300,59 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
+    [Fact]
+    public async Task ALoginThatRacesTheAddAfterItIsSavedIsTheOneKeptAndTheRemovalLogsItOut()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, logger);
+        Task<RemoteResult<int>>? call = null;
+        store.AfterUpdate = () =>
+        {
+            // A background call logs in after the new server is saved and before the add keeps its own login.
+            var id = registry.GetServers().Single().Id;
+            call = Task.Run(() => PingAsync(registry, id));
+            SpinWait.SpinUntil(() => call.IsCompleted, TimeSpan.FromSeconds(5));
+        };
+
+        var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(added.IsSuccess);
+        Assert.True((await call!.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        Assert.Equal(2, handler.Logins);
+        var used = await registry.RunWithSessionAsync(added.Value!.Id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
+        Assert.Equal(handler.Live, used.Value);
+        Assert.True(await registry.RemoveAsync(added.Value.Id));
+        Assert.Equal([TestValues.Token + "2"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task ARemovalRightAfterTheAddIsSavedLogsOutTheLoginOfTheAdd()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, logger);
+        Task<bool>? removal = null;
+        store.AfterUpdate = () => removal = registry.RemoveAsync(registry.GetServers().Single().Id);
+
+        var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(RemoteFailure.UnknownServer, added.Failure);
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        Assert.Empty(registry.GetServers());
+        AssertClean(logger);
+    }
+
     // Runs a step once, just before or just after the next change of the configuration, or when its save fails.
     private sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
     {
