@@ -499,7 +499,8 @@ public sealed class LibraryMaterializerTests : IDisposable
         var before = _fixture.Files;
         var stubs = _fixture.Registry.State.Stubs.Select(stub => stub.Id).ToList();
 
-        _fixture.AfterResolve = () => _fixture.Sync.Registry.Remove(server.Id);
+        // The fake remote answers at once, so the removal is over when the call returns.
+        _fixture.AfterResolve = () => _ = _fixture.Sync.Registry.RemoveAsync(server.Id);
         await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
 
         Assert.Contains(_fixture.Hooked.LastServers ?? [], candidate => candidate.Id == server.Id);
@@ -928,7 +929,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
         using var sync = SyncWithMaterializer();
 
-        await sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(removed.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(removed.Id, () => _fixture.Sync.Registry.RemoveAsync(removed.Id), CancellationToken.None);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
 
         Assert.False(Directory.Exists(_fixture.Path_(removed, "Film", "Other (2021)")));
@@ -951,7 +952,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Single(_fixture.Registry.State.Series);
         using var sync = SyncWithMaterializer();
 
-        await sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(removed.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(removed.Id, () => _fixture.Sync.Registry.RemoveAsync(removed.Id), CancellationToken.None);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
 
         Assert.False(Directory.Exists(_fixture.Path_(removed)));
@@ -969,7 +970,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         var path = _fixture.Path_(removed, "Film", "Film (2020)", "Film (2020) - A.strm");
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Throws(new IOException("busy"));
         using var sync = SyncWithMaterializer();
-        await sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(removed.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(removed.Id, () => _fixture.Sync.Registry.RemoveAsync(removed.Id), CancellationToken.None);
 
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
 
@@ -991,7 +992,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
         using var sync = SyncWithMaterializer();
 
-        _fixture.Sync.Registry.Remove(server.Id);
+        await _fixture.Sync.Registry.RemoveAsync(server.Id);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
 
         Assert.True(File.Exists(_fixture.Path_(server, "Film", "Film (2020)", "Film (2020) - A.strm")));
@@ -1007,7 +1008,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         var first = await _fixture.Sync.AddServerAsync("A", "films");
         await _fixture.SyncAndMaterializeAsync();
         using var sync = SyncWithMaterializer();
-        await sync.RemoveServerAsync(first.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(first.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(first.Id, () => _fixture.Sync.Registry.RemoveAsync(first.Id), CancellationToken.None);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
         Assert.False(Directory.Exists(_fixture.Path_(first)));
 
@@ -1029,7 +1030,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         var first = await _fixture.Sync.AddServerAsync("A", "films");
         await _fixture.SyncAndMaterializeAsync();
         using var sync = SyncWithMaterializer();
-        await sync.RemoveServerAsync(first.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(first.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(first.Id, () => _fixture.Sync.Registry.RemoveAsync(first.Id), CancellationToken.None);
 
         var again = await _fixture.Sync.AddServerAsync("A", "films");
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
@@ -1050,7 +1051,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         var first = await _fixture.Sync.AddServerAsync("A", "films");
         using var sync = SyncWithMaterializer();
         await sync.RunAsync(CancellationToken.None);
-        _fixture.Sync.Registry.Remove(first.Id);
+        await _fixture.Sync.Registry.RemoveAsync(first.Id);
         _fixture.Sync.Client.ServerId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9";
 
         var other = await _fixture.Sync.AddServerAsync("A", "films");
@@ -1071,7 +1072,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         using var sync = SyncWithMaterializer();
 
         _fixture.Sync.KeySource.Key = null;
-        await sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Sync.Registry.Remove(removed.Id)), CancellationToken.None);
+        await sync.RemoveServerAsync(removed.Id, () => _fixture.Sync.Registry.RemoveAsync(removed.Id), CancellationToken.None);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
 
         Assert.False(Directory.Exists(_fixture.Path_(removed, "Film", "Film (2020)")));
@@ -1087,7 +1088,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         await sync.RunAsync(CancellationToken.None);
         var before = _fixture.Files;
 
-        _fixture.Sync.Registry.Remove(server.Id);
+        await _fixture.Sync.Registry.RemoveAsync(server.Id);
         await sync.RunAsync(CancellationToken.None);
 
         Assert.Equal(before, _fixture.Files);

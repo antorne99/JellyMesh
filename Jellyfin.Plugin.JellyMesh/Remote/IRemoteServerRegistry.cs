@@ -43,12 +43,13 @@ public interface IRemoteServerRegistry
 
     /// <summary>
     /// Removes a server. Possible in any key state: it uses no credential, and it is how to
-    /// recover from a lost key.
+    /// recover from a lost key. Then ends the live login on the remote, if there is one, within a short time (413): if that
+    /// fails, its device stays listed there and the removal stands.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <returns>Whether the server existed.</returns>
     /// <exception cref="System.Exception">The configuration could not be saved. The server stays, unless the save was cancelled.</exception>
-    bool Remove(Guid serverId);
+    Task<bool> RemoveAsync(Guid serverId);
 
     /// <summary>
     /// Renames a server. Its ID, and so its folder, stay the same (Q5, Q38).

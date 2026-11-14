@@ -694,7 +694,7 @@ public class FederationAdminControllerTests
         using var fixture = new RegistryFixture(RemoteWithServerId());
         var controller = ControllerFor(fixture);
         var first = (await controller.AddServer(_request, CancellationToken.None)).Value!;
-        fixture.Registry.Remove(first.Id);
+        await fixture.Registry.RemoveAsync(first.Id);
 
         var again = await controller.AddServer(new AddServerRequest { Name = "Renamed", Url = TestValues.Url, Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
 

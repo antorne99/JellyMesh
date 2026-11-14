@@ -112,10 +112,10 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public Action? OnRemove { get; set; }
 
-    public bool Remove(Guid serverId)
+    public Task<bool> RemoveAsync(Guid serverId)
     {
         OnRemove?.Invoke();
-        return Servers.RemoveAll(server => server.Id == serverId) > 0;
+        return Task.FromResult(Servers.RemoveAll(server => server.Id == serverId) > 0);
     }
 
     public Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();

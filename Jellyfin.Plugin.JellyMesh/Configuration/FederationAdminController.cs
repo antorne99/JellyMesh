@@ -218,7 +218,7 @@ public class FederationAdminController : ControllerBase
                 {
                     stopping = true;
                     await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
-                    return _registry.Remove(serverId);
+                    return await _registry.RemoveAsync(serverId).ConfigureAwait(false);
                 },
                 cancellationToken).ConfigureAwait(false);
         }
