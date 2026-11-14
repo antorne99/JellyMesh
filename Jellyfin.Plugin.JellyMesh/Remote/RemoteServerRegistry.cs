@@ -146,7 +146,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             // A call that logged in since the save holds the live login: the remote revoked this one.
             if (runtime.Session is null && (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId)))
             {
-                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, server.Name).ConfigureAwait(false);
+                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, server.Name, freshMayBeRevoked: true).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
             }
         }
@@ -720,7 +720,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     // Ends a login that finished after the removal of its server, so that no device stays behind (413). The forgotten
     // runtime leaves too, with any other login it kept: if the removal is not saved, the next call builds a new one.
-    private async Task EndLoginOfRemovedAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName)
+    private async Task EndLoginOfRemovedAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, string serverName, bool freshMayBeRevoked = false)
     {
         RemoteSession? kept = null;
         if (runtime is not null)
@@ -741,6 +741,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         if (failures[1] == RemoteFailure.AuthenticationFailed)
         {
             failures[1] = RemoteFailure.None;
+        }
+
+        // The add logs in outside the gate, so a later login of this device, which its own path ends, can revoke it.
+        if (freshMayBeRevoked && failures[0] == RemoteFailure.AuthenticationFailed)
+        {
+            failures[0] = RemoteFailure.None;
         }
 
         foreach (var failure in failures.Where(failure => failure != RemoteFailure.None))

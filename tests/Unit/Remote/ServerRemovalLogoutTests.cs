@@ -408,10 +408,12 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
-    [Fact]
-    public async Task ARemovalRightAfterTheAddIsSavedLogsOutTheLoginOfTheAdd()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARemovalRightAfterTheAddIsSavedLogsOutTheLoginOfTheAdd(bool remoteRefusesRevokedTokens)
     {
-        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false, refuseRevoked: remoteRefusesRevokedTokens);
         using var fixture = new RegistryFixture(Remote());
         var store = new HookedStore(fixture.Store);
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
@@ -429,6 +431,7 @@ public class ServerRemovalLogoutTests
         Assert.Null(handler.Live);
         Assert.Empty(registry.GetServers());
         Assert.DoesNotContain(logger.Lines, line => line.Contains("stays listed", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("Could not end", StringComparison.Ordinal));
         AssertClean(logger);
     }
 
