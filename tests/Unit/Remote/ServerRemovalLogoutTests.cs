@@ -355,7 +355,64 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
-    // Runs a step once, just before or just after the next change of the configuration, or when its save fails.
+    [Fact]
+    public async Task ACredentialsLoginThatFailsAfterTheRemovalLeavesNoStateForTheServer()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, RefusingLoginClient(), new CapturingLogger<RemoteServerRegistry>());
+        Task<bool>? removal = null;
+        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        var update = await restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.True(await removal!);
+        Assert.Equal(RemoteFailure.AuthenticationFailed, update.Failure);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+    }
+
+    [Fact]
+    public async Task ACancelledCredentialsUpdateAfterTheRemovalLeavesNoStateForTheServer()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, new CapturingLogger<RemoteServerRegistry>());
+        Task<bool>? removal = null;
+        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, new CancellationToken(true)));
+
+        Assert.True(await removal!);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+    }
+
+    [Fact]
+    public async Task ACallWhoseLoginFailsAfterTheRemovalLeavesNoStateForTheServer()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, RefusingLoginClient(), new CapturingLogger<RemoteServerRegistry>());
+        Task<bool>? removal = null;
+        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        var call = await PingAsync(restarted, server.Id);
+
+        Assert.True(await removal!);
+        Assert.Equal(RemoteFailure.AuthenticationFailed, call.Failure);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+    }
+
+    private static JellyfinRemoteClient RefusingLoginClient() => new(new StubHttpClientFactory(new StubHandler(request => request.RequestUri!.AbsolutePath == "/Users/AuthenticateByName"
+        ? StubHandler.Status(HttpStatusCode.Unauthorized)
+        : StubHandler.StockServer_Respond(request))))
+    {
+        Delay = (_, _) => Task.CompletedTask
+    };
+
+    // Runs a step once, just before or just after the next change of the configuration, when its save fails, or after a read.
     private sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
     {
         public event EventHandler? SettingsChanged
@@ -370,7 +427,16 @@ public class ServerRemovalLogoutTests
 
         public Action? FailedUpdate { get; set; }
 
-        public T Read<T>(Func<PluginConfiguration, T> read) => inner.Read(read);
+        public Action? AfterRead { get; set; }
+
+        public T Read<T>(Func<PluginConfiguration, T> read)
+        {
+            var result = inner.Read(read);
+            var after = AfterRead;
+            AfterRead = null;
+            after?.Invoke();
+            return result;
+        }
 
         public void Update(Action<PluginConfiguration> update)
         {

@@ -57,6 +57,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     /// </summary>
     internal TimeSpan LogoutLimit { get; init; } = LogoutTimeout;
 
+    // Whether the registry holds in-memory state for a server. Read by tests.
+    internal bool HoldsStateFor(Guid serverId) => _runtimes.ContainsKey(serverId);
+
     /// <inheritdoc />
     public IReadOnlyList<RemoteServerInfo> GetServers()
     {
@@ -184,7 +187,17 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         // Under the login gate, as in GetSessionAsync: the remote keeps only the last login, so that must be the one kept (413).
         var endpoint = EndpointOf(serverId, stored.Url);
         var runtime = RuntimeOf(serverId);
-        await runtime.LoginGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await runtime.LoginGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            DropIfRemoved(serverId, runtime);
+            throw;
+        }
+
+        var kept = false;
         try
         {
             var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
@@ -235,9 +248,16 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
             }
+
+            kept = true;
         }
         finally
         {
+            if (!kept)
+            {
+                DropIfRemoved(serverId, runtime);
+            }
+
             runtime.LoginGate.Release();
         }
 
@@ -541,6 +561,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
             if (credentials is null)
             {
+                DropIfRemoved(server.Id, runtime);
                 return RemoteResult.Fail<RemoteSession>(RemoteFailure.Suspended);
             }
 
@@ -548,6 +569,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             if (login.Value is not { } fresh)
             {
                 runtime.Session = null;
+                DropIfRemoved(server.Id, runtime);
                 return login;
             }
 
@@ -661,6 +683,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         catch (OperationCanceledException) when (limit.IsCancellationRequested)
         {
             return RemoteFailure.Timeout;
+        }
+    }
+
+    // Lets go of the state of a server removed meanwhile, unless it holds a login that the removal still ends (413).
+    private void DropIfRemoved(Guid serverId, ServerRuntime runtime)
+    {
+        if (runtime.Session is null && !IsConfigured(serverId))
+        {
+            _runtimes.TryRemove(KeyValuePair.Create(serverId, runtime));
         }
     }
 
