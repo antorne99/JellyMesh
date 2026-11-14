@@ -127,6 +127,9 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
     }
 
     /// <inheritdoc />
+    public bool Exists => File.Exists(_path);
+
+    /// <inheritdoc />
     public Task SaveAsync(IReadOnlyCollection<KeptTitle> titles, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(titles);

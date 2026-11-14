@@ -85,6 +85,10 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IServerStubRenamer, ServerStubRenamer>();
         serviceCollection.AddSingleton<IServerRenamer, ServerRenamer>();
         serviceCollection.AddSingleton<IMergeWatchStateCarry, MergeWatchStateCarry>();
+        serviceCollection.AddSingleton<IKeptWatchStateStore>(provider => new KeptWatchStateStore(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<KeptWatchStateStore>>()));
+        serviceCollection.AddSingleton<IWatchStateKeeper, WatchStateKeeper>();
         serviceCollection.AddSingleton<ISyncHistory>(provider => new SyncHistoryStore(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<SyncHistoryStore>>()));

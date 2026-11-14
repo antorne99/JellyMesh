@@ -11,6 +11,11 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface IKeptWatchStateStore
 {
     /// <summary>
+    /// Gets a value indicating whether the file exists, so that a server that never removed one makes none.
+    /// </summary>
+    bool Exists { get; }
+
+    /// <summary>
     /// Saves the titles in one transaction, each replacing the record of the same old item.
     /// </summary>
     /// <param name="titles">The titles with their users.</param>

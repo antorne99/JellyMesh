@@ -31,6 +31,7 @@ public sealed class StubCleanupTaskTests : IDisposable
     private readonly Mock<IVersionLinker> _linker = new();
     private readonly Mock<ILayoutMigration> _migration = new();
     private readonly Mock<IServerStubRenamer> _renames = new();
+    private readonly Mock<IWatchStateKeeper> _keeper = new();
     private readonly CapturingLogger<StubCleanupTask> _logger = new();
     private readonly List<string> _calls = [];
     private readonly User _anna = new("anna", "auth", "reset");
@@ -66,7 +67,8 @@ public sealed class StubCleanupTaskTests : IDisposable
         _logger,
         _linker.Object,
         _migration.Object,
-        _renames.Object);
+        _renames.Object,
+        _keeper.Object);
 
     private Task RunAsync() => Task().Run(new Progress<double>(), CancellationToken.None);
 
@@ -380,6 +382,30 @@ public sealed class StubCleanupTaskTests : IDisposable
         await RunAsync();
 
         Assert.Equal(["link", "migration"], seen);
+    }
+
+    // Row 412: the new stubs have their items and versions by now.
+    [Fact]
+    public async Task AfterTheLink_TheKeptWatchStateComesBack_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("link"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _keeper
+            .Setup(keeper => keeper.RestoreAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken token) =>
+            {
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add("restore");
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["link", "restore"], seen);
     }
 
     [Fact]
