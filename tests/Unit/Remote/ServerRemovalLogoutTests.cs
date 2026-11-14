@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Security;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Remote;
@@ -585,14 +586,60 @@ public class ServerRemovalLogoutTests
         handler.OnLogin = null;
         fixture.Store.SaveFailure = null;
         fixture.KeySource.Key = TestValues.Key;
-        if (!saveFails)
-        {
-            Assert.Equal(stored, fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials));
-        }
+        Assert.Equal(stored, fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials));
 
         var used = await registry.RunWithSessionAsync(server.Id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
         Assert.Equal(TestValues.Token + "1", used.Value);
         AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task NewCredentialsThatCannotBeSavedLeaveTheStoredOnesForTheNextLogin()
+    {
+        const string RemoteId = "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b";
+        var withServerId = false;
+        InMemoryConfigurationStore? store = null;
+        using var fixture = new RegistryFixture(new StubHandler(request =>
+        {
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case LoginPath when withServerId:
+                    // The login of the new credentials returns a Server Id, then the save fails.
+                    store!.SaveFailure = new IOException();
+                    return StubHandler.Json(TestValues.LoginJson.Replace("{\"AccessToken\"", "{\"ServerId\":\"" + RemoteId + "\",\"AccessToken\"", StringComparison.Ordinal));
+                case LogoutPath:
+                    return StubHandler.Status(HttpStatusCode.NoContent);
+                default:
+                    return StubHandler.StockServer_Respond(request);
+            }
+        }));
+        store = fixture.Store;
+        var server = await fixture.AddServerAsync();
+        var stored = fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials);
+        withServerId = true;
+
+        await Assert.ThrowsAsync<IOException>(() => fixture.Registry.UpdateCredentialsAsync(server.Id, new RemoteCredentials { Username = "other-user", Password = "other-pass" }, CancellationToken.None));
+
+        Assert.Equal(stored, fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials));
+        Assert.Equal(string.Empty, fixture.Store.Read(config => config.Servers.Single().JellyfinServerId));
+        Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LogoutPath);
+
+        // The kept login gets a 401 at its next call and logs in again with the stored credentials.
+        withServerId = false;
+        fixture.Store.SaveFailure = null;
+        fixture.Handler.Requests.Clear();
+        var attempts = 0;
+        var call = await fixture.Registry.RunWithSessionAsync(
+            server.Id,
+            (_, _, _) => Task.FromResult(++attempts == 1 ? RemoteResult.Fail<int>(RemoteFailure.AuthenticationFailed) : RemoteResult.Success(1)),
+            CancellationToken.None);
+
+        Assert.True(call.IsSuccess);
+        var login = Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LoginPath);
+        Assert.Contains(TestValues.Username, login.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("other-user", login.Body, StringComparison.Ordinal);
+        Assert.All(fixture.Logger.Lines, line => Assert.DoesNotContain("other-pass", line, StringComparison.Ordinal));
+        AssertClean(fixture.Logger);
     }
 
     [Fact]

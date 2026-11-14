@@ -225,17 +225,21 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             var found = false;
             var heldElsewhere = false;
             string? storedId = null;
+            string? previous = null;
+            string? savedId = null;
             try
             {
                 _store.Update(config =>
                 {
                     if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
                     {
+                        previous = server.EncryptedCredentials;
                         server.EncryptedCredentials = encrypted;
                         storedId = server.JellyfinServerId;
                         if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
                         {
                             heldElsewhere = !TryStoreServerId(config, server, remoteId);
+                            savedId = heldElsewhere ? null : remoteId;
                         }
 
                         found = true;
@@ -244,6 +248,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
             catch
             {
+                // Memory goes back to what is saved before the logout, so no call picks up the unsaved credentials.
+                if (previous is not null)
+                {
+                    RestoreCredentials(serverId, stored.Name, encrypted, previous, savedId);
+                }
+
                 await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 throw;
             }
@@ -517,6 +527,29 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogError("Cannot save the configuration again after a failed removal: {Error}", exception.GetType().Name);
+        }
+    }
+
+    // Puts back in memory the credentials and Server Id of a server whose new credentials were not saved (419).
+    private void RestoreCredentials(Guid serverId, string serverName, string unsaved, string previous, string? unsavedServerId)
+    {
+        try
+        {
+            _store.Update(config =>
+            {
+                if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server && server.EncryptedCredentials == unsaved)
+                {
+                    server.EncryptedCredentials = previous;
+                    if (unsavedServerId is not null && server.JellyfinServerId == unsavedServerId)
+                    {
+                        server.JellyfinServerId = string.Empty;
+                    }
+                }
+            });
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot save the configuration again after unsaved credentials of remote server {ServerName}: {Error}", LogText.Clean(serverName), exception.GetType().Name);
         }
     }
 
