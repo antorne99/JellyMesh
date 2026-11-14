@@ -592,6 +592,50 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
+    [Fact]
+    public async Task ACancelledCredentialsUpdateDoesNotDropARuntimeThatKeptALoginMeanwhile()
+    {
+        using var handler = new IssuingLoginHandler();
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, client, logger);
+        var call = PingAsync(restarted, server.Id);
+        await handler.FirstLoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var cancel = new CancellationTokenSource();
+        var update = restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, cancel.Token);
+        var removalSaved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<bool>? removal = null;
+        store.BeforeRead = () =>
+        {
+            // While the cancelled update lets go of the server: the call keeps its login, then the removal is saved.
+            handler.ReleaseFirstLogin.SetResult();
+            SpinWait.SpinUntil(() => call.IsCompleted, TimeSpan.FromSeconds(5));
+            store.AfterUpdate = () =>
+            {
+                removalSaved.SetResult();
+                proceed.Task.Wait(TimeSpan.FromSeconds(5));
+            };
+            removal = Task.Run(() => restarted.RemoveAsync(server.Id));
+            SpinWait.SpinUntil(() => removalSaved.Task.IsCompleted, TimeSpan.FromSeconds(5));
+        };
+
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => update.WaitAsync(TimeSpan.FromSeconds(5)));
+        proceed.SetResult();
+
+        Assert.True((await call.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(1, handler.Logins);
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        Assert.False(restarted.HoldsStateFor(server.Id));
+        AssertClean(logger);
+    }
+
     private static JellyfinRemoteClient RefusingLoginClient() => new(new StubHttpClientFactory(new StubHandler(request => request.RequestUri!.AbsolutePath == "/Users/AuthenticateByName"
         ? StubHandler.Status(HttpStatusCode.Unauthorized)
         : StubHandler.StockServer_Respond(request))))
@@ -599,7 +643,7 @@ public class ServerRemovalLogoutTests
         Delay = (_, _) => Task.CompletedTask
     };
 
-    // Runs a step once, just before or just after the next change of the configuration, when its save fails, or after a read.
+    // Runs a step once, just before or just after the next change of the configuration, when its save fails, or around a read.
     private sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
     {
         public event EventHandler? SettingsChanged
@@ -616,8 +660,13 @@ public class ServerRemovalLogoutTests
 
         public Action? AfterRead { get; set; }
 
+        public Action? BeforeRead { get; set; }
+
         public T Read<T>(Func<PluginConfiguration, T> read)
         {
+            var before = BeforeRead;
+            BeforeRead = null;
+            before?.Invoke();
             var result = inner.Read(read);
             var after = AfterRead;
             AfterRead = null;

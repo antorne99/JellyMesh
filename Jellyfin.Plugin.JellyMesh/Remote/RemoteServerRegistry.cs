@@ -785,10 +785,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Lets go of the state of a server removed meanwhile, unless it holds a login that the removal still ends (413).
+    // Lets go of the state of a server removed meanwhile, unless it holds a login that the removal still ends (413). The
+    // runtime is forgotten in the same step as the check, so a login kept later is ended by its own path.
     private void DropIfRemoved(Guid serverId, ServerRuntime runtime)
     {
-        if (runtime.Session is null && !IsConfigured(serverId))
+        if (!IsConfigured(serverId) && runtime.TryForgetIfIdle())
         {
             _runtimes.TryRemove(KeyValuePair.Create(serverId, runtime));
         }
@@ -963,6 +964,20 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 }
 
                 return !_forgotten;
+            }
+        }
+
+        // Forgets the runtime only if it holds no login, in one step: a later login is then not kept.
+        public bool TryForgetIfIdle()
+        {
+            lock (_gate)
+            {
+                if (_session is null)
+                {
+                    _forgotten = true;
+                }
+
+                return _forgotten;
             }
         }
 
