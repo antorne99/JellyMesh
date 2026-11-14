@@ -153,9 +153,10 @@ public class RemoteServerRegistryTests
             },
             CancellationToken.None);
 
-        // The login of the retry comes after the removal, so it is ended at once (413).
+        // The retry finds the server removed under the login gate, so it does not log in again (413).
         Assert.Equal(RemoteFailure.UnknownServer, result.Failure);
-        Assert.Equal(2, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Sessions/Logout"));
+        Assert.Equal(1, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Users/AuthenticateByName"));
+        Assert.Equal(1, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Sessions/Logout"));
     }
 
     [Theory]

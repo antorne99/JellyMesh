@@ -128,20 +128,28 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var added = false;
         try
         {
-            _store.Update(config =>
-            {
-                standing = remoteId is null ? null : ConfiguredAs(config, remoteId);
-                if (standing is null)
+            // A failed save takes the server out of memory under the same lock, so no call sees it (419).
+            _store.Update(
+                config =>
                 {
-                    config.Servers.Add(server);
-                    added = true;
-                }
-            });
+                    standing = remoteId is null ? null : ConfiguredAs(config, remoteId);
+                    if (standing is null)
+                    {
+                        config.Servers.Add(server);
+                        added = true;
+                    }
+                },
+                config =>
+                {
+                    if (added)
+                    {
+                        config.Servers.Remove(server);
+                    }
+                });
         }
         catch (Exception exception)
         {
-            // The store keeps the change in memory when the save fails: the server leaves it, then the login ends (419).
-            await EndUnsavedAddAsync(server, endpoint, login.Value!, added, exception).ConfigureAwait(false);
+            await EndUnsavedAddAsync(server, endpoint, login.Value!, exception).ConfigureAwait(false);
             throw;
         }
 
@@ -196,7 +204,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         var stored = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
-            ? new StoredServer(server.Id, server.Name, server.Url, server.EncryptedCredentials)
+            ? new StoredServer(server.Id, server.Name, server.Url)
             : null);
         if (stored is null)
         {
@@ -241,31 +249,41 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             string? savedId = null;
             try
             {
-                _store.Update(config =>
-                {
-                    if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
+                // A failed save puts the saved credentials, and no Server Id this change wrote, back under the same lock,
+                // so no call or removal picks up the unsaved ones (419).
+                _store.Update(
+                    config =>
                     {
-                        previous = server.EncryptedCredentials;
-                        server.EncryptedCredentials = encrypted;
-                        storedId = server.JellyfinServerId;
-                        if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
+                        if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
                         {
-                            heldElsewhere = !TryStoreServerId(config, server, remoteId);
-                            savedId = heldElsewhere ? null : remoteId;
-                        }
+                            previous = server.EncryptedCredentials;
+                            server.EncryptedCredentials = encrypted;
+                            storedId = server.JellyfinServerId;
+                            if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
+                            {
+                                heldElsewhere = !TryStoreServerId(config, server, remoteId);
+                                savedId = heldElsewhere ? null : remoteId;
+                            }
 
-                        found = true;
-                    }
-                });
+                            found = true;
+                        }
+                    },
+                    config =>
+                    {
+                        if (previous is not null
+                            && config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
+                            && server.EncryptedCredentials == encrypted)
+                        {
+                            server.EncryptedCredentials = previous;
+                            if (savedId is not null && server.JellyfinServerId == savedId)
+                            {
+                                server.JellyfinServerId = string.Empty;
+                            }
+                        }
+                    });
             }
             catch
             {
-                // Memory goes back to what is saved before the logout, so no call picks up the unsaved credentials.
-                if (previous is not null)
-                {
-                    RestoreCredentials(serverId, stored.Name, encrypted, previous, savedId);
-                }
-
                 await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 throw;
             }
@@ -312,9 +330,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         RemoteServerConfig? removed = null;
         var position = -1;
-        try
-        {
-            _store.Update(config =>
+
+        // A failed save puts the server back in memory under the same lock: the file still has it.
+        _store.Update(
+            config =>
             {
                 removed = config.Servers.FirstOrDefault(candidate => candidate.Id == serverId);
                 if (removed is not null)
@@ -323,13 +342,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                     config.Servers.RemoveAt(position);
                     HoldLibraries(config, removed);
                 }
+            },
+            config =>
+            {
+                if (removed is not null && position >= 0 && !config.Servers.Contains(removed))
+                {
+                    config.ReleaseHeldAutomaticLibraries(removed.Id, removed.AutomaticLibraryRegistry);
+                    config.Servers.Insert(Math.Min(position, config.Servers.Count), removed);
+                }
             });
-        }
-        catch (Exception exception) when (removed is not null && exception is not OperationCanceledException)
-        {
-            Restore(removed, position);
-            throw;
-        }
 
         if (removed is null)
         {
@@ -491,7 +512,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var server = _store.Read(config => config.Servers
             .Where(candidate => candidate.Id == serverId)
-            .Select(candidate => new StoredServer(candidate.Id, candidate.Name, candidate.Url, candidate.EncryptedCredentials))
+            .Select(candidate => new StoredServer(candidate.Id, candidate.Name, candidate.Url))
             .FirstOrDefault());
         if (server is null)
         {
@@ -522,46 +543,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         foreach (var runtime in _runtimes.Values)
         {
             runtime.Dispose();
-        }
-    }
-
-    // Puts back in memory a server whose removal was not saved: the file still has it.
-    private void Restore(RemoteServerConfig server, int position)
-    {
-        try
-        {
-            _store.Update(config =>
-            {
-                config.ReleaseHeldAutomaticLibraries(server.Id, server.AutomaticLibraryRegistry);
-                config.Servers.Insert(Math.Min(position, config.Servers.Count), server);
-            });
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            _logger.LogError("Cannot save the configuration again after a failed removal: {Error}", exception.GetType().Name);
-        }
-    }
-
-    // Puts back in memory the credentials and Server Id of a server whose new credentials were not saved (419).
-    private void RestoreCredentials(Guid serverId, string serverName, string unsaved, string previous, string? unsavedServerId)
-    {
-        try
-        {
-            _store.Update(config =>
-            {
-                if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server && server.EncryptedCredentials == unsaved)
-                {
-                    server.EncryptedCredentials = previous;
-                    if (unsavedServerId is not null && server.JellyfinServerId == unsavedServerId)
-                    {
-                        server.JellyfinServerId = string.Empty;
-                    }
-                }
-            });
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            _logger.LogError("Cannot save the configuration again after unsaved credentials of remote server {ServerName}: {Error}", LogText.Clean(serverName), exception.GetType().Name);
         }
     }
 
@@ -620,7 +601,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Success<RemoteSession>(current);
             }
 
-            var credentials = UnprotectOrNull(server.Id, server.EncryptedCredentials);
+            // Read again under the gate: the copy taken before it may be stale.
+            var encrypted = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id)?.EncryptedCredentials);
+            if (encrypted is null)
+            {
+                DropIfRemoved(server.Id, runtime);
+                return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
+            }
+
+            var credentials = UnprotectOrNull(server.Id, encrypted);
             if (credentials is null)
             {
                 DropIfRemoved(server.Id, runtime);
@@ -776,29 +765,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Takes an add that was not saved out of memory and ends its login, with any login a call kept meanwhile (419).
-    private async Task EndUnsavedAddAsync(RemoteServerConfig server, RemoteEndpoint endpoint, RemoteSession login, bool added, Exception error)
+    // Ends the login of an add that was not saved, with any login a call kept meanwhile (419).
+    private async Task EndUnsavedAddAsync(RemoteServerConfig server, RemoteEndpoint endpoint, RemoteSession login, Exception error)
     {
         var name = LogText.Clean(server.Name);
         _logger.LogWarning("Cannot save new remote server {ServerName}: {Error}; its login is ended", name, error.GetType().Name);
-        if (added)
-        {
-            try
-            {
-                _store.Update(config =>
-                {
-                    if (config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id) is { } unsaved)
-                    {
-                        config.Servers.Remove(unsaved);
-                    }
-                });
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                _logger.LogError("Cannot save the configuration again after a failed add: {Error}", exception.GetType().Name);
-            }
-        }
-
         var runtime = _runtimes.TryGetValue(server.Id, out var held) ? held : null;
         foreach (var failure in await EndFreshAndKeptAsync(server.Id, runtime, endpoint, login, freshMayBeRevoked: true).ConfigureAwait(false))
         {
@@ -977,7 +948,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     private ServerRuntime RuntimeOf(Guid serverId) => _runtimes.GetOrAdd(serverId, _ => new ServerRuntime());
 
-    private sealed record StoredServer(Guid Id, string Name, string Url, string EncryptedCredentials);
+    // The credentials are not copied: a login reads them under the login gate.
+    private sealed record StoredServer(Guid Id, string Name, string Url);
 
     private sealed record SessionAttempt<T>(RemoteResult<T> Attempt, RemoteSession? Session);
 

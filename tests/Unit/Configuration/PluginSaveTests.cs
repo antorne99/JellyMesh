@@ -377,6 +377,40 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Empty(logger.Lines);
     }
 
+    [Fact]
+    public void AChangeWhoseSaveFailsIsRolledBackUnderTheLockAndRethrown()
+    {
+        var serializer = new RealXmlSerializer();
+        var plugin = new Plugin(_paths, serializer, new CapturingLogger<Plugin>());
+        var server = Assert.Single(plugin.ReadConfiguration(config => config.Servers.ToList()));
+        serializer.SaveFailure = new IOException();
+        var rolledBack = 0;
+
+        var thrown = Assert.Throws<IOException>(() => plugin.ChangeConfiguration(
+            config => server.EncryptedCredentials = "unsaved",
+            config =>
+            {
+                rolledBack++;
+                server.EncryptedCredentials = "ciphertext-sentinel";
+            }));
+
+        Assert.Same(serializer.SaveFailure, thrown);
+        Assert.Equal(1, rolledBack);
+        Assert.Equal("ciphertext-sentinel", plugin.ReadConfiguration(config => config.Servers.Single().EncryptedCredentials));
+    }
+
+    [Fact]
+    public void AChangeWithoutARollbackStaysInMemoryWhenItsSaveFails()
+    {
+        var serializer = new RealXmlSerializer();
+        var plugin = new Plugin(_paths, serializer, new CapturingLogger<Plugin>());
+        serializer.SaveFailure = new IOException();
+
+        Assert.Throws<IOException>(() => plugin.ChangeConfiguration(config => config.Servers.Clear()));
+
+        Assert.Empty(plugin.ReadConfiguration(config => config.Servers.ToList()));
+    }
+
     public void Dispose() => Directory.Delete(_folder, true);
 
     private Plugin LoadWith(string? federatedRoot, CapturingLogger<Plugin> logger)
@@ -384,12 +418,19 @@ public sealed class PluginSaveTests : IDisposable
 
     private sealed class RealXmlSerializer : IXmlSerializer
     {
+        public Exception? SaveFailure { get; set; }
+
         public object? DeserializeFromStream(Type type, Stream stream) => new XmlSerializer(type).Deserialize(stream);
 
         public void SerializeToStream(object obj, Stream stream) => new XmlSerializer(obj.GetType()).Serialize(stream, obj);
 
         public void SerializeToFile(object obj, string file)
         {
+            if (SaveFailure is not null)
+            {
+                throw SaveFailure;
+            }
+
             using var stream = File.Create(file);
             SerializeToStream(obj, stream);
         }

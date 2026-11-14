@@ -92,6 +92,19 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 
         Saves++;
     }
+
+    public void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback)
+    {
+        try
+        {
+            Update(update);
+        }
+        catch
+        {
+            rollback(Configuration);
+            throw;
+        }
+    }
 }
 
 internal sealed class FixedLegacyKeySource : ILegacySecretKeySource
