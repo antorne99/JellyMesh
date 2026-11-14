@@ -392,6 +392,44 @@ public class ServerRemovalLogoutTests
     }
 
     [Fact]
+    public async Task ACancelledCredentialsUpdateDuringTheRemovalLeavesTheLiveLoginToIt()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, new CapturingLogger<RemoteServerRegistry>());
+        var server = (await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None)).Value!;
+        var removalSaved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var updateEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<bool>? removal = null;
+        store.AfterRead = () =>
+        {
+            // The update ends after the removal is saved and before the removal takes the server's login.
+            store.AfterUpdate = () =>
+            {
+                removalSaved.SetResult();
+                SpinWait.SpinUntil(() => updateEnded.Task.IsCompleted, TimeSpan.FromSeconds(5));
+            };
+            removal = Task.Run(() => registry.RemoveAsync(server.Id));
+            SpinWait.SpinUntil(() => removalSaved.Task.IsCompleted, TimeSpan.FromSeconds(5));
+        };
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, new CancellationToken(true)));
+        }
+        finally
+        {
+            updateEnded.SetResult();
+        }
+
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal([TestValues.Token + "1"], handler.LoggedOut);
+        Assert.Null(handler.Live);
+    }
+
+    [Fact]
     public async Task ACallWhoseLoginFailsAfterTheRemovalLeavesNoStateForTheServer()
     {
         using var fixture = new RegistryFixture(Remote());
