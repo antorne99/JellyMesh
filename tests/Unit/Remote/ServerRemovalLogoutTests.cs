@@ -520,6 +520,75 @@ public class ServerRemovalLogoutTests
         Assert.False(restarted.HoldsStateFor(server.Id));
     }
 
+    // Decision 419: new credentials that log in but cannot be saved end that login, and the kept one is left alone.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NewCredentialsThatCannotBeSavedLogOutTheirLoginAndLeaveTheKeptOne(bool saveFails)
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger);
+        var server = (await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None)).Value!;
+        var stored = fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials);
+        handler.OnLogin = () =>
+        {
+            // After the login, the key goes or the save fails.
+            if (saveFails)
+            {
+                fixture.Store.SaveFailure = new IOException();
+            }
+            else
+            {
+                fixture.KeySource.Key = null;
+            }
+        };
+
+        if (saveFails)
+        {
+            await Assert.ThrowsAsync<IOException>(() => registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None));
+        }
+        else
+        {
+            Assert.Equal(RemoteFailure.Suspended, (await registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None)).Failure);
+        }
+
+        Assert.Equal([TestValues.Token + "2"], handler.LoggedOut);
+        handler.OnLogin = null;
+        fixture.Store.SaveFailure = null;
+        fixture.KeySource.Key = TestValues.Key;
+        if (!saveFails)
+        {
+            Assert.Equal(stored, fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials));
+        }
+
+        var used = await registry.RunWithSessionAsync(server.Id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
+        Assert.Equal(TestValues.Token + "1", used.Value);
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task NewCredentialsThatCannotBeSavedCutTheLogoutOfTheirLoginAtTheLimit()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        using var handler = new HangingHandler(LogoutPath) { OnLogin = () => fixture.KeySource.Key = null };
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromMilliseconds(200) };
+        var watch = Stopwatch.StartNew();
+
+        var update = await registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.Suspended, update.Failure);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), watch.Elapsed.ToString());
+        Assert.True(handler.Started);
+        Assert.Contains(logger.Lines, line => line.Contains("Friend", StringComparison.Ordinal) && line.Contains(nameof(RemoteFailure.Timeout), StringComparison.Ordinal));
+        AssertClean(logger);
+    }
+
     private static JellyfinRemoteClient RefusingLoginClient() => new(new StubHttpClientFactory(new StubHandler(request => request.RequestUri!.AbsolutePath == "/Users/AuthenticateByName"
         ? StubHandler.Status(HttpStatusCode.Unauthorized)
         : StubHandler.StockServer_Respond(request))))
@@ -599,8 +668,15 @@ public class ServerRemovalLogoutTests
 
         public bool Started => Volatile.Read(ref _started) == 1;
 
+        public Action? OnLogin { get; init; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath == LoginPath)
+            {
+                OnLogin?.Invoke();
+            }
+
             if (request.RequestUri!.AbsolutePath == path)
             {
                 Volatile.Write(ref _started, 1);
@@ -625,7 +701,7 @@ public class ServerRemovalLogoutTests
         {
             switch (request.RequestUri!.AbsolutePath)
             {
-                case "/Users/AuthenticateByName":
+                case LoginPath:
                     LoginArrived.TrySetResult();
                     await ReleaseLogin.Task.WaitAsync(cancellationToken);
                     break;
@@ -650,6 +726,9 @@ public class ServerRemovalLogoutTests
         public TaskCompletionSource FirstLoginArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource ReleaseFirstLogin { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Runs at each login, before its answer.
+        public Action? OnLogin { get; set; }
 
         public int Logins
         {
@@ -688,7 +767,7 @@ public class ServerRemovalLogoutTests
         {
             switch (request.RequestUri!.AbsolutePath)
             {
-                case "/Users/AuthenticateByName":
+                case LoginPath:
                     string token;
                     bool first;
                     lock (_gate)
@@ -699,6 +778,7 @@ public class ServerRemovalLogoutTests
                         first = holdFirstLogin && _logins == 1;
                     }
 
+                    OnLogin?.Invoke();
                     if (first)
                     {
                         FirstLoginArrived.TrySetResult();

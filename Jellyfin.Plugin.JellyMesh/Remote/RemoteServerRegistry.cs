@@ -207,29 +207,40 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
             }
 
+            // New credentials that cannot be saved end their login; the kept one stays and logs in again at its 401 (419).
             var encrypted = _vault.Protect(serverId, credentials);
             if (encrypted is null)
             {
+                await EndUnsavedLoginAsync(endpoint, login.Value!, stored.Name).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
             }
 
             var found = false;
             var heldElsewhere = false;
             string? storedId = null;
-            _store.Update(config =>
+            try
             {
-                if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
+                _store.Update(config =>
                 {
-                    server.EncryptedCredentials = encrypted;
-                    storedId = server.JellyfinServerId;
-                    if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
+                    if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
                     {
-                        heldElsewhere = !TryStoreServerId(config, server, remoteId);
-                    }
+                        server.EncryptedCredentials = encrypted;
+                        storedId = server.JellyfinServerId;
+                        if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
+                        {
+                            heldElsewhere = !TryStoreServerId(config, server, remoteId);
+                        }
 
-                    found = true;
-                }
-            });
+                        found = true;
+                    }
+                });
+            }
+            catch
+            {
+                await EndUnsavedLoginAsync(endpoint, login.Value!, stored.Name).ConfigureAwait(false);
+                throw;
+            }
+
             if (!found)
             {
                 await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, stored.Name).ConfigureAwait(false);
@@ -735,6 +746,16 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         foreach (var failure in failures.Where(failure => failure != RemoteFailure.None))
         {
             _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
+    }
+
+    // Ends a login whose credentials could not be saved, within the logout limit (419).
+    private async Task EndUnsavedLoginAsync(RemoteEndpoint endpoint, RemoteSession session, string serverName)
+    {
+        var failure = await LogOutWithinLimitAsync(endpoint, session).ConfigureAwait(false);
+        if (failure != RemoteFailure.None)
+        {
+            _logger.LogWarning("Could not end the login with unsaved credentials on remote server {ServerName}: {Failure}; it may stay open there until the next login", LogText.Clean(serverName), failure);
         }
     }
 
