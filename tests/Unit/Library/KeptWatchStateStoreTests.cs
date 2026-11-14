@@ -103,6 +103,22 @@ public sealed class KeptWatchStateStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SavingTheSameOldItemAgainKeepsItsFirstSavedDate()
+    {
+        var oldItem = Guid.NewGuid();
+        var store = Store();
+        await store.SaveAsync([Film(oldItem, "Film", Watched(_anna))], CancellationToken.None);
+
+        await store.SaveAsync([Film(oldItem, "Film", Watched(_anna, 3)) with { SavedUtc = _saved.AddDays(30) }], CancellationToken.None);
+
+        var read = Assert.Single(await store.ReadAsync(CancellationToken.None));
+        Assert.Equal(3, Assert.Single(read.Users).PlayCount);
+        Assert.Equal(_saved, read.SavedUtc);
+        Assert.Equal(1, await store.PruneAsync(_saved.AddDays(1), new HashSet<Guid> { _anna }, CancellationToken.None));
+        Assert.Empty(await store.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ForgettingTheLastUserOfATitleDeletesTheTitle()
     {
         var store = Store();

@@ -61,6 +61,8 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
         PRAGMA user_version = 1;
         """;
 
+    private const string SelectSavedOfOldItem = "SELECT SavedUtc FROM Titles WHERE OldItemId = $old;";
+
     private const string DeleteTitleOfOldItem = """
         DELETE FROM UserStates WHERE TitleId IN (SELECT Id FROM Titles WHERE OldItemId = $old);
         DELETE FROM Titles WHERE OldItemId = $old;
@@ -138,8 +140,10 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
             {
                 foreach (var title in titles)
                 {
+                    // A record saved again keeps its first date, so its 90 days are not reset.
+                    var saved = SavedOf(connection, transaction, title.OldItemId) ?? ToUtc(title.SavedUtc).Ticks;
                     Execute(connection, transaction, DeleteTitleOfOldItem, ("$old", Text(title.OldItemId)));
-                    var id = InsertTitleRow(connection, transaction, title);
+                    var id = InsertTitleRow(connection, transaction, title, saved);
                     foreach (var user in title.Users)
                     {
                         Execute(
@@ -273,7 +277,14 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
         return command.ExecuteNonQuery();
     }
 
-    private static long InsertTitleRow(SqliteConnection connection, SqliteTransaction transaction, KeptTitle title)
+    private static long? SavedOf(SqliteConnection connection, SqliteTransaction transaction, Guid oldItemId)
+    {
+        using var command = Command(connection, transaction, SelectSavedOfOldItem);
+        command.Parameters.AddWithValue("$old", Text(oldItemId));
+        return command.ExecuteScalar() is long ticks ? ticks : null;
+    }
+
+    private static long InsertTitleRow(SqliteConnection connection, SqliteTransaction transaction, KeptTitle title, long savedTicks)
     {
         using var command = Command(connection, transaction, InsertTitle);
         foreach (var (name, value) in new (string, object?)[]
@@ -294,7 +305,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
             ("$season", title.SeasonNumber),
             ("$episode", title.EpisodeNumber),
             ("$episodeEnd", title.EpisodeNumberEnd),
-            ("$saved", ToUtc(title.SavedUtc).Ticks)
+            ("$saved", savedTicks)
         })
         {
             command.Parameters.AddWithValue(name, value ?? DBNull.Value);
