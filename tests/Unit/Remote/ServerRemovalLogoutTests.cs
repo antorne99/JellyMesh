@@ -540,11 +540,13 @@ public class ServerRemovalLogoutTests
         var store = new HookedStore(fixture.Store);
         using var restarted = new RemoteServerRegistry(store, fixture.Vault, RefusingLoginClient(), new CapturingLogger<RemoteServerRegistry>());
         Task<bool>? removal = null;
-        store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
+
+        // The removal starts once the call has read its credentials under the login gate.
+        store.AfterRead = () => store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
 
         var call = await PingAsync(restarted, server.Id);
 
-        Assert.True(await removal!);
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(RemoteFailure.AuthenticationFailed, call.Failure);
         Assert.False(restarted.HoldsStateFor(server.Id));
     }
@@ -737,6 +739,56 @@ public class ServerRemovalLogoutTests
         await Assert.ThrowsAsync<IOException>(() => removal!.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(stored, fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials));
         AssertClean(logger);
+    }
+
+    // The login reads the credentials under the login gate, not from a copy taken before it.
+    [Fact]
+    public async Task ALoginUsesTheCredentialsStoredWhenItTakesTheGate()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var store = new HookedStore(fixture.Store);
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(store, fixture.Vault, fixture.Client, logger);
+        var other = fixture.Vault.Protect(server.Id, OtherCredentials)!;
+        store.AfterRead = () => fixture.Store.Configuration.Servers.Single().EncryptedCredentials = other;
+        fixture.Handler.Requests.Clear();
+
+        Assert.True((await PingAsync(restarted, server.Id)).IsSuccess);
+
+        var login = Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LoginPath);
+        Assert.Contains(OtherCredentials.Username, login.Body, StringComparison.Ordinal);
+        AssertClean(logger);
+    }
+
+    // As above, for the login again after a 401.
+    [Fact]
+    public async Task ALoginAfterA401UsesTheCredentialsStoredWhenItTakesTheGate()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var other = fixture.Vault.Protect(server.Id, OtherCredentials)!;
+        fixture.Handler.Requests.Clear();
+        var attempts = 0;
+
+        var call = await fixture.Registry.RunWithSessionAsync(
+            server.Id,
+            (_, _, _) =>
+            {
+                if (++attempts > 1)
+                {
+                    return Task.FromResult(RemoteResult.Success(1));
+                }
+
+                fixture.Store.Configuration.Servers.Single().EncryptedCredentials = other;
+                return Task.FromResult(RemoteResult.Fail<int>(RemoteFailure.AuthenticationFailed));
+            },
+            CancellationToken.None);
+
+        Assert.True(call.IsSuccess);
+        var login = Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == LoginPath);
+        Assert.Contains(OtherCredentials.Username, login.Body, StringComparison.Ordinal);
+        AssertClean(fixture.Logger);
     }
 
     [Fact]

@@ -204,7 +204,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         var stored = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
-            ? new StoredServer(server.Id, server.Name, server.Url, server.EncryptedCredentials)
+            ? new StoredServer(server.Id, server.Name, server.Url)
             : null);
         if (stored is null)
         {
@@ -512,7 +512,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var server = _store.Read(config => config.Servers
             .Where(candidate => candidate.Id == serverId)
-            .Select(candidate => new StoredServer(candidate.Id, candidate.Name, candidate.Url, candidate.EncryptedCredentials))
+            .Select(candidate => new StoredServer(candidate.Id, candidate.Name, candidate.Url))
             .FirstOrDefault());
         if (server is null)
         {
@@ -601,7 +601,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Success<RemoteSession>(current);
             }
 
-            var credentials = UnprotectOrNull(server.Id, server.EncryptedCredentials);
+            // Read again under the gate: the copy taken before it may be stale.
+            var encrypted = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id)?.EncryptedCredentials);
+            if (encrypted is null)
+            {
+                DropIfRemoved(server.Id, runtime);
+                return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
+            }
+
+            var credentials = UnprotectOrNull(server.Id, encrypted);
             if (credentials is null)
             {
                 DropIfRemoved(server.Id, runtime);
@@ -940,7 +948,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     private ServerRuntime RuntimeOf(Guid serverId) => _runtimes.GetOrAdd(serverId, _ => new ServerRuntime());
 
-    private sealed record StoredServer(Guid Id, string Name, string Url, string EncryptedCredentials);
+    // The credentials are not copied: a login reads them under the login gate.
+    private sealed record StoredServer(Guid Id, string Name, string Url);
 
     private sealed record SessionAttempt<T>(RemoteResult<T> Attempt, RemoteSession? Session);
 
