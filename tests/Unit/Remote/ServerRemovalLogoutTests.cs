@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -199,6 +201,105 @@ public class ServerRemovalLogoutTests
         Assert.True((await PingAsync(restarted, server.Id)).IsSuccess);
     }
 
+    [Fact]
+    public async Task ACredentialsUpdateWaitsForARunningLoginAndKeepsItsOwnToken()
+    {
+        using var handler = new IssuingLoginHandler();
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger);
+        var call = PingAsync(restarted, server.Id);
+        await handler.FirstLoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Runs up to its first pending wait: without the gate its login would reach the remote now.
+        var update = restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+
+        Assert.Equal(1, handler.Logins);
+        Assert.False(update.IsCompleted);
+        handler.ReleaseFirstLogin.SetResult();
+        Assert.True((await call.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        Assert.True((await update.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        Assert.Equal(2, handler.Logins);
+        var used = await restarted.RunWithSessionAsync(server.Id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
+        Assert.Equal(handler.Live, used.Value);
+        Assert.Equal(2, handler.Logins);
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task AfterARunningLoginAndACredentialsUpdateTheRemovalLogsOutTheLiveLogin()
+    {
+        using var handler = new IssuingLoginHandler();
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger);
+        var call = PingAsync(restarted, server.Id);
+        await handler.FirstLoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var update = restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        handler.ReleaseFirstLogin.SetResult();
+        await call.WaitAsync(TimeSpan.FromSeconds(5));
+        await update.WaitAsync(TimeSpan.FromSeconds(5));
+        var lastIssued = handler.Live;
+
+        Assert.True(await restarted.RemoveAsync(server.Id));
+
+        Assert.NotNull(lastIssued);
+        Assert.Equal([lastIssued], handler.LoggedOut);
+        Assert.Null(handler.Live);
+        AssertClean(logger);
+    }
+
+    [Fact]
+    public async Task ALoginEndedForARemovedServerAlsoLogsOutTheLoginItsServerKept()
+    {
+        using var handler = new IssuingLoginHandler(holdFirstLogin: false);
+        using var fixture = new RegistryFixture(Remote());
+        var store = new HookedStore(fixture.Store);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(store, fixture.Vault, client, logger);
+        var server = (await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None)).Value!;
+        var added = handler.Live;
+        var removalSaved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var updateEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<bool>? removal = null;
+        store.BeforeUpdate = () =>
+        {
+            // The update saves after the removal is saved and ends before the removal takes the server's login.
+            store.AfterUpdate = () =>
+            {
+                removalSaved.SetResult();
+                SpinWait.SpinUntil(() => updateEnded.Task.IsCompleted, TimeSpan.FromSeconds(5));
+            };
+            removal = Task.Run(() => registry.RemoveAsync(server.Id));
+            SpinWait.SpinUntil(() => removalSaved.Task.IsCompleted, TimeSpan.FromSeconds(5));
+        };
+
+        var update = await Task.Run(async () =>
+        {
+            try
+            {
+                return await registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+            }
+            finally
+            {
+                updateEnded.SetResult();
+            }
+        });
+
+        Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
+        Assert.NotNull(added);
+        Assert.Equal(2, handler.Logins);
+        Assert.Equal([added, TestValues.Token + "2"], handler.LoggedOut.Order(StringComparer.Ordinal));
+        Assert.Null(handler.Live);
+        AssertClean(logger);
+    }
+
     // Runs a step once, just before or just after the next change of the configuration, or when its save fails.
     private sealed class HookedStore(InMemoryConfigurationStore inner) : IPluginConfigurationStore
     {
@@ -279,6 +380,98 @@ public class ServerRemovalLogoutTests
             }
 
             return StubHandler.StockServer_Respond(request);
+        }
+    }
+
+    // A remote that issues a new token at each login, revoking the earlier one, and can hold the answer to the first login.
+    private sealed class IssuingLoginHandler(bool holdFirstLogin = true) : HttpMessageHandler
+    {
+        private readonly Lock _gate = new();
+        private readonly List<string> _loggedOut = [];
+        private int _logins;
+        private string? _live;
+
+        public TaskCompletionSource FirstLoginArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseFirstLogin { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Logins
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _logins;
+                }
+            }
+        }
+
+        public string? Live
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _live;
+                }
+            }
+        }
+
+        public IReadOnlyList<string> LoggedOut
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _loggedOut.ToList();
+                }
+            }
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/Users/AuthenticateByName":
+                    string token;
+                    bool first;
+                    lock (_gate)
+                    {
+                        _logins++;
+                        token = TestValues.Token + _logins.ToString(CultureInfo.InvariantCulture);
+                        _live = token;
+                        first = holdFirstLogin && _logins == 1;
+                    }
+
+                    if (first)
+                    {
+                        FirstLoginArrived.TrySetResult();
+                        await ReleaseFirstLogin.Task.WaitAsync(cancellationToken);
+                    }
+
+                    return StubHandler.Json(TestValues.LoginJson.Replace(TestValues.Token, token, StringComparison.Ordinal));
+                case LogoutPath:
+                    var sent = TokenOf(request);
+                    lock (_gate)
+                    {
+                        _loggedOut.Add(sent);
+                        if (_live == sent)
+                        {
+                            _live = null;
+                        }
+                    }
+
+                    return StubHandler.Status(HttpStatusCode.NoContent);
+                default:
+                    return StubHandler.StockServer_Respond(request);
+            }
+        }
+
+        private static string TokenOf(HttpRequestMessage request)
+        {
+            var header = request.Headers.GetValues("Authorization").Single();
+            var start = header.IndexOf("Token=\"", StringComparison.Ordinal) + "Token=\"".Length;
+            return header[start..header.IndexOf('"', start)];
         }
     }
 }
