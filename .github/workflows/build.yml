@@ -16,7 +16,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build and test
         run: |
@@ -32,7 +32,7 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The runner creates the folder, so that it can write to it after the container, which runs as root.
       - name: Build the plugin
@@ -54,7 +54,7 @@ jobs:
           gh release create "$TAG" "$zip" "$zip.md5" "$zip.sha256" --title "JellyMesh $TAG" --notes-file artifacts/notes.md
 
       # Jellyfin reads the manifest from main, so it changes there and not on the tagged commit.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: main
           path: published
