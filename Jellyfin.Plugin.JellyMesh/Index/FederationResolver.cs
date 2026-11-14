@@ -46,7 +46,9 @@ public sealed class FederationResolver : IFederationResolver
         var catalogs = snapshot.Servers.Where(catalog => names.ContainsKey(catalog.ServerId)).ToList();
 
         var local = _localCatalog.Read();
-        var result = DedupEngine.Resolve(local, catalogs.SelectMany(CatalogItemMapper.ToCatalogItems), _merges.Merges);
+        var remote = catalogs.SelectMany(CatalogItemMapper.ToCatalogItems).ToList();
+        var result = DedupEngine.Resolve(local, remote, _merges.Merges);
+        var episodes = EpisodesBySeries(local, remote);
 
         var details = catalogs
             .SelectMany(catalog => catalog.Items.Select(item => (Catalog: catalog, Item: item)))
@@ -59,11 +61,16 @@ public sealed class FederationResolver : IFederationResolver
         MergeCopyView ToCopyView(WorkCopy copy)
         {
             var merged = MergedCopy.From(copy.Item, copy.IsLocal);
-            return new MergeCopyView(merged, NameOf(merged), copy.Item.Metadata.RunTimeTicks, true) { Versions = BestFirst(copy.Item) };
+            return WithEpisodes(new MergeCopyView(merged, NameOf(merged), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, true) { Versions = BestFirst(FilmOnly(copy.Item)) }, copy.Item);
         }
 
         MergeCopyView ToMergedCopyView(AppliedCopy copy) =>
-            new(copy.Copy, NameOf(copy.Copy), copy.Item?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(copy.Item) };
+            WithEpisodes(new(copy.Copy, NameOf(copy.Copy), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(FilmOnly(copy.Item)) }, copy.Item);
+
+        MergeCopyView WithEpisodes(MergeCopyView view, CatalogItem? item) =>
+            item is { Kind: not ContentKind.Movie } && episodes.TryGetValue((view.Copy.IsLocal, item.ServerId, WorkResolver.CopyItemOf(item)), out var found)
+                ? view with { EpisodeCount = found.Episodes, SeasonCount = found.Seasons }
+                : view;
 
         ResolvedSource ToSource(RemoteSource source)
         {
@@ -97,12 +104,38 @@ public sealed class FederationResolver : IFederationResolver
             MergeCases = result.MergeCases
                 .Select(entry => new MergeCaseView(
                     entry.Kind,
-                    entry.Works.Select(work => new MergeTitleView(work.WorkKey, work.HasLocalCopy, work.MergeIds, work.Copies.Select(ToCopyView).ToList())).ToList()))
+                    entry.Works.Select(work => new MergeTitleView(work.WorkKey, work.HasLocalCopy, work.MergeIds, work.Copies.Select(ToCopyView).ToList())).ToList())
+                {
+                    ContentKind = entry.ContentKind
+                })
                 .ToList(),
             ManualMerges = result.Merges
                 .Select(merge => new ManualMergeView(merge.Merge.Id, merge.Merge.CreatedUtc, merge.IsInEffect, merge.Copies.Select(ToMergedCopyView).ToList()))
+                .ToList(),
+            // A series is refreshed as a whole, never episode by episode (Q244).
+            LocalItemsAwaitingRefresh = local
+                .Where(item => item.AwaitsRefresh)
+                .Select(item => ToLocalId(item.Kind == ContentKind.Movie ? item.ItemId : item.SeriesId ?? string.Empty))
+                .Where(id => id != Guid.Empty)
+                .Distinct()
                 .ToList()
         };
+    }
+
+    // The episodes and seasons of each series copy, keyed as a copy names its series.
+    private static Dictionary<(bool IsLocal, string ServerId, string? SeriesId), (int Episodes, int Seasons)> EpisodesBySeries(
+        IReadOnlyList<CatalogItem> local,
+        List<CatalogItem> remote)
+    {
+        return local.Select(item => (IsLocal: true, Item: item))
+            .Concat(remote.Select(item => (IsLocal: false, Item: item)))
+            .Where(entry => entry.Item.Kind != ContentKind.Movie && entry.Item.SeriesId is not null)
+            .GroupBy(entry => (entry.IsLocal, entry.Item.ServerId, (string?)entry.Item.SeriesId))
+            .ToDictionary(
+                group => group.Key,
+                group => (
+                    group.Select(entry => entry.Item.ItemId).Distinct(StringComparer.Ordinal).Count(),
+                    group.Select(entry => entry.Item.SeasonNumber).OfType<int>().Distinct().Count()));
     }
 
     private static List<MediaVersion> BestFirst(CatalogItem? item)
@@ -111,6 +144,9 @@ public sealed class FederationResolver : IFederationResolver
             ? []
             : QualityRanking.Rank(item.ToSources()).Select(source => new MediaVersion(source.MediaSourceId, source.Quality)).ToList();
     }
+
+    // A series copy is shown by one of its episodes, whose duration and versions say nothing of the series.
+    private static CatalogItem? FilmOnly(CatalogItem? item) => item?.Kind == ContentKind.Movie ? item : null;
 
     private static Guid ToLocalId(string itemId) => Guid.TryParse(itemId, out var id) ? id : Guid.Empty;
 

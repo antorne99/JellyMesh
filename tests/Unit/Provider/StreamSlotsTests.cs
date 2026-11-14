@@ -30,6 +30,15 @@ public class StreamSlotsTests
         _slots.Confirm(_peer, reservation, playSession);
     }
 
+    // What the closer does once the transcodes are gone.
+    private void Close()
+    {
+        foreach (var playSession in _slots.TakeClosing())
+        {
+            _slots.Closed(playSession);
+        }
+    }
+
     [Fact]
     public void An_abandoned_request_frees_the_slot_after_the_grace_only()
     {
@@ -42,6 +51,7 @@ public class StreamSlotsTests
         _clock.Advance(StreamSlots.AbandonGrace - TimeSpan.FromMilliseconds(1));
         Assert.Equal(1, _slots.Count(_peer));
         _clock.Advance(TimeSpan.FromMilliseconds(1));
+        Close();
         Assert.Equal(0, _slots.Count(_peer));
     }
 
@@ -154,6 +164,7 @@ public class StreamSlotsTests
     {
         Hold("one");
         _clock.Advance(StreamSlots.IdleTimeout);
+        Close();
         Assert.Equal(0, _slots.Count(_peer));
         Assert.True(_slots.Owns(_peer, "one"));
 
@@ -206,6 +217,8 @@ public class StreamSlotsTests
         Revoke();
 
         Assert.Equal(["lost"], cut);
+        Assert.Equal(2, _slots.Count(_peer));
+        Close();
         Assert.Equal(1, _slots.Count(_peer));
     }
 
@@ -276,8 +289,15 @@ public class StreamSlotsTests
 
         _slots.CutToLimit(_peer, 1);
 
+        Assert.Equal(3, _slots.Count(_peer));
+        var closing = _slots.TakeClosing();
+        Assert.Equal(["middle", "newest"], closing.Order(StringComparer.Ordinal));
+        foreach (var playSession in closing)
+        {
+            _slots.Closed(playSession);
+        }
+
         Assert.Equal(1, _slots.Count(_peer));
-        Assert.Equal(["middle", "newest"], _slots.TakeClosing().Order(StringComparer.Ordinal));
         using var oldest = _slots.TryEnter(_peer, 1, "oldest", _kept);
         Assert.NotNull(oldest);
     }
@@ -456,6 +476,7 @@ public class StreamSlotsTests
         Assert.Equal(1, _slots.Count(_peer));
 
         _clock.Advance(TimeSpan.FromSeconds(1));
+        Close();
         Assert.Equal(0, _slots.Count(_peer));
         Assert.NotNull(_slots.TryReserve(_peer, 1, null));
     }
@@ -469,6 +490,291 @@ public class StreamSlotsTests
 
         Assert.Equal(["one"], _slots.TakeClosing());
         Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void An_abandoned_slot_stays_counted_until_its_transcode_is_closed()
+    {
+        Hold("one");
+        var request = _slots.TryEnter(_peer, 1, "one")!;
+        request.Abandon();
+        request.Dispose();
+        _clock.Advance(StreamSlots.AbandonGrace);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+        Assert.Equal(1, _slots.Count(_peer));
+        Assert.Null(_slots.TryReserve(_peer, 1, null));
+        Assert.Null(_slots.TryEnter(_peer, 1, "two"));
+
+        _slots.Closed("one");
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.NotNull(_slots.TryReserve(_peer, 1, null));
+    }
+
+    [Fact]
+    public void An_idle_slot_stays_counted_until_its_transcode_is_closed()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Null(_slots.TryReserve(_peer, 1, null));
+
+        Close();
+
+        Assert.NotNull(_slots.TryReserve(_peer, 1, null));
+    }
+
+    [Fact]
+    public void A_slot_being_closed_is_handed_out_once()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_stream_back_while_its_transcode_is_being_closed_keeps_its_slot()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Assert.Equal(["one"], _slots.TakeClosing());
+
+        using var back = _slots.TryEnter(_peer, 1, "one");
+        _slots.Closed("one");
+
+        Assert.NotNull(back);
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_renewal_does_not_bring_back_a_slot_being_closed()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        _slots.Renew(_peer, "one");
+
+        Assert.Equal(["one"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_replacement_does_not_free_a_slot_being_closed()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Assert.Null(_slots.TryReserve(_peer, 1, "one"));
+    }
+
+    [Fact]
+    public void A_release_leaves_a_slot_being_closed_to_its_close()
+    {
+        Hold("one");
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Assert.Equal(["one"], _slots.TakeClosing());
+
+        _slots.Release(_peer, "one");
+
+        Assert.Equal(1, _slots.Count(_peer));
+        _slots.Closed("one");
+        Assert.Equal(0, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void Closing_a_slot_in_use_or_unknown_does_nothing()
+    {
+        Hold("one");
+
+        _slots.Closed("one");
+        _slots.Closed("unknown");
+
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void Coming_down_to_a_lower_limit_counts_no_slot_being_closed()
+    {
+        Hold("old", 2);
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Hold("new", 2);
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Equal(["old"], _slots.TakeClosing());
+        _slots.Closed("old");
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_stream_being_closed_does_not_come_back_above_a_lowered_limit()
+    {
+        Hold("old", 2);
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Hold("new", 2);
+        _slots.CutToLimit(_peer, 1);
+
+        var back = _slots.TryEnter(_peer, 1, "old");
+
+        Assert.Null(back);
+        Assert.Equal(["old"], _slots.TakeClosing());
+        _slots.Closed("old");
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_stream_being_closed_comes_back_while_it_fits_the_limit()
+    {
+        Hold("old", 2);
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Hold("new", 2);
+        _slots.CutToLimit(_peer, 2);
+
+        using var back = _slots.TryEnter(_peer, 2, "old");
+
+        Assert.NotNull(back);
+        Assert.Empty(_slots.TakeClosing());
+    }
+
+    [Fact]
+    public void Revoking_does_not_free_a_slot_being_closed()
+    {
+        Paused("lost", _lost);
+        _clock.Advance(StreamSlots.IdleTimeout);
+
+        Revoke();
+
+        Assert.Equal(1, _slots.Count(_peer));
+        Assert.Equal(["lost"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_revoked_slot_stays_counted_until_its_transcode_is_closed()
+    {
+        Paused("lost", _lost);
+        Paused("kept", _kept);
+
+        Revoke();
+
+        Assert.Equal(2, _slots.Count(_peer));
+        Assert.Null(_slots.TryReserve(_peer, 2, null));
+        Assert.Null(_slots.TryEnter(_peer, 2, "new", _kept));
+        Close();
+        Assert.Equal(1, _slots.Count(_peer));
+        Assert.NotNull(_slots.TryEnter(_peer, 2, "new", _kept));
+    }
+
+    [Fact]
+    public void A_slot_cut_by_a_lower_limit_stays_counted_until_its_transcode_is_closed()
+    {
+        Paused("oldest", _kept);
+        Paused("newest", _kept);
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Equal(2, _slots.Count(_peer));
+        Assert.Null(_slots.TryReserve(_peer, 2, null));
+        Close();
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_revoked_stream_does_not_come_back_while_its_transcode_is_being_closed_even_with_room()
+    {
+        Paused("lost", _lost);
+        Revoke();
+
+        Assert.Null(_slots.TryEnter(_peer, 5, "lost", _lost));
+        Assert.Equal(["lost"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_cut_stream_does_not_come_back_while_its_transcode_is_being_closed_even_with_room()
+    {
+        Paused("oldest", _kept);
+        Paused("newest", _kept);
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Null(_slots.TryEnter(_peer, 5, "newest", _kept));
+        Assert.Equal(["newest"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_cut_stream_back_after_its_close_counts_as_new()
+    {
+        Paused("oldest", _kept);
+        Paused("newest", _kept);
+        _slots.CutToLimit(_peer, 1);
+        Close();
+
+        Assert.Null(_slots.TryEnter(_peer, 1, "newest", _kept));
+        using var back = _slots.TryEnter(_peer, 2, "newest", _kept);
+        Assert.NotNull(back);
+    }
+
+    [Fact]
+    public void A_slot_already_being_closed_when_revoked_does_not_come_back()
+    {
+        Paused("lost", _lost);
+        _clock.Advance(StreamSlots.IdleTimeout);
+        Assert.Equal(1, _slots.Count(_peer));
+
+        Revoke();
+
+        Assert.Null(_slots.TryEnter(_peer, 5, "lost", _lost));
+        Assert.Equal(["lost"], _slots.TakeClosing());
+    }
+
+    [Fact]
+    public void A_revoked_reservation_goes_at_once_with_nothing_to_close()
+    {
+        var pending = _slots.TryReserve(_peer, 2, null)!;
+
+        Revoke();
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+        _slots.Confirm(_peer, pending, "late", _lost);
+        Assert.Equal(0, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_release_or_renewal_leaves_a_revoked_slot_to_its_close()
+    {
+        Paused("lost", _lost);
+        Revoke();
+
+        _slots.Release(_peer, "lost");
+        _slots.Renew(_peer, "lost");
+
+        Assert.Equal(1, _slots.Count(_peer));
+        Assert.Null(_slots.TryEnter(_peer, 5, "lost", _lost));
+    }
+
+    [Fact]
+    public void A_replacement_does_not_free_a_cut_slot()
+    {
+        Paused("oldest", _kept);
+        Paused("newest", _kept);
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Null(_slots.TryReserve(_peer, 2, "newest"));
+    }
+
+    [Fact]
+    public void Removing_a_peer_frees_its_slots_at_once_and_still_closes_its_transcodes()
+    {
+        using var running = _slots.TryEnter(_peer, 3, "running", _lost);
+        Paused("paused", _kept);
+
+        _slots.Revoke(_peer, _ => false);
+        _slots.ReleaseAll(_peer);
+
+        Assert.Equal(0, _slots.Count(_peer));
+        Assert.Equal(["paused", "running"], _slots.TakeClosing().Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -539,7 +845,7 @@ public class StreamSlotsTests
     {
         Hold("one");
         _clock.Advance(StreamSlots.IdleTimeout);
-        Assert.Equal(0, _slots.Count(_peer));
+        Assert.Equal(1, _slots.Count(_peer));
 
         using var back = _slots.TryEnter(_peer, 1, "one");
 
@@ -609,6 +915,7 @@ public class StreamSlotsTests
     {
         Hold("one");
         _clock.Advance(StreamSlots.IdleTimeout);
+        Close();
         Hold("two");
 
         Assert.Null(_slots.TryEnter(_peer, 1, "one"));
@@ -665,6 +972,7 @@ public class StreamSlotsTests
         _slots.Renew(_peer, "one");
 
         _clock.Advance(StreamSlots.IdleTimeout);
+        Close();
 
         Assert.Equal(0, _slots.Count(_peer));
     }
@@ -684,6 +992,7 @@ public class StreamSlotsTests
         _clock.Advance(StreamSlots.IdleTimeout);
 
         _slots.Renew(_peer, "one");
+        Close();
 
         Assert.Equal(0, _slots.Count(_peer));
         Assert.NotNull(_slots.TryReserve(_peer, 1, null));
@@ -697,6 +1006,7 @@ public class StreamSlotsTests
 
         _slots.Renew(_other, "one");
         _clock.Advance(TimeSpan.FromSeconds(1));
+        Close();
 
         Assert.Equal(0, _slots.Count(_peer));
     }

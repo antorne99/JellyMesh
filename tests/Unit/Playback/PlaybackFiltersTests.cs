@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,11 +12,14 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Segments;
+using Jellyfin.Plugin.JellyMesh.Tests.Segments;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
+using MediaBrowser.Controller.MediaSegments;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
@@ -47,9 +51,11 @@ public class PlaybackFiltersTests
     private readonly Mock<ISessionManager> _sessionManager = new();
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly Mock<IFederationResolver> _resolver = new();
+    private readonly Mock<IMediaSegmentManager> _segmentManager = new();
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StreamSlots _peerSlots = new(TimeProvider.System, new InMemoryConfigurationStore());
     private readonly StubEntry _stub;
+    private SegmentOffer? _offer;
 
     public PlaybackFiltersTests()
     {
@@ -57,6 +63,7 @@ public class PlaybackFiltersTests
         var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") };
         _library.Setup(library => library.GetItemById(_itemId)).Returns(video);
         _stubs.Setup(stubs => stubs.Find("stub")).Returns(_stub);
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
         _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 0, [], []));
         SignedIn();
     }
@@ -80,26 +87,37 @@ public class PlaybackFiltersTests
 
     private PlaybackInfoFilter InfoFilter()
     {
+        var store = new InMemoryConfigurationStore();
+        var lookup = new StubLookup(_library.Object, _stubs.Object, store);
+        _offer = new SegmentOffer(_segmentManager.Object, Segments(lookup, store), lookup, _fixture.Sessions);
         return new PlaybackInfoFilter(
-            new StubLookup(_library.Object, _stubs.Object),
-            _library.Object,
+            lookup,
             _authorization.Object,
             _fixture.Coordinator,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
-            new LocalCopyLookup(_resolver.Object, _library.Object));
+            new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
+            _offer);
     }
 
-    private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null)
+    private StubSegments Segments(StubLookup lookup, InMemoryConfigurationStore store)
+    {
+        var index = new Mock<IFederationIndex>();
+        index.Setup(federation => federation.Snapshot).Returns(new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [] });
+        return new(lookup, index.Object, _fixture.Registry, new StubSegmentsTests.FakeSegmentClient(), store, TimeProvider.System, NullLogger<StubSegments>.Instance);
+    }
+
+    private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null, Func<string, IReadOnlyList<string>>? listFolder = null)
     {
         return new StockRouteGuardFilter(
-            new StubLookup(_library.Object, _stubs.Object),
-            _library.Object,
+            new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
             _authorization.Object,
             _fixture.Coordinator,
             sessions ?? _fixture.Sessions,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
-            _peerSlots);
+            _peerSlots,
+            listFolder ?? StockRouteGuardFilter.ListFolder);
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
@@ -207,6 +225,7 @@ public class PlaybackFiltersTests
     [InlineData("Subtitle", "GetSubtitle", "routeItemId")]
     [InlineData("VideoAttachments", "GetAttachment", "videoId")]
     [InlineData("Trickplay", "GetTrickplayHlsPlaylist", "itemId")]
+    [InlineData("MediaSegments", "GetItemSegments", "itemId")]
     [InlineData("Library", "GetDownload", "itemId")]
     public async Task A_stock_media_route_refuses_a_stub_without_a_user(string controller, string action, string argument)
     {
@@ -224,6 +243,34 @@ public class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(), context));
         Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_stub_are_not_found_for_a_user_who_cannot_see_it()
+    {
+        var context = Context("MediaSegments", "GetItemSegments", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_stub_in_no_library_are_not_found()
+    {
+        CanSeeItem();
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = Context("MediaSegments", "GetItemSegments", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_stub_reach_a_user_who_can_see_it()
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(GuardFilter(), Context("MediaSegments", "GetItemSegments", ("itemId", _itemId))));
     }
 
     [Fact]
@@ -378,12 +425,32 @@ public class PlaybackFiltersTests
         var source = Assert.Single(response.MediaSources);
         Assert.StartsWith("/Videos/" + _localId.ToString("N") + "/stream.mp4?static=true", source.TranscodingUrl, StringComparison.Ordinal);
         Assert.Contains("ApiKey=" + Token, source.TranscodingUrl, StringComparison.Ordinal);
-        Assert.Equal(_itemId.ToString("N"), source.Id);
+        Assert.Equal(_localId.ToString("N"), source.Id);
         Assert.False(source.SupportsDirectPlay);
         Assert.False(source.SupportsDirectStream);
         Assert.True(source.SupportsTranscoding);
         Assert.Null(source.Path);
         Assert.Null(source.MediaStreams[0].Path);
+    }
+
+    [Fact]
+    public async Task A_device_playing_the_local_copy_reads_no_segments_of_the_stub_directly()
+    {
+        Offline();
+        LocalCopyArrived();
+        _segmentManager.Setup(manager => manager.HasSegments(It.IsAny<Guid>())).Returns(true);
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+        var file = LocalFile(directPlay: true);
+        file.HasSegments = true;
+
+        var executed = await RunStockAsync(context, file);
+
+        var response = Assert.IsType<PlaybackInfoResponse>(Assert.IsType<OkObjectResult>(executed.Result).Value);
+        Assert.True(Assert.Single(response.MediaSources).HasSegments);
+        Assert.False(_offer!.ServesDirect(_user.Id, "device", _itemId));
+        Assert.True(_offer.ServesDirect(_user.Id, "device", _localId));
+        _fixture.Sessions.EndLocal(_user.Id, "local-session");
+        Assert.True(_offer.ServesDirect(_user.Id, "device", _itemId));
     }
 
     [Fact]
@@ -1270,5 +1337,354 @@ public class PlaybackFiltersTests
 
         Assert.NotNull(_fixture.Sessions.Find(session.Id));
         Assert.Empty(_fixture.Client.Stopped);
+    }
+
+    // D9: the legacy segment route serves any file of the transcode folder by name, whatever item its route names.
+    private const string JobHash = "0123456789abcdef0123456789abcdef";
+
+    // A refused file reaches stock under a name that is no file, so that stock answers as for any missing one.
+    private static void AssertReadsAsMissing(ActionExecutingContext context, bool passed, string argument)
+    {
+        Assert.True(passed);
+        Assert.Null(context.Result);
+        Assert.StartsWith(StockRouteGuardFilter.MissingFilePrefix, Assert.IsType<string>(context.ActionArguments[argument]), StringComparison.Ordinal);
+    }
+
+    private TranscodingJob JobOf(string playSessionId)
+    {
+        var job = new TranscodingJob(NullLogger<TranscodingJob>.Instance) { PlaySessionId = playSessionId, Path = "/cache/transcodes/" + JobHash + ".m3u8" };
+        _transcodes.Setup(manager => manager.GetTranscodingJob(playSessionId)).Returns(job);
+        return job;
+    }
+
+    private static ActionExecutingContext LegacySegment(Guid item, string playlistId, string segmentId) =>
+        Context("HlsSegment", "GetHlsVideoSegmentLegacy", ("itemId", item.ToString("N")), ("playlistId", playlistId), ("segmentId", segmentId), ("segmentContainer", "ts"));
+
+    [Fact]
+    public async Task A_legacy_segment_wants_a_user()
+    {
+        Anonymous();
+        var context = LegacySegment(LocalItem(), "anything", "anything0");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("other", JobHash + "3")]
+    [InlineData("other", "0123456789ABCDEF0123456789ABCDEF-1")]
+    [InlineData(JobHash, "other3")]
+    [InlineData("6789ABCDEF", "other3")]
+    public async Task A_legacy_segment_of_the_local_play_session_of_another_user_is_not_found(string playlistId, string segmentId)
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), playlistId, segmentId);
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_the_local_play_session_of_another_user_is_not_found_when_its_stub_is_gone()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        StubGone();
+        var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_the_play_session_of_a_peer_is_not_found()
+    {
+        using var job = JobOf("peer-play");
+        PeerPlays(Guid.NewGuid());
+        var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task Its_user_reads_a_legacy_segment_of_their_local_play_session()
+    {
+        CanSeeItem();
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacySegment(_itemId, JobHash, JobHash + "0")));
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_their_local_play_session_on_a_stub_they_no_longer_see_is_not_found()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), JobHash, JobHash + "0");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_that_names_a_stub_the_user_cannot_see_is_not_found()
+    {
+        var context = LegacySegment(_itemId, "other", "other0");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    // A playlist id that only part of the path of the job holds is refused as one that matches nothing, so growing it one
+    // digit at a time tells nothing of the name of the job.
+    [Theory]
+    [InlineData("01")]
+    [InlineData("cdef0123")]
+    [InlineData("/cache/transcodes/0")]
+    public async Task A_short_playlist_id_of_the_job_of_another_user_reads_as_one_of_no_file(string playlistId)
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), playlistId, "none");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_short_playlist_id_of_no_job_goes_to_stock_untouched()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacySegment(LocalItem(), "9f", "none");
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+        Assert.Equal("9f", context.ActionArguments["playlistId"]);
+    }
+
+    [Theory]
+    [InlineData("f0.ts", true)]
+    [InlineData("ef12", true)]
+    [InlineData("f9.ts", false)]
+    public async Task A_playlist_id_that_runs_into_a_segment_name_of_the_job_of_another_user_reads_as_one_of_no_file(string playlistId, bool refused)
+    {
+        var folder = Directory.CreateTempSubdirectory("jellymesh-transcodes-").FullName;
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, JobHash + "0.ts"), string.Empty);
+            await File.WriteAllTextAsync(Path.Combine(folder, JobHash + "12.ts"), string.Empty);
+            JobOf("local-play").Path = Path.Combine(folder, JobHash + ".m3u8");
+            _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+            var context = LegacySegment(LocalItem(), playlistId, "none");
+
+            var passed = await RunAsync(GuardFilter(), context);
+
+            if (refused)
+            {
+                AssertReadsAsMissing(context, passed, "playlistId");
+            }
+            else
+            {
+                Assert.True(passed);
+                Assert.Equal(playlistId, context.ActionArguments["playlistId"]);
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_lists_the_transcode_folder_once_whatever_the_jobs_in_it()
+    {
+        var listings = new List<string>();
+        foreach (var number in new[] { "1", "2", "3" })
+        {
+            var job = new TranscodingJob(NullLogger<TranscodingJob>.Instance) { PlaySessionId = "play-" + number, Path = "/cache/transcodes/" + new string(number[0], 32) + ".m3u8" };
+            _transcodes.Setup(manager => manager.GetTranscodingJob("play-" + number)).Returns(job);
+            _fixture.Sessions.RecordLocal(Guid.NewGuid(), "play-" + number, _itemId);
+        }
+
+        var context = LegacySegment(LocalItem(), "22220.ts", "none");
+        var passed = await RunAsync(GuardFilter(listFolder: folder =>
+        {
+            listings.Add(folder);
+            return [folder + "/" + new string('2', 32) + "0.ts"];
+        }), context);
+
+        AssertReadsAsMissing(context, passed, "playlistId");
+        Assert.Equal(["/cache/transcodes"], listings);
+    }
+
+    [Fact]
+    public async Task A_legacy_segment_of_a_job_nobody_recorded_stays_with_stock()
+    {
+        using var job = JobOf("real-title");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacySegment(LocalItem(), JobHash, JobHash + "0")));
+    }
+
+    // Row 212: the legacy audio segment and playlist routes serve a file of the transcode folder by its name alone.
+    private static ActionExecutingContext LegacyAudio(Guid item, string segmentId, string extension = "aac")
+    {
+        var context = Context("HlsSegment", "GetHlsAudioSegmentLegacy", ("itemId", item.ToString("N")), ("segmentId", segmentId));
+        context.HttpContext.Request.Path = "/Audio/" + item.ToString("N") + "/hls/" + segmentId + "/stream." + extension;
+        return context;
+    }
+
+    private static ActionExecutingContext LegacyPlaylist(Guid item, string playlistId)
+    {
+        var context = Context("HlsSegment", "GetHlsPlaylistLegacy", ("itemId", item.ToString("N")), ("playlistId", playlistId));
+        context.HttpContext.Request.Path = "/Videos/" + item.ToString("N") + "/hls/" + playlistId + "/stream.m3u8";
+        return context;
+    }
+
+    [Fact]
+    public async Task A_legacy_audio_segment_wants_a_user_whatever_file_it_names()
+    {
+        Anonymous();
+        var context = LegacyAudio(LocalItem(), "anything");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(JobHash, "aac")]
+    [InlineData(JobHash, "mp3")]
+    [InlineData(JobHash + "3", "aac")]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF", "mp3")]
+    public async Task A_legacy_audio_segment_of_the_local_play_session_of_another_user_is_not_found(string segmentId, string extension)
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacyAudio(LocalItem(), segmentId, extension);
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "segmentId");
+    }
+
+    [Fact]
+    public async Task A_legacy_audio_segment_of_the_play_session_of_a_peer_is_not_found()
+    {
+        using var job = JobOf("peer-play");
+        PeerPlays(Guid.NewGuid());
+        var context = LegacyAudio(LocalItem(), JobHash);
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "segmentId");
+    }
+
+    [Fact]
+    public async Task Its_user_reads_a_legacy_audio_segment_of_their_local_play_session()
+    {
+        CanSeeItem();
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacyAudio(_itemId, JobHash)));
+    }
+
+    [Fact]
+    public async Task A_legacy_audio_segment_that_names_a_stub_the_user_cannot_see_is_not_found()
+    {
+        var context = LegacyAudio(_itemId, "other");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "segmentId");
+    }
+
+    [Theory]
+    [InlineData("other")]
+    [InlineData("6789abcdef")]
+    public async Task A_legacy_audio_segment_of_a_file_nobody_recorded_stays_with_stock(string segmentId)
+    {
+        using var job = JobOf("real-title");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacyAudio(LocalItem(), segmentId)));
+    }
+
+    [Theory]
+    [InlineData(JobHash)]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData(JobHash + "_subtitles")]
+    public async Task A_legacy_playlist_of_the_local_play_session_of_another_user_is_not_found(string playlistId)
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacyPlaylist(LocalItem(), playlistId);
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_legacy_playlist_of_the_local_play_session_of_another_user_is_not_found_when_its_stub_is_gone()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        StubGone();
+        var context = LegacyPlaylist(LocalItem(), JobHash);
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_legacy_playlist_of_the_play_session_of_a_peer_is_not_found()
+    {
+        using var job = JobOf("peer-play");
+        PeerPlays(Guid.NewGuid());
+        var context = LegacyPlaylist(LocalItem(), JobHash);
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_legacy_playlist_of_a_recorded_play_session_wants_a_user()
+    {
+        Anonymous();
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+        var context = LegacyPlaylist(LocalItem(), JobHash);
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Its_user_reads_the_legacy_playlist_of_their_local_play_session()
+    {
+        CanSeeItem();
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacyPlaylist(_itemId, JobHash)));
+    }
+
+    [Fact]
+    public async Task A_legacy_playlist_of_their_local_play_session_on_a_stub_they_no_longer_see_is_not_found()
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(_user.Id, "local-play", _itemId);
+        var context = LegacyPlaylist(LocalItem(), JobHash);
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    [Fact]
+    public async Task A_legacy_playlist_that_names_a_stub_the_user_cannot_see_is_not_found()
+    {
+        var context = LegacyPlaylist(_itemId, "other");
+
+        AssertReadsAsMissing(context, await RunAsync(GuardFilter(), context), "playlistId");
+    }
+
+    // Stock reads the playlist by its own name, so a name that only holds the one of a job reads no file of it.
+    [Theory]
+    [InlineData("other")]
+    [InlineData("6789abcdef")]
+    [InlineData("x" + JobHash)]
+    public async Task A_legacy_playlist_of_a_file_nobody_recorded_stays_with_stock(string playlistId)
+    {
+        using var job = JobOf("local-play");
+        _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
+
+        Assert.True(await RunAsync(GuardFilter(), LegacyPlaylist(LocalItem(), playlistId)));
     }
 }

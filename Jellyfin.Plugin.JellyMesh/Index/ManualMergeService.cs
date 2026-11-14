@@ -10,9 +10,11 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyMesh.Index;
 
 /// <summary>
-/// Merges film titles by hand and undoes it (decision 20). A merge only changes what the resolver returns, so everything
-/// after it is the path of any two copies that became one title: the materializer updates the stub that stays, and the
-/// post-scan task hands the watch state of the other over and removes it (decision 2).
+/// Merges film or series titles by hand and undoes it (decisions 20 and 51). A merge only changes what the resolver returns,
+/// so everything after it is the path of any two copies that became one title: copies of one server keep one stub, whose
+/// post-scan task hands the state of the other over (decision 2), and copies of different servers or a local one become
+/// versions (Q23), for a series episode by episode with the same range (D3). When titles of one library become one entity,
+/// the merge carries their state to the primary (decision 172).
 /// </summary>
 public sealed class ManualMergeService
 {
@@ -21,6 +23,8 @@ public sealed class ManualMergeService
     private readonly ILibraryMaterializer _materializer;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ManualMergeService> _logger;
+    private readonly IVersionLinker? _linker;
+    private readonly IMergeWatchStateCarry? _carry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ManualMergeService"/> class.
@@ -30,18 +34,24 @@ public sealed class ManualMergeService
     /// <param name="materializer">The materializer.</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="linker">The version linker, if any.</param>
+    /// <param name="carry">The watch state carry of a merge, if any.</param>
     public ManualMergeService(
         IFederationResolver resolver,
         IManualMergeStore store,
         ILibraryMaterializer materializer,
         TimeProvider timeProvider,
-        ILogger<ManualMergeService> logger)
+        ILogger<ManualMergeService> logger,
+        IVersionLinker? linker = null,
+        IMergeWatchStateCarry? carry = null)
     {
         _resolver = resolver;
         _store = store;
         _materializer = materializer;
         _timeProvider = timeProvider;
         _logger = logger;
+        _linker = linker;
+        _carry = carry;
     }
 
     /// <summary>
@@ -51,7 +61,11 @@ public sealed class ManualMergeService
     public ManualMergeList GetList()
     {
         var view = _resolver.Resolve();
-        return new ManualMergeList(view.MergeCases, view.ManualMerges, _store.IsDamaged);
+        var films = view.MergeCases.Where(entry => entry.ContentKind == ContentKind.Movie).ToList();
+        return new ManualMergeList(films, view.ManualMerges, _store.IsDamaged)
+        {
+            SeriesCases = view.MergeCases.Where(entry => entry.ContentKind != ContentKind.Movie).ToList()
+        };
     }
 
     /// <summary>
@@ -83,6 +97,7 @@ public sealed class ManualMergeService
             return outcome;
         }
 
+        var heads = FindHeads(titles);
         var replaced = titles.SelectMany(title => title.MergeIds).ToHashSet();
         await _store.UpdateAsync(
             current =>
@@ -99,8 +114,9 @@ public sealed class ManualMergeService
             },
             cancellationToken).ConfigureAwait(false);
 
-        _logger.LogInformation("Merged {Count} film titles by hand", titles.Count);
-        await ApplyAsync(cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Merged {Count} {Kind} titles by hand", titles.Count, KindOf(titles));
+        await ApplyAsync(false, cancellationToken).ConfigureAwait(false);
+        await CarryAsync(heads, cancellationToken).ConfigureAwait(false);
         return ManualMergeOutcome.Merged;
     }
 
@@ -112,22 +128,22 @@ public sealed class ManualMergeService
     /// <returns>Whether the merge existed.</returns>
     public async Task<bool> UndoAsync(Guid mergeId, CancellationToken cancellationToken)
     {
-        var found = false;
+        ManualMerge? undone = null;
         await _store.UpdateAsync(
             current =>
             {
-                found = current.Any(merge => merge.Id == mergeId);
+                undone = current.FirstOrDefault(merge => merge.Id == mergeId);
                 return current.Where(merge => merge.Id != mergeId).ToList();
             },
             cancellationToken).ConfigureAwait(false);
 
-        if (found)
+        if (undone is not null)
         {
-            _logger.LogInformation("Undid a manual merge of film titles");
-            await ApplyAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Undid a manual merge of {Kind} titles", undone.Copies.Any(copy => copy.Kind != ContentKind.Movie) ? "series" : "film");
+            await ApplyUndoAsync(undone, cancellationToken).ConfigureAwait(false);
         }
 
-        return found;
+        return undone is not null;
     }
 
     /// <summary>
@@ -173,9 +189,45 @@ public sealed class ManualMergeService
         return merge.Copies.Any(copy => IsOn(copy, serverId));
     }
 
+    private static string KindOf(List<MergeTitleView> titles) =>
+        titles.SelectMany(title => title.Copies).Any(copy => copy.Copy.Kind != ContentKind.Movie) ? "series" : "film";
+
     // A local copy is never on a remote server, whatever its server ID says.
     private static bool IsOn(MergedCopy copy, string serverId)
         => !copy.IsLocal && string.Equals(copy.ServerId, serverId, StringComparison.OrdinalIgnoreCase);
+
+    // The entities the titles show before the merge links them.
+    private IReadOnlyList<MergeHead> FindHeads(List<MergeTitleView> titles)
+    {
+        try
+        {
+            return _carry?.FindHeads(titles.SelectMany(title => title.Copies).Select(copy => copy.Copy).ToList()) ?? [];
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot find the titles a manual merge joins: {Error}", exception.GetType().Name);
+            return [];
+        }
+    }
+
+    // The state moves once, at the merge, when two entities of one library become one (decision 172).
+    private async Task CarryAsync(IReadOnlyList<MergeHead> heads, CancellationToken cancellationToken)
+    {
+        if (_carry is null || heads.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await _carry.CarryAsync(heads, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Cannot carry the watch state of a manual merge: {Error}", exception.GetType().Name);
+        }
+    }
 
     // Finds the titles of a merge, or why it cannot be made.
     private (ManualMergeOutcome Outcome, List<MergeTitleView> Titles) Check(IReadOnlyCollection<string> workKeys)
@@ -194,20 +246,50 @@ public sealed class ManualMergeService
             return (ManualMergeOutcome.ListChanged, []);
         }
 
-        return (titles.Count(title => title.HasLocalCopy) > 1 ? ManualMergeOutcome.TwoLocalTitles : ManualMergeOutcome.Merged, titles);
+        if (titles.Count(title => title.HasLocalCopy) > 1)
+        {
+            return (KindOf(titles) == "series" ? ManualMergeOutcome.TwoLocalSeries : ManualMergeOutcome.TwoLocalTitles, titles);
+        }
+
+        return (ManualMergeOutcome.Merged, titles);
     }
 
-    // The choice is saved by now, so a failure here only delays it to the next sync.
-    private async Task ApplyAsync(CancellationToken cancellationToken)
+    // The undo is saved by now. The stubs of the group it dissolves are read before the materializer changes the groups,
+    // and detached at once (D5, Q171); a failure leaves them to the nightly run (Q144).
+    private async Task ApplyUndoAsync(ManualMerge undone, CancellationToken cancellationToken)
     {
         try
         {
+            var dissolved = _linker?.GroupedStubsOf(undone.Copies) ?? [];
             await _materializer.MaterializeAsync(cancellationToken).ConfigureAwait(false);
+            if (_linker is not null)
+            {
+                await _linker.LinkAsync(false, cancellationToken).ConfigureAwait(false);
+                await _linker.DetachAsync(dissolved, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The type only: a message could hold a remote address.
-            _logger.LogError("Could not apply a manual merge yet, the next sync does: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not apply the undo of a manual merge yet, a later sync or the nightly run does: {Error}", exception.GetType().Name);
+        }
+    }
+
+    // The choice is saved by now, so a failure only delays it to the next sync.
+    private async Task ApplyAsync(bool thorough, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _materializer.MaterializeAsync(cancellationToken).ConfigureAwait(false);
+            if (_linker is not null)
+            {
+                await _linker.LinkAsync(thorough, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a remote address.
+            _logger.LogError("Could not apply a manual merge yet, a later sync or the nightly run does: {Error}", exception.GetType().Name);
         }
     }
 }

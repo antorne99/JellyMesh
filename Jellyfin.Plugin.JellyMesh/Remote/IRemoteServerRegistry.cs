@@ -20,7 +20,9 @@ public interface IRemoteServerRegistry
     IReadOnlyList<RemoteServerInfo> GetServers();
 
     /// <summary>
-    /// Adds a server, once the login on it succeeded. On failure nothing is saved.
+    /// Adds a server, once the login on it succeeded. On failure nothing is saved. A remote whose Server Id belongs to a
+    /// configured server fails with <see cref="RemoteFailure.AlreadyConfigured"/> and that server as the value. A server
+    /// added again after a removal is a new one, with a new identifier (decision 408).
     /// </summary>
     /// <param name="name">The display name.</param>
     /// <param name="url">The base URL.</param>
@@ -41,12 +43,22 @@ public interface IRemoteServerRegistry
 
     /// <summary>
     /// Removes a server. Possible in any key state: it uses no credential, and it is how to
-    /// recover from a lost key.
+    /// recover from a lost key. Then ends the live login on the remote, if there is one, within a short time (413): if that
+    /// fails, its device stays listed there and the removal stands.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <returns>Whether the server existed.</returns>
     /// <exception cref="System.Exception">The configuration could not be saved. The server stays, unless the save was cancelled.</exception>
-    bool Remove(Guid serverId);
+    Task<bool> RemoveAsync(Guid serverId);
+
+    /// <summary>
+    /// Renames a server. Its ID, and so its folder, stay the same (Q5, Q38).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="name">The new name, trimmed.</param>
+    /// <returns>Whether the server existed.</returns>
+    /// <exception cref="System.ArgumentException">The name is blank.</exception>
+    bool Rename(Guid serverId, string name);
 
     /// <summary>
     /// Tests the login and refreshes the capabilities of a server.
@@ -90,6 +102,20 @@ public interface IRemoteServerRegistry
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The result of <paramref name="call"/>, or why it could not run.</returns>
     Task<RemoteResult<T>> RunWithSessionAsync<T>(
+        Guid serverId,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs a playback call like <see cref="RunWithSessionAsync{T}"/>, without telling the activity log that the server
+    /// went offline or came back (decision 130).
+    /// </summary>
+    /// <typeparam name="T">The result type.</typeparam>
+    /// <param name="serverId">The server.</param>
+    /// <param name="call">The call.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The result of <paramref name="call"/>, or why it could not run.</returns>
+    Task<RemoteResult<T>> RunPlaybackCallAsync<T>(
         Guid serverId,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken);

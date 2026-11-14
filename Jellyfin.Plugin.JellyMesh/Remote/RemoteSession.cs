@@ -28,4 +28,9 @@ public sealed class RemoteSession
     /// Gets the remote user identifier.
     /// </summary>
     public string UserId { get; }
+
+    /// <summary>
+    /// Gets the Server Id the remote gave itself at login, as 32 lowercase digits, null if it gave none.
+    /// </summary>
+    public string? ServerId { get; init; }
 }

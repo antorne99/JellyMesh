@@ -37,7 +37,7 @@ STEP_NAME = ".jmStepName"
 STEP_STATE = ".jmStepState"
 STEP_DONE_ICON = ".jmStepDone .jmStepIcon"
 STEPS = ["Add a remote server", "Choose libraries to import", "Choose the federated folder",
-         "Run the first sync", "Link the two paths"]
+         "Run the first sync", "Link the folders of each server"]
 STEP_TEXT_ALL = ", ".join([STEP_NAME, STEP_STATE, ".jmStepText"])
 ANNOUNCE = "#jmAnnounce"
 SERVERS = "#jmServers"
@@ -80,11 +80,20 @@ CONFIRM_MARKUP = CONFIRM_TEXT + " b, " + CONFIRM_TEXT + " i"
 CONFIRM_OK = CONFIRM + " [data-id=ok]"
 CONFIRM_CANCEL = CONFIRM + " [data-id=cancel]"
 CHECKBOX = "input[type=checkbox]"
+# The boxes of the libraries to import, apart from the switch of the automatic libraries above them in a server row.
+LIBRARY = ".jmLibraries " + CHECKBOX
 NUMBER = "input[type=number]"
 SAVE_SETTINGS = "#jmSaveSettings"
 SAVE_BAR = "#jmSaveBar"
 VERSION = "#jmVersion"
 BANNER = "#jmBanner"
+MIGRATION = "#jmMigration"
+MIGRATION_TITLE = "#jmMigrationTitle"
+MIGRATION_TEXT = "#jmMigrationText"
+MIGRATION_LIBRARIES = "#jmMigrationLibraries"
+MIGRATE_AUTOMATIC = "#jmMigrateAutomatic"
+MIGRATE_MANUAL = "#jmMigrateManual"
+NEW_SERVER_MODE = "#jmNewServerMode"
 ADD_PART = "#jmAddServerPart"
 ADD_BLOCKED = "#jmAddBlocked"
 LIBRARIES_NOTE = ".jmLibrariesNote"
@@ -97,6 +106,8 @@ METADATA_PROTECTION = "#jmMetadataProtection"
 CHOOSE_FOLDER = "#jmChooseFolder"
 FOLDER_PATH = ".jmPath"
 FOLDER_NOTES = "#jmFolderNotes"
+SERVER_FOLDER = ".jmServerFolder"
+SERVER_FOLDER_NAME = ".jmServerFolderName"
 PICKER_ROW = CONFIRM + " .lnkPath"
 PICKER_OK = CONFIRM + " button[type=submit]"
 PICKER_CLOSE = CONFIRM + " .btnCloseDialog"
@@ -133,11 +144,13 @@ FAILURE = {
     "settings": "#jmSettingsFailure",
 }
 NEW_PEER = "Connect a server"
+OWN_LIBRARIES = "Create a Film and a Serie library for this server"
 ALERT = ".jmAlert"
 ALERTS_WITH_DATA = [WARNING, "#jmIndexWarning", "#jmMergeWarning"]
 SELECT = "select"
 SELECT_ARROW = ".selectArrow"
 CHECK_MARK = ".checkboxOutline"
+LIBRARY_MARK = ".jmLibraries " + CHECK_MARK
 CHECK_LABEL = ".checkboxLabel"
 USER_LABEL = "User"
 LIMIT_LABEL = "Stream limit"
@@ -329,6 +342,11 @@ def server_row(page, name):
 def peer_row(page, name):
     """Finds the row of a connected server."""
     return page.locator(PEERS + " > div > *").filter(has=page.get_by_role("heading", name=name, exact=True, include_hidden=True))
+
+
+def server_folder(page, name):
+    """Finds the block of a remote server in the federated folder section, with its two paths and their warnings."""
+    return page.locator(SERVER_FOLDER).filter(has=page.locator(SERVER_FOLDER_NAME, has_text=name))
 
 
 def state_of(row):

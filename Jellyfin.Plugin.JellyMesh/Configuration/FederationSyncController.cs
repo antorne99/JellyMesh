@@ -20,16 +20,19 @@ public class FederationSyncController : ControllerBase
 {
     private readonly ICatalogSyncService _sync;
     private readonly IFederationResolver _resolver;
+    private readonly ISyncHistory _history;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationSyncController"/> class.
     /// </summary>
     /// <param name="sync">The sync service.</param>
     /// <param name="resolver">The resolver.</param>
-    public FederationSyncController(ICatalogSyncService sync, IFederationResolver resolver)
+    /// <param name="history">The sync history.</param>
+    public FederationSyncController(ICatalogSyncService sync, IFederationResolver resolver, ISyncHistory history)
     {
         _sync = sync;
         _resolver = resolver;
+        _history = history;
     }
 
     /// <summary>
@@ -56,6 +59,14 @@ public class FederationSyncController : ControllerBase
     [HttpGet("Sync")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<SyncStatus> GetSync() => _sync.GetStatus();
+
+    /// <summary>
+    /// Gets the last syncs that ran, newest first (decision 48). Holds no address.
+    /// </summary>
+    /// <returns>The history.</returns>
+    [HttpGet("Sync/History")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<SyncHistoryView> GetHistory() => new SyncHistoryView(_history.Runs, _history.IsDamaged);
 
     /// <summary>
     /// Gets the sources of each content identity, worked out now from the index and the local library.

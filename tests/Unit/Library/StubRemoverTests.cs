@@ -137,6 +137,108 @@ public sealed class StubRemoverTests : IDisposable
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), watch.Elapsed.ToString());
     }
 
+    [Fact]
+    public void TheFolderOfARemovedServerGoesWithTheSeriesLeftInIt()
+    {
+        var server = Guid.NewGuid();
+        var series = ServerSeries(server, "show");
+        var seriesItem = new Folder { Id = Guid.NewGuid(), Path = Path.Combine(_root, series.RelativePath) };
+        _library.Setup(library => library.FindByPath(seriesItem.Path, true)).Returns(seriesItem);
+        Directory.CreateDirectory(Path.Combine(_root, FederatedPaths.MovieFolder(server, string.Empty)));
+        File.WriteAllText(Path.Combine(_root, FederatedPaths.MovieFolder(server, string.Empty), FederatedPaths.HiddenFileName), string.Empty);
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], _ => false);
+
+        Assert.False(Directory.Exists(Path.Combine(_root, FederatedPaths.ServerFolder(server))));
+        Assert.Empty(removal.State.Series);
+        Assert.Equal(1, removal.Removed);
+        Assert.Empty(removal.Failures);
+        _library.Verify(library => library.DeleteItem(seriesItem, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
+    }
+
+    [Fact]
+    public void AServerWithAStubLeftKeepsItsFolder()
+    {
+        var server = Guid.NewGuid();
+        var stub = Movie("m1", "Film 1") with { ServerId = server, RelativePath = FederatedPaths.MovieStub(server, "Film 1", "A") };
+        Write(stub.RelativePath);
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Stubs = [stub] }, [server], _ => false);
+
+        Assert.True(File.Exists(Path.Combine(_root, stub.RelativePath)));
+        Assert.Equal(stub, Assert.Single(removal.State.Stubs));
+        Assert.Equal(0, removal.Removed);
+    }
+
+    [Fact]
+    public void OnlyTheFoldersOfTheGivenServersGo()
+    {
+        var removed = Guid.NewGuid();
+        var kept = Guid.NewGuid();
+        var series = ServerSeries(kept, "show");
+        Directory.CreateDirectory(Path.Combine(_root, FederatedPaths.ServerFolder(removed), "Film"));
+        var flat = Movie("m1", "Film 1");
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Stubs = [flat], Series = [series] }, [removed], _ => false);
+
+        Assert.False(Directory.Exists(Path.Combine(_root, FederatedPaths.ServerFolder(removed))));
+        Assert.True(Directory.Exists(Path.Combine(_root, series.RelativePath)));
+        Assert.True(File.Exists(Path.Combine(_root, flat.RelativePath)));
+        Assert.Equal(series, Assert.Single(removal.State.Series));
+    }
+
+    [Fact]
+    public void ASeriesThatCannotBeRemovedKeepsTheFolderOfItsServer()
+    {
+        var server = Guid.NewGuid();
+        var series = ServerSeries(server, "show");
+        _library.Setup(library => library.FindByPath(Path.Combine(_root, series.RelativePath), true)).Throws(new IOException("busy"));
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], _ => false);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, series.RelativePath)));
+        Assert.Equal(series, Assert.Single(removal.State.Series));
+        Assert.IsType<IOException>(Assert.Single(removal.Failures));
+        Assert.Equal(0, removal.Removed);
+    }
+
+    [Fact]
+    public void AServerAddedBackWhileItsSeriesGoKeepsItsFolder()
+    {
+        var server = Guid.NewGuid();
+        var series = ServerSeries(server, "show");
+        var addedBack = false;
+        _library.Setup(library => library.FindByPath(Path.Combine(_root, series.RelativePath), true)).Callback(() => addedBack = true).Returns((BaseItem?)null);
+        File.WriteAllText(Path.Combine(_root, FederatedPaths.ServerFolder(server), FederatedPaths.HiddenFileName), string.Empty);
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], id => addedBack && id == server);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, FederatedPaths.ServerFolder(server))));
+        Assert.Equal(0, removal.Removed);
+    }
+
+    [Fact]
+    public void AServerAlreadyBackKeepsItsFolderAndItsSeries()
+    {
+        var server = Guid.NewGuid();
+        var series = ServerSeries(server, "show");
+
+        var removal = _remover.RemoveServerFolders(_root, new StubState { Series = [series] }, [server], id => id == server);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, series.RelativePath)));
+        Assert.Equal(series, Assert.Single(removal.State.Series));
+        Assert.Equal(0, removal.Removed);
+    }
+
+    [Fact]
+    public void AFolderAlreadyGoneIsNoWork()
+    {
+        var removal = _remover.RemoveServerFolders(_root, StubState.Empty, [Guid.NewGuid()], _ => false);
+
+        Assert.Equal(0, removal.Removed);
+        Assert.Empty(removal.Failures);
+    }
+
     private StubEntry Movie(string id, string title)
     {
         var path = FederatedPaths.MovieStub(title);
@@ -156,6 +258,13 @@ public sealed class StubRemoverTests : IDisposable
         var path = FederatedPaths.SeriesFolderOf(folder);
         Directory.CreateDirectory(Path.Combine(_root, path));
         return new SeriesStub { Id = id, RelativePath = path, WorkKey = id };
+    }
+
+    private SeriesStub ServerSeries(Guid server, string id)
+    {
+        var path = FederatedPaths.SeriesFolderOf(server, "Show " + id);
+        Directory.CreateDirectory(Path.Combine(_root, path));
+        return new SeriesStub { Id = id, ServerId = server, RelativePath = path, WorkKey = id };
     }
 
     private StubEntry Episode(string id, SeriesStub series, int season, int number, bool writeFile = true)

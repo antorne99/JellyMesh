@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Segments;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
@@ -18,8 +19,8 @@ using Microsoft.AspNetCore.WebUtilities;
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
-/// Answers <c>PlaybackInfo</c> for stubs, POST and GET. It is the only place that sees both the user and the device
-/// profile. Runs after authentication, and redoes the check of the library: the controller it replaces would do it.
+/// Answers <c>PlaybackInfo</c> for stubs and for titles with versions, POST and GET. It is the only place that sees both the
+/// user and the device profile. Runs after authentication, and redoes the check of the library the stock action would do.
 /// </summary>
 public sealed class PlaybackInfoFilter : IAsyncActionFilter
 {
@@ -28,35 +29,39 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     private const string MediaSourceArgument = "mediaSourceId";
 
     private readonly StubLookup _stubs;
-    private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
     private readonly PlaybackRefusal _refusal;
     private readonly LocalCopyLookup _localCopies;
+    private readonly PlaybackVersions _versions;
+    private readonly SegmentOffer _segments;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackInfoFilter"/> class.
     /// </summary>
     /// <param name="stubs">The stubs.</param>
-    /// <param name="libraryManager">The library manager.</param>
     /// <param name="authorization">The authorization context.</param>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="refusal">The refusal.</param>
     /// <param name="localCopies">The lookup of local copies.</param>
+    /// <param name="versions">The versions of a title.</param>
+    /// <param name="segments">Whether a playback offers the segments of its item.</param>
     public PlaybackInfoFilter(
         StubLookup stubs,
-        ILibraryManager libraryManager,
         IAuthorizationContext authorization,
         PlaybackCoordinator coordinator,
         PlaybackRefusal refusal,
-        LocalCopyLookup localCopies)
+        LocalCopyLookup localCopies,
+        PlaybackVersions versions,
+        SegmentOffer segments)
     {
         _stubs = stubs;
-        _libraryManager = libraryManager;
         _authorization = authorization;
         _coordinator = coordinator;
         _refusal = refusal;
         _localCopies = localCopies;
+        _versions = versions;
+        _segments = segments;
     }
 
     /// <summary>
@@ -88,9 +93,18 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var (controller, action) = StubLookup.ActionOf(context);
-        var itemId = StubLookup.ItemIdOf(context);
-        var stub = controller == "MediaInfo" && action.Contains("PlaybackInfo", StringComparison.Ordinal) && itemId is { } id ? _stubs.Find(id) : null;
-        if (stub is null)
+        var routeId = StubLookup.ItemIdOf(context);
+        if (controller != "MediaInfo" || !action.Contains("PlaybackInfo", StringComparison.Ordinal) || routeId is not { } route)
+        {
+            await next().ConfigureAwait(false);
+            return;
+        }
+
+        // R:versioni §5: the version comes from the query, else from the body, as the stock action merges them.
+        var arguments = new ArgumentReader(context.ActionArguments);
+        var asked = arguments.Version(MediaSourceArgument);
+        var routeStub = _stubs.Find(route);
+        if (routeStub is null && (asked is not { } named || named.Equals(route) || _stubs.Find(named) is null) && !_stubs.HasVersions(route))
         {
             await next().ConfigureAwait(false);
             return;
@@ -104,18 +118,28 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        if (_libraryManager.GetItemById<BaseItem>(itemId!.Value, user) is null)
+        // A version the user cannot see, in no library (D17) or of another title, is not found, and reaches no remote.
+        if (!_stubs.Sees(user, route)
+            || (asked is { } version && (!_stubs.Sees(user, version) || !_versions.IsVersionOf(route, version))))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
         }
 
+        var target = asked ?? (routeStub is null ? route : _versions.Choose(route, routeStub, user));
+        var targetStub = target.Equals(route) ? routeStub : _stubs.Find(target);
+        if (targetStub is null && routeStub is null)
+        {
+            await PlayStockVersionAsync(context, next, target).ConfigureAwait(false);
+            return;
+        }
+
         var deviceId = authorization.DeviceId ?? string.Empty;
-        var arguments = new ArgumentReader(context.ActionArguments);
         var request = new PlaybackOpenRequest
         {
-            Identity = new PlaybackIdentity(user.Id, deviceId, itemId.Value, stub.Id),
-            Stub = stub,
+            Identity = new PlaybackIdentity(user.Id, deviceId, target, (targetStub ?? routeStub)!.Id),
+            Stub = (targetStub ?? routeStub)!,
+            Fallbacks = targetStub is null ? [] : _versions.Fallbacks(target, targetStub, user),
             LocalToken = authorization.Token,
             DeviceProfile = arguments.Body<DeviceProfile>("DeviceProfile"),
             AudioStreamIndex = arguments.Value<int>("audioStreamIndex"),
@@ -131,18 +155,50 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             AlwaysBurnInSubtitleWhenTranscoding = arguments.Value<bool>("alwaysBurnInSubtitleWhenTranscoding")
         };
 
+        // The local copy under a stub is stock's, through the file route of the local copy.
+        if (targetStub is null)
+        {
+            await PlayLocalCopyAsync(context, next, request, target, route).ConfigureAwait(false);
+            return;
+        }
+
         var outcome = await _coordinator.OpenAsync(request, http.RequestAborted).ConfigureAwait(false);
         switch (outcome.Kind)
         {
             case PlaybackOutcomeKind.Remote:
+                _segments.OfferOnRemote(outcome.Response!, outcome.Served, route);
                 context.Result = new OkObjectResult(outcome.Response);
                 break;
             case PlaybackOutcomeKind.LocalTranscode when request.DeviceProfile is not null:
-                await RunLocalTranscodeAsync(context, next, request, outcome).ConfigureAwait(false);
+                // After a fallback another version serves, and stock must transcode its .strm.
+                var served = outcome.Served is { } identity ? request with { Identity = identity } : request;
+                await RunLocalTranscodeAsync(context, next, served, outcome, route).ConfigureAwait(false);
                 break;
             default:
-                await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user).ConfigureAwait(false);
+                await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user, route).ConfigureAwait(false);
                 break;
+        }
+    }
+
+    // Keeps only the source of the version served: stock may list every version, and clients play the first one.
+    private static void KeepOnly(PlaybackInfoResponse response, Guid versionId)
+    {
+        var id = versionId.ToString("N");
+        var kept = response.MediaSources.Where(source => string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (kept.Count > 0)
+        {
+            response.MediaSources = kept;
+        }
+    }
+
+    // Stock answers for a local version under a local item. The GET action has no version to pin, so the answer is trimmed.
+    private static async Task PlayStockVersionAsync(ActionExecutingContext context, ActionExecutionDelegate next, Guid versionId)
+    {
+        context.ActionArguments[MediaSourceArgument] = versionId.ToString("N");
+        var executed = await next().ConfigureAwait(false);
+        if (executed.Result is ObjectResult { Value: PlaybackInfoResponse response })
+        {
+            KeepOnly(response, versionId);
         }
     }
 
@@ -162,6 +218,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return false;
         }
 
+        KeepOnly(response, localItemId);
+
         foreach (var source in response.MediaSources)
         {
             // What the client could play as it is goes by file, without a transcode nobody needs.
@@ -176,8 +234,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             HideFile(source);
             source.Protocol = MediaProtocol.Http;
 
-            // The client reports playback on the item it opened, and the server looks this source up on that item.
-            source.Id = request.Identity.ItemId.ToString("N");
+            // The client reports this id as the version played, and the server keeps the watch state on that version.
+            source.Id = localItemId.ToString("N");
             foreach (var stream in source.MediaStreams ?? [])
             {
                 stream.Path = null;
@@ -187,19 +245,25 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         return true;
     }
 
-    private async Task RefuseOrPlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, User user)
+    private async Task RefuseOrPlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, User user, Guid route)
     {
-        if (_localCopies.Find(request.Stub, user) is not { } local)
+        // A local copy in no library is not one to fall back on for a non-admin (D17).
+        if (_localCopies.Find(request.Stub, user) is not { } local || !_stubs.Sees(user, local.Id))
         {
             context.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.TextOf(outcome));
             return;
         }
 
+        await PlayLocalCopyAsync(context, next, request, local.Id, route).ConfigureAwait(false);
+    }
+
+    private async Task PlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, Guid localItemId, Guid route)
+    {
         // The stock action answers for the local item. The source the client asked for is one of the stub.
-        context.ActionArguments[ItemArgument] = local.Id;
-        context.ActionArguments[MediaSourceArgument] = local.Id.ToString("N");
+        context.ActionArguments[ItemArgument] = localItemId;
+        context.ActionArguments[MediaSourceArgument] = localItemId.ToString("N");
         var executed = await next().ConfigureAwait(false);
-        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, request, local.Id))
+        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, request, localItemId))
         {
             executed.Exception = null;
             executed.ExceptionHandled = true;
@@ -207,10 +271,11 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
+        _coordinator.RecordLocalPlaySession(request.Identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
+        _segments.RecordLocalCopy(request.Identity, response.PlaySessionId, localItemId, route);
     }
 
-    private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome)
+    private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, Guid route)
     {
         // The stock action builds the local TranscodingUrl. ffmpeg then reads the URL of the .strm, from loopback.
         var noCopy = new Dictionary<string, object?>
@@ -226,7 +291,15 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             context.ActionArguments[name] = value;
         }
 
+        // Stock transcodes the .strm of the version served, which may not be the item of the route.
+        context.ActionArguments[ItemArgument] = request.Identity.ItemId;
+        context.ActionArguments[MediaSourceArgument] = request.Identity.ItemId.ToString("N");
         var executed = await next().ConfigureAwait(false);
+        if (executed.Result is ObjectResult { Value: PlaybackInfoResponse trimmed })
+        {
+            KeepOnly(trimmed, request.Identity.ItemId);
+        }
+
         if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalResponse(response, request, outcome))
         {
             executed.Exception = null;
@@ -236,6 +309,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
+        _coordinator.RecordLocalTranscode(response.PlaySessionId, outcome.FileSource);
+        _segments.OfferOnLocal(response, request.Identity, outcome.FileSource, route);
     }
 
     private bool CleanLocalResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, PlaybackOutcome outcome)
@@ -279,6 +354,15 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             where T : class
         {
             return _body?.GetType().GetProperty(name)?.GetValue(_body) as T;
+        }
+
+        // Reads the version a client names, as a Guid or as text, the query over the body. Anything else counts as none.
+        public Guid? Version(string name)
+        {
+            var value = _arguments.TryGetValue(name, out var query) && query is not null && !(query is string { Length: 0 })
+                ? query
+                : _body?.GetType().GetProperties().FirstOrDefault(candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.GetValue(_body);
+            return (value is Guid id || (value is string text && Guid.TryParse(text, out id))) && !id.Equals(Guid.Empty) ? id : null;
         }
 
         // A query value wins over the body, as in the stock action.

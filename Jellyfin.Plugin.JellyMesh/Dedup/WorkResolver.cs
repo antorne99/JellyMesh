@@ -26,8 +26,9 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// </para>
 /// <para>Series without IDs keep §4.1: normalized title and year, and never a link to a series with IDs.</para>
 /// <para>
-/// Manual merges (decision 20) come last and only join works found by the rules above, so they cannot split anything. Works
-/// joined take the lowest of their keys: the stub that had that key stays, and it gets the key back after an undo. Films only.
+/// Manual merges (decisions 20 and 51) come last and only join works found by the rules above, so they cannot split
+/// anything. Works joined take the lowest of their keys: the stub that had that key stays, and it gets the key back after an
+/// undo. A series copy is its series item, so a merge joins whole series; works of different kinds never join.
 /// </para>
 /// <para>The result is a property of the set of items and merges, so it does not depend on their order.</para>
 /// </remarks>
@@ -97,8 +98,15 @@ internal sealed class WorkResolver
     public Work? Find(CatalogItem item)
     {
         var work = FindNatural(item);
-        return _mergedKeys.TryGetValue(work?.Key ?? KeyOfFilmAlone(item), out var merged) ? new Work(merged, MatchKind.Manual) : work;
+        return _mergedKeys.TryGetValue(work?.Key ?? KeyOfAlone(item), out var merged) ? new Work(merged, MatchKind.Manual) : work;
     }
+
+    /// <summary>
+    /// Gets the item that names the copy an item belongs to: the film itself, or the series of an episode.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <returns>The item ID, null for an episode whose series is not known.</returns>
+    internal static string? CopyItemOf(CatalogItem item) => item.Kind == ContentKind.Movie ? item.ItemId : item.SeriesId;
 
     /// <summary>
     /// Puts an ID in the form used for comparing.
@@ -238,18 +246,26 @@ internal sealed class WorkResolver
         return copyPairs.Concat(workPairs).All(confirmed.Contains);
     }
 
-    // A merged copy that lost its title or year on the remote has no work, and it must not fall out of the merge for that.
-    private static string KeyOfFilmAlone(CatalogItem item) => string.Join('|', Prefix(item.Kind), "item:" + CopyName(item));
+    // A merged copy that lost its title or year on the remote has no work, and it must not fall out of the merge for that. All
+    // the episodes of a series share its key.
+    private static string KeyOfAlone(CatalogItem item) =>
+        string.Join('|', Prefix(item.Kind), "item:" + item.ServerId + ":" + (CopyItemOf(item) ?? item.ItemId));
 
-    private static bool IsCopy(CatalogItem film, MergedCopy copy)
+    private static bool IsCopy(CatalogItem item, MergedCopy copy)
     {
-        if (string.Equals(film.ServerId, copy.ServerId, StringComparison.Ordinal) && string.Equals(film.ItemId, copy.ItemId, StringComparison.Ordinal))
+        if (item.Kind != copy.Kind)
+        {
+            return false;
+        }
+
+        if (string.Equals(item.ServerId, copy.ServerId, StringComparison.Ordinal) && string.Equals(CopyItemOf(item), copy.ItemId, StringComparison.Ordinal))
         {
             return true;
         }
 
-        var ids = new ContentIds(Canonical(copy.Tmdb), Canonical(copy.Imdb));
-        return ids != ContentIds.None && CanonicalIds(film) == new WorkIds(ContentKind.Movie, ids);
+        var tvdb = copy.Kind == ContentKind.Movie ? null : Canonical(copy.Tvdb);
+        var ids = new ContentIds(Canonical(copy.Tmdb), Canonical(copy.Imdb), tvdb);
+        return ids != ContentIds.None && CanonicalIds(item) == new WorkIds(copy.Kind, ids);
     }
 
     private static (ManualMerge Merge, List<string> Keys, List<AppliedCopy> Copies) FindCopies(ManualMerge merge, List<(CatalogItem Item, string Key)> films)
@@ -267,12 +283,16 @@ internal sealed class WorkResolver
             // Sorted films, so that the item shown for a copy found by its IDs does not depend on the order of a read.
             var found = films.Where(film => IsCopy(film.Item, copy)).ToList();
             keys.UnionWith(found.Select(film => film.Key));
-            var exact = found.FindIndex(film => string.Equals(film.Item.ServerId, copy.ServerId, StringComparison.Ordinal) && string.Equals(film.Item.ItemId, copy.ItemId, StringComparison.Ordinal));
+            var exact = found.FindIndex(film => string.Equals(film.Item.ServerId, copy.ServerId, StringComparison.Ordinal) && string.Equals(CopyItemOf(film.Item), copy.ItemId, StringComparison.Ordinal));
             applied.Add(new AppliedCopy(copy, found.Count == 0 ? null : found[Math.Max(exact, 0)].Item));
         }
 
         return (merge, keys.ToList(), applied);
     }
+
+    // The keys of a merge split by kind, since a film and a series never become one title.
+    private static IEnumerable<List<string>> KindsOf(List<string> keys) =>
+        keys.GroupBy(key => key.Split('|', 2)[0], StringComparer.Ordinal).Select(group => group.ToList());
 
     private Work? FindNatural(CatalogItem item)
     {
@@ -298,21 +318,23 @@ internal sealed class WorkResolver
             return;
         }
 
-        var films = items
-            .Where(item => item.Kind == ContentKind.Movie)
-            .Select(item => (Item: item, Key: FindNatural(item)?.Key ?? KeyOfFilmAlone(item)))
-            .DistinctBy(film => (film.Item.ServerId, film.Item.ItemId))
-            .OrderBy(film => film.Item.ServerId, StringComparer.Ordinal)
-            .ThenBy(film => film.Item.ItemId, StringComparer.Ordinal)
+        // One entry per copy: a film, or a series with its lowest episode, so that what is shown does not depend on a read.
+        var copies = items
+            .Where(item => CopyItemOf(item) is not null)
+            .OrderBy(item => item.ServerId, StringComparer.Ordinal)
+            .ThenBy(item => CopyItemOf(item), StringComparer.Ordinal)
+            .ThenBy(item => item.ItemId, StringComparer.Ordinal)
+            .DistinctBy(item => (item.Kind, item.ServerId, CopyItemOf(item)))
+            .Select(item => (Item: item, Key: FindNatural(item)?.Key ?? KeyOfAlone(item)))
             .ToList();
 
-        var found = merges.OrderBy(merge => merge.Id).Select(merge => FindCopies(merge, films)).ToList();
+        var found = merges.OrderBy(merge => merge.Id).Select(merge => FindCopies(merge, copies)).ToList();
         JoinWorks(found.ConvertAll(merge => merge.Keys));
 
         Merges = found.ConvertAll(merge => new AppliedMerge(
             merge.Merge,
             merge.Keys.Count > 0 ? _mergedKeys.GetValueOrDefault(merge.Keys[0], merge.Keys[0]) : null,
-            merge.Keys.Count > 1,
+            KindsOf(merge.Keys).Any(keys => keys.Skip(1).Any()),
             merge.Copies));
 
         // An issue whose keys all became one is settled. One that always had a single key is about IDs, and stays.
@@ -330,7 +352,7 @@ internal sealed class WorkResolver
         var keys = keysOfMerges.SelectMany(list => list).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
         var positions = keys.Select((key, index) => (key, index)).ToDictionary(entry => entry.key, entry => entry.index, StringComparer.Ordinal);
         var groups = new DisjointSets(keys.Count);
-        foreach (var list in keysOfMerges)
+        foreach (var list in keysOfMerges.SelectMany(KindsOf))
         {
             foreach (var key in list.Skip(1))
             {

@@ -4,8 +4,6 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Remote;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -15,8 +13,8 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
 /// What clients play: playlists, segments, subtitles and streams of a session. Each request is checked again against the
-/// user and the library of the title, and a remote failure ends in a bare status: remote bodies never pass. A refusal for
-/// the stream limit also tells the device why.
+/// user and the library of the title, which a user who is not an admin must find in a library (D17), and a remote failure
+/// ends in a bare status: remote bodies never pass. A refusal for the stream limit also tells the device why.
 /// </summary>
 [ApiController]
 [Route(PlaybackUrls.SessionRoute + "/{sessionId}")]
@@ -29,7 +27,7 @@ public class PlaybackProxyController : ControllerBase
 
     private readonly PlaybackSessionStore _sessions;
     private readonly PlaybackCoordinator _coordinator;
-    private readonly ILibraryManager _libraryManager;
+    private readonly StubLookup _stubs;
     private readonly IAuthorizationContext _authorization;
     private readonly TimeProvider _clock;
     private readonly PlaybackRefusal _refusal;
@@ -39,21 +37,21 @@ public class PlaybackProxyController : ControllerBase
     /// </summary>
     /// <param name="sessions">The sessions.</param>
     /// <param name="coordinator">The coordinator.</param>
-    /// <param name="libraryManager">The library manager.</param>
+    /// <param name="stubs">The stubs, for what a user sees.</param>
     /// <param name="authorization">The authorization context.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="refusal">The refusal of a playback.</param>
     public PlaybackProxyController(
         PlaybackSessionStore sessions,
         PlaybackCoordinator coordinator,
-        ILibraryManager libraryManager,
+        StubLookup stubs,
         IAuthorizationContext authorization,
         TimeProvider clock,
         PlaybackRefusal refusal)
     {
         _sessions = sessions;
         _coordinator = coordinator;
-        _libraryManager = libraryManager;
+        _stubs = stubs;
         _authorization = authorization;
         _clock = clock;
         _refusal = refusal;
@@ -161,6 +159,11 @@ public class PlaybackProxyController : ControllerBase
         return await RelayStreamAsync(session, upstream, cancellationToken).ConfigureAwait(false);
     }
 
+    private static bool IsSubtitle(string path)
+    {
+        return path.Split('?')[0].Contains("/Subtitles/", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string FolderOf(string path)
     {
         var plain = path.Split('?')[0];
@@ -174,7 +177,7 @@ public class PlaybackProxyController : ControllerBase
             || string.IsNullOrEmpty(authorization.Token)
             || _sessions.Find(sessionId) is not { } session
             || session.Identity.UserId != user.Id
-            || _libraryManager.GetItemById<BaseItem>(session.Identity.ItemId, user) is null)
+            || !_stubs.Sees(user, session.Identity.ItemId))
         {
             return new SessionAccess(null, string.Empty);
         }
@@ -184,10 +187,15 @@ public class PlaybackProxyController : ControllerBase
 
     private async Task<ActionResult> RelayPlaylistAsync(PlaybackSession session, string path, string remoteFolder, string prefix, string token, CancellationToken cancellationToken)
     {
+        if (session.HasFailed)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway);
+        }
+
         var playlist = await _coordinator.ReadPlaylistAsync(session.Source.ServerId, path, cancellationToken).ConfigureAwait(false);
         if (!playlist.IsSuccess)
         {
-            return RelayFailed(session, playlist.Failure);
+            return RelayFailed(session, path, playlist.Failure);
         }
 
         var text = HlsPlaylistRewriter.Rewrite(playlist.Value!, session, remoteFolder, prefix, token, PlaybackCoordinator.SecretsOf(session));
@@ -198,26 +206,44 @@ public class PlaybackProxyController : ControllerBase
 
     private async Task<ActionResult> RelayStreamAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
     {
+        if (session.HasFailed)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway);
+        }
+
         var method = HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get;
         var range = Request.Headers.Range.ToString();
         var request = new RemoteStreamRequest(method, path, string.IsNullOrEmpty(range) ? null : range);
         var opened = await _coordinator.OpenAsync(session.Source.ServerId, request, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {
-            return RelayFailed(session, opened.Failure);
+            return RelayFailed(session, path, opened.Failure);
         }
 
         using var stream = opened.Value!;
-        await StreamRelay.CopyAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false);
+        if (await StreamRelay.CopyAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken, _clock).ConfigureAwait(false) && !IsSubtitle(path))
+        {
+            _coordinator.ReportFailure(session);
+        }
+
         return new EmptyResult();
     }
 
-    // A stream that lost its slot and came back to a full server: the same refusal as a new PlaybackInfo gets.
-    private ActionResult RelayFailed(PlaybackSession session, RemoteFailure failure)
+    // A stream that lost its slot and came back to a full server: the same refusal as a new PlaybackInfo gets. Any other
+    // failure but a missing subtitle or a full queue here ends the session, so that the player reconnects (row 57).
+    private ActionResult RelayFailed(PlaybackSession session, string path, RemoteFailure failure)
     {
-        return failure == RemoteFailure.StreamLimitReached
-            ? _refusal.Refuse(HttpContext, session.Identity.DeviceId, PlaybackRefusal.LimitText)
-            : StatusCode(StatusCodes.Status502BadGateway);
+        if (failure == RemoteFailure.StreamLimitReached)
+        {
+            return _refusal.Refuse(HttpContext, session.Identity.DeviceId, PlaybackRefusal.LimitText);
+        }
+
+        if (failure != RemoteFailure.Busy && !IsSubtitle(path))
+        {
+            _coordinator.ReportFailure(session);
+        }
+
+        return StatusCode(StatusCodes.Status502BadGateway);
     }
 
     private sealed record SessionAccess(PlaybackSession? Session, string Token);

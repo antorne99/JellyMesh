@@ -1,15 +1,23 @@
 # Helpers for the Phase 7 proof: two private JellyMesh servers federated to each other. Source it.
-#   a  jm-prov-a  18410  media of remoto-standard  consumer of b and of the stock remote
-#   b  jm-prov-b  18411  media of remoto-jellymesh consumer of a
+#   a  $PREFIX-a  $PORT_A    media of remoto-standard  consumer of b and of the stock remote
+#   b  $PREFIX-b  $PORT_A+1  media of remoto-jellymesh consumer of a
 # The servers reach each other through gate.py on the host, so that a test can slow them down or cut them off:
-#   18412 -> a, 18413 -> b, 18414 -> stock remote (8097)
+#   $PORT_A+2 -> a, $PORT_A+3 -> b, $PORT_A+4 -> stock remote ($STOCK_PORT)
+# PREFIX (default jm-prov) and PORT_A (default 18410) move it all elsewhere, for a run beside another stack.
+# STOCK_PORT (default 8097) is the remoto-standard of the shared stack; STOCK=own makes $PREFIX-s on $PORT_A+5 instead.
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
 MEDIA=${MEDIA:?point MEDIA at tests/Integration/media of the main checkout}
 WORK=${WORK:?point WORK at a scratch folder}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 ACCEPT='Accept: application/json; profile="PascalCase"'
-AUTH='MediaBrowser Client="JellyMeshProv", Device="prov", DeviceId="jm-prov-admin", Version="0.1"'
+PREFIX=${PREFIX:-jm-prov}
+PORT_A=${PORT_A:-18410}
+PORT_B=${PORT_B:-$((PORT_A + 1))}
+GATE_A=$((PORT_A + 2)) GATE_B=$((PORT_A + 3)) GATE_STOCK=$((PORT_A + 4))
+STOCK=${STOCK:-shared}
+if [ "$STOCK" = own ]; then STOCK_PORT=${STOCK_PORT:-$((PORT_A + 5))}; else STOCK_PORT=${STOCK_PORT:-8097}; fi
+AUTH="MediaBrowser Client=\"JellyMeshProv\", Device=\"prov\", DeviceId=\"$PREFIX-admin\", Version=\"0.1\""
 HOST_GATE=host.docker.internal
 INCREMENTAL_TASK="JellyMesh incremental sync"
 RECONCILE_TASK="JellyMesh reconciliation"
@@ -20,9 +28,9 @@ PROFILE_DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayPro
 PROFILE_HLS='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 mkdir -p "$WORK"
 
-# PREFIX, PORT_A and PORT_B move the servers elsewhere, for a script that runs beside another stack.
-port_of() { case $1 in a) echo "${PORT_A:-18410}" ;; b) echo "${PORT_B:-18411}" ;; esac; }
-container_of() { echo "${PREFIX:-jm-prov}-$1"; }
+# s is the private stock server of STOCK=own.
+port_of() { case $1 in a) echo "$PORT_A" ;; b) echo "$PORT_B" ;; s) echo "$STOCK_PORT" ;; esac; }
+container_of() { echo "$PREFIX-$1"; }
 token_of() { cat "$WORK/token-$1" 2>/dev/null || true; }
 
 # req <a|b> <method> <path> [body]: prints the body; the status goes to $WORK/status.
@@ -40,14 +48,14 @@ post() { req "$1" POST "$2" "${3:-}"; }
 
 # as_peer <a|b> <user> <method> <path>: the same request with the login of a dedicated user. Prints the status.
 peer_token() {
-  curl -sS -X POST -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"jm-prov-probe-$2\", Version=\"0.1\"" \
+  curl -sS -X POST -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"$PREFIX-probe-$2\", Version=\"0.1\"" \
     -H 'Content-Type: application/json' -d "{\"Username\":\"$2\",\"Pw\":\"jellymesh-test\"}" \
     "http://127.0.0.1:$(port_of "$1")/Users/AuthenticateByName" | jq -r .AccessToken
 }
 as_peer() {
   local s=$1 token=$2 method=$3 path=$4
   curl -sS -o "$WORK/body" -w '%{http_code}' -X "$method" -H "$ACCEPT" \
-    -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"jm-prov-probe\", Version=\"0.1\", Token=\"$token\"" \
+    -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"peer\", DeviceId=\"$PREFIX-probe\", Version=\"0.1\", Token=\"$token\"" \
     "http://127.0.0.1:$(port_of "$s")$path"
 }
 
@@ -96,11 +104,11 @@ start() {
   get "$s" /Startup/User >/dev/null
   post "$s" /Startup/User '{"Name":"admin","Password":"jellymesh-test"}' >/dev/null
   post "$s" /Startup/Complete >/dev/null
-  docker exec "$name" sh -c 'mkdir -p /federata/Film /federata/Serie /extra/film && touch /federata/Film/.jellymesh /federata/Serie/.jellymesh /extra/film/.keep'
+  docker exec "$name" sh -c 'mkdir -p /extra/film && touch /extra/film/.keep'
   login "$s"
   local opts='{"LibraryOptions":{"EnableInternetProviders":false}}'
-  post "$s" "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/extra/film&paths=/federata/Film" "$opts" >/dev/null
-  post "$s" "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie&paths=/federata/Serie" "$opts" >/dev/null
+  post "$s" "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/extra/film" "$opts" >/dev/null
+  post "$s" "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie" "$opts" >/dev/null
   post "$s" /Users/New '{"Name":"peer","Password":"jellymesh-test"}' >/dev/null
   post "$s" /Users/New '{"Name":"mario","Password":"jellymesh-test"}' >/dev/null
   scan "$s"
@@ -112,6 +120,35 @@ install_plugin() {
   wait_ready "$1"
   login "$1"
 }
+
+# stock_up: with STOCK=own, a private stock server set up as remoto-standard of the shared stack. Otherwise nothing.
+stock_up() {
+  [ "$STOCK" = own ] || return 0
+  local name opts='{"LibraryOptions":{"EnableInternetProviders":false}}'
+  name=$(container_of s)
+  stock_down
+  rm -f "$WORK/token-s"
+  docker run -d --name "$name" -p "127.0.0.1:$STOCK_PORT:8096" -e TZ=Europe/Rome \
+    -v "$name-config:/config" -v "$name-cache:/cache" -v "$MEDIA/remoto-standard:/media:ro" "$IMAGE" >/dev/null
+  wait_ready s
+  post s /Startup/Configuration '{"UICulture":"en-US","MetadataCountryCode":"IT","PreferredMetadataLanguage":"it"}' >/dev/null
+  get s /Startup/User >/dev/null
+  post s /Startup/User '{"Name":"admin","Password":"jellymesh-test"}' >/dev/null
+  post s /Startup/Complete >/dev/null
+  login s
+  post s /Users/New '{"Name":"jellymesh","Password":"jellymesh-test"}' >/dev/null
+  post s "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film" "$opts" >/dev/null
+  post s "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie" "$opts" >/dev/null
+  scan s
+}
+# stock_down: removes the private stock server and its volumes, if there are any.
+stock_down() {
+  docker rm -f "$(container_of s)" >/dev/null 2>&1 || true
+  docker volume rm "$(container_of s)-config" "$(container_of s)-cache" >/dev/null 2>&1 || true
+}
+
+# gates_down: stops the gates of this run alone, found by their listen ports.
+gates_down() { pkill -f "gate\.py ($GATE_A|$GATE_B|$GATE_STOCK) " 2>/dev/null || true; }
 
 user_id() { get "$1" /Users | jq -r --arg n "$2" '.[] | select(.Name == $n) | .Id'; }
 library_id() { get "$1" /JellyMesh/Admin/Peers/Options | jq -r --arg n "$2" '.Libraries[] | select(.Name == $n) | .Id'; }
@@ -129,6 +166,19 @@ share() {
 # add_remote <consumer> <name> <url> <user> -> server id. Asks the gate-side URL, which is what the consumer really uses.
 add_remote() {
   post "$1" /JellyMesh/Admin/Servers "$(jq -n --arg n "$2" --arg u "$3" --arg x "$4" '{Name:$n,Url:$u,Username:$x,Password:"jellymesh-test"}')" | jq -r .Id
+}
+
+# dashed <server id>: the ID as the plugin names the folder of that server.
+dashed() { local id=${1//-/}; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+
+# link_server <consumer> <server id>: adds the Film and Serie folders of that server to the libraries, as an admin does.
+link_server() {
+  local s=$1 dir kind
+  dir=/federata/$(dashed "$2")
+  for kind in Film Serie; do
+    post "$s" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$dir/$kind" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
+    [ "$(status)" = 204 ] || { echo "linking $dir/$kind failed: $(status)" >&2; return 1; }
+  done
 }
 
 # import_all <consumer> <server id>: every library the remote offers.
@@ -170,7 +220,7 @@ gate_mode() { echo "$2" >"$WORK/gate-$1"; }
 client_login() {
   curl -sS -X POST -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"$1\", DeviceId=\"$1\", Version=\"0.1\"" \
     -H 'Content-Type: application/json' -d '{"Username":"admin","Pw":"jellymesh-test"}' \
-    http://127.0.0.1:18411/Users/AuthenticateByName | jq -r .AccessToken >"$WORK/client-$1"
+    "http://127.0.0.1:$PORT_B/Users/AuthenticateByName" | jq -r .AccessToken >"$WORK/client-$1"
 }
 # open_stream <device> <item> <profile>: PlaybackInfo on b. Prints the status; the answer is in $WORK/open-<device>.
 open_stream() {
@@ -178,7 +228,7 @@ open_stream() {
   [ -f "$WORK/client-$device" ] || client_login "$device"
   curl -sS -o "$WORK/open-$device" -w '%{http_code}' -X POST -H "$ACCEPT" \
     -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"$device\", DeviceId=\"$device\", Version=\"0.1\", Token=\"$(cat "$WORK/client-$device")\"" \
-    -H 'Content-Type: application/json' -d "$profile" "http://127.0.0.1:18411/Items/$item/PlaybackInfo"
+    -H 'Content-Type: application/json' -d "$profile" "http://127.0.0.1:$PORT_B/Items/$item/PlaybackInfo"
 }
 # close_stream <device>: what a client does at the end of a playback.
 close_stream() {
@@ -186,9 +236,9 @@ close_stream() {
   session=$(jq -r '.PlaySessionId // empty' "$WORK/open-$device" 2>/dev/null)
   [ -n "$session" ] || return 0
   curl -sS -o /dev/null -X DELETE -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"$device\", DeviceId=\"$device\", Version=\"0.1\", Token=\"$(cat "$WORK/client-$device")\"" \
-    "http://127.0.0.1:18411/Videos/ActiveEncodings?deviceId=$device&playSessionId=$session"
+    "http://127.0.0.1:$PORT_B/Videos/ActiveEncodings?deviceId=$device&playSessionId=$session"
 }
-stream_url() { echo "http://127.0.0.1:18411$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/open-$1")"; }
+stream_url() { echo "http://127.0.0.1:$PORT_B$(jq -r '.MediaSources[0].TranscodingUrl' "$WORK/open-$1")"; }
 active_streams() { get a /JellyMesh/Admin/Peers | jq -r '.[0].ActiveStreams'; }
 folder_of() { local plain=${1%%\?*}; echo "${plain%/*}/"; }
 # hls_segments <device> <how many>: walks an HLS stream as a player does, each URI against the playlist it came from. Prints
@@ -203,14 +253,18 @@ hls_segments() {
     curl -sS -o /dev/null -w '%{http_code}\n' --max-time 60 "$(folder_of "$variant")$segment"
   done
 }
-# movie_on_b <title>: the stub of a title on b.
-movie_on_b() { get b '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$1" '[.Items[] | select((.Path // "") | contains($t))][0].Id'; }
+# movie_on_b <title> [server id]: the stub of a title on b, in the folder of that server, by default a.
+movie_on_b() {
+  local folder
+  folder=/federata/$(dashed "${2:-$(cat "$WORK/id-b-from-a")}")/
+  get b '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$1" --arg f "$folder" '[.Items[] | select((.Path // "") | (startswith($f) and contains($t)))][0].Id'
+}
 # message_during <device> <seconds> <command...>: runs the command with the device connected, prints what it was told.
 message_during() {
   local device=$1 seconds=$2
   shift 2
   [ -f "$WORK/client-$device" ] || client_login "$device"
-  python3 "$S/ws.py" 18411 "$(cat "$WORK/client-$device")" "$device" "$seconds" >"$WORK/ws-$device" &
+  python3 "$S/ws.py" "$PORT_B" "$(cat "$WORK/client-$device")" "$device" "$seconds" >"$WORK/ws-$device" &
   local listener=$!
   sleep 2
   "$@" >"$WORK/during-$device"

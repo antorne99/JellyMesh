@@ -26,4 +26,7 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
 
     /// <inheritdoc />
     public void Update(Action<PluginConfiguration> update) => Plugin.ChangeConfiguration(update);
+
+    /// <inheritdoc />
+    public void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback) => Plugin.ChangeConfiguration(update, rollback);
 }

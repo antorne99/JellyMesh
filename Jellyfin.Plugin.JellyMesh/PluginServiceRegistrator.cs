@@ -1,4 +1,5 @@
 using System;
+using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -9,6 +10,7 @@ using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -24,6 +26,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<IPluginConfigurationStore, PluginConfigurationStore>();
+        serviceCollection.AddSingleton<IActivityWriter, JellyfinActivityWriter>();
         serviceCollection.AddSingleton<ISecretKeySource>(provider => new FileSecretKeySource(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<FileSecretKeySource>>()));
@@ -58,7 +61,40 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<StubTechnicalData>();
         serviceCollection.AddSingleton<StubItemUpdater>();
         serviceCollection.AddSingleton<StubRemover>();
+        serviceCollection.AddSingleton<ILocalRefreshRequester, LocalRefreshRequester>();
         serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
+        serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
+        serviceCollection.AddSingleton<ILibraryPaths, LibraryPaths>();
+        serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
+        serviceCollection.AddSingleton<RetiredLibraryIds>();
+        serviceCollection.AddSingleton<ILibraryViewIds, LibraryViewIds>();
+        serviceCollection.AddSingleton(provider => new LibraryRenameJournal(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<LibraryRenameJournal>>()));
+        serviceCollection.AddSingleton<ILibraryRenamer, LibraryRenamer>();
+        serviceCollection.AddHostedService<LibraryRenameResumeService>();
+        serviceCollection.AddSingleton<RetiredLibraryFilter>();
+        serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<RetiredLibraryFilter>());
+        serviceCollection.AddSingleton<IVersionLinker, VersionLinker>();
+        serviceCollection.AddSingleton<ILocalTitleLinker, LocalTitleLinker>();
+        serviceCollection.AddHostedService<LocalRefreshWatcher>();
+        serviceCollection.AddSingleton<IWatchStateCarryLog>(provider => new WatchStateCarryLog(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<WatchStateCarryLog>>()));
+        serviceCollection.AddSingleton<IWatchStateCarrier, WatchStateCarrier>();
+        serviceCollection.AddSingleton<IServerStubRenamer, ServerStubRenamer>();
+        serviceCollection.AddSingleton<IServerRenamer, ServerRenamer>();
+        serviceCollection.AddSingleton<IMergeWatchStateCarry, MergeWatchStateCarry>();
+        serviceCollection.AddSingleton<IKeptWatchStateStore>(provider => new KeptWatchStateStore(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<KeptWatchStateStore>>()));
+        serviceCollection.AddSingleton<IWatchStateKeeper, WatchStateKeeper>();
+        serviceCollection.AddSingleton<ISyncHistory>(provider => new SyncHistoryStore(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<SyncHistoryStore>>()));
+        serviceCollection.AddSingleton<ILayoutMigration, LayoutMigration>();
+        serviceCollection.AddSingleton<ILibraryChangeTracker, LibraryChangeTracker>();
+        serviceCollection.AddSingleton<IUnchangedSyncGate, UnchangedSyncGate>();
         serviceCollection.AddSingleton<ICatalogSyncService, CatalogSyncService>();
         serviceCollection.AddHostedService<SyncScheduleService>();
 

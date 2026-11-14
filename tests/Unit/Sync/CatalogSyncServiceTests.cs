@@ -42,7 +42,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
         var removed = await _fixture.AddServerAsync("A", "films");
         var kept = await _fixture.AddServerAsync("B", "films");
         await _fixture.Sync.RunAsync(CancellationToken.None);
-        await _fixture.Sync.RemoveServerAsync(removed.Id, () => Task.FromResult(_fixture.Registry.Remove(removed.Id)), CancellationToken.None);
+        await _fixture.Sync.RemoveServerAsync(removed.Id, () => _fixture.Registry.RemoveAsync(removed.Id), CancellationToken.None);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -56,7 +56,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
         var missing = await _fixture.AddServerAsync("A", "films");
         await _fixture.Sync.RunAsync(CancellationToken.None);
-        _fixture.Registry.Remove(missing.Id);
+        await _fixture.Registry.RemoveAsync(missing.Id);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -70,7 +70,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
         var missing = await _fixture.AddServerAsync("A", "films");
         var kept = await _fixture.AddServerAsync("B", "films");
         await _fixture.Sync.RunAsync(CancellationToken.None);
-        _fixture.Registry.Remove(missing.Id);
+        await _fixture.Registry.RemoveAsync(missing.Id);
 
         Assert.Equal(1, await _fixture.Sync.ForgetMissingServersAsync(CancellationToken.None));
         await _fixture.Sync.RunAsync(CancellationToken.None);

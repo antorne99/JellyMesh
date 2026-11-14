@@ -28,6 +28,11 @@ public sealed class StubCleanupTaskTests : IDisposable
     private readonly Mock<IUserManager> _users = new();
     private readonly Mock<IUserDataManager> _userData = new();
     private readonly Mock<IProviderManager> _providers = new();
+    private readonly Mock<IVersionLinker> _linker = new();
+    private readonly Mock<ILayoutMigration> _migration = new();
+    private readonly Mock<IServerStubRenamer> _renames = new();
+    private readonly Mock<IWatchStateKeeper> _keeper = new();
+    private readonly CapturingLogger<StubCleanupTask> _logger = new();
     private readonly List<string> _calls = [];
     private readonly User _anna = new("anna", "auth", "reset");
     private readonly User _bruno = new("bruno", "auth", "reset");
@@ -41,6 +46,8 @@ public sealed class StubCleanupTaskTests : IDisposable
         _userData
             .Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()))
             .Callback<User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken>((user, item, _, _, _) => _calls.Add("save " + user.Username + " " + item.Path));
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -48,6 +55,8 @@ public sealed class StubCleanupTaskTests : IDisposable
     private StubCleanupTask Task() => new(
         _fixture.Registry,
         _fixture.Resolver,
+        _fixture.Sync.Index,
+        _fixture.Sync.Registry,
         _fixture.Sync.Store,
         _fixture.Library.Object,
         _users.Object,
@@ -55,17 +64,21 @@ public sealed class StubCleanupTaskTests : IDisposable
         _providers.Object,
         Mock.Of<IFileSystem>(),
         _fixture.Remover,
-        new CapturingLogger<StubCleanupTask>());
+        _logger,
+        _linker.Object,
+        _migration.Object,
+        _renames.Object,
+        _keeper.Object);
 
     private Task RunAsync() => Task().Run(new Progress<double>(), CancellationToken.None);
 
     private async Task<(Movie Stub, Movie Local)> FilmWithLocalCopyAsync()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m", "Film", 2020, "1"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
         await _fixture.SyncAndMaterializeAsync();
 
-        var path = _fixture.Path_("Film", "Film (2020)", "Film (2020).strm");
+        var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var stub = new Movie { Id = Guid.NewGuid(), Path = path };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(stub);
 
@@ -82,29 +95,81 @@ public sealed class StubCleanupTaskTests : IDisposable
 
     private static UserItemData Played(DateTime when) => new() { Key = "k", Played = true, PlayCount = 1, LastPlayedDate = when };
 
-    [Fact]
-    public async Task TheStateIsCopiedPerUserBeforeTheStubGoes()
+    // Every stub gets an item, as after a scan, so that a merge could go through.
+    private void GiveEveryStubAnItem()
     {
-        var (stub, local) = await FilmWithLocalCopyAsync();
-        var when = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        var annaLocal = new UserItemData { Key = "l" };
-        GiveState(_anna, stub, Played(when));
-        GiveState(_anna, local, annaLocal);
-        GiveState(_bruno, stub, new UserItemData { Key = "k", PlaybackPositionTicks = 500, LastPlayedDate = when });
-        var brunoLocal = new UserItemData { Key = "l" };
-        GiveState(_bruno, local, brunoLocal);
+        foreach (var stub in _fixture.Registry.State.Stubs)
+        {
+            var path = _fixture.Path_(stub.RelativePath);
+            _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(new Movie { Id = Guid.NewGuid(), Path = path });
+        }
+    }
+
+    [Fact]
+    public async Task TheStubsOfTwoServersWithTheSameFilmBothStay()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
+        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("b", "Film", 2020, "1"));
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.Sync.AddServerAsync("B", "films-b");
+        await _fixture.SyncAndMaterializeAsync();
+        GiveEveryStubAnItem();
 
         await RunAsync();
 
-        Assert.True(annaLocal.Played);
-        Assert.Equal(500, brunoLocal.PlaybackPositionTicks);
-        Assert.Equal(
-            ["save anna /media/film/Film.mkv", "save bruno /media/film/Film.mkv", "delete " + stub.Path],
-            _calls);
-        Assert.False(Directory.Exists(_fixture.Path_("Film", "Film (2020)")));
-        Assert.Empty(_fixture.Registry.State.Stubs);
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        Assert.All(_fixture.Registry.State.Stubs, stub => Assert.True(File.Exists(_fixture.Path_(stub.RelativePath))));
+        Assert.Empty(_calls);
     }
 
+    [Fact]
+    public async Task ALocalCopyLeavesTheStubAndItsStateWhereTheyAre()
+    {
+        var (stub, local) = await FilmWithLocalCopyAsync();
+        GiveState(_anna, stub, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        var annaLocal = new UserItemData { Key = "l" };
+        GiveState(_anna, local, annaLocal);
+
+        await RunAsync();
+
+        Assert.False(annaLocal.Played);
+        Assert.Empty(_calls);
+        Assert.True(File.Exists(stub.Path));
+        Assert.Single(_fixture.Registry.State.Stubs);
+    }
+
+    [Fact]
+    public async Task AStubOfTheFlatLayoutIsLeftAsItIs()
+    {
+        var (_, local) = await FilmWithLocalCopyAsync();
+        var own = _fixture.Registry.State.Stubs[0];
+        var flat = new StubEntry
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Kind = StubKind.Movie,
+            RelativePath = Path.Combine("Film", "Film (2020)", "Film (2020).strm"),
+            Sources = own.Sources,
+            IdentityKey = own.IdentityKey
+        };
+        var path = _fixture.Path_(flat.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, "url");
+        var item = new Movie { Id = Guid.NewGuid(), Path = path };
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+        GiveState(_anna, item, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        GiveState(_anna, local, new UserItemData { Key = "l" });
+        var state = _fixture.Registry.State;
+        await _fixture.Registry.SaveAsync(state with { Stubs = [.. state.Stubs, flat] }, CancellationToken.None);
+
+        await RunAsync();
+
+        Assert.True(File.Exists(path));
+        Assert.Contains(_fixture.Registry.State.Stubs, stub => stub.Id == flat.Id);
+        Assert.Empty(_calls);
+    }
+
+    // Two copies on one server, then a third that holds the IDs of both: one film from now on.
     private async Task<(Movie Survivor, Movie Merged)> TwoFilmsThatBecomeOneAsync()
     {
         var byTmdb = TestItems.Movie("a", "Film", 2020, "1");
@@ -112,23 +177,41 @@ public sealed class StubCleanupTaskTests : IDisposable
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, byTmdb);
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, byImdb);
-        await _fixture.Sync.AddServerAsync("A", "films");
-        await _fixture.Sync.AddServerAsync("B", "films-b");
+        await _fixture.Sync.AddServerAsync("A", "films", "films-b");
         await _fixture.SyncAndMaterializeAsync();
-        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count(stub => stub.Sources.Any(source => source.ItemId is "a" or "b")));
 
-        // A third copy holds both IDs, so the two are one film from now on.
         var both = TestItems.Movie("c", "Film", 2020, "1") with { ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = "1", ["Imdb"] = "tt1" } };
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, both);
         await _fixture.SyncAndMaterializeAsync();
-        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        var own = _fixture.Registry.State.Stubs.Where(stub => stub.Sources.Any(source => source.ItemId is "a" or "b" or "c")).ToList();
+        Assert.Equal(2, own.Count);
 
-        var claim = new StubMatcher(_fixture.Registry.State.Stubs).ClaimAll(_fixture.Resolver.Resolve().Contents).Single();
+        var claim = new StubMatcher(own).ClaimAll(_fixture.Resolver.Resolve().Contents).Single(claim => claim.Stub is not null);
         var survivor = new Movie { Id = Guid.NewGuid(), Path = _fixture.Path_(claim.Stub!.RelativePath) };
         var merged = new Movie { Id = Guid.NewGuid(), Path = _fixture.Path_(Assert.Single(claim.Merged).RelativePath) };
         _fixture.Library.Setup(library => library.FindByPath(survivor.Path, false)).Returns(survivor);
         _fixture.Library.Setup(library => library.FindByPath(merged.Path, false)).Returns(merged);
         return (survivor, merged);
+    }
+
+    // Gives the stub of an item a pending server rename from an old label, its old .strm still on disk.
+    private async Task<string> PendingRenameAsync(Movie item)
+    {
+        var stub = _fixture.Registry.State.Stubs.Single(stub => _fixture.Path_(stub.RelativePath) == item.Path);
+        var oldPath = Path.Combine(Path.GetDirectoryName(stub.RelativePath)!, "Vecchio.strm");
+        await File.WriteAllTextAsync(_fixture.Path_(oldPath), "old");
+        await _fixture.Registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await _fixture.Registry.SaveAsync(_fixture.Registry.State with { Renames = [new StubRename(stub.Id, oldPath)] }, CancellationToken.None);
+        }
+        finally
+        {
+            _fixture.Registry.Exit();
+        }
+
+        return oldPath;
     }
 
     [Fact]
@@ -147,6 +230,104 @@ public sealed class StubCleanupTaskTests : IDisposable
         Assert.False(File.Exists(merged.Path));
     }
 
+    // Q327: the merged stub leaves its version group, with the registry lock held, before it is deleted.
+    [Fact]
+    public async Task AMergedStubLeavesItsVersionGroupBeforeItGoes()
+    {
+        var (_, merged) = await TwoFilmsThatBecomeOneAsync();
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IReadOnlyCollection<StubEntry> stubs, CancellationToken _) =>
+            {
+                using var wait = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _fixture.Registry.EnterAsync(wait.Token));
+                _calls.Add("detach " + string.Join(",", stubs.Select(stub => _fixture.Path_(stub.RelativePath))));
+                return (IReadOnlyList<StubEntry>)[];
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["detach " + merged.Path, "delete " + merged.Path], _calls);
+        Assert.False(File.Exists(merged.Path));
+    }
+
+    // Q351: a merged stub whose server rename is pending also has its old item in a version group, and its folder goes.
+    [Fact]
+    public async Task AMergedStubWithAPendingRenameDetachesItsOldItemToo()
+    {
+        var (_, merged) = await TwoFilmsThatBecomeOneAsync();
+        var oldPath = await PendingRenameAsync(merged);
+        var detached = new List<string>();
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => detached.AddRange(stubs.Select(stub => _fixture.Path_(stub.RelativePath))))
+            .ReturnsAsync([]);
+
+        await RunAsync();
+
+        Assert.Equal([merged.Path, _fixture.Path_(oldPath)], detached);
+        Assert.False(File.Exists(merged.Path));
+    }
+
+    [Fact]
+    public async Task AMergedStubWhoseOldItemCannotLeaveItsVersionGroupStays()
+    {
+        var (_, merged) = await TwoFilmsThatBecomeOneAsync();
+        var oldPath = await PendingRenameAsync(merged);
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.Where(stub => stub.RelativePath == oldPath).ToList());
+
+        await RunAsync();
+
+        Assert.True(File.Exists(merged.Path));
+        Assert.True(File.Exists(_fixture.Path_(oldPath)));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+    }
+
+    // Q326 and Q327: a merged stub that cannot leave its group stays, with its state, for the next scan.
+    [Fact]
+    public async Task AMergedStubThatCannotLeaveItsVersionGroupStaysForTheNextScan()
+    {
+        var (survivor, merged) = await TwoFilmsThatBecomeOneAsync();
+        GiveState(_anna, merged, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        var kept = new UserItemData { Key = "s" };
+        GiveState(_anna, survivor, kept);
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.ToList());
+
+        await RunAsync();
+
+        Assert.Empty(_calls);
+        Assert.False(kept.Played);
+        Assert.True(File.Exists(merged.Path));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+
+        _linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        await RunAsync();
+
+        Assert.False(File.Exists(merged.Path));
+        Assert.Single(_fixture.Registry.State.Stubs);
+    }
+
+    [Fact]
+    public async Task AMergeOnOneServerLeavesTheStubOfAnotherServer()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "Film C", "movies"));
+        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, TestItems.Movie("d", "Film", 2020, "1"));
+        var other = await _fixture.Sync.AddServerAsync("B", "films-c");
+        var (survivor, merged) = await TwoFilmsThatBecomeOneAsync();
+        var otherPath = _fixture.Path_(other, "Film", "Film (2020)", "Film (2020) - B.strm");
+        _fixture.Library.Setup(library => library.FindByPath(otherPath, false)).Returns(new Movie { Id = Guid.NewGuid(), Path = otherPath });
+
+        await RunAsync();
+
+        Assert.Equal(["delete " + merged.Path], _calls);
+        Assert.True(File.Exists(survivor.Path));
+        Assert.True(File.Exists(otherPath));
+        var stubs = _fixture.Registry.State.Stubs;
+        Assert.Equal(2, stubs.Count);
+        Assert.Equal(stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal), Assert.Single(_fixture.Registry.State.Groups).StubIds.Order(StringComparer.Ordinal));
+    }
+
     [Fact]
     public async Task AMergedStubWaitsWhileTheSurvivorHasNoItem()
     {
@@ -160,6 +341,141 @@ public sealed class StubCleanupTaskTests : IDisposable
     }
 
     [Fact]
+    public async Task AfterTheScan_TheVersionsAreLinked_OnceTheMergedStubIsGone_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(async (bool thorough, CancellationToken token) =>
+            {
+                // The linker takes the same lock, so it must be free by now.
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add(thorough + " " + _fixture.Registry.State.Stubs.Count);
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["False 1"], seen);
+    }
+
+    [Fact]
+    public async Task AfterTheLink_TheMigrationRuns_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("link"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _migration
+            .Setup(migration => migration.RunAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken token) =>
+            {
+                // The migration takes the same lock, so it must be free by now.
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add("migration");
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["link", "migration"], seen);
+    }
+
+    // Row 412: the new stubs have their items and versions by now.
+    [Fact]
+    public async Task AfterTheLink_TheKeptWatchStateComesBack_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("link"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _keeper
+            .Setup(keeper => keeper.RestoreAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken token) =>
+            {
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add("restore");
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["link", "restore"], seen);
+    }
+
+    [Fact]
+    public async Task BeforeTheLink_TheRenamedStubsFinish_OutsideTheRegistryLock()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("link"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _renames
+            .Setup(renames => renames.FinishAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken token) =>
+            {
+                await _fixture.Registry.EnterAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+                _fixture.Registry.Exit();
+                seen.Add("renames");
+            });
+
+        await RunAsync();
+
+        Assert.Equal(["renames", "link"], seen);
+    }
+
+    [Fact]
+    public async Task AFailedRenameFinish_IsLoggedByItsTypeOnly_AndTheLinkRuns()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        _renames
+            .Setup(renames => renames.FinishAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("/federata/secret"));
+
+        await RunAsync();
+
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        _linker.Verify(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AFailedMigration_IsLoggedByItsTypeOnly()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        _migration
+            .Setup(migration => migration.RunAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("/federata/secret"));
+
+        await RunAsync();
+
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AFailedLink_IsLoggedByItsTypeOnly_AndTheScanGoesOn()
+    {
+        await TwoFilmsThatBecomeOneAsync();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("http://secret"));
+
+        await RunAsync();
+
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Single(_fixture.Registry.State.Stubs);
+    }
+
+    [Fact]
     public async Task TheMaterializerAsksForTheScanThatHandlesAMerge()
     {
         await TwoFilmsThatBecomeOneAsync();
@@ -170,109 +486,51 @@ public sealed class StubCleanupTaskTests : IDisposable
         _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
     }
 
-    private async Task<Episode> DoubleEpisodeStubAsync()
-    {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("d", "s", 1, 1) with { IndexNumberEnd = 2 });
-        await _fixture.Sync.AddServerAsync("A", "shows");
-        await _fixture.SyncAndMaterializeAsync();
-
-        var path = _fixture.Path_("Serie", "Show (2020)", "Season 01", "Show S01E01-E02.strm");
-        var stub = new Episode { Id = Guid.NewGuid(), Path = path };
-        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(stub);
-        return stub;
-    }
-
-    private Episode AddLocalEpisode(int number)
-    {
-        var local = new Episode { Id = Guid.NewGuid(), Path = "/media/serie/e" + number + ".mkv" };
-        _fixture.Library.Setup(library => library.GetItemById(local.Id)).Returns(local);
-        _fixture.LocalCatalog.Items.Add(new CatalogItem
-        {
-            ServerId = "local",
-            ItemId = local.Id.ToString("N"),
-            Kind = ContentKind.Episode,
-            Title = "Show",
-            Year = 2020,
-            Ids = new ContentIds("72", "tt71", "71"),
-            SeasonNumber = 1,
-            EpisodeNumber = number
-        });
-        return local;
-    }
-
     [Fact]
-    public async Task AStubOfADouble_StaysWhileOneOfItsEpisodesIsNotLocal()
+    public async Task IfTheStateCannotBeSavedTheMergedStubStays()
     {
-        var stub = await DoubleEpisodeStubAsync();
-        AddLocalEpisode(1);
-
-        await RunAsync();
-
-        Assert.True(File.Exists(stub.Path));
-        Assert.Single(_fixture.Registry.State.Stubs);
-        Assert.Empty(_calls);
-    }
-
-    [Fact]
-    public async Task AStubOfADouble_HandsItsStateToEveryLocalEpisode_WhenAllHaveArrived()
-    {
-        var stub = await DoubleEpisodeStubAsync();
-        var first = AddLocalEpisode(1);
-        var second = AddLocalEpisode(2);
-        GiveState(_anna, stub, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
-        var firstData = new UserItemData { Key = "1" };
-        var secondData = new UserItemData { Key = "2" };
-        GiveState(_anna, first, firstData);
-        GiveState(_anna, second, secondData);
-
-        await RunAsync();
-
-        Assert.True(firstData.Played);
-        Assert.True(secondData.Played);
-        Assert.False(File.Exists(stub.Path));
-        Assert.Empty(_fixture.Registry.State.Stubs);
-    }
-
-    [Fact]
-    public async Task ANewerLocalStateIsNotOverwritten()
-    {
-        var (stub, local) = await FilmWithLocalCopyAsync();
-        GiveState(_anna, stub, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
-        var newer = new UserItemData { Key = "l", PlaybackPositionTicks = 7, LastPlayedDate = new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc) };
-        GiveState(_anna, local, newer);
-
-        await RunAsync();
-
-        Assert.False(newer.Played);
-        Assert.Equal(["delete " + stub.Path], _calls);
-    }
-
-    [Fact]
-    public async Task IfTheStateCannotBeSavedTheStubStays()
-    {
-        var (stub, local) = await FilmWithLocalCopyAsync();
-        GiveState(_anna, stub, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
-        GiveState(_anna, local, new UserItemData { Key = "l" });
+        var (survivor, merged) = await TwoFilmsThatBecomeOneAsync();
+        GiveState(_anna, merged, Played(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        GiveState(_anna, survivor, new UserItemData { Key = "s" });
         _userData
-            .Setup(data => data.SaveUserData(_anna, local, It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()))
+            .Setup(data => data.SaveUserData(_anna, survivor, It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()))
             .Throws(new IOException("disk"));
 
         await RunAsync();
 
-        Assert.True(File.Exists(stub.Path));
-        Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.True(File.Exists(merged.Path));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
     }
 
     [Fact]
-    public async Task ALocalItemThatCannotBeFoundKeepsTheStub()
+    public async Task ACorruptIndexRemovesNothing()
     {
-        var (stub, local) = await FilmWithLocalCopyAsync();
-        _fixture.Library.Setup(library => library.GetItemById(local.Id)).Returns((BaseItem)null!);
+        var (_, merged) = await TwoFilmsThatBecomeOneAsync();
+        var resolver = new Mock<IFederationResolver>();
+        var key = new ContentIdentity("movie|tmdb:1", "movie|tmdb:1", ContentKind.Movie, MatchKind.ProviderId);
+        resolver.Setup(item => item.Resolve(It.IsAny<IndexSnapshot>(), It.IsAny<IReadOnlyList<RemoteServerInfo>>())).Returns(new FederationView(
+            IndexHealth.Corrupt,
+            1,
+            [new ResolvedContent(key, false, null, [])],
+            []));
+        var task = new StubCleanupTask(
+            _fixture.Registry,
+            resolver.Object,
+            _fixture.Sync.Index,
+            _fixture.Sync.Registry,
+            _fixture.Sync.Store,
+            _fixture.Library.Object,
+            _users.Object,
+            _userData.Object,
+            _providers.Object,
+            Mock.Of<IFileSystem>(),
+            _fixture.Remover,
+            new CapturingLogger<StubCleanupTask>());
 
-        await RunAsync();
+        await task.Run(new Progress<double>(), CancellationToken.None);
 
-        Assert.True(File.Exists(stub.Path));
+        Assert.True(File.Exists(merged.Path));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
     }
 
     [Fact]
@@ -289,84 +547,43 @@ public sealed class StubCleanupTaskTests : IDisposable
     }
 
     [Fact]
-    public async Task AStaleServerDoesNotStopALocalCopyFromReplacingTheStub()
-    {
-        var (stub, _) = await FilmWithLocalCopyAsync();
-        _fixture.Sync.Client.OnPage = (_, _) => RemoteFailure.Unreachable;
-        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
-
-        await RunAsync();
-
-        Assert.False(File.Exists(stub.Path));
-    }
-
-    [Fact]
-    public async Task ACorruptIndexRemovesNothing()
-    {
-        var (stub, _) = await FilmWithLocalCopyAsync();
-        var resolver = new Mock<IFederationResolver>();
-        var key = new ContentIdentity("movie|tmdb:1", "movie|tmdb:1", ContentKind.Movie, MatchKind.ProviderId);
-        resolver.Setup(item => item.Resolve()).Returns(new FederationView(
-            IndexHealth.Corrupt,
-            1,
-            [new ResolvedContent(key, true, null, []) { LocalItemIds = [Guid.NewGuid()] }],
-            []));
-        var task = new StubCleanupTask(
-            _fixture.Registry,
-            resolver.Object,
-            _fixture.Sync.Store,
-            _fixture.Library.Object,
-            _users.Object,
-            _userData.Object,
-            _providers.Object,
-            Mock.Of<IFileSystem>(),
-            _fixture.Remover,
-            new CapturingLogger<StubCleanupTask>());
-
-        await task.Run(new Progress<double>(), CancellationToken.None);
-
-        Assert.True(File.Exists(stub.Path));
-    }
-
-    [Fact]
-    public async Task TheLastEpisodeTakesItsFoldersAndSeriesAway()
+    public async Task LocalEpisodesLeaveTheStubsTheirFoldersAndTheSeries()
     {
         _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1), TestItems.Episode("e2", "s", 2, 1));
-        await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1), TestItems.Episode("e2", "s", 1, 2) with { IndexNumberEnd = 3 });
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
         await _fixture.SyncAndMaterializeAsync();
-        var seasonRow = new Season { Id = Guid.NewGuid(), Path = _fixture.Path_("Serie", "Show (2020)", "Season 01") };
-        _fixture.Library.Setup(library => library.FindByPath(seasonRow.Path, true)).Returns(seasonRow);
-        var localSeries = new Series { Id = Guid.NewGuid(), Name = "Show" };
-        var localEpisode = new Episode { Id = Guid.NewGuid(), SeriesId = localSeries.Id };
-        _fixture.Library.Setup(library => library.GetItemById(localEpisode.Id)).Returns(localEpisode);
-        _fixture.Library.Setup(library => library.GetItemById(localSeries.Id)).Returns(localSeries);
-        var ids = new ContentIds("72", "tt71", "71");
-
-        _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = localEpisode.Id.ToString("N"), Kind = ContentKind.Episode, Ids = ids, SeasonNumber = 1, EpisodeNumber = 1 });
-        await RunAsync();
-
-        Assert.False(Directory.Exists(seasonRow.Path));
-        Assert.True(Directory.Exists(_fixture.Path_("Serie", "Show (2020)", "Season 02")));
-        Assert.Contains("delete " + seasonRow.Path, _calls);
-        Assert.Single(_fixture.Registry.State.Series);
-
-        var seriesRow = new Series { Id = Guid.NewGuid(), Path = _fixture.Path_("Serie", "Show (2020)") };
+        var seriesRow = new Series { Id = Guid.NewGuid(), Path = _fixture.Path_(a, "Serie", "Show (2020)") };
         _fixture.Library.Setup(library => library.FindByPath(seriesRow.Path, true)).Returns(seriesRow);
-        var favorite = new UserItemData { Key = "k", IsFavorite = true };
+        GiveState(_anna, seriesRow, new UserItemData { Key = "k", IsFavorite = true });
+        GiveEveryStubAnItem();
+        var localSeries = new Series { Id = Guid.NewGuid(), Name = "Show" };
         var localData = new UserItemData { Key = "l" };
-        GiveState(_anna, seriesRow, favorite);
         GiveState(_anna, localSeries, localData);
-        _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), Kind = ContentKind.Episode, Ids = ids, SeasonNumber = 2, EpisodeNumber = 1 });
-        var localId2 = Guid.Parse(_fixture.LocalCatalog.Items[^1].ItemId);
-        _fixture.Library.Setup(library => library.GetItemById(localId2)).Returns(new Episode { Id = localId2, SeriesId = localSeries.Id });
+        _fixture.Library.Setup(library => library.GetItemById(localSeries.Id)).Returns(localSeries);
+        foreach (var number in new[] { 1, 2, 3 })
+        {
+            var local = new Episode { Id = Guid.NewGuid(), SeriesId = localSeries.Id, Path = "/media/serie/e" + number + ".mkv" };
+            _fixture.Library.Setup(library => library.GetItemById(local.Id)).Returns(local);
+            _fixture.LocalCatalog.Items.Add(new CatalogItem
+            {
+                ServerId = "local",
+                ItemId = local.Id.ToString("N"),
+                Kind = ContentKind.Episode,
+                Ids = new ContentIds("72", "tt71", "71"),
+                SeasonNumber = 1,
+                EpisodeNumber = number
+            });
+        }
 
         await RunAsync();
 
-        Assert.False(Directory.Exists(seriesRow.Path));
-        Assert.Empty(_fixture.Registry.State.Series);
-        Assert.Contains("delete " + seriesRow.Path, _calls);
-        Assert.True(localData.IsFavorite);
+        Assert.Empty(_calls);
+        Assert.False(localData.IsFavorite);
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        Assert.Single(_fixture.Registry.State.Series);
+        Assert.True(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "Show S01E01 - A.strm")));
+        Assert.True(File.Exists(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "Show S01E02-E03 - A.strm")));
     }
 
     [Fact]
@@ -374,14 +591,14 @@ public sealed class StubCleanupTaskTests : IDisposable
     {
         _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
         _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 1));
-        await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", "shows");
         await _fixture.SyncAndMaterializeAsync();
 
         await RunAsync();
         _providers.Verify(provider => provider.QueueRefresh(It.IsAny<Guid>(), It.IsAny<MetadataRefreshOptions>(), It.IsAny<RefreshPriority>()), Times.Never);
         Assert.True(Assert.Single(_fixture.Registry.State.Series).NeedsRefresh);
 
-        var row = new Series { Id = Guid.NewGuid(), Path = _fixture.Path_("Serie", "Show (2020)") };
+        var row = new Series { Id = Guid.NewGuid(), Path = _fixture.Path_(a, "Serie", "Show (2020)") };
         _fixture.Library.Setup(library => library.FindByPath(row.Path, true)).Returns(row);
         await RunAsync();
         await RunAsync();

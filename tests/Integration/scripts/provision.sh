@@ -46,6 +46,21 @@ add_library() {
   post "/Library/VirtualFolders?$query" '{"LibraryOptions":{"EnableInternetProviders":true,"PreferredMetadataLanguage":"it","MetadataCountryCode":"IT"}}'
 }
 
+# link_server_folders: adds the Film and Serie folders of each remote server already added to the libraries.
+link_server_folders() {
+  local dir kind library path
+  for dir in "$(dirname "$0")"/../federata/*-*-*-*-*/; do
+    [ -d "$dir" ] || continue
+    for kind in Film Serie; do
+      path=/federata/$(basename "$dir")/$kind
+      library=$(get /Library/VirtualFolders | jq -c --arg n "$kind" '.[] | select(.Name == $n)')
+      echo "$library" | jq -e --arg p "$path" '.Locations | index($p)' >/dev/null && continue
+      echo "  library $kind: $path"
+      post "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$path" '{Name: $n, PathInfo: {Path: $p}}')"
+    done
+  done
+}
+
 add_remote_user() {
   if get /Users | jq -e --arg n "$REMOTE_USER" 'any(.[]; .Name == $n)' >/dev/null; then
     return
@@ -82,6 +97,7 @@ for instance in locale remoto-standard remoto-jellymesh; do
   if [ "$instance" = locale ]; then
     add_library Film movies /media/film /federata/Film
     add_library Serie tvshows /media/serie /federata/Serie
+    link_server_folders
   else
     add_library Film movies /media/film
     add_library Serie tvshows /media/serie

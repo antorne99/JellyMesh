@@ -1,27 +1,56 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.4.3.0"
-targetAbi: "12.0.0.0"
+version: "0.5.0.0"
+targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
 description: >
-  JellyMesh shows films and series from other Jellyfin servers in your existing
-  libraries and streams them through the local server. Duplicates become one
-  title: a local copy always wins, otherwise the best quality does, and the
-  other copies stay as backups. Remote servers can be stock Jellyfin or run
-  JellyMesh, which adds shared libraries, stream limits and a change feed
-  between servers you trust. An admin can merge films that can't be matched
-  safely.
+  JellyMesh shows films and series from other Jellyfin servers in your
+  libraries and streams them through the local server. Each server gets its
+  own folders, which you add to your libraries or let JellyMesh turn into a
+  library per server. A title shows once, with the copies of every server as
+  versions: a local copy starts first, otherwise the best quality does.
+  Remote servers can be stock Jellyfin or run JellyMesh, which adds shared
+  libraries, stream limits and a change feed between servers you trust. An
+  admin can merge films and series that can't be matched safely.
 category: "General"
 owner: "antorne99"
 image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - A request for a video segment that names no play session can no longer stop another user's transcode on this server: it is refused only when it names the device of another user's play session, or when it names no device while another user has a transcode without one. Playlists are not affected.
-  - Servers that play titles you share through JellyMesh can no longer reach each other's play sessions, including through the legacy params or a query with different letter case.
-  - Servers you share with can no longer open live TV through a shared title: their stream and PlaybackInfo requests that name a live stream are refused.
-  - Users of this server can no longer stop, restart or keep alive a stream that another JellyMesh server plays from it.
+  - JellyMesh now needs Jellyfin 12.1 or later: on 12.0, upgrade Jellyfin first.
+  - Each server now has its own Film and Serie folders inside the federated folder, so each server can have its own libraries and permissions.
+  - A title now shows once in each library, with the copies of every server and your local copy as versions: a local copy starts first, otherwise the best copy the user can see, and each user is offered only the versions they can see.
+  - "Watched" is now shared by all versions of a title, in every library, while the resume position stays with the version that was played.
+  - A local copy no longer removes the remote copies, so a library of server folders stays complete.
+  - When a version cannot play, playback now falls back only to the other versions the user can see, then to a local transcode, then to a local copy the user can see.
+  - A new switch on each server's card creates a Film and a Serie library for that server and keeps them in step with it; JellyMesh renames and deletes only the libraries it created, and user permissions stay with you.
+  - Servers can now be renamed from their card: their files and automatic libraries follow, the users allowed or blocked on those libraries are updated, and the watch state is carried.
+  - Adding a server that is already configured is refused, and the message names it.
+  - A server removed and added back is now treated as a new server, so link its folders to your libraries again unless automatic libraries do it.
+  - Removing a server now keeps each user's watch state for its titles for 90 days and puts it back when the same titles appear again, from that server or another one.
+  - Removing a server now stops what plays from it at once and ends its JellyMesh device on the remote, also after a restart, if the server answers within a few seconds; otherwise the device stays listed there.
+  - If the watch state of a removed server cannot be saved, its folders stay and the plugin page warns about it until the save succeeds.
+  - The kept watch state is saved in a file that only the user running Jellyfin can read.
+  - At the first start a banner asks whether to move from the old shared folders automatically or by hand; the old titles keep playing until the move is done, and the watch state moves to the new titles.
+  - A new setting adds the folders of servers connected later to your libraries automatically.
+  - Series can now be merged by hand too, episode by episode, and merged copies become versions instead of backups; favourite, rating and play count move to the primary version.
+  - Splitting or merging versions in Jellyfin itself is undone at the next sync: use Undo merge on the plugin page to separate copies.
+  - The plugin page now warns about a library over the whole federated folder or a server's folder, about libraries added to or removed from the federated folder, about series split across different libraries, and about a second library on a server's folders.
+  - Libraries that hold only federated folders are no longer offered to other JellyMesh servers, and federated titles are now left out at any depth of the federated folder, including through symbolic links, other Unicode forms of the path and macOS letter case.
+  - Seasons now come from the remote with their name, overview and poster, films and series also get their logo, banner and thumb, and images removed on the remote are deleted.
+  - YouTube trailers of remote titles now show in Jellyfin.
+  - Intro and credits segments now come from the remote, also from JellyMesh servers on 0.5, and are dropped when playback falls back to a copy of a different length.
+  - A new option, off by default, writes remote collections into films so that Jellyfin groups them; JellyMesh servers send their collections from 0.5.
+  - New local films and series without provider IDs now get one metadata refresh, so that they can be matched with remote copies.
+  - The Catalog tab now shows the last 50 syncs and the last 7 nightly reconciliations, with counts for each server.
+  - JellyMesh now writes to Jellyfin's activity log when a server goes offline or comes back, when a sync fails, when saved passwords no longer decrypt, and for each completed sync.
+  - If a source drops during playback, the retry now plays from another source, and a title that drops more than 3 times within 5 minutes is refused until they pass.
+  - A stream slot freed by revoking a library, lowering a limit or abandoning a stream now stays counted until its transcode is closed.
+  - Users who can't see a version or a title of a server can no longer reach it through the legacy segment, audio and playlist routes, and non-admins can no longer play a version that is in no library.
+  - Syncs that find nothing new finish faster; files changed by hand in the federated folder are put right by the nightly reconciliation.
+  - Going back to 0.4 after 0.5 has started is not supported: 0.4 discards the new state, and would read series merged by hand as films.
 
-  Not verified: that the end of an idle stream slot, rather than Jellyfin itself, closes a quiet transcode of another server, with the setting on or off; a music client that sends no device.
+  Not verified: playback and sync on Jellyfin 12.1, where only installing and loading were checked; how the Android TV and Swiftfin apps show versions, read only from their source; Next Up with two versions of an episode; the sync history in a real Jellyfin; trailers of series; Jellyfin creating the collections from remote collections; the federated folder recognized through links on macOS and Windows; a stream that breaks in the middle of its body, and the HLS reconnection; intro and credits segments read from a real remote; the kept watch state on Jellyfin 12.1 to 12.3, where only 12.4 was tried; the kept watch state of titles moved from the 0.4 layout, checked only in unit tests; a slow client may play a few more seconds from its buffer after a removed server's stream ends; the warning for a removal that cannot save the watch state, checked only with a simulated failure; the private watch state file on Windows, where SQLite's side files take the folder's permissions.

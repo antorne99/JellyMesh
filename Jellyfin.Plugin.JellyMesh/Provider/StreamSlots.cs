@@ -12,7 +12,9 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// claims can be trusted. A slot lives as long as this server sees it used: a request in progress holds it, a renewal
 /// from the consumer extends it, and after <see cref="IdleTimeout"/> without either it is gone, by default with its
 /// transcode, so a consumer that vanishes leaves nothing behind. A request that ends badly with nothing else running leaves it only
-/// <see cref="AbandonGrace"/>. In memory on purpose: a restart ends the streams too.
+/// <see cref="AbandonGrace"/>. A slot whose transcode has to be closed stays counted until <see cref="Closed"/>, so that a
+/// new stream never runs next to the ffmpeg of the old one, and one revoked or cut never comes back before that. In memory
+/// on purpose: a restart ends the streams too.
 /// </summary>
 public sealed class StreamSlots
 {
@@ -65,7 +67,7 @@ public sealed class StreamSlots
         lock (_lock)
         {
             var slots = SlotsOf(peerId);
-            if (replaces is not null)
+            if (replaces is not null && !(slots.TryGetValue(replaces, out var replaced) && replaced.Closing))
             {
                 slots.Remove(replaces);
             }
@@ -167,7 +169,15 @@ public sealed class StreamSlots
             var key = playSessionId ?? Guid.NewGuid().ToString("N");
             if (slots.TryGetValue(key, out var slot))
             {
+                // A stream back while its transcode waits to be closed keeps both, if the open slots leave it room. One
+                // that was revoked or cut waits for the close, and then counts as new.
+                if (slot.Closing && (slot.Ended || slots.Values.Count(other => !other.Closing) >= limit))
+                {
+                    return null;
+                }
+
                 slot.InFlight++;
+                slot.Closing = false;
             }
             else if (slots.Count >= limit)
             {
@@ -195,7 +205,7 @@ public sealed class StreamSlots
     {
         lock (_lock)
         {
-            if (SlotsOf(peerId).TryGetValue(key, out var slot))
+            if (SlotsOf(peerId).TryGetValue(key, out var slot) && !slot.Closing)
             {
                 slot.LastUsed = _clock.GetUtcNow();
                 slot.Abandoned = false;
@@ -205,7 +215,7 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Frees a slot. An unknown one is ignored: it may have expired.
+    /// Frees a slot. An unknown one is ignored: it may have expired. One whose transcode is being closed goes with it.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="key">The play session or reservation.</param>
@@ -213,13 +223,17 @@ public sealed class StreamSlots
     {
         lock (_lock)
         {
-            SlotsOf(peerId).Remove(key);
+            var slots = SlotsOf(peerId);
+            if (!(slots.TryGetValue(key, out var slot) && slot.Closing))
+            {
+                slots.Remove(key);
+            }
         }
     }
 
     /// <summary>
-    /// Frees every slot of a peer that was removed. What is running has been cut by then, and a request of a stream that
-    /// goes on takes a slot like any other. Its play sessions stay its own: they still have transcodes to close.
+    /// Frees every slot of a removed peer, closing ones too, whose transcodes are still closed. Its play sessions stay
+    /// its own until then.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     public void ReleaseAll(Guid peerId)
@@ -231,8 +245,8 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Ends what a peer may no longer read: its requests are cut, its slots go and its transcodes are closed. The rest of
-    /// what it plays is left alone.
+    /// Ends what a peer may no longer read: its requests are cut and its transcodes are closed. A slot with a transcode
+    /// stays counted until that is done, and the rest goes at once. The rest of what it plays is left alone.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="keeps">Tells whether the peer still reaches an item.</param>
@@ -254,11 +268,7 @@ public sealed class StreamSlots
             var slots = SlotsOf(peerId);
             foreach (var (key, slot) in slots.Where(pair => lost.Contains(pair.Value.ItemId)).ToList())
             {
-                slots.Remove(key);
-                if (!slot.EndsWithRequest)
-                {
-                    _closing.Add((peerId, key));
-                }
+                End(peerId, slots, key, slot);
             }
 
             cut = RunningOf(peerId).Where(request => lost.Contains(request.ItemId)).ToList();
@@ -273,7 +283,7 @@ public sealed class StreamSlots
 
     /// <summary>
     /// Brings a peer down to a lower limit at once. What no longer fits ends as in <see cref="Revoke"/>: its requests are
-    /// cut, its slot goes and its transcode is closed. The rest stays counted.
+    /// cut and its transcode is closed, counted until then. The rest stays counted.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="limit">The new limit.</param>
@@ -282,15 +292,13 @@ public sealed class StreamSlots
         List<StreamRequest> cut;
         lock (_lock)
         {
+            // A slot being closed is going anyway: it never makes a stream go in its place.
             var slots = SlotsOf(peerId);
-            var excess = InCuttingOrder(slots).Take(slots.Count - limit).ToList();
+            var open = slots.Where(pair => !pair.Value.Closing).ToDictionary();
+            var excess = InCuttingOrder(open).Take(open.Count - limit).ToList();
             foreach (var (key, slot) in excess)
             {
-                slots.Remove(key);
-                if (!slot.EndsWithRequest && !slot.IsReservation)
-                {
-                    _closing.Add((peerId, key));
-                }
+                End(peerId, slots, key, slot);
             }
 
             var keys = excess.Select(pair => pair.Key).ToHashSet();
@@ -304,8 +312,8 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Takes the play sessions whose transcode has to be closed: those whose slot expired or was revoked. One that came
-    /// back has a slot again, and its transcode is in use.
+    /// Takes the play sessions whose transcode has to be closed: those whose slot expired, was revoked or was cut. One
+    /// that came back has a slot again, and its transcode is in use. Each is handed out once.
     /// </summary>
     /// <returns>The play sessions.</returns>
     public IReadOnlyList<string> TakeClosing()
@@ -318,7 +326,7 @@ public sealed class StreamSlots
             }
 
             var closing = _closing
-                .Where(entry => !_peers.TryGetValue(entry.PeerId, out var slots) || !slots.ContainsKey(entry.PlaySessionId))
+                .Where(entry => !_peers.TryGetValue(entry.PeerId, out var slots) || !slots.TryGetValue(entry.PlaySessionId, out var slot) || slot.Closing)
                 .Select(entry => entry.PlaySessionId)
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
@@ -328,7 +336,25 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Counts the slots of a peer.
+    /// Frees the slot of a play session once its transcode is closed. One that came back in the meantime keeps its slot.
+    /// </summary>
+    /// <param name="playSessionId">The play session.</param>
+    public void Closed(string playSessionId)
+    {
+        lock (_lock)
+        {
+            foreach (var slots in _peers.Values)
+            {
+                if (slots.TryGetValue(playSessionId, out var slot) && slot.Closing)
+                {
+                    slots.Remove(playSessionId);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Counts the slots of a peer, those whose transcode is being closed too.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <returns>The slots in use.</returns>
@@ -348,8 +374,8 @@ public sealed class StreamSlots
     }
 
     // Expired slots go whenever the peer is looked at, so that no timer is needed. After a lost connection their transcodes
-    // go too. After the idle time that is a setting, read here, because stock has a timer of its own. A request can outlive
-    // the slot it entered with, and while it runs its transcode is in use.
+    // go too, and the slot waits for that. After the idle time that is a setting, read here, because stock has a timer of
+    // its own. A request can outlive the slot it entered with, and while it runs its transcode is in use.
     private Dictionary<string, Slot> SlotsOf(Guid peerId)
     {
         if (!_peers.TryGetValue(peerId, out var slots))
@@ -359,16 +385,39 @@ public sealed class StreamSlots
         }
 
         var now = _clock.GetUtcNow();
-        foreach (var (key, slot) in slots.Where(pair => pair.Value.IsExpired(now)).ToList())
+        foreach (var (key, slot) in slots.Where(pair => !pair.Value.Closing && pair.Value.IsExpired(now)).ToList())
         {
-            slots.Remove(key);
             if (!slot.EndsWithRequest && (slot.Abandoned || CloseAtExpiry) && !RunningOf(peerId).Any(request => request.PlaySessionId == key))
             {
+                slot.Closing = true;
                 _closing.Add((peerId, key));
+            }
+            else
+            {
+                slots.Remove(key);
             }
         }
 
         return slots;
+    }
+
+    // Ends a slot for good. With a transcode it is counted until closed, and one already being closed is not handed out
+    // again. A reservation or a read has nothing to close and goes at once.
+    private void End(Guid peerId, Dictionary<string, Slot> slots, string key, Slot slot)
+    {
+        if (slot.EndsWithRequest || slot.IsReservation)
+        {
+            slots.Remove(key);
+            return;
+        }
+
+        if (!slot.Closing)
+        {
+            slot.Closing = true;
+            _closing.Add((peerId, key));
+        }
+
+        slot.Ended = true;
     }
 
     private HashSet<StreamRequest> RunningOf(Guid peerId)
@@ -422,6 +471,11 @@ public sealed class StreamSlots
         public bool IsReservation { get; init; }
 
         public long Opened { get; init; }
+
+        public bool Closing { get; set; }
+
+        // Revoked or cut: its stream may not come back on it.
+        public bool Ended { get; set; }
 
         public bool IsExpired(DateTimeOffset now)
         {

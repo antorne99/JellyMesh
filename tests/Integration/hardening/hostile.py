@@ -140,8 +140,20 @@ class Handler(socketserver.StreamRequestHandler):
     def handle(self):
         try:
             self.answer()
+            self.wait_for_close()
         except (BrokenPipeError, ConnectionResetError):
             log("GONE")
+
+    def wait_for_close(self):
+        # Lets the plugin close first. When the host closes first, Docker Desktop at times drops a later SYN from the
+        # container that reuses the port, and that connect hangs for more than 10 s.
+        self.wfile.flush()
+        self.request.settimeout(10)
+        try:
+            while self.request.recv(65536):
+                pass
+        except OSError:
+            pass
 
     def slow(self):
         global running, peak

@@ -1,21 +1,24 @@
 # Helpers for the proof of tasks 504, 505 and 602. Source it.
-#   local   jm-play-local   18430  plugin, writable /media, consumer of remote
-#   remote  jm-play-remote  18431  stock Jellyfin with the media of remoto-standard
-#   peer    jm-play-peer    18432  plugin, consumer of local: proves the rules on federated items
+#   local   $PREFIX-local   $PORT    plugin, writable /media, consumer of remote
+#   remote  $PREFIX-remote  $PORT+1  stock Jellyfin with the media of remoto-standard
+#   peer    $PREFIX-peer    $PORT+2  plugin, consumer of local: proves the rules on federated items
+# PREFIX (default jm-play) and PORT (default 18430) move it all elsewhere, for a run beside another stack.
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
 MEDIA=${MEDIA:?point MEDIA at tests/Integration/media of the main checkout}
-WORK=${WORK:-${TMPDIR:-/tmp}/jm-play-run}
+PREFIX=${PREFIX:-jm-play}
+PORT=${PORT:-18430}
+WORK=${WORK:-${TMPDIR:-/tmp}/$PREFIX-run}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 PW_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-noble
 PLUGIN=28c43ea1-fb5a-4b3a-8e6e-30aa3245c653
 ACCEPT='Accept: application/json; profile="PascalCase"'
-AUTH='MediaBrowser Client="JellyMeshPlay", Device="play", DeviceId="jm-play-admin", Version="0.1"'
+AUTH="MediaBrowser Client=\"JellyMeshPlay\", Device=\"play\", DeviceId=\"$PREFIX-admin\", Version=\"0.1\""
 PROFILE_HLS='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 mkdir -p "$WORK/web"
 
-port_of() { case $1 in local) echo 18430 ;; remote) echo 18431 ;; peer) echo 18432 ;; esac; }
-name_of() { echo "jm-play-$1"; }
+port_of() { case $1 in local) echo "$PORT" ;; remote) echo $((PORT + 1)) ;; peer) echo $((PORT + 2)) ;; esac; }
+name_of() { echo "$PREFIX-$1"; }
 token_of() { cat "$WORK/token-$1" 2>/dev/null || true; }
 
 # req <server> <method> <path> [body]: prints the body; the status goes to $WORK/status.
@@ -74,6 +77,7 @@ library() { # library <server> <name> <type> <path>...
   local s=$1 name=$2 type=$3 query="" p
   shift 3
   for p in "$@"; do query="$query&paths=$p"; done
+  name=$(jq -rn --arg v "$name" '$v | @uri')
   post "$s" "/Library/VirtualFolders?name=$name&collectionType=$type&refreshLibrary=false$query" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
 }
 
@@ -126,36 +130,50 @@ stub_item() { get "$1" '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path
 local_item() { get "$1" '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$2" '[.Items[] | select((.Path // "") | (contains($t) and startswith("/media")))][0].Id // ""'; }
 stub_url() { get "$1" "/Items?Ids=$2&Fields=MediaSources" | jq -r '.Items[0].MediaSources[0].Path'; }
 
-strm_file() { docker exec "$(name_of "$1")" sh -c "find /federata/Film -name '*.strm' | grep -F \"$2\" | head -1"; }
-strm_text() { docker exec "$(name_of "$1")" sh -c "cat \"\$(find /federata/Film -name '*.strm' | grep -F \"$2\" | head -1)\""; }
+# strm_file <server> <title> [folder]: the .strm of a title, by default in the Film folder of a remote server.
+strm_file() { docker exec "$(name_of "$1")" sh -c "find ${3:-/federata/*/Film} -name '*.strm' | grep -F \"$2\" | head -1"; }
+strm_text() { docker exec "$(name_of "$1")" sh -c "cat \"\$(find ${3:-/federata/*/Film} -name '*.strm' | grep -F \"$2\" | head -1)\""; }
+
+# server_folder <server id>: the folder of a remote server, as the plugin names it.
+server_folder() { local id=${1//-/}; echo "/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+# link_folder <server> <library> <path>: adds a path to a library, as an admin does. Prints the status.
+link_folder() {
+  post "$1" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$2" --arg p "$3" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
+  status
+}
+# unlink_folder <server> <library> <path>: takes a path off a library. Prints the status.
+unlink_folder() {
+  req "$1" DELETE "/Library/VirtualFolders/Paths?name=$2&path=$(jq -rn --arg p "$3" '$p | @uri')&refreshLibrary=false" >/dev/null
+  status
+}
 
 # viewer_login: a login for the viewer on the device of the browser, or its messages would go elsewhere.
 viewer_login() {
   curl -sS -X POST -H "$ACCEPT" -H 'Content-Type: application/json' -d '{"Username":"viewer","Pw":"jellymesh-test"}' \
-    -H 'Authorization: MediaBrowser Client="Jellyfin Web", Device="Chromium", DeviceId="jm-play-browser", Version="12.4.0"' \
-    http://127.0.0.1:18430/Users/AuthenticateByName | jq -r .AccessToken >"$WORK/token-viewer"
+    -H "Authorization: MediaBrowser Client=\"Jellyfin Web\", Device=\"Chromium\", DeviceId=\"$PREFIX-browser\", Version=\"12.4.0\"" \
+    "http://127.0.0.1:$PORT/Users/AuthenticateByName" | jq -r .AccessToken >"$WORK/token-viewer"
 }
 as_viewer() { # as_viewer <method> <path> [body]: prints the status; the answer is in $WORK/viewer-body
   curl -sS -o "$WORK/viewer-body" -w '%{http_code}' -X "$1" -H "$ACCEPT" \
-    -H "Authorization: MediaBrowser Client=\"JellyMeshPlay\", Device=\"viewer\", DeviceId=\"jm-play-viewer\", Version=\"0.1\", Token=\"$(cat "$WORK/token-viewer")\"" \
-    -H 'Content-Type: application/json' ${3:+-d "$3"} "http://127.0.0.1:18430$2"
+    -H "Authorization: MediaBrowser Client=\"JellyMeshPlay\", Device=\"viewer\", DeviceId=\"$PREFIX-viewer\", Version=\"0.1\", Token=\"$(cat "$WORK/token-viewer")\"" \
+    -H 'Content-Type: application/json' ${3:+-d "$3"} "http://127.0.0.1:$PORT$2"
 }
 
 # web <item> <scenario> <capture> [seconds]: real jellyfin-web in Chromium, as the viewer.
 web() {
   local item=$1 scenario=$2 cap=$3 secs=${4:-12} me sid
   me=$(as_viewer GET /Users/Me >/dev/null; jq -r .Id "$WORK/viewer-body")
-  sid=$(curl -fsS http://127.0.0.1:18430/System/Info/Public | jq -r .Id)
+  sid=$(curl -fsS "http://127.0.0.1:$PORT/System/Info/Public" | jq -r .Id)
   mkdir -p "$WORK/web"
   cp "$WT/tests/Integration/playback/webplay.py" "$WORK/web/webplay.py"
-  docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -v jm-play-pw:/pw -e PYTHONPATH=/pw "$PW_IMAGE" \
+  docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -v "$PREFIX-pw:/pw" -e PYTHONPATH=/pw -e DEVICE_ID="$PREFIX-browser" "$PW_IMAGE" \
     bash -c 'test -d /pw/playwright || pip install -q --target /pw --no-warn-script-location playwright==1.48.0 2>/dev/null; exec python3 "$@"' _ \
-    /w/webplay.py http://host.docker.internal:18430 "$(cat "$WORK/token-viewer")" "$me" "$sid" "$item" "$scenario" "/w/$cap" "$secs"
+    /w/webplay.py "http://host.docker.internal:$PORT" "$(cat "$WORK/token-viewer")" "$me" "$sid" "$item" "$scenario" "/w/$cap" "$secs"
 }
 
 down() {
-  docker rm -f jm-play-local jm-play-remote jm-play-peer >/dev/null 2>&1 || true
-  docker volume rm jm-play-local-config jm-play-local-cache jm-play-local-fed \
-    jm-play-remote-config jm-play-remote-cache jm-play-remote-fed \
-    jm-play-peer-config jm-play-peer-cache jm-play-peer-fed jm-play-media jm-play-pw >/dev/null 2>&1 || true
+  docker rm -f "$PREFIX-local" "$PREFIX-remote" "$PREFIX-peer" >/dev/null 2>&1 || true
+  docker volume rm "$PREFIX-local-config" "$PREFIX-local-cache" "$PREFIX-local-fed" \
+    "$PREFIX-remote-config" "$PREFIX-remote-cache" "$PREFIX-remote-fed" \
+    "$PREFIX-peer-config" "$PREFIX-peer-cache" "$PREFIX-peer-fed" "$PREFIX-media" "$PREFIX-pw" >/dev/null 2>&1 || true
 }

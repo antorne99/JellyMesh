@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -19,6 +20,7 @@ using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Moq;
@@ -36,7 +38,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, ILibraryChangeTracker? changes = null, IServerRenamer? renamer = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -46,7 +48,11 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(federatedRoot),
             Mock.Of<ICatalogSyncService>(),
             new InMemoryMergeStore(),
-            new CapturingLogger<FederationAdminController>());
+            libraries ?? Mock.Of<IServerLibraryManager>(),
+            new CapturingLogger<FederationAdminController>(),
+            migration,
+            changes,
+            renamer);
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -81,6 +87,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
 
         var result = await controller.RemoveServer(source.ServerId, CancellationToken.None);
@@ -107,6 +114,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
 
         var result = await controller.RemoveServer(Guid.NewGuid(), CancellationToken.None);
@@ -126,15 +134,17 @@ public class FederationAdminControllerTests
         var sync = new Mock<ICatalogSyncService>();
         sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>()))
             .Returns<Guid, Func<Task<bool>>, CancellationToken>((_, remove, _) => remove());
+        var playback = new CoordinatorFixture();
         var controller = new FederationAdminController(
             fixture.Registry,
             fixture.Vault,
             fixture.Store,
             new RecordingChecker(FederatedFolderLinkState.NotChecked),
-            new CoordinatorFixture().Coordinator,
+            playback.Coordinator,
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
         fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(saveFailure)!;
 
@@ -147,6 +157,44 @@ public class FederationAdminControllerTests
         Assert.Contains("Try again", failure.Message, StringComparison.Ordinal);
         Assert.Equal(server.Id, Assert.Single(fixture.Registry.GetServers()).Id);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+
+        // The server stays, so its login stays and it plays again (413).
+        Assert.DoesNotContain(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        var stream = await playback.Coordinator.OpenAsync(server.Id, new RemoteStreamRequest(System.Net.Http.HttpMethod.Get, "/Videos/a/stream", null), CancellationToken.None);
+        Assert.True(stream.IsSuccess, stream.Failure.ToString());
+        stream.Value!.Dispose();
+    }
+
+    // Decision 413: what plays from the server ends first, then its login on the remote.
+    [Fact]
+    public async Task Removing_a_server_ends_its_streams_then_its_login_on_the_remote()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var playback = new CoordinatorFixture();
+        var loggedOutAtClose = true;
+        playback.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()))
+            .Callback(() => loggedOutAtClose = fixture.Handler.Requests.Any(request => request.Uri.AbsolutePath == "/Sessions/Logout"))
+            .Returns(Task.CompletedTask);
+        playback.Coordinator.RecordLocalPlaySession(Guid.NewGuid(), Guid.NewGuid(), "local", ["device"]);
+        playback.Coordinator.RecordLocalTranscode("local", new StubSource(server.Id, "item", "item-ms"));
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            playback.Coordinator,
+            new FixedFederatedRootSource(null),
+            RemovingSync(server.Id).Object,
+            new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
+            new CapturingLogger<FederationAdminController>());
+
+        Assert.IsType<NoContentResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
+
+        Assert.False(loggedOutAtClose);
+        playback.Transcodes.Verify(manager => manager.KillTranscodingJobs(string.Empty, "local", It.IsAny<Func<string, bool>>()), Times.Once);
+        Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
     }
 
     [Fact]
@@ -166,6 +214,7 @@ public class FederationAdminControllerTests
             new FixedFederatedRootSource(null),
             sync.Object,
             new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
             new CapturingLogger<FederationAdminController>());
 
         var result = Assert.IsType<ObjectResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
@@ -242,6 +291,70 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task Removing_a_server_deletes_its_automatic_libraries_with_no_confirmation()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var record = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "a1" };
+        fixture.Store.Update(config =>
+        {
+            var stored = config.Servers.Single();
+            stored.AutomaticLibraries = true;
+            stored.AutomaticLibraryRegistry.Add(record);
+        });
+        var libraries = new Mock<IServerLibraryManager>();
+        var heldAtStart = 0;
+        libraries.Setup(manager => manager.DeleteRemovedServerLibraries())
+            .Callback(() => heldAtStart = fixture.Store.Configuration.RemovedServerLibraries.Sum(entry => entry.Libraries.Count))
+            .Returns(Task.CompletedTask);
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, libraries: libraries.Object);
+
+        var result = await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(1, heldAtStart);
+        libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Once);
+        libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    // Jellyfin hands a primary version over only when its item alone is deleted, not with its library.
+    [Fact]
+    public async Task The_automatic_libraries_of_a_removed_server_go_after_its_stubs()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var cleanup = new TaskCompletionSource();
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sync = RemovingSync(server.Id);
+        sync.Setup(service => service.StartRemovalCleanup()).Returns(cleanup.Task);
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.DeleteRemovedServerLibraries())
+            .Callback(() => deleted.SetResult())
+            .Returns(Task.CompletedTask);
+        var controller = CreateController(fixture, sync.Object, libraries: libraries.Object);
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Never);
+        cleanup.SetResult();
+        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task A_removal_that_fails_deletes_no_automatic_library()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var libraries = new Mock<IServerLibraryManager>();
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, libraries: libraries.Object);
+        fixture.Store.SaveFailure = new IOException("disk full");
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Never);
+    }
+
+    [Fact]
     public async Task A_removal_that_fails_keeps_the_manual_merges()
     {
         using var fixture = new RegistryFixture();
@@ -309,7 +422,12 @@ public class FederationAdminControllerTests
     private static ManualMerge Merge(params MergedCopy[] copies)
         => new() { Id = Guid.NewGuid(), CreatedUtc = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), Copies = copies };
 
-    private static FederationAdminController CreateController(RegistryFixture fixture, ICatalogSyncService sync, IManualMergeStore? merges = null, ILogger<FederationAdminController>? logger = null) => new(
+    private static FederationAdminController CreateController(
+        RegistryFixture fixture,
+        ICatalogSyncService sync,
+        IManualMergeStore? merges = null,
+        ILogger<FederationAdminController>? logger = null,
+        IServerLibraryManager? libraries = null) => new(
         fixture.Registry,
         fixture.Vault,
         fixture.Store,
@@ -318,6 +436,7 @@ public class FederationAdminControllerTests
         new FixedFederatedRootSource(null),
         sync,
         merges ?? new InMemoryMergeStore(),
+        libraries ?? Mock.Of<IServerLibraryManager>(),
         logger ?? new CapturingLogger<FederationAdminController>());
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
@@ -356,6 +475,194 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task Switching_on_the_libraries_of_a_server_starts_in_the_background_and_shows_the_state()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        var controller = ControllerFor(fixture, libraries: libraries.Object);
+        var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
+        var state = new AutomaticLibrariesState(true, true, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None);
+        libraries.Setup(manager => manager.Enable(id)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+        libraries.Setup(manager => manager.GetState(id)).Returns(state);
+
+        var result = controller.SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = true });
+
+        var accepted = Assert.IsType<AcceptedResult>(result.Result);
+        Assert.Same(state, accepted.Value);
+        Assert.Same(state, Assert.Single(controller.GetStatus().Value!.Servers).AutomaticLibraries);
+    }
+
+    [Fact]
+    public void Switching_off_without_a_confirmation_answers_with_the_libraries_it_would_delete()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        var id = Guid.NewGuid();
+        libraries.Setup(manager => manager.Disable(id, false))
+            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Friend - Film", "Friend - Serie"]));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false });
+
+        var conflict = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+        var body = Assert.IsType<AutomaticLibrariesRefusal>(conflict.Value);
+        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, body.Outcome);
+        Assert.Equal(["Friend - Film", "Friend - Serie"], body.ToDelete);
+    }
+
+    [Fact]
+    public void A_confirmed_switch_off_reaches_the_manager()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        var id = Guid.NewGuid();
+        libraries.Setup(manager => manager.Disable(id, true)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false, Confirmed = true });
+
+        Assert.IsType<AcceptedResult>(result.Result);
+    }
+
+    [Theory]
+    [InlineData(AutomaticLibrariesOutcome.UnknownServer, 404)]
+    [InlineData(AutomaticLibrariesOutcome.NoFederatedFolder, 409)]
+    [InlineData(AutomaticLibrariesOutcome.Busy, 409)]
+    public void A_refused_switch_answers_with_its_reason(AutomaticLibrariesOutcome outcome, int status)
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.Enable(It.IsAny<Guid>())).Returns(AutomaticLibrariesRequest.Refused(outcome));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(Guid.NewGuid(), new SetAutomaticLibrariesRequest { Enabled = true });
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(status, refused.StatusCode);
+        var body = Assert.IsType<AutomaticLibrariesRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
+    public void A_confirmed_rename_starts_in_the_background_and_shows_the_state()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var id = Guid.NewGuid();
+        var state = new ServerRenameState(true, false, false);
+        renamer.Setup(r => r.Rename(id, "Mare", true)).Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
+        renamer.Setup(r => r.GetState(id)).Returns(state);
+
+        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true });
+
+        var accepted = Assert.IsType<AcceptedResult>(result.Result);
+        Assert.Same(state, accepted.Value);
+    }
+
+    [Fact]
+    public void A_rename_without_a_confirmation_answers_with_the_libraries_it_renames()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var id = Guid.NewGuid();
+        renamer.Setup(r => r.Rename(id, "Mare", false))
+            .Returns(new ServerRenameRequest(ServerRenameOutcome.ConfirmationRequired, Task.CompletedTask, ["Casa - Film"]));
+
+        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare" });
+
+        var conflict = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+        var body = Assert.IsType<ServerRenameRefusal>(conflict.Value);
+        Assert.Equal(ServerRenameOutcome.ConfirmationRequired, body.Outcome);
+        Assert.Equal(["Casa - Film"], body.Libraries);
+    }
+
+    [Theory]
+    [InlineData(ServerRenameOutcome.InvalidName, 400)]
+    [InlineData(ServerRenameOutcome.UnknownServer, 404)]
+    [InlineData(ServerRenameOutcome.Busy, 409)]
+    public void A_refused_rename_answers_with_its_reason(ServerRenameOutcome outcome, int status)
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        renamer.Setup(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>())).Returns(ServerRenameRequest.Refused(outcome));
+
+        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(Guid.NewGuid(), new RenameServerRequest { Name = " " });
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(status, refused.StatusCode);
+        var body = Assert.IsType<ServerRenameRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
+    public async Task Cancelling_a_pending_rename_answers_with_the_state()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var id = Guid.NewGuid();
+        var state = new ServerRenameState(false, false, false);
+        renamer.Setup(r => r.CancelPendingAsync(id)).ReturnsAsync(ServerRenameOutcome.Cancelled);
+        renamer.Setup(r => r.GetState(id)).Returns(state);
+
+        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(id);
+
+        Assert.Same(state, result.Value);
+    }
+
+    [Theory]
+    [InlineData(ServerRenameOutcome.UnknownServer, 404)]
+    [InlineData(ServerRenameOutcome.Busy, 409)]
+    [InlineData(ServerRenameOutcome.CancelFailed, 500)]
+    public async Task A_refused_cancel_answers_with_its_reason(ServerRenameOutcome outcome, int status)
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        renamer.Setup(r => r.CancelPendingAsync(It.IsAny<Guid>())).ReturnsAsync(outcome);
+
+        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(Guid.NewGuid());
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(status, refused.StatusCode);
+        var body = Assert.IsType<ServerRenameRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
+    public async Task The_status_shows_the_rename_of_each_server_and_whether_a_restart_is_needed()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var controller = ControllerFor(fixture, renamer: renamer.Object);
+        var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
+        var state = new ServerRenameState(false, true, false);
+        renamer.Setup(r => r.GetState(id)).Returns(state);
+        renamer.Setup(r => r.NeedsRestart).Returns(true);
+
+        var status = controller.GetStatus().Value!;
+
+        Assert.True(status.RenamedLibrariesNeedRestart);
+        Assert.Same(state, Assert.Single(status.Servers).Rename);
+    }
+
+    // Q359: the page warns by server name when a rename is held up by a detach, with no path in the status.
+    [Fact]
+    public async Task The_status_says_when_the_rename_of_a_server_is_stuck_on_a_detach()
+    {
+        using var fixture = new RegistryFixture();
+        var renamer = new Mock<IServerRenamer>();
+        var controller = ControllerFor(fixture, renamer: renamer.Object);
+        var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
+        renamer.Setup(r => r.GetState(id)).Returns(new ServerRenameState(false, true, false) { Stuck = true });
+
+        var json = ToJson(controller.GetStatus().Value);
+
+        Assert.Contains("\"Rename\":{\"Busy\":false,\"Pending\":true,\"Failed\":false,\"Stuck\":true}", json, StringComparison.Ordinal);
+        Assert.DoesNotContain(".strm", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task NoSecretReachesTheXmlTheLogsOrTheApi()
     {
         using var fixture = new RegistryFixture();
@@ -380,6 +687,72 @@ public class FederationAdminControllerTests
         var logs = string.Join('\n', fixture.Logger.Lines);
         AssertNoSecret(logs);
         Assert.NotEmpty(fixture.Logger.Lines);
+    }
+
+    [Fact]
+    public async Task AnAddedServerGetsItsFoldersAtOnce()
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        var controller = CreateController(fixture, sync.Object);
+
+        var added = await controller.AddServer(_request, CancellationToken.None);
+
+        Assert.NotNull(added.Value);
+        sync.Verify(service => service.PrepareServerFolders(), Times.Once);
+    }
+
+    private static StubHandler RemoteWithServerId() => new(request => request.RequestUri!.AbsolutePath == "/Users/AuthenticateByName"
+        ? StubHandler.Json("{\"ServerId\":\"8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b\"," + TestValues.LoginJson[1..])
+        : StubHandler.StockServer_Respond(request));
+
+    [Fact]
+    public async Task ARemoteAlreadyConfiguredIsRefusedWithTheNameItHasHere()
+    {
+        using var fixture = new RegistryFixture(RemoteWithServerId());
+        var sync = new Mock<ICatalogSyncService>();
+        var controller = CreateController(fixture, sync.Object);
+        await controller.AddServer(_request, CancellationToken.None);
+        sync.Invocations.Clear();
+
+        var again = await controller.AddServer(new AddServerRequest { Name = "Again", Url = TestValues.Url, Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+
+        var refused = Assert.IsType<ObjectResult>(again.Result);
+        Assert.Equal(409, refused.StatusCode);
+        var body = Assert.IsType<FailureResponse>(refused.Value);
+        Assert.Equal(RemoteFailure.AlreadyConfigured, body.Failure);
+        Assert.Equal("Friend", body.ServerName);
+        Assert.Equal("This server is already configured as “Friend”.", body.Message);
+        Assert.DoesNotContain(TestValues.Host, ToJson(body), StringComparison.Ordinal);
+        sync.Verify(service => service.PrepareServerFolders(), Times.Never);
+    }
+
+    [Fact]
+    public async Task ARemovedServerAddedAgainIsAddedAsANewServer()
+    {
+        using var fixture = new RegistryFixture(RemoteWithServerId());
+        var controller = ControllerFor(fixture);
+        var first = (await controller.AddServer(_request, CancellationToken.None)).Value!;
+        await fixture.Registry.RemoveAsync(first.Id);
+
+        var again = await controller.AddServer(new AddServerRequest { Name = "Renamed", Url = TestValues.Url, Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+
+        Assert.NotEqual(first.Id, again.Value!.Id);
+        Assert.Equal("Renamed", again.Value.Name);
+        Assert.DoesNotContain("Recognized", ToJson(again.Value), StringComparison.Ordinal);
+        Assert.Equal(again.Value.Id, controller.GetStatus().Value!.Servers.Single().Id);
+    }
+
+    [Fact]
+    public async Task AServerThatCannotBeAddedGetsNoFolders()
+    {
+        using var fixture = new RegistryFixture(new StubHandler(_ => throw new HttpRequestException("Connection refused")));
+        var sync = new Mock<ICatalogSyncService>();
+        var controller = CreateController(fixture, sync.Object);
+
+        await controller.AddServer(_request, CancellationToken.None);
+
+        sync.Verify(service => service.PrepareServerFolders(), Times.Never);
     }
 
     [Fact]
@@ -526,18 +899,336 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public void TheFolderShowsItsPathsAndTheCheckerDecidesTheLink()
+    public async Task TheFolderShowsThePathsOfEachServerAndTheCheckerDecidesTheLink()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var server = await fixture.AddServerAsync();
+        var checker = new RecordingChecker(FederatedFolderLinkState.NotLinked);
 
-        var folder = ControllerFor(fixture, new RecordingChecker(FederatedFolderLinkState.NotLinked)).GetStatus().Value!.FederatedFolder;
+        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
 
-        Assert.Equal("/federata/Film", folder.MoviesPath);
-        Assert.Equal("/federata/Serie", folder.SeriesPath);
+        Assert.Equal([server.Id], checker.Servers);
+        var shown = Assert.Single(folder.Servers);
+        Assert.Equal(server.Id, shown.Id);
+        Assert.Equal("Friend", shown.Name);
+        Assert.Equal($"/federata/{server.Id:D}/Film", shown.MoviesPath);
+        Assert.Equal($"/federata/{server.Id:D}/Serie", shown.SeriesPath);
+        Assert.Equal(["Film"], shown.Movies.Libraries);
+        Assert.Equal(["Serie"], shown.SeriesGroupingOff);
+        Assert.Equal(["Serie"], shown.SeriesLibraries);
         Assert.Equal(FederatedFolderLinkState.NotLinked, folder.Link);
-        Assert.Equal(["Film"], folder.Movies.Libraries);
-        Assert.Equal(["Serie"], folder.SeriesGroupingOff);
+        Assert.Equal(["Tutto"], folder.Covering);
+        Assert.True(folder.SeriesSplit);
+    }
+
+    [Fact]
+    public async Task ALibraryOnTheFoldersOfAServerOutsideItsAutomaticOnesIsUnregistered()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var server = await fixture.AddServerAsync();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.GetState(server.Id))
+            .Returns(new AutomaticLibrariesState(true, false, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None));
+        var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Friend - Film", "Mia"] };
+
+        var folder = ControllerFor(fixture, checker, libraries: libraries.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Equal(["Mia"], Assert.Single(folder.Servers).Unregistered);
+    }
+
+    [Fact]
+    public async Task AServerSavedTwiceShowsOnceWithItsFirstName()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var server = await fixture.AddServerAsync();
+        var saved = fixture.Store.Configuration.Servers[0];
+        fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = server.Id, Name = "Copia", Url = saved.Url, EncryptedCredentials = saved.EncryptedCredentials });
+        var checker = new RecordingChecker(FederatedFolderLinkState.Linked);
+
+        var status = ControllerFor(fixture, checker).GetStatus().Value!;
+
+        Assert.Equal(server.Name, Assert.Single(status.Servers).Name);
+        Assert.Equal(server.Name, Assert.Single(status.FederatedFolder.Servers).Name);
+        Assert.Equal([server.Id], checker.Servers);
+    }
+
+    [Fact]
+    public async Task WithTheSwitchOffNoLibraryIsUnregistered()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        await fixture.AddServerAsync();
+        var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Mia"] };
+
+        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+
+        Assert.Empty(Assert.Single(folder.Servers).Unregistered);
+    }
+
+    [Fact]
+    public void TheLibrariesLeftByRemovedServersAreListed()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Vecchio - Film" } });
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Altro - Serie" } });
+
+        var status = ControllerFor(fixture).GetStatus().Value!;
+
+        Assert.Equal(["Vecchio - Film", "Altro - Serie"], status.ReleasedLibraries.Select(library => library.Name));
+        Assert.Equal(fixture.Store.Configuration.RemovedServerLibraries.Select(held => held.ServerId), status.ReleasedLibraries.Select(library => library.ServerId));
+    }
+
+    // Row 416: each removed server whose removal waits for its watch state, by name only.
+    [Fact]
+    public void TheStatusListsTheRemovalsHeldForTheirWatchState()
+    {
+        using var fixture = new RegistryFixture();
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.HeldRemovals).Returns([new HeldRemoval("Vecchio"), new HeldRemoval(null)]);
+        var controller = new FederationAdminController(
+            fixture.Registry,
+            fixture.Vault,
+            fixture.Store,
+            new RecordingChecker(FederatedFolderLinkState.NotChecked),
+            new CoordinatorFixture().Coordinator,
+            new FixedFederatedRootSource(null),
+            Mock.Of<ICatalogSyncService>(),
+            new InMemoryMergeStore(),
+            Mock.Of<IServerLibraryManager>(),
+            new CapturingLogger<FederationAdminController>(),
+            keeper: keeper.Object);
+
+        var status = controller.GetStatus().Value!;
+
+        Assert.Equal(["Vecchio", null], status.HeldRemovals.Select(held => held.Name));
+        Assert.Contains("\"HeldRemovals\":[{\"Name\":\"Vecchio\"},{", ToJson(status), StringComparison.Ordinal);
+        Assert.Empty(ControllerFor(fixture).GetStatus().Value!.HeldRemovals);
+    }
+
+    [Fact]
+    public void HidingReleasedLibrariesTakesThemOffTheStatusAndLeavesTheLibrariesAlone()
+    {
+        using var fixture = new RegistryFixture();
+        var removed = Guid.NewGuid();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = removed, ReleasedLibraries = { "Vecchio - Film", "Vecchio - Serie" } });
+        var libraries = new Mock<IServerLibraryManager>();
+        var controller = ControllerFor(fixture, libraries: libraries.Object);
+
+        var result = controller.HideReleasedLibraries(new HideReleasedLibrariesRequest([new ReleasedLibrary(removed, "Vecchio - Film")]));
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(["Vecchio - Serie"], controller.GetStatus().Value!.ReleasedLibraries.Select(library => library.Name));
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Equal(["Vecchio - Film", "Vecchio - Serie"], held.ReleasedLibraries);
+        Assert.Equal(["Vecchio - Film"], held.HiddenReleasedLibraries);
+        libraries.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void HidingAReleasedLibraryTwiceKeepsOneMark()
+    {
+        using var fixture = new RegistryFixture();
+        var removed = Guid.NewGuid();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = removed, ReleasedLibraries = { "Vecchio - Film" } });
+        var controller = ControllerFor(fixture);
+        var request = new HideReleasedLibrariesRequest([new ReleasedLibrary(removed, "Vecchio - Film")]);
+
+        controller.HideReleasedLibraries(request);
+        var result = controller.HideReleasedLibraries(request);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(["Vecchio - Film"], Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
+        Assert.Empty(controller.GetStatus().Value!.ReleasedLibraries);
+    }
+
+    [Theory]
+    [InlineData(false, "Vecchio - Film")]
+    [InlineData(true, "Vecchio - Serie")]
+    [InlineData(true, "vecchio - film")]
+    public void HidingAReleasedLibraryThatIsNotListedHidesNothing(bool sameServer, string name)
+    {
+        using var fixture = new RegistryFixture();
+        var removed = Guid.NewGuid();
+        fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = removed, ReleasedLibraries = { "Vecchio - Film", "Altro - Film" } });
+        var controller = ControllerFor(fixture);
+
+        var result = controller.HideReleasedLibraries(new HideReleasedLibrariesRequest(
+            [new ReleasedLibrary(removed, "Altro - Film"), new ReleasedLibrary(sameServer ? removed : Guid.NewGuid(), name)]));
+
+        Assert.Equal(404, Assert.IsAssignableFrom<ObjectResult>(result).StatusCode);
+        Assert.Empty(Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
+        Assert.Equal(2, controller.GetStatus().Value!.ReleasedLibraries.Count);
+    }
+
+    [Fact]
+    public void TheFolderCarriesTheMigrationOfItsPaths()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var status = new LayoutMigrationStatus(LayoutMigrationStep.AddPaths, [new LayoutMigrationLibrary("Film", ["/federata/Film"], ["/federata/x/Film"])], 3);
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.GetStatus("/federata")).Returns(status);
+
+        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Same(status, folder.Migration);
+    }
+
+    [Fact]
+    public void TheFolderSaysWhichLibrariesChangedOnItSinceTheSync()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var changes = new Mock<ILibraryChangeTracker>();
+        var found = new LibraryChanges(["Tutto"], ["Film"]);
+        changes.Setup(tracker => tracker.Compare()).Returns(found);
+
+        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Same(found, folder.Changes);
+        changes.Verify(tracker => tracker.Record(), Times.Never);
+    }
+
+    [Fact]
+    public void WithNoFolderThereAreNoChanges()
+    {
+        using var fixture = new RegistryFixture();
+        var changes = new Mock<ILibraryChangeTracker>(MockBehavior.Strict);
+
+        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Equal(LibraryChanges.None, folder.Changes);
+    }
+
+    [Fact]
+    public void ChoosingTheAutomaticMigrationStartsItAndShowsTheBanner()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var status = new LayoutMigrationStatus(LayoutMigrationStep.AddPaths, [], 3) { Mode = LayoutMigrationMode.Automatic, Running = true };
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.Choose(LayoutMigrationMode.Automatic)).Returns(new LayoutMigrationChoice(LayoutMigrationChoiceOutcome.Started, Task.CompletedTask));
+        migration.Setup(item => item.GetStatus("/federata")).Returns(status);
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        var accepted = Assert.IsType<AcceptedResult>(result.Result);
+        Assert.Same(status, accepted.Value);
+    }
+
+    [Fact]
+    public void ChoosingTheManualMigrationShowsTheBanner()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var status = new LayoutMigrationStatus(LayoutMigrationStep.AddPaths, [], 3) { Mode = LayoutMigrationMode.Manual };
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.Choose(LayoutMigrationMode.Manual)).Returns(new LayoutMigrationChoice(LayoutMigrationChoiceOutcome.Chosen, Task.CompletedTask));
+        migration.Setup(item => item.GetStatus("/federata")).Returns(status);
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Manual });
+
+        Assert.Same(status, result.Value);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationChoiceOutcome.Busy)]
+    [InlineData(LayoutMigrationChoiceOutcome.NotAllowed)]
+    [InlineData(LayoutMigrationChoiceOutcome.NothingToMigrate)]
+    public void ARefusedChoiceAnswersWithItsReason(LayoutMigrationChoiceOutcome outcome)
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.FederatedFolderPath = "/federata";
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.Choose(It.IsAny<LayoutMigrationMode>())).Returns(LayoutMigrationChoice.Refused(outcome));
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Manual });
+
+        var refused = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(409, refused.StatusCode);
+        var body = Assert.IsType<LayoutMigrationRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+    }
+
+    [Fact]
+    public void WithNoFolderThereIsNoChoice()
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>(MockBehavior.Strict);
+
+        var result = ControllerFor(fixture, migration: migration.Object).ChooseMigration(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationChoiceOutcome.Chosen, 204)]
+    [InlineData(LayoutMigrationChoiceOutcome.Started, 202)]
+    public void TheSettingsSetTheModeOfTheNewServersEvenWithNoFolder(LayoutMigrationChoiceOutcome outcome, int code)
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.SetMode(LayoutMigrationMode.Automatic)).Returns(new LayoutMigrationChoice(outcome, Task.CompletedTask));
+
+        var result = ControllerFor(fixture, migration: migration.Object).SetNewServerMode(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        Assert.Equal(code, Assert.IsAssignableFrom<IStatusCodeActionResult>(result).StatusCode);
+        migration.Verify(item => item.SetMode(LayoutMigrationMode.Automatic), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationChoiceOutcome.Busy)]
+    [InlineData(LayoutMigrationChoiceOutcome.NotAllowed)]
+    public void ARefusedModeAnswersWithItsReason(LayoutMigrationChoiceOutcome outcome)
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.SetMode(It.IsAny<LayoutMigrationMode>())).Returns(LayoutMigrationChoice.Refused(outcome));
+
+        var result = ControllerFor(fixture, migration: migration.Object).SetNewServerMode(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Manual });
+
+        var refused = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(409, refused.StatusCode);
+        var body = Assert.IsType<LayoutMigrationRefusal>(refused.Value);
+        Assert.Equal(outcome, body.Outcome);
+        Assert.Equal(FederationAdminController.MigrationRefusalMessage(outcome), body.Message);
+    }
+
+    [Fact]
+    public void WithoutTheMigrationThereIsNoModeToSet()
+    {
+        using var fixture = new RegistryFixture();
+
+        var result = ControllerFor(fixture).SetNewServerMode(new ChooseMigrationRequest { Mode = LayoutMigrationMode.Automatic });
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public void TheStatusCarriesTheModeOfTheNewServers()
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(item => item.NewServerMode).Returns(LayoutMigrationMode.Automatic);
+
+        Assert.Equal(LayoutMigrationMode.Automatic, ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder.NewServerMode);
+        Assert.Equal(LayoutMigrationMode.Manual, ControllerFor(fixture).GetStatus().Value!.FederatedFolder.NewServerMode);
+    }
+
+    [Fact]
+    public void WithNoFolderThereIsNoMigration()
+    {
+        using var fixture = new RegistryFixture();
+        var migration = new Mock<ILayoutMigration>();
+
+        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+
+        Assert.Null(folder.Migration);
+        migration.Verify(item => item.GetStatus(It.IsAny<string>()), Times.Never);
     }
 
     private sealed class RecordingChecker : IFederatedFolderLinkChecker
@@ -548,16 +1239,32 @@ public class FederationAdminControllerTests
 
         public bool Called { get; private set; }
 
-        public FederatedFolderLinkReport Check(string federatedFolderPath)
+        public IReadOnlyList<Guid> Servers { get; private set; } = [];
+
+        public IReadOnlyList<string> OnlyOnItsFolders { get; init; } = [];
+
+        public FederatedFolderLinkReport Check(string federatedFolderPath, IReadOnlyList<Guid> serverIds)
         {
             Called = true;
-            var link = _state switch
+            Servers = serverIds;
+            if (_state == FederatedFolderLinkState.NotChecked)
             {
-                FederatedFolderLinkState.Linked => FederatedPathLink.Linked,
-                FederatedFolderLinkState.NotLinked => FederatedPathLink.NotLinked,
-                _ => FederatedPathLink.NotChecked
-            };
-            return new FederatedFolderLinkReport(new(link, ["Film"]), new(link, []), ["Serie"]);
+                return FederatedFolderLinkReport.NotChecked;
+            }
+
+            var link = _state == FederatedFolderLinkState.Linked ? FederatedPathLink.Linked : FederatedPathLink.NotLinked;
+            var servers = serverIds
+                .Select(id => new ServerFolderLink(
+                    id,
+                    FederatedFolderLayout.ServerMoviesPath(federatedFolderPath, id),
+                    FederatedFolderLayout.ServerSeriesPath(federatedFolderPath, id),
+                    new(link, ["Film"]),
+                    new(link, []),
+                    ["Serie"],
+                    ["Serie"],
+                    OnlyOnItsFolders))
+                .ToList();
+            return new FederatedFolderLinkReport(servers, ["Tutto"], true);
         }
     }
 }

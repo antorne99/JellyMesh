@@ -52,6 +52,7 @@ internal static class Fixtures
             ServerId = server,
             ItemId = itemId,
             Kind = ContentKind.Episode,
+            SeriesId = "series-" + series,
             Title = series,
             Year = year,
             Ids = ids ?? ContentIds.None,

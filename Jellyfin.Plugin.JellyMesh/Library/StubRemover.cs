@@ -114,6 +114,75 @@ public sealed class StubRemover
         return new StubRemoval(next, gone.Count(id => !kept.Contains(id)), failures);
     }
 
+    /// <summary>
+    /// Removes series that no stub uses any more, with their folders and items. A series still used, or whose folder
+    /// cannot be removed, stays in the registry.
+    /// </summary>
+    /// <param name="root">The federated folder.</param>
+    /// <param name="state">The registry.</param>
+    /// <param name="series">The series.</param>
+    /// <returns>The registry without the series, with what failed.</returns>
+    public StubRemoval RemoveSeries(string root, StubState state, IReadOnlyCollection<SeriesStub> series)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(series);
+
+        var failures = new List<Exception>();
+        var used = state.Stubs.Select(entry => entry.SeriesStubId).OfType<string>().ToHashSet(StringComparer.Ordinal);
+        var gone = series
+            .Where(entry => !used.Contains(entry.Id) && Try(failures, () => DeleteFolderAndRow(root, entry.RelativePath)))
+            .Select(entry => entry.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        return new StubRemoval(state with { Series = state.Series.Where(entry => !gone.Contains(entry.Id)).ToList() }, gone.Count, failures);
+    }
+
+    /// <summary>
+    /// Deletes the folder of each server, with the series still in it, once no stub of that server is left. A server with a
+    /// stub left, or whose series cannot be removed, keeps its folder and is tried again next time.
+    /// </summary>
+    /// <param name="root">The federated folder.</param>
+    /// <param name="state">The registry.</param>
+    /// <param name="servers">The removed servers.</param>
+    /// <param name="isConfigured">Tells whether a server is configured right now; one added back keeps its folder.</param>
+    /// <returns>The registry without their series, with how many folders went and what failed.</returns>
+    public StubRemoval RemoveServerFolders(string root, StubState state, IReadOnlyCollection<Guid> servers, Func<Guid, bool> isConfigured)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(servers);
+        ArgumentNullException.ThrowIfNull(isConfigured);
+
+        var failures = new List<Exception>();
+        var removed = 0;
+        foreach (var serverId in servers.Distinct())
+        {
+            if (isConfigured(serverId) || state.Stubs.Any(stub => stub.ServerId == serverId))
+            {
+                continue;
+            }
+
+            var series = state.Series.Where(entry => entry.ServerId == serverId).ToList();
+            if (series.Count > 0)
+            {
+                var removal = RemoveSeries(root, state, series);
+                state = removal.State;
+                failures.AddRange(removal.Failures);
+                if (state.Series.Any(entry => entry.ServerId == serverId))
+                {
+                    continue;
+                }
+            }
+
+            // Asked again right before the delete: the series may have taken long enough for the server to come back.
+            var folder = FederatedPaths.ServerFolder(serverId);
+            if (!isConfigured(serverId) && Directory.Exists(FederatedPaths.Resolve(root, folder)) && Try(failures, () => DeleteFolder(root, folder)))
+            {
+                removed++;
+            }
+        }
+
+        return new StubRemoval(state, removed, failures);
+    }
+
     private static bool Try(List<Exception> failures, Action action)
     {
         try

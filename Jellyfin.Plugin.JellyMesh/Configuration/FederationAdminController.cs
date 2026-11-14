@@ -27,6 +27,9 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 [Produces(MediaTypeNames.Application.Json)]
 public class FederationAdminController : ControllerBase
 {
+    /// <summary>The refusal of a hide whose libraries are no longer listed.</summary>
+    internal const string ReleasedLibraryNotListed = "These libraries are no longer listed. The page reads them again.";
+
     private readonly IRemoteServerRegistry _registry;
     private readonly ICredentialVault _vault;
     private readonly IPluginConfigurationStore _store;
@@ -35,7 +38,12 @@ public class FederationAdminController : ControllerBase
     private readonly IFederatedRootSource _rootSource;
     private readonly ICatalogSyncService _sync;
     private readonly IManualMergeStore _merges;
+    private readonly IServerLibraryManager _libraries;
     private readonly ILogger<FederationAdminController> _logger;
+    private readonly ILayoutMigration? _migration;
+    private readonly ILibraryChangeTracker? _changes;
+    private readonly IServerRenamer? _renamer;
+    private readonly IWatchStateKeeper? _keeper;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -48,7 +56,12 @@ public class FederationAdminController : ControllerBase
     /// <param name="rootSource">The source of the federated folder.</param>
     /// <param name="sync">The sync service, which deletes what a removed server left.</param>
     /// <param name="merges">The manual merges, which lose the copies of a removed server.</param>
+    /// <param name="libraries">The libraries the plugin keeps for each server.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="migration">The manual migration from the flat layout, for the banner.</param>
+    /// <param name="changes">The libraries that changed on the federated folder since the last sync.</param>
+    /// <param name="renamer">The server rename.</param>
+    /// <param name="keeper">The watch state kept for removed servers, for the removals it holds.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -58,7 +71,12 @@ public class FederationAdminController : ControllerBase
         IFederatedRootSource rootSource,
         ICatalogSyncService sync,
         IManualMergeStore merges,
-        ILogger<FederationAdminController> logger)
+        IServerLibraryManager libraries,
+        ILogger<FederationAdminController> logger,
+        ILayoutMigration? migration = null,
+        ILibraryChangeTracker? changes = null,
+        IServerRenamer? renamer = null,
+        IWatchStateKeeper? keeper = null)
     {
         _registry = registry;
         _vault = vault;
@@ -68,7 +86,12 @@ public class FederationAdminController : ControllerBase
         _rootSource = rootSource;
         _sync = sync;
         _merges = merges;
+        _libraries = libraries;
         _logger = logger;
+        _migration = migration;
+        _changes = changes;
+        _renamer = renamer;
+        _keeper = keeper;
     }
 
     /// <summary>
@@ -80,19 +103,64 @@ public class FederationAdminController : ControllerBase
     public ActionResult<FederationStatus> GetStatus()
     {
         var keyState = _vault.GetKeyState();
+
+        // A server id saved twice, as by a hand-edited configuration, shows once with its first entry.
+        var servers = _registry.GetServers().DistinctBy(server => server.Id).ToList();
         return new FederationStatus(
             keyState,
             keyState != KeyState.Ok,
             KeyWarning(keyState),
-            GetFederatedFolder(),
-            _registry.GetServers().Select(ToStatus).ToList())
+            GetFederatedFolder(servers),
+            servers.Select(ToStatus).ToList())
         {
-            LegacyKeySet = _vault.IsLegacyKeySet
+            LegacyKeySet = _vault.IsLegacyKeySet,
+            RenamedLibrariesNeedRestart = _renamer?.NeedsRestart ?? false,
+            ReleasedLibraries = _store.Read(config => config.RemovedServerLibraries
+                .SelectMany(held => held.ReleasedLibraries
+                    .Where(name => !held.HiddenReleasedLibraries.Contains(name, StringComparer.Ordinal))
+                    .Select(name => new ReleasedLibrary(held.ServerId, name)))
+                .ToList()),
+            HeldRemovals = _keeper?.HeldRemovals ?? []
         };
     }
 
     /// <summary>
-    /// Adds a server after logging in on it.
+    /// Takes released libraries of removed servers off the page (§10 row 281). The libraries themselves are not touched.
+    /// Hides nothing if one of them is not listed.
+    /// </summary>
+    /// <param name="request">The libraries.</param>
+    /// <returns>Nothing.</returns>
+    [HttpPost("ReleasedLibraries/Hide")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public ActionResult HideReleasedLibraries([FromBody] HideReleasedLibrariesRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var hidden = false;
+        _store.Update(config =>
+        {
+            var found = request.Libraries
+                .Select(library => (Held: config.RemovedServerLibraries.FirstOrDefault(held => held.ServerId == library.ServerId), library.Name))
+                .ToList();
+            if (found.Any(pair => pair.Held is null || !pair.Held.ReleasedLibraries.Contains(pair.Name, StringComparer.Ordinal)))
+            {
+                return;
+            }
+
+            foreach (var (held, name) in found.Where(pair => !pair.Held!.HiddenReleasedLibraries.Contains(pair.Name, StringComparer.Ordinal)))
+            {
+                held!.HiddenReleasedLibraries.Add(name);
+            }
+
+            hidden = true;
+        });
+
+        return hidden ? NoContent() : NotFound(new FailureResponse(RemoteFailure.None, ReleasedLibraryNotListed));
+    }
+
+    /// <summary>
+    /// Adds a server after logging in on it, and writes its folders in the federated folder.
     /// </summary>
     /// <param name="request">The server and the dedicated user.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -108,13 +176,28 @@ public class FederationAdminController : ControllerBase
 
         var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
         var result = await _registry.AddAsync(request.Name, request.Url, credentials, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
+        if (result.Failure == RemoteFailure.AlreadyConfigured && result.Value is { } configured)
+        {
+            return StatusCode(
+                StatusCodes.Status409Conflict,
+                new FailureResponse(result.Failure, $"This server is already configured as “{configured.Name}”.") { ServerName = configured.Name });
+        }
+
+        if (!result.IsSuccess)
+        {
+            return Failed(result.Failure);
+        }
+
+        _sync.PrepareServerFolders();
+        return ToStatus(result.Value!);
     }
 
     /// <summary>
-    /// Removes a server and starts deleting its content. Works whatever the state of the key. The removal is recorded before
-    /// the server leaves the configuration: only recorded servers lose their content (decision 44). If the removal cannot be
-    /// saved, the record is taken back and the server stays; the answer says whether its playback was already stopped.
+    /// Removes a server and starts deleting its content and its automatic libraries, with no confirmation (decision 140).
+    /// Works whatever the state of the key. The removal is recorded before the server leaves the configuration: only
+    /// recorded servers lose their content (decision 44). If the removal cannot be saved, the record is taken back and the
+    /// server stays; the answer says whether its playback was already stopped. What plays from it ends first, and its
+    /// login on the remote last, within a short time (413).
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -141,12 +224,18 @@ public class FederationAdminController : ControllerBase
                 {
                     stopping = true;
                     await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
-                    return _registry.Remove(serverId);
+                    return await _registry.RemoveAsync(serverId).ConfigureAwait(false);
                 },
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // The server stays, so it may play again.
+            if (stopping)
+            {
+                _playback.ReopenServer(serverId);
+            }
+
             return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed);
         }
 
@@ -156,7 +245,7 @@ public class FederationAdminController : ControllerBase
         }
 
         await RemoveFromMergesAsync(serverId).ConfigureAwait(false);
-        _sync.StartRemovalCleanup();
+        _ = DeleteLibrariesAfterAsync(_sync.StartRemovalCleanup());
         return NoContent();
     }
 
@@ -183,7 +272,7 @@ public class FederationAdminController : ControllerBase
 
         if (forgotten > 0)
         {
-            _sync.StartRemovalCleanup();
+            _ = _sync.StartRemovalCleanup();
         }
 
         return new ForgetResponse(forgotten);
@@ -269,6 +358,176 @@ public class FederationAdminController : ControllerBase
         return _registry.SetImportedLibraries(serverId, request.LibraryIds) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
 
+    /// <summary>
+    /// Turns on or off the Film and Serie libraries the plugin keeps for a server. Turning them off deletes them, so it
+    /// needs a confirmation while there are any.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The switch and the confirmation.</param>
+    /// <returns>The state, while the work runs in the background.</returns>
+    [HttpPost("Servers/{serverId:guid}/AutomaticLibraries")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<AutomaticLibrariesState> SetAutomaticLibraries([FromRoute] Guid serverId, [FromBody] SetAutomaticLibrariesRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var answer = request.Enabled ? _libraries.Enable(serverId) : _libraries.Disable(serverId, request.Confirmed);
+        if (answer.Outcome == AutomaticLibrariesOutcome.Started)
+        {
+            return Accepted(_libraries.GetState(serverId));
+        }
+
+        var status = answer.Outcome == AutomaticLibrariesOutcome.UnknownServer ? StatusCodes.Status404NotFound : StatusCodes.Status409Conflict;
+        return StatusCode(status, new AutomaticLibrariesRefusal(answer.Outcome, RefusalMessage(answer.Outcome), answer.ToDelete));
+    }
+
+    /// <summary>
+    /// Renames a server with its stubs and automatic libraries, after a confirmation (Q38).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The new name and the confirmation.</param>
+    /// <returns>The state, while the work runs in the background.</returns>
+    [HttpPost("Servers/{serverId:guid}/Rename")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<ServerRenameState> RenameServer([FromRoute] Guid serverId, [FromBody] RenameServerRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (_renamer is null)
+        {
+            return NotFound();
+        }
+
+        var answer = _renamer.Rename(serverId, request.Name, request.Confirmed);
+        if (answer.Outcome == ServerRenameOutcome.Started)
+        {
+            return Accepted(_renamer.GetState(serverId));
+        }
+
+        var status = answer.Outcome switch
+        {
+            ServerRenameOutcome.InvalidName => StatusCodes.Status400BadRequest,
+            ServerRenameOutcome.UnknownServer => StatusCodes.Status404NotFound,
+            _ => StatusCodes.Status409Conflict
+        };
+        return StatusCode(status, new ServerRenameRefusal(answer.Outcome, RenameRefusalMessage(answer.Outcome), answer.Libraries));
+    }
+
+    /// <summary>
+    /// Drops the stub moves of a server that wait for a scan, and deletes their old files (§10 row 288).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The state of the rename.</returns>
+    [HttpPost("Servers/{serverId:guid}/Rename/Cancel")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId)
+    {
+        if (_renamer is null)
+        {
+            return NotFound();
+        }
+
+        var outcome = await _renamer.CancelPendingAsync(serverId).ConfigureAwait(false);
+        if (outcome == ServerRenameOutcome.Cancelled)
+        {
+            return _renamer.GetState(serverId);
+        }
+
+        var status = outcome switch
+        {
+            ServerRenameOutcome.UnknownServer => StatusCodes.Status404NotFound,
+            ServerRenameOutcome.CancelFailed => StatusCodes.Status500InternalServerError,
+            _ => StatusCodes.Status409Conflict
+        };
+        return StatusCode(status, new ServerRenameRefusal(outcome, RenameRefusalMessage(outcome), []));
+    }
+
+    /// <summary>
+    /// Records the choice in the migration banner: manual, or automatic, which starts or resumes in the background (Q55, Q57).
+    /// </summary>
+    /// <param name="request">The mode chosen.</param>
+    /// <returns>The migration status.</returns>
+    [HttpPost("Migration")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<LayoutMigrationStatus?> ChooseMigration([FromBody] ChooseMigrationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var path = _store.Read(config => config.FederatedFolderPath);
+        if (_migration is null || string.IsNullOrEmpty(path))
+        {
+            return NotFound();
+        }
+
+        var answer = _migration.Choose(request.Mode);
+        return answer.Outcome switch
+        {
+            LayoutMigrationChoiceOutcome.Started => Accepted(_migration.GetStatus(path)),
+            LayoutMigrationChoiceOutcome.Chosen => _migration.GetStatus(path),
+            _ => StatusCode(StatusCodes.Status409Conflict, new LayoutMigrationRefusal(answer.Outcome, MigrationRefusalMessage(answer.Outcome)))
+        };
+    }
+
+    /// <summary>
+    /// Sets from the settings the mode for the servers linked later, the field of the banner (Q58, §10 row 368). While the
+    /// banner asks, it is the banner's choice.
+    /// </summary>
+    /// <param name="request">The mode chosen.</param>
+    /// <returns>No content, accepted when it started the automatic migration, or the reason of a refusal.</returns>
+    [HttpPost("Migration/NewServers")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult SetNewServerMode([FromBody] ChooseMigrationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (_migration is null)
+        {
+            return NotFound();
+        }
+
+        var answer = _migration.SetMode(request.Mode);
+        return answer.Outcome switch
+        {
+            LayoutMigrationChoiceOutcome.Started => Accepted(),
+            LayoutMigrationChoiceOutcome.Chosen => NoContent(),
+            _ => StatusCode(StatusCodes.Status409Conflict, new LayoutMigrationRefusal(answer.Outcome, MigrationRefusalMessage(answer.Outcome)))
+        };
+    }
+
+    internal static string MigrationRefusalMessage(LayoutMigrationChoiceOutcome outcome)
+    {
+        return outcome switch
+        {
+            LayoutMigrationChoiceOutcome.Busy => "The automatic migration is running. Try again when it stops.",
+            LayoutMigrationChoiceOutcome.NothingToMigrate => "There is nothing to migrate.",
+            _ => "The automatic migration cannot go back to manual."
+        };
+    }
+
+    internal static string RenameRefusalMessage(ServerRenameOutcome outcome)
+    {
+        return outcome switch
+        {
+            ServerRenameOutcome.InvalidName => "Enter a name.",
+            ServerRenameOutcome.UnknownServer => "This server is not configured.",
+            ServerRenameOutcome.ConfirmationRequired => "Confirm to rename this server.",
+            ServerRenameOutcome.Busy => "This server is being renamed, or its titles wait for a library scan. Try again when it is done.",
+            ServerRenameOutcome.CancelFailed => "Some old files of this server could not be deleted. Try again.",
+            _ => "The operation failed."
+        };
+    }
+
     internal static string? KeyWarning(KeyState state)
     {
         return state switch
@@ -301,6 +560,19 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
             RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
             RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
+            RemoteFailure.AlreadyConfigured => "This server is already configured.",
+            _ => "The operation failed."
+        };
+    }
+
+    internal static string RefusalMessage(AutomaticLibrariesOutcome outcome)
+    {
+        return outcome switch
+        {
+            AutomaticLibrariesOutcome.UnknownServer => "This server is not configured.",
+            AutomaticLibrariesOutcome.NoFederatedFolder => "Set the federated folder first.",
+            AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the libraries of this server.",
+            AutomaticLibrariesOutcome.Busy => "The libraries of this server are being updated. Try again when it is done.",
             _ => "The operation failed."
         };
     }
@@ -316,7 +588,7 @@ public class FederationAdminController : ControllerBase
         };
     }
 
-    private static ServerStatus ToStatus(RemoteServerInfo server)
+    private ServerStatus ToStatus(RemoteServerInfo server)
     {
         return new ServerStatus(
             server.Id,
@@ -328,7 +600,9 @@ public class FederationAdminController : ControllerBase
             ConnectionOf(server.LastFailure),
             server.LastCheckedUtc)
         {
-            NeedsPassword = server.NeedsPassword
+            NeedsPassword = server.NeedsPassword,
+            AutomaticLibraries = _libraries.GetState(server.Id),
+            Rename = _renamer?.GetState(server.Id)
         };
     }
 
@@ -336,7 +610,7 @@ public class FederationAdminController : ControllerBase
     {
         var status = failure switch
         {
-            RemoteFailure.Suspended => StatusCodes.Status409Conflict,
+            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
@@ -367,18 +641,47 @@ public class FederationAdminController : ControllerBase
         }
     }
 
-    private FederatedFolderStatus GetFederatedFolder()
+    // The stubs go first: Jellyfin hands a primary version over to the others only when its item is deleted alone.
+    private async Task DeleteLibrariesAfterAsync(Task cleanup)
+    {
+        await cleanup.ConfigureAwait(false);
+        await _libraries.DeleteRemovedServerLibraries().ConfigureAwait(false);
+    }
+
+    private FederatedFolderStatus GetFederatedFolder(IReadOnlyList<RemoteServerInfo> servers)
     {
         var path = _store.Read(config => config.FederatedFolderPath);
-        var report = path.Length == 0 ? FederatedFolderLinkReport.NotChecked : _linkChecker.Check(path);
+        var report = path.Length == 0 ? FederatedFolderLinkReport.NotChecked : _linkChecker.Check(path, servers.Select(server => server.Id).ToList());
+        var names = servers.ToDictionary(server => server.Id, server => server.Name);
         return new FederatedFolderStatus(
             path,
-            path.Length == 0 ? string.Empty : FederatedFolderLayout.MoviesPath(path),
-            path.Length == 0 ? string.Empty : FederatedFolderLayout.SeriesPath(path),
             report.State,
-            report.Movies,
-            report.Series,
-            report.SeriesGroupingOff,
-            PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null);
+            report.Servers.Select(link => ToFolderStatus(link, names[link.ServerId])).ToList(),
+            report.Covering,
+            report.SeriesSplit,
+            PluginConfiguration.FederatedRootOf(_rootSource.GetFederatedRoot()) is not null)
+        {
+            Migration = path.Length == 0 ? null : _migration?.GetStatus(path),
+            Changes = path.Length == 0 ? LibraryChanges.None : _changes?.Compare() ?? LibraryChanges.None,
+            NewServerMode = _migration?.NewServerMode ?? LayoutMigrationMode.Manual
+        };
+    }
+
+    private ServerFolderStatus ToFolderStatus(ServerFolderLink link, string name)
+    {
+        var automatic = _libraries.GetState(link.ServerId);
+        var unregistered = automatic is { Enabled: true }
+            ? link.OnlyOnItsFolders.Where(library => !automatic.Libraries.Any(own => string.Equals(own.Name, library, StringComparison.Ordinal))).ToList()
+            : [];
+        return new ServerFolderStatus(
+            link.ServerId,
+            name,
+            link.MoviesPath,
+            link.SeriesPath,
+            link.Movies,
+            link.Series,
+            link.SeriesGroupingOff,
+            link.SeriesLibraries,
+            unregistered);
     }
 }

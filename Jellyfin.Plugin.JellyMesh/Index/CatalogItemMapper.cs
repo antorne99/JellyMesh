@@ -67,6 +67,7 @@ public static class CatalogItemMapper
             ServerId = serverId,
             ItemId = item.ItemId,
             Kind = ContentKind.Episode,
+            SeriesId = item.SeriesId,
             Title = parent?.Name ?? item.SeriesName,
             Year = parent?.ProductionYear,
             Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
@@ -77,12 +78,19 @@ public static class CatalogItemMapper
         };
     }
 
-    private static MediaVersion ToMediaVersion(IndexedVersion version)
+    /// <summary>
+    /// Gets the quality of a version, as the dedup compares it.
+    /// </summary>
+    /// <param name="version">The version.</param>
+    /// <returns>The quality.</returns>
+    public static SourceQuality QualityOf(IndexedVersion version)
     {
+        ArgumentNullException.ThrowIfNull(version);
+
         var isHdr = string.Equals(version.VideoRange, HdrRange, StringComparison.OrdinalIgnoreCase);
         var isSdr = string.Equals(version.VideoRange, SdrRange, StringComparison.OrdinalIgnoreCase);
-        return new MediaVersion(
-            version.MediaSourceId,
-            new SourceQuality(version.Height, isHdr, version.BitRate, version.Codec) { IsRangeKnown = isHdr || isSdr });
+        return new SourceQuality(version.Height, isHdr, version.BitRate, version.Codec) { IsRangeKnown = isHdr || isSdr };
     }
+
+    private static MediaVersion ToMediaVersion(IndexedVersion version) => new(version.MediaSourceId, QualityOf(version));
 }

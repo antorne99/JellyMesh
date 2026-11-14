@@ -32,4 +32,14 @@ public sealed record ServerStatus(
     /// Gets a value indicating whether the stored password no longer decrypts and must be entered again.
     /// </summary>
     public bool NeedsPassword { get; init; }
+
+    /// <summary>
+    /// Gets the state of the Film and Serie libraries the plugin keeps for this server.
+    /// </summary>
+    public AutomaticLibrariesState? AutomaticLibraries { get; init; }
+
+    /// <summary>
+    /// Gets the state of the rename of this server.
+    /// </summary>
+    public ServerRenameState? Rename { get; init; }
 }

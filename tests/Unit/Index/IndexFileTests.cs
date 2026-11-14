@@ -63,6 +63,7 @@ public sealed class IndexFileTests : IDisposable
         OriginalTitle = "Original",
         Overview = "Plot",
         Taglines = ["Tagline"],
+        TrailerIds = ["dQw4w9WgXcQ"],
         Genres = ["Drama"],
         Studios = ["Studio"],
         Tags = ["Tag"],
@@ -86,6 +87,7 @@ public sealed class IndexFileTests : IDisposable
         SeasonName = "Season 1",
         ImageTags = new System.Collections.Generic.Dictionary<string, string> { ["Primary"] = "tag" },
         BackdropImageTags = ["backdrop"],
+        Collection = new IndexedBoxSet("Saga", "10"),
         Versions =
         [
             new IndexedVersion
@@ -166,6 +168,7 @@ public sealed class IndexFileTests : IDisposable
         var item = Assert.Single(server.Items);
         Assert.Equal(expected.Name, item.Name);
         Assert.Equal(expected.Taglines, item.Taglines);
+        Assert.Equal(expected.TrailerIds, item.TrailerIds);
         Assert.Equal(expected.Genres, item.Genres);
         Assert.Equal(expected.Studios, item.Studios);
         Assert.Equal(expected.Tags, item.Tags);
@@ -178,6 +181,7 @@ public sealed class IndexFileTests : IDisposable
         {
             Chapters = item.Chapters,
             Taglines = item.Taglines,
+            TrailerIds = item.TrailerIds,
             Genres = item.Genres,
             Studios = item.Studios,
             Tags = item.Tags,

@@ -1,5 +1,5 @@
 # Helpers for the checks of the configuration page, on the private servers listed in the README. Source it.
-# Reuses merge/ and dedup/, and names all it makes after UI_PREFIX. Never touches the jellymesh-test stack.
+# Reuses dedup/, and names all it makes after UI_PREFIX. Never touches the jellymesh-test stack.
 : "${UI_PREFIX:?set UI_PREFIX, a name of its own such as jm-ui-811}"
 : "${UI_PORT:?set UI_PORT, the first of four free ports such as 18811}"
 case $UI_PREFIX in jellymesh-test*)
@@ -11,7 +11,40 @@ UI=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/$UI_PREFIX-work}
 # The media is gitignored, so a worktree takes the one of the main checkout.
 MEDIA=${MEDIA:-$(dirname "$(git -C "$UI" rev-parse --path-format=absolute --git-common-dir)")/tests/Integration/media}
-source "$UI/../merge/lib.sh"
+source "$UI/../dedup/lib.sh"
+PW_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-noble
+
+# add_clip <server> <clip> <folder> <title> <tmdb> <imdb> <plot>: a film in /extra/film, with its .nfo. Empty IDs are left out.
+add_clip() {
+  local name folder=/extra/film/$3 file=$3 nfo
+  name=$(container_of "$1")
+  nfo="<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><movie><title>$4</title><year>2026</year><plot>$7</plot>"
+  [ -n "$5" ] && nfo+="<uniqueid type=\"tmdb\" default=\"true\">$5</uniqueid>"
+  [ -n "$6" ] && nfo+="<uniqueid type=\"imdb\">$6</uniqueid>"
+  nfo+="</movie>"
+  docker exec "$name" mkdir -p "$folder"
+  docker cp "$2" "$name:$folder/$file.mkv" >/dev/null
+  printf '%s' "$nfo" | docker exec -i "$name" sh -c "cat >'$folder/movie.nfo'"
+  docker exec "$name" chmod -R a+rwX "$folder"
+}
+list() { get "$1" /JellyMesh/Admin/Merges; }
+
+# flat_paths_off <server>: the Film and Serie libraries without the single folders of 0.4, as on a new 0.5 install.
+flat_paths_off() {
+  local kind
+  for kind in Film Serie; do
+    req "$1" DELETE "/Library/VirtualFolders/Paths?name=$kind&path=/federata/$kind&refreshLibrary=false" >/dev/null
+  done
+}
+
+# link_server_folders <server>: adds the Film and Serie folders of each remote to the library of that kind, as the admin does.
+link_server_folders() {
+  local kind path
+  while read -r kind path; do
+    post "$1" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$path" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
+    [ "$(cat "$WORK/status")" = 204 ] || { echo "linking $path failed: $(cat "$WORK/status")" >&2; return 1; }
+  done < <(get "$1" /JellyMesh/Admin/Status | jq -r '.FederatedFolder.Servers[] | "Film \(.MoviesPath)", "Serie \(.SeriesPath)"')
+}
 # The plugin keeps its credential key in a file now (decision 42), so these servers run without the old variable.
 
 SERVERS="fresh stock peer first"

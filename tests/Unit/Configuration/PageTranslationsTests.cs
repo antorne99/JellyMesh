@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Xunit;
@@ -88,10 +89,27 @@ public class PageTranslationsTests
             yield return FederationAdminController.KeyWarning(state)!;
         }
 
+        foreach (var outcome in Enum.GetValues<AutomaticLibrariesOutcome>())
+        {
+            yield return FederationAdminController.RefusalMessage(outcome);
+        }
+
+        foreach (var outcome in Enum.GetValues<ServerRenameOutcome>().Where(outcome => outcome is not (ServerRenameOutcome.Started or ServerRenameOutcome.Cancelled)))
+        {
+            yield return FederationAdminController.RenameRefusalMessage(outcome);
+        }
+
+        foreach (var outcome in Enum.GetValues<LayoutMigrationChoiceOutcome>().Where(outcome => outcome is not (LayoutMigrationChoiceOutcome.Started or LayoutMigrationChoiceOutcome.Chosen)))
+        {
+            yield return FederationAdminController.MigrationRefusalMessage(outcome);
+        }
+
+        yield return FederationAdminController.ReleasedLibraryNotListed;
         yield return "A sync is already running.";
         yield return "This merge no longer exists.";
         yield return "Select at least two titles of one group.";
         yield return "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.";
+        yield return "Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.";
         yield return "The list changed. Check it again, then merge.";
     }
 
@@ -138,6 +156,52 @@ public class PageTranslationsTests
     public void A_translation_fills_the_same_values(string language)
     {
         Assert.Empty(_languages[language].Where(pair => !Holes(pair.Key).SequenceEqual(Holes(pair.Value))).Select(pair => pair.Key));
+    }
+
+    [Theory]
+    [MemberData(nameof(Languages))]
+    public void A_translation_shows_no_context_mark(string language)
+    {
+        Assert.Empty(_languages[language].Where(pair => Regex.IsMatch(pair.Value, @"\|\w+$")).Select(pair => pair.Key));
+    }
+
+    [Fact]
+    public void Forgetting_missing_servers_says_the_watch_state_stays_with_the_titles()
+    {
+        // Row 412: forgetting goes through the same removal, so the watch state is kept as when a server is removed.
+        Assert.Contains("t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from those servers added back or from another one, it comes back.')", _script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_merge_date_of_series_has_its_own_text()
+    {
+        Assert.Contains("mergedOn: t('Merged on {date}|series')", _script, StringComparison.Ordinal);
+        Assert.Equal("Unite il {date}", _languages["it"]["Merged on {date}|series"]);
+        Assert.Equal("Uniti il {date}", _languages["it"]["Merged on {date}"]);
+    }
+
+    [Theory]
+    [InlineData("without this backup")]
+    [InlineData("senza questa riserva")]
+    [InlineData("or add those servers again")]
+    [InlineData("o aggiungi di nuovo quei server")]
+    public void No_text_speaks_of_the_flat_layout_or_of_adding_missing_servers_again(string text)
+    {
+        Assert.DoesNotContain(text, _page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Removing_a_server_says_its_folders_go_and_how_they_come_back()
+    {
+        Assert.Contains("t('The folders of this server are deleted now: its titles leave the libraries, with their images.", _script, StringComparison.Ordinal);
+        Assert.Contains("t('Restoring the settings brings its folders back, with the same titles and watch state.')", _script, StringComparison.Ordinal);
+
+        // Row 412: the watch state follows the content, not the server.
+        Assert.Contains("t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.')", _script, StringComparison.Ordinal);
+
+        // Decision 408: a server added back is a new one, so the page neither promises its folders back nor recognizes it.
+        Assert.DoesNotContain("Adding the server back, or restoring", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecognizedAs", _script, StringComparison.Ordinal);
     }
 
     [Theory]

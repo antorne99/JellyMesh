@@ -136,4 +136,26 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             SaveConfiguration();
         }
     }
+
+    /// <summary>
+    /// Changes the configuration under the configuration lock and saves it; on a failure, rolls the change back under the same lock.
+    /// </summary>
+    /// <param name="update">The change to apply.</param>
+    /// <param name="rollback">Puts the configuration back as saved.</param>
+    internal void ChangeConfiguration(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback)
+    {
+        lock (_configurationLock)
+        {
+            try
+            {
+                update(Configuration);
+                SaveConfiguration();
+            }
+            catch
+            {
+                rollback(Configuration);
+                throw;
+            }
+        }
+    }
 }

@@ -13,6 +13,7 @@ public sealed class PlaybackSessionStore
 {
     private readonly ConcurrentDictionary<string, PlaybackSession> _sessions = new(StringComparer.Ordinal);
     private readonly PlaySessionOwners _localOwners;
+    private readonly ConcurrentDictionary<string, Guid> _localSources = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSessionStore"/> class.
@@ -72,6 +73,29 @@ public sealed class PlaybackSessionStore
     public void EndLocal(Guid userId, string? playSessionId)
     {
         _localOwners.Remove(userId, playSessionId);
+        ForgetEndedSources();
+    }
+
+    /// <summary>
+    /// Records the server whose file the local transcode of a play session reads.
+    /// </summary>
+    /// <param name="playSessionId">The play session, recorded with <see cref="RecordLocal"/>.</param>
+    /// <param name="serverId">The server of the file.</param>
+    public void RecordLocalSource(string playSessionId, Guid serverId)
+    {
+        ArgumentNullException.ThrowIfNull(playSessionId);
+        _localSources[playSessionId] = serverId;
+    }
+
+    /// <summary>
+    /// Lists the play sessions still open whose local transcode reads a file of a server.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The play sessions.</returns>
+    public IReadOnlyList<string> LocalSessionsReading(Guid serverId)
+    {
+        ForgetEndedSources();
+        return _localSources.Where(pair => pair.Value == serverId).Select(pair => pair.Key).ToList();
     }
 
     /// <summary>
@@ -82,6 +106,7 @@ public sealed class PlaybackSessionStore
     {
         ArgumentNullException.ThrowIfNull(times);
         _localOwners.ForgetIdle(times.SessionRetention);
+        ForgetEndedSources();
     }
 
     /// <summary>
@@ -157,5 +182,14 @@ public sealed class PlaybackSessionStore
     public PlaybackSession? Remove(string sessionId)
     {
         return _sessions.TryRemove(sessionId, out var session) ? session : null;
+    }
+
+    // Forgets the file servers of play sessions no longer recorded.
+    private void ForgetEndedSources()
+    {
+        foreach (var playSessionId in _localSources.Keys.Where(playSessionId => _localOwners.ItemOf(playSessionId) is null))
+        {
+            _localSources.TryRemove(playSessionId, out _);
+        }
     }
 }

@@ -183,6 +183,7 @@ public class PeerGuardFilterTests
         var reservation = _fixture.Slots.TryReserve(_fixture.Peer.Id, 1, null)!;
         _fixture.Slots.Confirm(_fixture.Peer.Id, reservation, "play");
         Elapse(StreamSlots.IdleTimeout + TimeSpan.FromHours(24));
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(0, Slots);
 
         var (_, ran) = await RunAsync(ProviderFixture.Stock("HlsSegment", "StopEncodingProcess"), "DELETE", null, "?deviceId=device&playSessionId=play");
@@ -389,15 +390,18 @@ public class PeerGuardFilterTests
     }
 
     [Fact]
-    public async Task A_lost_connection_frees_the_slot_after_the_grace()
+    public async Task A_lost_connection_frees_the_slot_after_the_grace_once_its_transcode_is_closed()
     {
         _fixture.Own("play");
 
         await StreamAsync(ends: ConnectionLost);
 
         Elapse(StreamSlots.AbandonGrace - TimeSpan.FromSeconds(1));
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(1, Slots);
         Elapse(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, Slots);
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(0, Slots);
     }
 
@@ -518,7 +522,7 @@ public class PeerGuardFilterTests
         _fixture.Own("play");
         await StreamAsync(ends: ConnectionLost);
         Elapse(StreamSlots.AbandonGrace);
-        Assert.Equal(0, Slots);
+        Assert.Equal(1, Slots);
 
         await StreamAsync();
         await _fixture.Closer.CloseAbandonedAsync();
@@ -635,6 +639,29 @@ public class PeerGuardFilterTests
     }
 
     [Fact]
+    public async Task A_stream_that_comes_while_the_timer_closes_the_abandoned_transcode_waits_for_it()
+    {
+        _fixture.Own("gone");
+        _fixture.Own("next");
+        await StreamAsync("gone", ends: ConnectionLost);
+        Elapse(StreamSlots.AbandonGrace);
+        var killing = new TaskCompletionSource();
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "gone", It.IsAny<Func<string, bool>>())).Returns(killing.Task);
+        var timer = _fixture.Closer.CloseAbandonedAsync();
+
+        var (context, ran) = await StreamAsync("next");
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(context));
+
+        killing.SetResult();
+        await timer;
+        var (_, ranAfter) = await StreamAsync("next");
+
+        Assert.True(ranAfter);
+    }
+
+    [Fact]
     public async Task A_failed_start_of_ffmpeg_is_cleared_at_once_so_that_a_retry_does_not_wait_for_it()
     {
         _fixture.Own("play");
@@ -667,6 +694,66 @@ public class PeerGuardFilterTests
         });
 
         lifetime.Verify(feature => feature.Abort(), Times.Once);
+    }
+
+    [Fact]
+    public async Task The_next_stream_starts_only_after_a_revoked_transcode_closed()
+    {
+        _fixture.Own("lost");
+        _fixture.Own("next");
+        await StreamAsync("lost");
+        _fixture.Slots.Revoke(_fixture.Peer.Id, _ => false);
+
+        var (_, ran) = await StreamAsync("next", during: () => VerifyClosed("lost", Times.Once()));
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task A_revoked_stream_back_while_its_transcode_is_being_closed_gets_the_refusal_of_the_limit()
+    {
+        _fixture.Connect(2);
+        _fixture.Own("play");
+        await StreamAsync();
+        var killing = new TaskCompletionSource();
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "play", It.IsAny<Func<string, bool>>())).Returns(killing.Task);
+        _fixture.Slots.Revoke(_fixture.Peer.Id, _ => false);
+        var timer = _fixture.Closer.CloseAbandonedAsync();
+
+        var (context, ran) = await StreamAsync();
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(context));
+        Assert.Equal(ProviderProtocol.StreamLimitRefusal, context.HttpContext.Response.Headers[ProviderProtocol.RefusalHeader].ToString());
+        Assert.Equal(1, Slots);
+
+        killing.SetResult();
+        await timer;
+        Assert.Equal(0, Slots);
+    }
+
+    [Fact]
+    public async Task A_stream_cut_by_a_lower_limit_is_refused_while_its_transcode_is_being_closed()
+    {
+        _fixture.Connect(2);
+        _fixture.Own("oldest");
+        _fixture.Own("newest");
+        await StreamAsync("oldest");
+        await StreamAsync("newest");
+        var killing = new TaskCompletionSource();
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "newest", It.IsAny<Func<string, bool>>())).Returns(killing.Task);
+        _fixture.Slots.CutToLimit(_fixture.Peer.Id, 1);
+        var timer = _fixture.Closer.CloseAbandonedAsync();
+
+        var (context, ran) = await StreamAsync("newest");
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, StatusOf(context));
+        Assert.Equal(2, Slots);
+
+        killing.SetResult();
+        await timer;
+        Assert.Equal(1, Slots);
     }
 
     [Fact]
@@ -715,6 +802,7 @@ public class PeerGuardFilterTests
         await StreamAsync(ends: http => http.Response.StatusCode = StatusCodes.Status500InternalServerError);
 
         Elapse(StreamSlots.AbandonGrace);
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(0, Slots);
     }
 
@@ -726,6 +814,7 @@ public class PeerGuardFilterTests
         await StreamAsync(failure: new InvalidOperationException());
 
         Elapse(StreamSlots.AbandonGrace);
+        await _fixture.Closer.CloseAbandonedAsync();
         Assert.Equal(0, Slots);
     }
 
@@ -841,6 +930,7 @@ public class PeerGuardFilterTests
     [Theory]
     [InlineData("Image", "GetItemImage", null)]
     [InlineData("Subtitle", "GetSubtitle", null)]
+    [InlineData("MediaSegments", "GetItemSegments", null)]
     [InlineData("MediaInfo", "GetPostedPlaybackInfo", null)]
     [InlineData("Videos", "GetVideoStream", null)]
     [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", "?PlaySessionId=play")]
@@ -855,6 +945,7 @@ public class PeerGuardFilterTests
     [Theory]
     [InlineData("Image", "GetItemImage", null)]
     [InlineData("Subtitle", "GetSubtitle", null)]
+    [InlineData("MediaSegments", "GetItemSegments", null)]
     [InlineData("MediaInfo", "GetPostedPlaybackInfo", null)]
     [InlineData("Videos", "GetVideoStream", null)]
     [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", "?PlaySessionId=play")]
@@ -879,6 +970,14 @@ public class PeerGuardFilterTests
     public async Task A_shared_item_is_served()
     {
         var (_, ran) = await RunAsync(ProviderFixture.Stock("Image", "GetItemImage"), "GET", ProviderFixture.SharedItem);
+
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public async Task The_media_segments_of_a_shared_item_are_served()
+    {
+        var (_, ran) = await RunAsync(ProviderFixture.Stock("MediaSegments", "GetItemSegments"), "GET", ProviderFixture.SharedItem);
 
         Assert.True(ran);
     }
@@ -1079,7 +1178,7 @@ public class PeerPlaybackInfoFilterTests
 
     public PeerPlaybackInfoFilterTests()
     {
-        _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots);
+        _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots, _fixture.Closer);
     }
 
     private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null, bool bodyBound = true)
@@ -1176,6 +1275,48 @@ public class PeerPlaybackInfoFilterTests
         Assert.False(ran);
         Assert.Equal(StatusCodes.Status429TooManyRequests, (context.Result as StatusCodeResult)?.StatusCode);
         Assert.Equal(ProviderProtocol.StreamLimitRefusal, context.HttpContext.Response.Headers[ProviderProtocol.RefusalHeader].ToString());
+    }
+
+    [Fact]
+    public async Task At_the_limit_a_playback_after_the_grace_closes_the_abandoned_transcode_and_takes_its_slot()
+    {
+        var peer = _fixture.Peer.Id;
+        _fixture.Slots.Confirm(peer, _fixture.Slots.TryReserve(peer, 1, null)!, "gone");
+        var request = _fixture.Slots.TryEnter(peer, 1, "gone")!;
+        request.Abandon();
+        request.Dispose();
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace);
+
+        var (_, ran) = await RunAsync(Answer("next"));
+
+        Assert.True(ran);
+        _fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "gone", It.IsAny<Func<string, bool>>()), Times.Once());
+        Assert.Equal(1, _fixture.Slots.Count(peer));
+    }
+
+    [Fact]
+    public async Task A_playback_that_comes_while_the_timer_closes_the_abandoned_transcode_waits_for_it()
+    {
+        var peer = _fixture.Peer.Id;
+        _fixture.Slots.Confirm(peer, _fixture.Slots.TryReserve(peer, 1, null)!, "gone");
+        var request = _fixture.Slots.TryEnter(peer, 1, "gone")!;
+        request.Abandon();
+        request.Dispose();
+        _fixture.Clock.Advance(StreamSlots.AbandonGrace);
+        var killing = new TaskCompletionSource();
+        _fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "gone", It.IsAny<Func<string, bool>>())).Returns(killing.Task);
+        var timer = _fixture.Closer.CloseAbandonedAsync();
+
+        var (context, ran) = await RunAsync(Answer("next"));
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, (context.Result as StatusCodeResult)?.StatusCode);
+
+        killing.SetResult();
+        await timer;
+        var (_, ranAfter) = await RunAsync(Answer("next"));
+
+        Assert.True(ranAfter);
     }
 
     [Fact]

@@ -3,16 +3,16 @@
 # host, stalled bodies, poisoned URLs. The proof in every scenario is what arrived at the third host (nothing), what the
 # fake sent, the memory of a container capped at 1500 MB, and the log at its most verbose.
 # Takes about 6 minutes, because it waits for real timeouts. Containers and volumes are removed at the end.
-# usage: run.sh   (scratch goes in WORK, by default ${TMPDIR:-/tmp}/jm-hard-run)
+# usage: run.sh   (scratch goes in WORK, by default ${TMPDIR:-/tmp}/jm-hard-run; NAME, PORT, FAKE and THIRD move it)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/jm-hard-run}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
-NAME=jm-hard-a
-PORT=18458
-FAKE=18455
-THIRD=18456
+NAME=${NAME:-jm-hard-a}
+PORT=${PORT:-18458}
+FAKE=${FAKE:-18455}
+THIRD=${THIRD:-18456}
 REMOTE_PASSWORD=hostile-password-sentinel
 REMOTE_TOKEN=hostile-remote-token-sentinel
 FAKE_URL=http://host.docker.internal:$FAKE
@@ -146,6 +146,11 @@ libraries=$(get "/JellyMesh/Admin/Servers/$server/Libraries" | jq -c '{LibraryId
 post "/JellyMesh/Admin/Servers/$server/Libraries" "$libraries" >/dev/null
 sync_now
 check "sync" null "$(last_failure)"
+# Stubs go to the folder of the server, which an admin adds to the library.
+id=${server//-/}
+folder="/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}/Film"
+post "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg p "$folder" '{Name: "Film", PathInfo: {Path: $p}}')" >/dev/null
+check "the folder of the server is linked" 204 "$(status)"
 scan
 film=$(get '/Items?Recursive=true&IncludeItemTypes=Movie' | jq -r '.Items[0].Id')
 check "the films are in the library" 3 "$(get '/Items?Recursive=true&IncludeItemTypes=Movie' | jq -r .TotalRecordCount)"
@@ -222,7 +227,8 @@ echo "--- bodies that stall"
 set_mode catalog-stall
 sync_now
 check "a catalog that stalls" Timeout "$(last_failure)"
-at_most "seconds of that sync" 40 "$(cat "$WORK/sync-seconds")"
+# Decision 47: a sync read that times out is tried twice more, after 1 s and 3 s, so about 94 s in all.
+at_most "seconds of that sync" 110 "$(cat "$WORK/sync-seconds")"
 set_mode pi-stall
 started=$SECONDS
 check "PlaybackInfo that stalls: refused" 503 "$(open s1 "$film")"

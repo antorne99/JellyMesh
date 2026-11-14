@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Task 845: a stock remote with "Group movies into collections" on answers /Items with the collection in place of
 # its films. Proves that the sync query still reads both films of a collection and the consumer materializes them.
-# usage: MEDIA=<main checkout>/tests/Integration/media collections.sh   (KEEP=1 leaves the containers up)
+# usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-col] [PORT=18480] collections.sh   (KEEP=1 leaves the containers up)
 set -euo pipefail
-WORK=${WORK:-${TMPDIR:-/tmp}/jm-col-run}
+PREFIX=${PREFIX:-jm-col}
+PORT=${PORT:-18480}
+WORK=${WORK:-${TMPDIR:-/tmp}/$PREFIX-run}
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Own containers and ports. rjm is the dedicated user on the remote: its requests go to remote with its own token.
-port_of() { case $1 in local) echo 18480 ;; remote | rjm) echo 18481 ;; esac; }
-name_of() { echo "jm-col-$1"; }
+port_of() { case $1 in local) echo "$PORT" ;; remote | rjm) echo $((PORT + 1)) ;; esac; }
+name_of() { echo "$PREFIX-$1"; }
 down() {
-  docker rm -f jm-col-local jm-col-remote >/dev/null 2>&1 || true
-  docker volume rm jm-col-local-config jm-col-local-cache jm-col-local-fed \
-    jm-col-remote-config jm-col-remote-cache jm-col-remote-fed jm-col-local-media >/dev/null 2>&1 || true
+  docker rm -f "$PREFIX-local" "$PREFIX-remote" >/dev/null 2>&1 || true
+  docker volume rm "$PREFIX-local-config" "$PREFIX-local-cache" "$PREFIX-local-fed" \
+    "$PREFIX-remote-config" "$PREFIX-remote-cache" "$PREFIX-remote-fed" "$PREFIX-local-media" >/dev/null 2>&1 || true
 }
 [ "${KEEP:-}" = 1 ] || trap down EXIT
 
@@ -67,14 +69,14 @@ check "with the parameter the remote answers both films and no collection" '[] t
 remote_films=$(echo "$with" | jq -r .total)
 
 echo "--- the consumer syncs"
-start local jm-col-local-media:/media
-library local Film movies /federata/Film
-bash "$WT/tests/Integration/scripts/install-plugin.sh" jm-col-local
+start local "$PREFIX-local-media:/media"
+bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
 sleep 3
 wait_ready local
 login local
 settings local '.FederatedFolderPath = "/federata"' >/dev/null
-id=$(add_remote local remote http://host.docker.internal:18481 jellymesh)
+id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
+library local Film movies "$(server_folder "$id")/Film"
 import_all local "$id"
 sync_now local
 scan local
@@ -83,10 +85,10 @@ for title in "$FILM_A" "$FILM_B"; do
   check "$title has a stub" true "$([ -n "$(strm_file local "$title")" ] && echo true || echo false)"
   check "$title is in the consumer library" true "$([ -n "$(stub_item local "$title")" ] && echo true || echo false)"
 done
-stubs=$(docker exec jm-col-local sh -c 'find /federata/Film -name "*.strm" | wc -l' | tr -d ' ')
+stubs=$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Film -name "*.strm" | wc -l' | tr -d ' ')
 echo "stubs: $stubs, films the remote answers uncollapsed: $remote_films"
 check "the consumer has a stub for every film of the remote" true "$([ "$stubs" -ge "$remote_films" ] && echo true || echo false)"
-check "no stub stands for the collection" 0 "$(docker exec jm-col-local sh -c 'find /federata -name "*.strm" | grep -c "JM Saga" || true')"
+check "no stub stands for the collection" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata -name "*.strm" | grep -c "JM Saga" || true')"
 
 echo "=== failed: $FAILED"
 exit $FAILED

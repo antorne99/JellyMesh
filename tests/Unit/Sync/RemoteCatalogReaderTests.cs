@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Xunit;
@@ -17,6 +18,268 @@ public sealed class RemoteCatalogReaderTests : IDisposable
 
     private Task<RemoteResult<System.Collections.Generic.IReadOnlyList<IndexedItem>>> ReadAsync(RemoteServerInfo server)
         => _fixture.Reader.ReadAsync(server, SyncFixture.Start, CancellationToken.None);
+
+    // By default every film of the fake collections is in the catalog.
+    private Task<RemoteResult<System.Collections.Generic.IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server, params string[] filmIds)
+        => _fixture.Reader.ReadCollectionsAsync(
+            server,
+            ["films"],
+            (filmIds.Length > 0 ? filmIds : _fixture.Client.Collections.SelectMany(entry => entry.Films)).ToHashSet(StringComparer.Ordinal),
+            CancellationToken.None);
+
+    [Fact]
+    public async Task EachFilmOfACollectionGetsItsNameAndTmdbId()
+    {
+        _fixture.Client.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = "10" } }, ["m1", "m2"]));
+        _fixture.Client.AddCollection("other", "elsewhere", "Not read", "m9");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal(new IndexedBoxSet("Saga", "10"), result.Value!["m1"]);
+        Assert.Equal(new IndexedBoxSet("Saga", "10"), result.Value["m2"]);
+        Assert.Equal(2, result.Value.Count);
+    }
+
+    [Theory]
+    [InlineData("12a")]
+    [InlineData("")]
+    [InlineData("1\" tmdb=\"2")]
+    public async Task ATmdbIdThatIsNotDigitsIsLeftOut(string tmdb)
+    {
+        _fixture.Client.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = tmdb } }, ["m1"]));
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal(new IndexedBoxSet("Saga", null), result.Value!["m1"]);
+    }
+
+    [Fact]
+    public async Task AFilmInTwoCollectionsGetsTheFirstByName()
+    {
+        _fixture.Client.AddCollection("films", "b", "Saga B", "m1");
+        _fixture.Client.AddCollection("films", "a", "Saga A", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal("Saga A", result.Value!["m1"].Name);
+    }
+
+    [Fact]
+    public async Task AFilmInTwoCollectionsGetsTheFirstByTrimmedName()
+    {
+        _fixture.Client.AddCollection("films", "a", "  Saga B", "m1");
+        _fixture.Client.AddCollection("films", "b", "Saga A ", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal("Saga A", result.Value!["m1"].Name);
+    }
+
+    [Fact]
+    public async Task ACollectionWithoutANameIsLeftOut()
+    {
+        _fixture.Client.AddCollection("films", "a", " ", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Empty(result.Value!);
+    }
+
+    [Fact]
+    public async Task ACollectionWithANameLongerThan256CharactersIsLeftOut()
+    {
+        _fixture.Client.AddCollection("films", "long", new string('x', 257), "m1");
+        _fixture.Client.AddCollection("films", "edge", " " + new string('y', 256) + " ", "m2");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.False(result.Value!.ContainsKey("m1"));
+        Assert.Equal(new string('y', 256), result.Value["m2"].Name);
+    }
+
+    [Fact]
+    public async Task AMemberThatIsNotAFilmOfTheCatalogIsLeftOut()
+    {
+        _fixture.Client.AddCollection("films", "box", "Saga", "m1", "ghost1", "ghost2");
+        _fixture.Client.AddCollection("films", "other", "Zeta", "ghost3");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server, "m1");
+
+        Assert.Equal(["m1"], result.Value!.Keys);
+    }
+
+    [Fact]
+    public async Task NoMoreCollectionsAreReadOnceEveryFilmOfTheCatalogHasOne()
+    {
+        _fixture.Client.AddCollection("films", "a", "Saga A", "m1");
+        _fixture.Client.AddCollection("films", "b", "Saga B", "m1");
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server, "m1");
+
+        Assert.Equal("Saga A", result.Value!["m1"].Name);
+        Assert.Contains("a@0", _fixture.Client.CollectionReads);
+        Assert.DoesNotContain("b@0", _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task CollectionsAndTheirFilmsAreReadPageByPage()
+    {
+        for (var index = 0; index < RemoteCatalogReader.PageSize + 1; index++)
+        {
+            _fixture.Client.AddCollection("films", "box" + index, "Saga " + index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture), "m" + index);
+        }
+
+        _fixture.Client.Collections[0].Films.AddRange(Enumerable.Range(1000, RemoteCatalogReader.PageSize).Select(index => "m" + index));
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal((2 * RemoteCatalogReader.PageSize) + 1, result.Value!.Count);
+        Assert.Contains("films@" + RemoteCatalogReader.PageSize, _fixture.Client.CollectionReads);
+        Assert.Contains("box0@" + RemoteCatalogReader.PageSize, _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AFailedCollectionReadIsAFailure()
+    {
+        _fixture.Client.AddCollection("films", "a", "Saga", "m1");
+        _fixture.Client.CollectionFailure = RemoteFailure.Unreachable;
+        var server = await _fixture.AddServerAsync("A", "films");
+
+        var result = await ReadCollectionsAsync(server);
+
+        Assert.Equal(RemoteFailure.Unreachable, result.Failure);
+    }
+
+    private async Task<RemoteServerInfo> PeerAsync(int protocolVersion = ProviderProtocol.CollectionsVersion)
+    {
+        _fixture.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, protocolVersion);
+        var server = await _fixture.AddServerAsync("A", "films");
+        Assert.Equal(RemoteMode.JellyMesh, server.Mode);
+        return server;
+    }
+
+    private void AddShared(string film, string? name, string? tmdb = null, string library = "films")
+        => _fixture.Client.SharedCollections.Add((library, new RemoteCollectionEntry(film, name, tmdb)));
+
+    [Fact]
+    public async Task AJellyMeshServerGivesTheCollectionsOfItsFilmsByTheProviderApi()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", " Saga ", "10");
+        AddShared("m2", "Saga", "1\" tmdb=\"2");
+        _fixture.Client.AddCollection("films", "box", "Stock", "m3");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
+
+        Assert.Equal(new IndexedBoxSet("Saga", "10"), result.Value!["m1"]);
+        Assert.Equal(new IndexedBoxSet("Saga", null), result.Value["m2"]);
+        Assert.Equal(2, result.Value.Count);
+        Assert.Equal(["peer:films@0"], _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerOnAnOlderProtocolIsNotAskedForCollections()
+    {
+        var server = await PeerAsync(ProviderProtocol.CollectionsVersion - 1);
+        AddShared("m1", "Saga");
+        _fixture.Client.AddCollection("films", "box", "Stock", "m1");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value!);
+        Assert.Empty(_fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AnEntryOfAJellyMeshServerThatIsNotUsableIsLeftOut()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", " ");
+        AddShared("m2", new string('x', 257));
+        AddShared("ghost", "Saga");
+        AddShared(null!, "Saga");
+        AddShared("m3", "Saga");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
+
+        Assert.Equal(["m3"], result.Value!.Keys);
+    }
+
+    [Fact]
+    public async Task TheCollectionsOfAJellyMeshServerAreReadPageByPageInEachLibrary()
+    {
+        var server = await PeerAsync();
+        var films = Enumerable.Range(0, ProviderProtocol.MaxItemsPerPage + 1).Select(index => "m" + index).ToList();
+        foreach (var film in films)
+        {
+            AddShared(film, "Saga");
+        }
+
+        AddShared("s1", "Other", library: "shows");
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films", "shows"], films.Append("s1").ToHashSet(StringComparer.Ordinal), CancellationToken.None);
+
+        Assert.Equal(films.Count + 1, result.Value!.Count);
+        Assert.Equal(["peer:films@0", "peer:films@" + ProviderProtocol.MaxItemsPerPage, "peer:shows@0"], _fixture.Client.CollectionReads);
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerThatClaimsTooManyFilmsInCollectionsIsRefused()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.RewriteSharedCollections = page => page with { TotalRecordCount = RemoteCatalogReader.MaxItemsPerQuery + 1 };
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Fact]
+    public async Task AJellyMeshServerWhoseCollectionPagesStallIsRefused()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.RewriteSharedCollections = page => page with { Items = [] };
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.CatalogChanged, result.Failure);
+    }
+
+    [Fact]
+    public async Task CollectionAnswersOfAJellyMeshServerCountTowardsTheBytesOfARead()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.RewriteSharedCollections = page => page with { ByteCount = RemoteCatalogReader.MaxBytesPerRead + 1 };
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
+    }
+
+    [Fact]
+    public async Task AFailedCollectionReadOfAJellyMeshServerIsAFailure()
+    {
+        var server = await PeerAsync();
+        AddShared("m1", "Saga");
+        _fixture.Client.CollectionFailure = RemoteFailure.ServerError;
+
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ServerError, result.Failure);
+    }
 
     [Fact]
     public async Task ReadsEveryPageInOrder()

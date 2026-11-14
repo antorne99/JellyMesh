@@ -36,6 +36,7 @@ public static class RemoteItemMapper
             OriginalTitle = item.OriginalTitle,
             Overview = item.Overview,
             Taglines = item.Taglines ?? [],
+            TrailerIds = YouTubeTrailer.IdsOf(item.RemoteTrailers),
             Genres = item.Genres ?? [],
             Studios = item.Studios?.Select(studio => studio.Name).OfType<string>().ToList() ?? [],
             Tags = item.Tags ?? [],
@@ -123,6 +124,7 @@ public static class RemoteItemMapper
             VideoRangeType = quality?.VideoRangeType,
             Timestamp = source.Timestamp,
             Video3DFormat = source.Video3DFormat,
+            HasSegments = source.HasSegments,
             Streams = source.MediaStreams?.Select(ToStream).ToList() ?? []
         };
     }

@@ -43,10 +43,12 @@ echo "--- stubs never reach a peer, by any route"
 check "PlaybackInfo of a stub" 404 "$(as_peer a "$token" POST "/Items/$stub/PlaybackInfo")"
 check "stream of a stub" 404 "$(as_peer a "$token" GET "/Videos/$stub/stream?static=true")"
 check "image of a stub" 404 "$(as_peer a "$token" GET "/Items/$stub/Images/Primary/0")"
+check "segments of a stub" 404 "$(as_peer a "$token" GET "/MediaSegments/$stub")"
 as_peer a "$token" GET "/JellyMesh/Provider/Items?ids=$stub&includeItemTypes=Movie" >/dev/null
 check "lookup of a stub" 0 "$(jq '.Items | length' "$WORK/body")"
 check "a real item stays reachable" 200 "$(as_peer a "$token" POST "/Items/$real/PlaybackInfo")"
 as_peer a "$token" DELETE "/JellyMesh/Provider/Streams/$(jq -r .PlaySessionId "$WORK/body")" >/dev/null
+check "segments of a real item stay reachable" 200 "$(as_peer a "$token" GET "/MediaSegments/$real")"
 
 echo "--- no cycles"
 # By ID, because a stub and a real copy can share a title. Series rows go one by one: a list collapses a split series.
@@ -72,8 +74,8 @@ check "a real item is found by a peer" 1 "$(jq '.Items | length' "$WORK/body")"
 check "its versions come with quality" true "$(jq --arg m "$(jq -r '.Items[0].MediaSources[0].Id' "$WORK/body")" '.Quality[$m].Height > 0' "$WORK/body")"
 check "no file path is sent to a peer" 0 "$(jq '[.Items[].MediaSources[] | (.Path // empty), (.MediaStreams[]? | .Path // empty)] | length' "$WORK/body")"
 
-stubs_a=$(docker exec jm-prov-a sh -c 'find /federata -name "*.strm"')
-stubs_b=$(docker exec jm-prov-b sh -c 'find /federata -name "*.strm"')
+stubs_a=$(docker exec "$PREFIX-a" sh -c 'find /federata -name "*.strm"')
+stubs_b=$(docker exec "$PREFIX-b" sh -c 'find /federata -name "*.strm"')
 before_a=$(echo "$stubs_a" | wc -l | tr -d ' ')
 before_b=$(echo "$stubs_b" | wc -l | tr -d ' ')
 for round in 1 2 3; do
@@ -82,16 +84,16 @@ for round in 1 2 3; do
   scan a
   scan b
 done
-check "stubs on a stay after three rounds" "$before_a" "$(docker exec jm-prov-a sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
-check "stubs on b stay after three rounds" "$before_b" "$(docker exec jm-prov-b sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
+check "stubs on a stay after three rounds" "$before_a" "$(docker exec "$PREFIX-a" sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
+check "stubs on b stay after three rounds" "$before_b" "$(docker exec "$PREFIX-b" sh -c 'find /federata -name "*.strm" | wc -l' | tr -d ' ')"
 
 echo "--- others are not peers"
 mario=$(peer_token a mario)
 check "capabilities for an ordinary user" 404 "$(as_peer a "$mario" GET /JellyMesh/Capabilities)"
 check "ProviderApi for an ordinary user" 403 "$(as_peer a "$mario" GET /JellyMesh/Provider/Libraries)"
 check "an ordinary user keeps the stock API" 200 "$(as_peer a "$mario" GET /UserViews)"
-check "capabilities without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18410/JellyMesh/Capabilities)"
-check "ProviderApi without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18410/JellyMesh/Provider/Libraries)"
+check "capabilities without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT_A/JellyMesh/Capabilities")"
+check "ProviderApi without a login" 401 "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT_A/JellyMesh/Provider/Libraries")"
 
 echo "--- shared libraries are enforced on the provider"
 serie=$(library_id a Serie)
@@ -103,6 +105,7 @@ check "libraries offered" "$film" "$(jq -r '[.Items[].Id] | join(",")' "$WORK/bo
 check "asking for the library that is not shared" 404 "$(as_peer a "$token" GET "/JellyMesh/Provider/Items?parentId=$serie&includeItemTypes=Episode")"
 check "PlaybackInfo outside the share" 404 "$(as_peer a "$token" POST "/Items/$episode/PlaybackInfo")"
 check "stream outside the share" 404 "$(as_peer a "$token" GET "/Videos/$episode/stream?static=true")"
+check "segments outside the share" 404 "$(as_peer a "$token" GET "/MediaSegments/$episode")"
 as_peer a "$token" GET "/JellyMesh/Provider/Items?ids=$episode&includeItemTypes=Episode" >/dev/null
 check "lookup outside the share" 0 "$(jq '.Items | length' "$WORK/body")"
 

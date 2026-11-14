@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -17,9 +18,22 @@ public static partial class FederatedPaths
     public const string HiddenFileName = ".jellymesh";
 
     private const int MaxNameLength = 120;
+    private const int MaxLabelLength = 40;
+    private const int GuidDigits = 8;
     private const string FallbackName = "Untitled";
     private const string MoviesFolder = "Film";
     private const string SeriesFolder = "Serie";
+
+    // Jellyfin reads a file name holding one of these after a delimiter as an extra (NamingOptions.VideoExtraRules).
+    private static readonly string[] _extraWords =
+    [
+        "trailer", "sample", "scene", "clip", "interview", "behindthescenes", "deleted", "featurette", "short", "extra", "other"
+    ];
+
+    // Jellyfin reads these tokens as a 3D format (NamingOptions.Format3DRules).
+    private static readonly string[] _threeDWords = ["3d", "sbs", "hsbs", "fsbs", "tab", "htab", "ftab", "sbs3d", "mvc"];
+
+    private static readonly char[] _labelDelimiters = [' ', '-', '.', '_'];
 
     private static readonly StringComparison _pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
@@ -93,19 +107,103 @@ public static partial class FederatedPaths
     /// <returns>The relative path of the <c>.strm</c>.</returns>
     public static string MovieStub(string folderName) => Path.Combine(MovieFolder(folderName), folderName + ".strm");
 
-    /// <summary>Builds the relative path of an episode stub.</summary>
+    /// <summary>Builds the relative folder of a server, named by its GUID, which does not change when the server is renamed.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The relative path.</returns>
+    public static string ServerFolder(Guid serverId) => serverId.ToString("D");
+
+    /// <summary>Builds the relative folder of a film in the folder of a server.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="folderName">The folder name.</param>
+    /// <returns>The relative path.</returns>
+    public static string MovieFolder(Guid serverId, string folderName) => Path.Combine(ServerFolder(serverId), MovieFolder(folderName));
+
+    /// <summary>Builds the relative folder of a series in the folder of a server.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="folderName">The folder name.</param>
+    /// <returns>The relative path.</returns>
+    public static string SeriesFolderOf(Guid serverId, string folderName) => Path.Combine(ServerFolder(serverId), SeriesFolderOf(folderName));
+
+    /// <summary>Builds the relative path of a film stub in the folder of a server, named <c>{folder} - {label}</c>.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="folderName">The folder name.</param>
+    /// <param name="label">The label of the server, from <see cref="Labels"/>.</param>
+    /// <returns>The relative path of the <c>.strm</c>.</returns>
+    public static string MovieStub(Guid serverId, string folderName, string label)
+        => Path.Combine(MovieFolder(serverId, folderName), folderName + " - " + label + ".strm");
+
+    /// <summary>Builds the relative path of an episode stub, with the label of its server after the numbers if it has one.</summary>
     /// <param name="seriesFolder">The relative folder of the series.</param>
     /// <param name="seriesName">The series name, for the file name.</param>
     /// <param name="season">The season.</param>
     /// <param name="episode">The episode.</param>
     /// <param name="lastEpisode">The last episode of a stub that covers several.</param>
+    /// <param name="label">The label of the server, null in the flat layout.</param>
     /// <returns>The relative path of the <c>.strm</c>.</returns>
-    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null)
+    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null, string? label = null)
     {
-        var folder = string.Create(CultureInfo.InvariantCulture, $"Season {season:00}");
+        var folder = SeasonFolder(season);
         var range = lastEpisode is { } last ? string.Create(CultureInfo.InvariantCulture, $"-E{last:00}") : string.Empty;
-        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}.strm");
+        var suffix = label is null ? string.Empty : " - " + label;
+        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}{suffix}.strm");
         return Path.Combine(seriesFolder, folder, file);
+    }
+
+    /// <summary>Builds the name of the folder of a season, as Jellyfin reads its number.</summary>
+    /// <param name="season">The season.</param>
+    /// <returns>The folder name.</returns>
+    public static string SeasonFolder(int season) => string.Create(CultureInfo.InvariantCulture, $"Season {season:00}");
+
+    /// <summary>
+    /// Builds the label of each server, the text after <c> - </c> in its stub names that clients show as the version
+    /// name: the server name sanitized, with no word Jellyfin would read as an extra or as 3D, and with the start of the
+    /// GUID added to a server that comes after another with the same label. A stored label never changes here.
+    /// </summary>
+    /// <param name="servers">The name of each server, in the order of the configuration.</param>
+    /// <param name="stored">The labels given before.</param>
+    /// <returns>The stored labels, and one for each server that had none.</returns>
+    public static IReadOnlyDictionary<Guid, string> Labels(IEnumerable<(Guid ServerId, string? Name)> servers, IReadOnlyDictionary<Guid, string> stored)
+    {
+        ArgumentNullException.ThrowIfNull(servers);
+        ArgumentNullException.ThrowIfNull(stored);
+
+        var labels = new Dictionary<Guid, string>(stored);
+        var taken = new HashSet<string>(stored.Values, StringComparer.OrdinalIgnoreCase);
+        foreach (var (serverId, name) in servers)
+        {
+            if (labels.ContainsKey(serverId))
+            {
+                continue;
+            }
+
+            var label = CleanLabel(serverId, name);
+            if (!taken.Add(label))
+            {
+                label += " " + GuidStart(serverId);
+                taken.Add(label);
+            }
+
+            labels[serverId] = label;
+        }
+
+        return labels;
+    }
+
+    /// <summary>
+    /// The label of a renamed server: the one of its new name, with its GUID when another server holds it (row 84). A
+    /// change of case only keeps the stored label, since one file name would then stand for both.
+    /// </summary>
+    /// <param name="serverId">The renamed server.</param>
+    /// <param name="name">Its new name.</param>
+    /// <param name="stored">The labels saved in the state, its own included.</param>
+    /// <returns>The label its stubs take.</returns>
+    public static string Relabel(Guid serverId, string? name, IReadOnlyDictionary<Guid, string> stored)
+    {
+        ArgumentNullException.ThrowIfNull(stored);
+
+        var others = stored.Where(entry => entry.Key != serverId).ToDictionary(entry => entry.Key, entry => entry.Value);
+        var label = Labels([(serverId, name)], others)[serverId];
+        return stored.TryGetValue(serverId, out var current) && string.Equals(current, label, StringComparison.OrdinalIgnoreCase) ? current : label;
     }
 
     /// <summary>
@@ -148,6 +246,37 @@ public static partial class FederatedPaths
 
         var folder = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
         return path.StartsWith(folder, _pathComparison) ? path[folder.Length..] : null;
+    }
+
+    /// <summary>
+    /// Tells whether a path is inside the federated folder, as only a stub is.
+    /// </summary>
+    /// <param name="root">The federated folder, empty or null if none is set.</param>
+    /// <param name="path">The path.</param>
+    /// <returns>True inside the folder.</returns>
+    public static bool IsInside(string? root, string? path)
+        => !string.IsNullOrEmpty(root) && path is not null && RelativeTo(root, path) is not null;
+
+    /// <summary>Gives the first digits of a server GUID, as appended to a label that is taken.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The digits.</returns>
+    internal static string GuidStart(Guid serverId) => serverId.ToString("N")[..GuidDigits];
+
+    private static string CleanLabel(Guid serverId, string? name)
+    {
+        // Delimiters become spaces, so that only the extras rules that follow a space can apply.
+        var words = Sanitize(name)
+            .Split(_labelDelimiters, StringSplitOptions.RemoveEmptyEntries)
+            .Where(word => !_extraWords.Any(extra => word.StartsWith(extra, StringComparison.OrdinalIgnoreCase))
+                && !_threeDWords.Contains(word, StringComparer.OrdinalIgnoreCase));
+
+        var label = string.Join(' ', words);
+        if (label.Length > MaxLabelLength)
+        {
+            label = label[..MaxLabelLength].TrimEnd();
+        }
+
+        return label.Length == 0 ? GuidStart(serverId) : label;
     }
 
     private static bool IsUnsafe(char character)

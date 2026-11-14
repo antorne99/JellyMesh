@@ -480,6 +480,60 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void AnEmptyLibraryNextToAServerNotReadInFullKeepsTheStubAndHoldsNothing()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with
+        {
+            Sources = [new StubSource(_serverA, "m1", "m1") { LibraryId = Library }, new StubSource(_serverB, "z1", "z1") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete), Catalog(_serverB, ServerSyncState.Stale)], new StubState { Stubs = [existing] });
+
+        Assert.Empty(plan.Removals);
+        Assert.Empty(plan.Held);
+    }
+
+    [Fact]
+    public void TwoSourcesInOneEmptyLibraryHoldTheStubOnce()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with
+        {
+            Sources = [new StubSource(_serverA, "m1", "m1") { LibraryId = Library }, new StubSource(_serverA, "m2", "m2") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete)], new StubState { Stubs = [existing] });
+
+        Assert.Empty(plan.Removals);
+        var held = Assert.Single(plan.Held);
+        Assert.Equal((_serverA, Library, 1), (held.ServerId, held.LibraryId, held.Stubs));
+    }
+
+    [Fact]
+    public void EmptyLibrariesOnTwoServersAreEachHeld()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with
+        {
+            Sources = [new StubSource(_serverA, "m1", "m1") { LibraryId = Library }, new StubSource(_serverB, "z1", "z1") { LibraryId = Library }]
+        };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete), Catalog(_serverB, ServerSyncState.Complete)], new StubState { Stubs = [existing] });
+
+        Assert.Empty(plan.Removals);
+        Assert.Equal([(_serverA, 1), (_serverB, 1)], plan.Held.Select(held => (held.ServerId, held.Stubs)).OrderBy(held => held.ServerId));
+    }
+
+    [Fact]
+    public void ASourceWithNoLibraryIsNotHeld()
+    {
+        var existing = ExistingStub("s1", "k1", _serverA, "m1") with { Sources = [new StubSource(_serverA, "m1", "m1")] };
+
+        var plan = Plan([], [Catalog(_serverA, ServerSyncState.Complete)], new StubState { Stubs = [existing] });
+
+        Assert.Single(plan.Removals);
+        Assert.Empty(plan.Held);
+    }
+
+    [Fact]
     public void AServerTheAdministratorRemovedReleasesItsStubs()
     {
         var plan = Plan(
@@ -684,6 +738,62 @@ public class StubPlannerTests
         Assert.Equal(2019, series.Metadata.Year);
         Assert.Equal(new Dictionary<string, string> { ["Tvdb"] = "8" }, series.Metadata.ProviderIds);
         Assert.Equal("/media/poster.jpg", Assert.Single(series.Images).LocalPath);
+    }
+
+    [Fact]
+    public void AStubSeriesWithALocalOneTakesNoLogoBannerOrThumbFromTheRemote()
+    {
+        var local = new LocalSeries("Local", 2019, null, new Dictionary<string, string>(), "/media/poster.jpg", null);
+        var art = new Dictionary<string, string> { ["Primary"] = "p", ["Logo"] = "l", ["Banner"] = "b", ["Thumb"] = "t" };
+
+        var withLocal = Plan(
+            [Episode("w", 1, 4, Source(_serverA, "e"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s") with { ImageTags = art }, EpisodeItem("e", "s", 1, 4))],
+            localSeries: _ => local);
+        var alone = Plan(
+            [Episode("w", 1, 4, Source(_serverA, "e"))],
+            [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s") with { ImageTags = art }, EpisodeItem("e", "s", 1, 4))]);
+
+        Assert.Equal([ImageType.Primary], Assert.Single(withLocal.Series).Images.Select(image => image.Type));
+        Assert.Equal([ImageType.Primary, ImageType.Logo, ImageType.Banner, ImageType.Thumb], Assert.Single(alone.Series).Images.Select(image => image.Type));
+    }
+
+    [Fact]
+    public void AStubSeriesWithALocalOneTakesNoSeasonFilesFromTheRemote()
+    {
+        var local = new LocalSeries("Local", 2019, null, new Dictionary<string, string>(), "/media/poster.jpg", null);
+        var season = new IndexedItem
+        {
+            ItemId = "ss1",
+            Kind = IndexedItemKind.Season,
+            LibraryId = "shows",
+            LastSeenUtc = _now,
+            Name = "Remote Season",
+            SeriesId = "s",
+            IndexNumber = 1,
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "sp" }
+        };
+        IndexedItem[] items = [SeriesItem("s"), season, EpisodeItem("e", "s", 1, 4) with { SeasonId = "ss1" }];
+
+        var withLocal = Plan([Episode("w", 1, 4, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, items)], localSeries: _ => local);
+        var alone = Plan([Episode("w", 1, 4, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, items)]);
+
+        Assert.Empty(Assert.Single(withLocal.Series).Seasons);
+        Assert.Equal("Remote Season", Assert.Single(Assert.Single(alone.Series).Seasons).Metadata.Title);
+    }
+
+    [Fact]
+    public void ASeriesRowTheIndexLostRemovesNoImage()
+    {
+        var art = SeriesItem("s") with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p", ["Logo"] = "l" } };
+        var first = Assert.Single(Plan([Episode("w", 1, 2, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, art, EpisodeItem("e", "s", 1, 2))]).Series);
+        var state = new StubState { Series = [first.Entry with { ImageTag = first.ImageTag }] };
+
+        var lost = Plan([Episode("w", 1, 2, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, EpisodeItem("e", "s", 1, 2))], state);
+        var dropped = Plan([Episode("w", 1, 2, Source(_serverA, "e"))], [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s") with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p" } }, EpisodeItem("e", "s", 1, 2))], state);
+
+        Assert.Empty(Assert.Single(lost.Series).RemovedImages);
+        Assert.Equal([ImageType.Logo], Assert.Single(dropped.Series).RemovedImages.Select(image => image.Type));
     }
 
     [Fact]

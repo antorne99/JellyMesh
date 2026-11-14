@@ -21,6 +21,15 @@ public interface IJellyfinRemoteClient
     Task<RemoteResult<RemoteSession>> AuthenticateAsync(RemoteEndpoint endpoint, RemoteCredentials credentials, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Ends a session on the remote, so that its device leaves the list there. A failure is only reported.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session to end.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the remote ended it.</returns>
+    Task<RemoteResult<bool>> LogoutAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Detects whether the remote runs JellyMesh. A 404 means standard mode.
     /// </summary>
     /// <param name="endpoint">The remote.</param>
@@ -66,6 +75,43 @@ public interface IJellyfinRemoteClient
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page. <see cref="RemoteFailure.ResponseTooLarge"/> means the same page with a lower limit may fit.</returns>
     Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads one page of the collections (BoxSets) that hold a film of a library, by stock <c>/Items</c>. The user sees
+    /// them only if the remote admin lets it see the Collections library.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="libraryId">The library.</param>
+    /// <param name="startIndex">The index of the first collection.</param>
+    /// <param name="limit">The most collections to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page, with names and provider IDs only.</returns>
+    Task<RemoteResult<RemoteItemPage>> GetCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads one page of the films of a collection, by stock <c>/Items</c>.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="collectionId">The collection.</param>
+    /// <param name="startIndex">The index of the first film.</param>
+    /// <param name="limit">The most films to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page, with IDs only.</returns>
+    Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads one page of the films of a shared library of a JellyMesh remote that are in a collection, by the ProviderApi.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="libraryId">The library.</param>
+    /// <param name="startIndex">The index of the first film.</param>
+    /// <param name="limit">The most films to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page, with the name and TMDb ID of each collection.</returns>
+    Task<RemoteResult<RemoteCollectionPage>> GetSharedCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken);
 
     /// <summary>
     /// Downloads an image of an item.

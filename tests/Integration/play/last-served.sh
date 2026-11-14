@@ -6,10 +6,10 @@
 #   a, b   $PREFIX-a/-b   $PORT+1/2  stock Jellyfin with the media of remoto-standard
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] last-served.sh [--keep]
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-
 PREFIX=${PREFIX:-jm-last}
 PORT=${PORT:-18436}
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 WORK=${WORK_LAST:-${TMPDIR:-/tmp}/$PREFIX-run}
 mkdir -p "$WORK"
 DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'
@@ -34,7 +34,7 @@ done
 
 start local "$PREFIX-local-media:/media"
 docker exec "$PREFIX-local" sh -c 'mkdir -p /media/film && touch /media/film/.keep'
-library local Film movies /media/film /federata/Film
+library local Film movies /media/film
 user local alice >/dev/null
 user local bob >/dev/null
 NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local" >/dev/null
@@ -44,17 +44,21 @@ login local
 settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id_a=$(add_remote local a "http://host.docker.internal:$(port_of a)" jellymesh)
 id_b=$(add_remote local b "http://host.docker.internal:$(port_of b)" jellymesh)
+for id in "$id_a" "$id_b"; do
+  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
+done
 import_all local "$id_a"
 import_all local "$id_b"
 sync_now local
 scan local
 
-tears=$(stub_item local "Tears of Steel")
-check "the film is a stub" 1 "$([ -n "$tears" ] && echo 1 || echo 0)"
 winner=$(get local /JellyMesh/Admin/Index/Decisions | jq -r '[.Contents[] | select((.Backups // []) | length > 0) | select(.Identity.Key | test("tears|2285752|133701"; "i"))][0].Winner.ServerName // ""')
 case $winner in a) backup=b ;; b) backup=a ;; *) echo "no winner with a backup: [$winner]" >&2; exit 1 ;; esac
 id_of() { case $1 in a) echo "$id_a" ;; b) echo "$id_b" ;; esac; }
 echo "winner $winner ($(id_of "$winner")), backup $backup ($(id_of "$backup"))"
+# Each server has a stub of its own: the one played is the stub of the winner.
+tears=$(get local '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg f "$(server_folder "$(id_of "$winner")")/" '[.Items[] | select((.Path // "") | (startswith($f) and contains("Tears of Steel")))][0].Id // ""')
+check "the film is a stub" 1 "$([ -n "$tears" ] && echo 1 || echo 0)"
 
 play() { # play <user>: a PlaybackInfo of the stub as that user; prints the status
   login "$1" "$1"

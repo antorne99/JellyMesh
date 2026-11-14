@@ -39,6 +39,37 @@ public class JellyfinRemoteClientTests
         Assert.Contains("\"Pw\":\"" + TestValues.Password + "\"", request.Body, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("\"ServerId\":\"8E3F1C2A4B5D4E6F8A9B0C1D2E3F4A5B\",", "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b")]
+    [InlineData("\"ServerId\":\"8e3f1c2a-4b5d-4e6f-8a9b-0c1d2e3f4a5b\",", "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b")]
+    [InlineData("", null)]
+    [InlineData("\"ServerId\":\"\",", null)]
+    [InlineData("\"ServerId\":\"not an id\",", null)]
+    [InlineData("\"ServerId\":\"00000000000000000000000000000000\",", null)]
+    public async Task LoginReadsTheServerIdOfTheRemoteWhenItIsAnId(string field, string? expected)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{" + field + TestValues.LoginJson[1..]));
+
+        var result = await LoginAsync(handler);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(expected, result.Value!.ServerId);
+    }
+
+    [Fact]
+    public async Task LogoutPostsTheSessionTokenInTheHeaderOnly()
+    {
+        var handler = new StubHandler(_ => StubHandler.Status(HttpStatusCode.NoContent));
+
+        await ClientFor(handler).LogoutAsync(_endpoint, _session, CancellationToken.None);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/Sessions/Logout", request.Uri.AbsolutePath);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AnImageIsReadWithTheSessionInTheHeaderOnly()
     {
@@ -341,6 +372,18 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task ItemsAsksForTheTrailersAndReadsTheirUrls()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"a\",\"RemoteTrailers\":[{\"Url\":\"https://youtu.be/dQw4w9WgXcQ\",\"Name\":\"T\"},null]}],\"TotalRecordCount\":1}"));
+
+        var result = await ItemsAsync(handler);
+
+        Assert.Contains("RemoteTrailers", handler.Requests[0].Uri.Query, StringComparison.Ordinal);
+        var item = Assert.Single(result.Value!.Items);
+        Assert.Equal("https://youtu.be/dQw4w9WgXcQ", item.RemoteTrailers![0]!.Url);
+    }
+
+    [Fact]
     public async Task ItemsNeverAsksForTheWatchStateOfTheRemoteUser()
     {
         var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
@@ -350,6 +393,79 @@ public class JellyfinRemoteClientTests
         var query = handler.Requests[0].Uri.Query;
         Assert.Contains("enableUserData=false", query, StringComparison.Ordinal);
         Assert.DoesNotContain("UserData", query.Replace("enableUserData", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CollectionsAreTheBoxSetsWithAFilmInALibrary()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"box\",\"Name\":\"Saga\",\"ProviderIds\":{\"Tmdb\":\"10\"}}],\"TotalRecordCount\":1}"));
+
+        var result = await ClientFor(handler).GetCollectionsAsync(_endpoint, _session, "lib", 200, 100, CancellationToken.None);
+
+        var box = Assert.Single(result.Value!.Items);
+        Assert.Equal("Saga", box.Name);
+        Assert.Equal("10", box.ProviderIds!["Tmdb"]);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items", request.Uri.AbsolutePath);
+        var query = request.Uri.Query;
+        foreach (var part in new[] { "userId=abc", "parentId=lib", "includeItemTypes=BoxSet", "recursive=true", "fields=ProviderIds", "enableUserData=false", "startIndex=200", "limit=100" })
+        {
+            Assert.Contains(part, query, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("MediaSources", query, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheFilmsOfACollectionAreReadByIdOnly()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"m1\"}],\"TotalRecordCount\":1}"));
+
+        var result = await ClientFor(handler).GetCollectionFilmsAsync(_endpoint, _session, "box", 0, 100, CancellationToken.None);
+
+        Assert.Equal("m1", Assert.Single(result.Value!.Items).Id);
+        var query = Assert.Single(handler.Requests).Uri.Query;
+        foreach (var part in new[] { "userId=abc", "parentId=box", "includeItemTypes=Movie", "recursive=true", "collapseBoxSetItems=false", "enableUserData=false", "startIndex=0", "limit=100" })
+        {
+            Assert.Contains(part, query, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("MediaSources", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheCollectionsOfAJellyMeshRemoteAreReadByTheProviderApi()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"m1\",\"Name\":\"Saga\",\"TmdbId\":\"10\"}],\"TotalRecordCount\":1}"));
+
+        var result = await ClientFor(handler).GetSharedCollectionsAsync(_endpoint, _session, "lib", 500, 100, CancellationToken.None);
+
+        Assert.Equal(new RemoteCollectionEntry("m1", "Saga", "10"), Assert.Single(result.Value!.Items));
+        Assert.Equal(1, result.Value.TotalRecordCount);
+        Assert.True(result.Value.ByteCount > 0);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/JellyMesh/Provider/Collections", request.Uri.AbsolutePath);
+        foreach (var part in new[] { "parentId=lib", "startIndex=500", "limit=100" })
+        {
+            Assert.Contains(part, request.Uri.Query, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("{\"Items\":null,\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[],\"TotalRecordCount\":null}")]
+    [InlineData("{\"Items\":[null],\"TotalRecordCount\":1}")]
+    [InlineData("not json")]
+    public async Task AMalformedCollectionPageOfAJellyMeshRemoteIsInvalid(string body)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json(body));
+
+        var result = await ClientFor(handler).GetSharedCollectionsAsync(_endpoint, _session, "lib", 0, 100, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
     }
 
     [Fact]

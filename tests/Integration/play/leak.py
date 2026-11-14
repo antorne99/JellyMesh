@@ -2,7 +2,7 @@
 """Looks for remote values in what clients, files and logs hold. The secrets come from where they really are: the tokens
 from the database of the remote, the item and server IDs from the stub registry of the consumer.
 
-Usage: leak.py <folder with remote-db/ and federated-stubs.json> <file or folder>...
+Usage: [REMOTE_PORT=<host port of the remote>] leak.py <folder with remote-db/ and federated-stubs.json> <file or folder>...
 """
 import json
 import os
@@ -28,7 +28,8 @@ for stub in stubs["Stubs"]:
         servers.add(source["ServerId"].replace("-", ""))
         servers.add(source["ServerId"])
 
-fixed = ["18431", "host.docker.internal:18431", "/media/film/Tears"]
+port = os.environ.get("REMOTE_PORT", "18431")
+fixed = [port, "host.docker.internal:" + port, "/media/film/Tears"]
 print("secrets:", len(tokens), "tokens,", len(items), "items,", len(servers), "server ids")
 assert tokens and items
 
@@ -48,8 +49,11 @@ for path in files:
         if label == "server" and path.endswith(".log"):
             continue
         for value in values:
-            if value.encode() in data:
-                at = data.index(value.encode())
+            at = data.find(value.encode())
+            # The folder of a server is named by its ID: in a federated path it is no secret (spec of the server folders).
+            while label == "server" and at >= 0 and data[max(0, at - 10):at] == b"/federata/":
+                at = data.find(value.encode(), at + 1)
+            if at >= 0:
                 print("HIT", label, value[:16], path.split("/")[-1], data[max(0, at - 60):at + 30])
                 hits += 1
 print(f"scanned {len(files)} files, {total} bytes, hits {hits}")

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -10,6 +11,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Extensions.Json;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Model.Dlna;
@@ -24,7 +26,7 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// Logs nothing and lets no transport exception out, as <see cref="JellyfinRemoteClient"/>: their messages can hold the
 /// remote address. Cancellation goes through, so that the caller can apply its own timeouts.
 /// </remarks>
-public sealed class RemotePlaybackClient : IRemotePlaybackClient
+public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegmentClient
 {
     /// <summary>
     /// Name of the <see cref="HttpClient"/> configuration. It has no overall timeout: a stream lasts as long as the film.
@@ -36,6 +38,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
     /// close to a kilobyte, so a film of many hours needs several megabytes.
     /// </summary>
     public const int MaxDocumentBytes = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// Most segments kept for one item. A film has a handful; the rest would only be rows a remote makes us store.
+    /// </summary>
+    public const int MaxSegments = 64;
 
     private const string AcceptJson = "application/json; profile=\"PascalCase\"";
 
@@ -258,6 +265,59 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
     }
 
+    /// <inheritdoc />
+    public async Task<RemoteResult<RemoteSegmentRead>> GetSegmentsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(itemId);
+
+        using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/MediaSegments/" + Uri.EscapeDataString(itemId));
+        var (document, status) = await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false);
+        if (!document.IsSuccess)
+        {
+            return IsItemRefusal(status)
+                ? RemoteResult.Success(RemoteSegmentRead.Refused)
+                : RemoteResult.Fail<RemoteSegmentRead>(document.Failure);
+        }
+
+        if (Parse<SegmentPage>(document.Value!)?.Items is not { } items)
+        {
+            return RemoteResult.Fail<RemoteSegmentRead>(RemoteFailure.InvalidResponse);
+        }
+
+        var segments = items
+            .Select(ToSegment)
+            .OfType<RemoteSegment>()
+            .Take(MaxSegments)
+            .ToList();
+        return RemoteResult.Success(new RemoteSegmentRead(segments));
+    }
+
+    // A client error about the item alone, such as not found or too many reads at once; 401 and 403 speak of the user.
+    private static bool IsItemRefusal(HttpStatusCode? status)
+    {
+        return status is { } code
+            && (int)code is >= 400 and < 500
+            && code is not HttpStatusCode.Unauthorized and not HttpStatusCode.Forbidden;
+    }
+
+    // Null for a type Jellyfin does not name, or times stock would refuse to store.
+    private static RemoteSegment? ToSegment(SegmentEntry? entry)
+    {
+        if (entry?.Type is not { Length: > 0 } name
+            || !name.All(char.IsAsciiLetter)
+            || !Enum.TryParse<MediaSegmentType>(name, out var type)
+            || type == MediaSegmentType.Unknown
+            || entry.StartTicks < 0
+            || entry.EndTicks <= entry.StartTicks)
+        {
+            return null;
+        }
+
+        return new RemoteSegment(type, entry.StartTicks, entry.EndTicks);
+    }
+
     private static string StreamPath(string playSessionId) => "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
 
     // Null when the path cannot be accepted: paths come from the answers of the remote.
@@ -324,9 +384,15 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
 
     private async Task<RemoteResult<byte[]>> ReadDocumentAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
     {
+        return (await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false)).Document;
+    }
+
+    // Reads a document with the status of the answer, null when none came.
+    private async Task<(RemoteResult<byte[]> Document, HttpStatusCode? Status)> ReadAnswerAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
+    {
         if (message is null)
         {
-            return RemoteResult.Fail<byte[]>(RemoteFailure.InvalidResponse);
+            return (RemoteResult.Fail<byte[]>(RemoteFailure.InvalidResponse), null);
         }
 
         var client = _httpClientFactory.CreateClient(HttpClientName);
@@ -335,21 +401,19 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return RemoteResult.Fail<byte[]>(FailureOf(response));
+                return (RemoteResult.Fail<byte[]>(FailureOf(response)), response.StatusCode);
             }
 
             var body = await RemoteBody.ReadLimitedAsync(response.Content, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
-            return body is null
-                ? RemoteResult.Fail<byte[]>(RemoteFailure.ResponseTooLarge)
-                : RemoteResult.Success(body);
+            return (body is null ? RemoteResult.Fail<byte[]>(RemoteFailure.ResponseTooLarge) : RemoteResult.Success(body), response.StatusCode);
         }
         catch (HttpRequestException)
         {
-            return RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable);
+            return (RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable), null);
         }
         catch (IOException)
         {
-            return RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable);
+            return (RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable), null);
         }
     }
 
@@ -368,6 +432,10 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient
         bool? AllowVideoStreamCopy,
         bool? AllowAudioStreamCopy,
         bool? AlwaysBurnInSubtitleWhenTranscoding);
+
+    private sealed record SegmentPage(IReadOnlyList<SegmentEntry?>? Items);
+
+    private sealed record SegmentEntry(string? Type, long StartTicks, long EndTicks);
 
     private sealed record UserResponse(UserPolicyResponse? Policy);
 

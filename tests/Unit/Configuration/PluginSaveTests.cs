@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Serialization;
 using Jellyfin.Extensions.Json;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Model.Serialization;
 using Moq;
@@ -103,6 +104,110 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Equal("Friend", Assert.Single(_plugin.Configuration.Servers).Name);
         Assert.Contains("ciphertext-sentinel", Xml, StringComparison.Ordinal);
         Assert.DoesNotContain("Injected", Xml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheXmlRoundTripsTheAutomaticLibraries()
+    {
+        _plugin.ChangeConfiguration(config =>
+        {
+            var server = config.Servers.Single();
+            server.AutomaticLibraries = true;
+            server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Friend - Serie", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" });
+            server.ReleasedAutomaticLibraries.Add("Friend - Film");
+        });
+
+        var loaded = Assert.Single(((PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!).Servers);
+
+        Assert.True(loaded.AutomaticLibraries);
+        var record = Assert.Single(loaded.AutomaticLibraryRegistry);
+        Assert.Equal((ServerLibraryKind.Series, "Friend - Serie", "0f1e2d3c4b5a69788796a5b4c3d2e1f0"), (record.Kind, record.Name, record.ItemId));
+        Assert.Equal(["Friend - Film"], loaded.ReleasedAutomaticLibraries);
+    }
+
+    [Fact]
+    public void TheXmlRoundTripsTheServerIds()
+    {
+        _plugin.ChangeConfiguration(config => config.Servers.Single().JellyfinServerId = "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b");
+
+        var loaded = (PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!;
+
+        Assert.Equal("8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b", Assert.Single(loaded.Servers).JellyfinServerId);
+    }
+
+    // Decision 408: the removed servers an earlier 0.5 build kept load without effect and leave at the next save.
+    [Fact]
+    public void TheRemovedServersOfAnEarlierBuildLeaveAtTheNextSave()
+    {
+        const string formerId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9";
+        var former = "<FormerServers><FormerServerConfig><Id>" + Guid.NewGuid() + "</Id><JellyfinServerId>" + formerId
+            + "</JellyfinServerId><Name>Old</Name></FormerServerConfig></FormerServers>";
+        File.WriteAllText(_plugin.ConfigurationFilePath, Xml.Replace("</PluginConfiguration>", former + "</PluginConfiguration>", StringComparison.Ordinal));
+
+        var restarted = new Plugin(_paths, new RealXmlSerializer(), new CapturingLogger<Plugin>());
+        restarted.ChangeConfiguration(config => config.SyncIntervalSeconds = 600);
+
+        Assert.Equal("Friend", Assert.Single(restarted.Configuration.Servers).Name);
+        Assert.Contains("ciphertext-sentinel", Xml, StringComparison.Ordinal);
+        Assert.DoesNotContain(formerId, Xml, StringComparison.Ordinal);
+        Assert.DoesNotContain("FormerServers", Xml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheLibrariesOfRemovedServersSurviveTheXmlAndAStockSaveAndAreNotShown()
+    {
+        var serverId = Guid.NewGuid();
+        _plugin.ChangeConfiguration(config =>
+        {
+            config.HoldAutomaticLibraries(
+                serverId,
+                [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" }],
+                ["9a8b7c6d5e4f30211203f4e5d6c7b8a9"],
+                ["5d6c7b8a99a8b7c6d5e4f30211203f4e"],
+                true);
+            config.RemovedServerLibraries[0].ReleasedLibraries.Add("Casa - Serie");
+            config.RemovedServerLibraries[0].HiddenReleasedLibraries.Add("Casa - Serie");
+        });
+        var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
+        _plugin.UpdateConfiguration(JsonSerializer.Deserialize<PluginConfiguration>(json, JsonDefaults.Options)!);
+
+        var loaded = (PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!;
+
+        Assert.DoesNotContain("0f1e2d3c4b5a69788796a5b4c3d2e1f0", json, StringComparison.Ordinal);
+        var held = Assert.Single(loaded.RemovedServerLibraries);
+        Assert.Equal(serverId, held.ServerId);
+        Assert.Equal("Casa - Film", Assert.Single(held.Libraries).Name);
+        Assert.Equal(["9a8b7c6d5e4f30211203f4e5d6c7b8a9"], held.PreexistingLibraryIds);
+        Assert.Equal(["5d6c7b8a99a8b7c6d5e4f30211203f4e"], held.FollowedLibraryIds);
+        Assert.True(held.FollowSkipped);
+        Assert.Equal(["Casa - Serie"], held.ReleasedLibraries);
+        Assert.Equal(["Casa - Serie"], held.HiddenReleasedLibraries);
+    }
+
+    [Fact]
+    public void TheMigrationStateSurvivesTheXmlAndAStockSaveAndIsNotShown()
+    {
+        // The choice and the step of the automatic migration resume after a restart (Q57), and the servers placed stay (Q58).
+        var placed = Guid.NewGuid();
+        _plugin.ChangeConfiguration(config =>
+        {
+            config.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
+            config.LayoutMigration.Step = AutomaticMigrationStep.RemoveOldPaths;
+            config.LayoutMigration.Error = AutomaticMigrationError.RemoveFailed;
+            config.LayoutMigration.ErrorLibrary = "Film di casa";
+            config.LayoutMigration.PlacedServers.Add(placed);
+        });
+        var json = JsonSerializer.Serialize(_plugin.Configuration, JsonDefaults.Options);
+        _plugin.UpdateConfiguration(JsonSerializer.Deserialize<PluginConfiguration>(json, JsonDefaults.Options)!);
+
+        var loaded = (PluginConfiguration)new RealXmlSerializer().DeserializeFromFile(typeof(PluginConfiguration), _plugin.ConfigurationFilePath)!;
+
+        Assert.DoesNotContain("Film di casa", json, StringComparison.Ordinal);
+        Assert.Equal(LayoutMigrationMode.Automatic, loaded.LayoutMigration.Mode);
+        Assert.Equal(AutomaticMigrationStep.RemoveOldPaths, loaded.LayoutMigration.Step);
+        Assert.Equal(AutomaticMigrationError.RemoveFailed, loaded.LayoutMigration.Error);
+        Assert.Equal("Film di casa", loaded.LayoutMigration.ErrorLibrary);
+        Assert.Equal([placed], loaded.LayoutMigration.PlacedServers);
     }
 
     [Fact]
@@ -272,6 +377,40 @@ public sealed class PluginSaveTests : IDisposable
         Assert.Empty(logger.Lines);
     }
 
+    [Fact]
+    public void AChangeWhoseSaveFailsIsRolledBackUnderTheLockAndRethrown()
+    {
+        var serializer = new RealXmlSerializer();
+        var plugin = new Plugin(_paths, serializer, new CapturingLogger<Plugin>());
+        var server = Assert.Single(plugin.ReadConfiguration(config => config.Servers.ToList()));
+        serializer.SaveFailure = new IOException();
+        var rolledBack = 0;
+
+        var thrown = Assert.Throws<IOException>(() => plugin.ChangeConfiguration(
+            config => server.EncryptedCredentials = "unsaved",
+            config =>
+            {
+                rolledBack++;
+                server.EncryptedCredentials = "ciphertext-sentinel";
+            }));
+
+        Assert.Same(serializer.SaveFailure, thrown);
+        Assert.Equal(1, rolledBack);
+        Assert.Equal("ciphertext-sentinel", plugin.ReadConfiguration(config => config.Servers.Single().EncryptedCredentials));
+    }
+
+    [Fact]
+    public void AChangeWithoutARollbackStaysInMemoryWhenItsSaveFails()
+    {
+        var serializer = new RealXmlSerializer();
+        var plugin = new Plugin(_paths, serializer, new CapturingLogger<Plugin>());
+        serializer.SaveFailure = new IOException();
+
+        Assert.Throws<IOException>(() => plugin.ChangeConfiguration(config => config.Servers.Clear()));
+
+        Assert.Empty(plugin.ReadConfiguration(config => config.Servers.ToList()));
+    }
+
     public void Dispose() => Directory.Delete(_folder, true);
 
     private Plugin LoadWith(string? federatedRoot, CapturingLogger<Plugin> logger)
@@ -279,12 +418,19 @@ public sealed class PluginSaveTests : IDisposable
 
     private sealed class RealXmlSerializer : IXmlSerializer
     {
+        public Exception? SaveFailure { get; set; }
+
         public object? DeserializeFromStream(Type type, Stream stream) => new XmlSerializer(type).Deserialize(stream);
 
         public void SerializeToStream(object obj, Stream stream) => new XmlSerializer(obj.GetType()).Serialize(stream, obj);
 
         public void SerializeToFile(object obj, string file)
         {
+            if (SaveFailure is not null)
+            {
+                throw SaveFailure;
+            }
+
             using var stream = File.Create(file);
             SerializeToStream(obj, stream);
         }

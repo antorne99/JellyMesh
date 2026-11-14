@@ -11,9 +11,7 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -26,6 +24,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 {
     // How many images of one server are read at once. A choice of Claude's, under the 8 reads per peer of decision 31.
     private const int ImageReadsAtOnce = 4;
+
+    private static readonly string[] _imageExtensions = [".jpg", ".png", ".webp", ".gif"];
 
     private readonly StubRegistry _registry;
     private readonly IFederationResolver _resolver;
@@ -40,6 +40,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private readonly StubUrlBuilder _urls;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<LibraryMaterializer> _logger;
+    private readonly ILocalRefreshRequester? _refresher;
+    private readonly IVersionLinker? _linker;
+    private readonly IWatchStateKeeper? _keeper;
     private volatile MaterializationReport? _lastReport;
 
     /// <summary>
@@ -58,6 +61,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <param name="urls">The builder of <c>.strm</c> URLs.</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="refresher">What asks Jellyfin to read the metadata of new local films.</param>
+    /// <param name="linker">What detaches a stub from its versions before it is removed.</param>
+    /// <param name="keeper">What keeps the watch state of removed servers and puts it back (row 412).</param>
     public LibraryMaterializer(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -71,7 +77,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         StubRemover remover,
         StubUrlBuilder urls,
         TimeProvider timeProvider,
-        ILogger<LibraryMaterializer> logger)
+        ILogger<LibraryMaterializer> logger,
+        ILocalRefreshRequester? refresher = null,
+        IVersionLinker? linker = null,
+        IWatchStateKeeper? keeper = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -86,6 +95,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         _urls = urls;
         _timeProvider = timeProvider;
         _logger = logger;
+        _refresher = refresher;
+        _linker = linker;
+        _keeper = keeper;
     }
 
     /// <inheritdoc />
@@ -97,7 +109,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <inheritdoc />
     public async Task<MaterializationReport> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken)
     {
-        var (root, isProtected) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection));
+        var (root, isProtected, writesCollections) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection, config.FederateCollections));
         if (root.Length == 0)
         {
             var report = new MaterializationReport(_timeProvider.GetUtcNow(), false, 0, 0, 0, 0, 0, []);
@@ -108,13 +120,44 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var report = await RunAsync(root, isProtected, verifyEveryStub, cancellationToken).ConfigureAwait(false);
+            var report = await RunAsync(root, isProtected, writesCollections, verifyEveryStub, cancellationToken).ConfigureAwait(false);
             _lastReport = report;
             return report;
         }
         finally
         {
             _registry.Exit();
+        }
+    }
+
+    /// <inheritdoc />
+    public void PrepareServerFolders()
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (root.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            WriteServerFolders(root, _servers.GetServers());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Cannot write the folders of the servers in the federated folder: {Error}", LogText.CleanMessage(ex.Message));
+        }
+    }
+
+    // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty.
+    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers)
+    {
+        WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
+        WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
+        foreach (var server in servers)
+        {
+            WriteHiddenFile(root, FederatedPaths.MovieFolder(server.Id, string.Empty));
+            WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(server.Id, string.Empty));
         }
     }
 
@@ -170,7 +213,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             if (Path.GetFileName(file).StartsWith(name, StringComparison.Ordinal)
                 && !string.Equals(file, keep, StringComparison.Ordinal)
-                && Path.GetExtension(file) is ".jpg" or ".png" or ".webp" or ".gif")
+                && _imageExtensions.Contains(Path.GetExtension(file)))
             {
                 File.Delete(file);
             }
@@ -189,23 +232,16 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return string.Equals(stub.UrlTag, urlTag, StringComparison.Ordinal) && stub.StrmWrittenUtc == File.GetLastWriteTimeUtc(strm);
     }
 
-    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool verifyEveryStub, CancellationToken cancellationToken)
+    private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool writesCollections, bool verifyEveryStub, CancellationToken cancellationToken)
     {
         // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
-        var plan = StubPlanner.Plan(new StubPlanInput(
-            view,
-            snapshot,
-            _registry.State,
-            servers,
-            isProtected,
-            _urls.Build,
-            workKey => LocalSeriesOf(view, workKey)));
+        _refresher?.Request(view.LocalItemsAwaitingRefresh);
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null) { WritesCollections = writesCollections });
 
-        WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
-        WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
+        WriteServerFolders(root, servers);
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 
@@ -221,7 +257,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             await WriteStubAsync(run, stub, cancellationToken).ConfigureAwait(false);
         }
 
-        // A stub with no work, such as one waiting for the post-scan task after its local copy arrived, can still be opened.
+        // A stub with no work, of the flat layout or merged and waiting for the post-scan task, can still be opened.
         var handled = plan.Stubs.Select(work => work.Entry).Concat(plan.Removals).Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var stub in plan.State.Stubs.Where(stub => !handled.Contains(stub.Id)))
         {
@@ -229,15 +265,24 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         run.Commit();
-        RemoveGone(run, plan.Removals);
+        var (removals, kept) = await KeepRemovedAsync(run, plan, cancellationToken).ConfigureAwait(false);
+        RemoveGone(run, await DetachRemovalsAsync(run, removals, cancellationToken).ConfigureAwait(false));
+        if (kept)
+        {
+            RemoveServerFolders(run, plan.State.RemovedServers);
+        }
 
         await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
+        if (_keeper is not null)
+        {
+            await _keeper.RestoreAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         foreach (var held in plan.Held)
         {
             _logger.LogWarning(
                 "A complete read of a library of remote server {ServerName} came back empty. {Count} stubs are kept until it has items again, or it is deselected",
-                held.ServerName,
+                LogText.Clean(held.ServerName),
                 held.Stubs);
         }
 
@@ -246,7 +291,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             _logger.LogInformation("{Count} groups of films may be duplicates. Review them under Duplicate films on the JellyMesh page", view.MergeCases.Count);
         }
 
-        if (run.NeedsScan || plan.MergedStubs > 0)
+        var scanQueued = run.NeedsScan || plan.MergedStubs > 0;
+        if (scanQueued)
         {
             _library.QueueLibraryScan();
         }
@@ -259,31 +305,14 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             run.Failed);
         return new MaterializationReport(_timeProvider.GetUtcNow(), true, run.Created, run.Updated, run.Removed, run.Failed, plan.Unplaceable, plan.Held)
         {
-            Unconfigured = plan.Unconfigured
+            Unconfigured = plan.Unconfigured,
+            ByServer = run.ByServer(),
+            RegistryGeneration = _registry.Generation,
+            AwaitingRefresh = view.LocalItemsAwaitingRefresh.Count,
+            ImagesPending = run.ImagesPending,
+            FoldersPending = run.FoldersPending,
+            ScanQueued = scanQueued
         };
-    }
-
-    private LocalSeries? LocalSeriesOf(FederationView view, string workKey)
-    {
-        if (!view.LocalItemByWork.TryGetValue(workKey, out var itemId)
-            || _library.GetItemById(itemId) is not Episode episode
-            || _library.GetItemById(episode.SeriesId) is not Series series)
-        {
-            return null;
-        }
-
-        return new LocalSeries(
-            series.Name,
-            series.ProductionYear,
-            series.Overview,
-            series.ProviderIds,
-            LocalImage(series, ImageType.Primary),
-            LocalImage(series, ImageType.Backdrop));
-    }
-
-    private string? LocalImage(BaseItem item, ImageType type)
-    {
-        return item.GetImageInfo(type, 0) is { IsLocalFile: true } image && File.Exists(image.Path) ? image.Path : null;
     }
 
     private async Task WriteSeriesAsync(Run run, SeriesWork work, CancellationToken cancellationToken)
@@ -308,18 +337,59 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
 
-            run.Put(entry);
+            var seasons = new List<SeasonStub>(work.Seasons.Count);
+            foreach (var season in work.Seasons)
+            {
+                seasons.Add(await WriteSeasonAsync(run, season, work.IsNew, entry.ServerId, cancellationToken).ConfigureAwait(false));
+            }
+
+            run.Put(entry with { Seasons = seasons });
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            run.Failed++;
+            run.Fail(entry.ServerId);
             _logger.LogError("Cannot write a stub series: {Error}", exception.GetType().Name);
         }
+    }
+
+    // Returns the season as now on disk. A season of a series that exists may already have its item, made from the folder
+    // name before this version: Jellyfin does not read the new season.nfo for it, so name, plot and poster go to the item.
+    private async Task<SeasonStub> WriteSeasonAsync(Run run, SeasonWork work, bool seriesIsNew, Guid? serverId, CancellationToken cancellationToken)
+    {
+        var entry = work.Entry;
+        var nfo = FederatedPaths.Resolve(run.Root, work.NfoPath);
+        try
+        {
+            var existing = new LazyItem(_library, Path.GetDirectoryName(nfo)!, true, seriesIsNew);
+            if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(nfo))
+            {
+                await WriteTextAsync(nfo, work.Nfo, cancellationToken).ConfigureAwait(false);
+                if (existing.Value is { } item)
+                {
+                    await _updater.ApplySeasonAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
+                }
+
+                entry = entry with { ContentHash = work.ContentHash };
+            }
+
+            if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
+            {
+                entry = entry with { ImageTag = work.ImageTag };
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            run.Fail(serverId);
+            _logger.LogError("Cannot write a stub season: {Error}", exception.GetType().Name);
+        }
+
+        return entry;
     }
 
     private async Task WriteStubAsync(Run run, StubWork work, CancellationToken cancellationToken)
@@ -358,7 +428,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await WriteImagesAsync(run, work.Images, existing.Value, cancellationToken).ConfigureAwait(false))
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
@@ -376,12 +446,18 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             run.Put(entry);
-            run.Created += work.IsNew ? 1 : 0;
-            run.Updated += !work.IsNew && changed ? 1 : 0;
+            if (work.IsNew)
+            {
+                run.Count(entry.ServerId, created: 1);
+            }
+            else if (changed)
+            {
+                run.Count(entry.ServerId, updated: 1);
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            run.Failed++;
+            run.Fail(entry.ServerId);
             _logger.LogError("Cannot write a stub: {Error}", exception.GetType().Name);
         }
     }
@@ -401,7 +477,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            run.Failed++;
+            run.Fail(stub.ServerId);
             _logger.LogError("Cannot sign a stub: {Error}", exception.GetType().Name);
         }
     }
@@ -424,6 +500,27 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return stale;
     }
 
+    // Removes the images the remote dropped, then writes the others. True once all of them are on disk.
+    private async Task<bool> UpdateImagesAsync(Run run, IReadOnlyList<StubImage> images, IReadOnlyList<StubImage> removed, BaseItem? item, CancellationToken cancellationToken)
+    {
+        foreach (var image in removed)
+        {
+            var stem = FederatedPaths.Resolve(run.Root, image.RelativeStem);
+            var files = _imageExtensions.Select(extension => stem + extension).ToList();
+            foreach (var file in files.Where(File.Exists))
+            {
+                File.Delete(file);
+            }
+
+            if (item is not null)
+            {
+                await _updater.RemoveImageAsync(item, image.Type, files, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return await WriteImagesAsync(run, images, item, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<bool> WriteImagesAsync(Run run, IReadOnlyList<StubImage> images, BaseItem? item, CancellationToken cancellationToken)
     {
         var complete = true;
@@ -433,6 +530,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             if (path is null)
             {
                 complete = false;
+                run.ImagesPending++;
             }
             else if (item is not null)
             {
@@ -471,6 +569,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var wanted = plan.Series
             .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
             .SelectMany(work => work.Images)
+            .Concat(plan.Series
+                .SelectMany(work => work.Seasons)
+                .Where(season => !string.Equals(season.Entry.ImageTag, season.ImageTag, StringComparison.Ordinal))
+                .SelectMany(season => season.Images))
             .Concat(plan.Stubs
                 .Where(work => !string.Equals(work.Entry.ImageTag, work.ImageTag, StringComparison.Ordinal))
                 .SelectMany(work => work.Images))
@@ -525,6 +627,60 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         return path;
     }
 
+    // The stubs to remove this round: one that could not leave its version group, also at the old path of a pending server
+    // rename, stays, counted as failed, for the next round (Q326, Q351).
+    // The titles of removed servers keep their watch state before they go (row 412); while it cannot be saved they stay.
+    private async Task<(IReadOnlyList<StubEntry> Stubs, bool Kept)> KeepRemovedAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
+    {
+        var removed = plan.State.RemovedServers.ToHashSet();
+        if (_keeper is null || removed.Count == 0)
+        {
+            return (plan.Removals, true);
+        }
+
+        var stubs = plan.Removals
+            .Where(stub => stub.ServerId is { } serverId ? removed.Contains(serverId) : stub.Sources.Count > 0 && stub.Sources.All(source => removed.Contains(source.ServerId)))
+            .ToList();
+        var series = run.State.Series.Where(entry => entry.ServerId is { } serverId && removed.Contains(serverId)).ToList();
+        if (await _keeper.KeepAsync(run.Root, stubs, series, cancellationToken).ConfigureAwait(false))
+        {
+            return (plan.Removals, true);
+        }
+
+        run.Failed += stubs.Count;
+        foreach (var serverId in stubs.Select(stub => stub.ServerId).OfType<Guid>())
+        {
+            run.CountServer(serverId, failed: 1);
+        }
+
+        var held = stubs.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        return (plan.Removals.Where(stub => !held.Contains(stub.Id)).ToList(), false);
+    }
+
+    private async Task<IReadOnlyList<StubEntry>> DetachRemovalsAsync(Run run, IReadOnlyList<StubEntry> removals, CancellationToken cancellationToken)
+    {
+        if (_linker is null || removals.Count == 0)
+        {
+            return removals;
+        }
+
+        var kept = await _linker.DetachForRemovalAsync(run.State.WithOldPaths(removals), cancellationToken).ConfigureAwait(false);
+        if (kept.Count == 0)
+        {
+            return removals;
+        }
+
+        var ids = kept.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        var stuck = removals.Where(stub => ids.Contains(stub.Id)).ToList();
+        run.Failed += stuck.Count;
+        foreach (var serverId in stuck.Select(stub => stub.ServerId).OfType<Guid>())
+        {
+            run.CountServer(serverId, failed: 1);
+        }
+
+        return removals.Where(stub => !ids.Contains(stub.Id)).ToList();
+    }
+
     private void RemoveGone(Run run, IReadOnlyList<StubEntry> stubs)
     {
         var removal = _remover.RemoveAll(run.Root, run.State, stubs);
@@ -534,6 +690,34 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         foreach (var failure in removal.Failures)
         {
             _logger.LogError("Cannot remove a stub: {Error}", failure.GetType().Name);
+        }
+
+        // A stub still in the registry was not removed. The totals count the failures themselves.
+        var left = removal.State.Stubs.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var stub in stubs)
+        {
+            if (stub.ServerId is { } serverId)
+            {
+                var kept = left.Contains(stub.Id);
+                run.CountServer(serverId, removed: kept ? 0 : 1, failed: kept ? 1 : 0);
+            }
+        }
+    }
+
+    // A server put back in the settings during the run keeps its folder: the servers are read again before each delete.
+    private void RemoveServerFolders(Run run, IReadOnlyList<Guid> removedServers)
+    {
+        var removal = _remover.RemoveServerFolders(run.Root, run.State, removedServers, serverId => _servers.GetServers().Any(server => server.Id == serverId));
+        run.State = removal.State;
+        run.FoldersPending += removal.Failures.Count;
+        foreach (var failure in removal.Failures)
+        {
+            _logger.LogError("Cannot remove the folder of a removed server: {Error}", failure.GetType().Name);
+        }
+
+        if (removal.Removed > 0)
+        {
+            _logger.LogInformation("Removed the folders of {Count} removed servers", removal.Removed);
         }
     }
 
@@ -565,6 +749,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         private readonly List<SeriesStub> _series;
         private readonly Dictionary<string, int> _stubAt;
         private readonly Dictionary<string, int> _seriesAt;
+        private readonly Dictionary<Guid, StubCounts> _byServer = [];
 
         public Run(string root, StubState state)
         {
@@ -597,6 +782,40 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public int Removed { get; set; }
 
         public int Failed { get; set; }
+
+        public int ImagesPending { get; set; }
+
+        public int FoldersPending { get; set; }
+
+        /// <summary>Adds to the totals and to the counts of the server, if the stub has one.</summary>
+        public void Count(Guid? serverId, int created = 0, int updated = 0)
+        {
+            Created += created;
+            Updated += updated;
+            if (serverId is { } id)
+            {
+                CountServer(id, created, updated);
+            }
+        }
+
+        /// <summary>Counts a stub or series that could not be written.</summary>
+        public void Fail(Guid? serverId)
+        {
+            Failed++;
+            if (serverId is { } id)
+            {
+                CountServer(id, failed: 1);
+            }
+        }
+
+        /// <summary>Adds to the counts of one server only.</summary>
+        public void CountServer(Guid serverId, int created = 0, int updated = 0, int removed = 0, int failed = 0)
+        {
+            var counts = _byServer.GetValueOrDefault(serverId) ?? new StubCounts(0, 0, 0, 0);
+            _byServer[serverId] = new StubCounts(counts.Created + created, counts.Updated + updated, counts.Removed + removed, counts.Failed + failed);
+        }
+
+        public IReadOnlyDictionary<Guid, StubCounts> ByServer() => new Dictionary<Guid, StubCounts>(_byServer);
 
         public void Put(StubEntry stub)
         {

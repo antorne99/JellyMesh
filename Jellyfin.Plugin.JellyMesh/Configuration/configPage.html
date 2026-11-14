@@ -594,6 +594,10 @@
                 margin-bottom: 0.25em;
             }
 
+            .jmGroup .checkboxContainer + .checkboxContainer {
+                margin-top: 1em;
+            }
+
             @media (max-width: 899.95px) {
                 .jmGroup {
                     grid-template-columns: minmax(0, 1fr);
@@ -658,6 +662,47 @@
             .jmFolderWarning {
                 margin-top: 0.5em;
                 font-weight: bold;
+            }
+
+            .jmServerFolder {
+                margin-top: 1em;
+            }
+
+            .jmServerFolderName {
+                color: var(--jm-text);
+                font-weight: 600;
+            }
+
+            .jmOwnNotes p {
+                margin: 0.5em 0 0;
+            }
+
+            .jmOwnNotes .jmActions {
+                margin-top: 0.75em;
+            }
+
+            .jmReleasedLibraries {
+                margin-top: 1em;
+            }
+
+            .jmReleasedLibraries p {
+                margin: 0;
+            }
+
+            .jmReleasedLibraries .jmActions {
+                margin-top: 0.75em;
+            }
+
+            .jmHeldRemovals {
+                margin-top: 1em;
+            }
+
+            .jmHeldRemovals p {
+                margin: 0;
+            }
+
+            .jmHeldRemovals p + p {
+                margin-top: 0.5em;
             }
 
             .jmCopyField {
@@ -1021,6 +1066,14 @@
                 margin: 0;
             }
 
+            .jmMergeSeries .jmMergeTitle {
+                grid-row: span 6;
+            }
+
+            .jmMergeSeries .jmMergeDetails {
+                grid-row: span 5;
+            }
+
             .jmCompareRow {
                 display: grid;
                 grid-template-columns: 6em minmax(0, 1fr);
@@ -1086,6 +1139,10 @@
                 display: none;
             }
 
+            .jmRenameCancel[hidden] {
+                display: none;
+            }
+
             .jmMerge {
                 padding: 0.9em 1.1em;
                 overflow-wrap: anywhere;
@@ -1109,8 +1166,86 @@
                 margin-top: 0.5em;
             }
 
+            #JellyMeshConfigPage .jmMergeSplit {
+                margin: 0.75em 0 0;
+                padding: 0.6em 0.8em;
+            }
+
             .jmMerge .emby-button {
                 margin: 0.75em 0 0;
+            }
+
+            .jmTableWrap {
+                overflow-x: auto;
+                border: 1px solid var(--jm-line);
+                border-radius: var(--jm-radius);
+                background: var(--jm-surface);
+            }
+
+            .jmTableWrap:focus-visible {
+                outline: 2px solid var(--jm-teal);
+                outline-offset: 2px;
+            }
+
+            #JellyMeshConfigPage .jmTableWrap > p {
+                margin: 0;
+                padding: 0.85em 1em;
+                color: var(--jm-muted);
+            }
+
+            .jmHistory {
+                width: 100%;
+                border-collapse: collapse;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .jmHistory th,
+            .jmHistory td {
+                padding: 0.65em 1em;
+                border-bottom: 1px solid var(--jm-line);
+                text-align: left;
+                vertical-align: top;
+            }
+
+            .jmHistory tbody tr:last-child td {
+                border-bottom: 0;
+            }
+
+            .jmHistory th {
+                color: var(--jm-muted);
+                font-size: 0.875em;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
+            .jmHistory td:not(:last-child) {
+                white-space: nowrap;
+            }
+
+            .jmHistory td:last-child {
+                min-width: 18em;
+            }
+
+            #JellyMeshConfigPage .jmHistory p {
+                margin: 0;
+            }
+
+            #JellyMeshConfigPage .jmHistory p + p {
+                margin-top: 0.3em;
+            }
+
+            .jmHistoryOutcome .jmDot {
+                display: inline-block;
+                margin-right: 0.45em;
+                vertical-align: 0.05em;
+            }
+
+            .jmHistoryNote {
+                display: block;
+                margin-top: 0.25em;
+                color: var(--jm-muted);
+                font-size: 0.875em;
+                white-space: normal;
             }
         </style>
         <div data-role="content">
@@ -1133,6 +1268,61 @@
                         <span class="jmDot" aria-hidden="true"></span>
                         <p id="jmStatus" class="jmHeadline"></p>
                     </div>
+                    <div id="jmMigration" hidden>
+                        <style>
+                            #jmMigration .jmBanner {
+                                align-items: flex-start;
+                            }
+
+                            #jmMigration .jmDot {
+                                margin-top: 0.4em;
+                            }
+
+                            #jmMigration p,
+                            #jmMigration ul {
+                                margin: 0.35em 0 0;
+                            }
+
+                            #jmMigration ul {
+                                padding-left: 1.2em;
+                            }
+
+                            #jmMigrationActions[hidden],
+                            #jmMigrationActions .emby-button[hidden] {
+                                display: none;
+                            }
+
+                            #jmMigrationNext {
+                                font-weight: 600;
+                            }
+
+                            #jmMigrationTitle {
+                                margin-top: 0;
+                                font-weight: 600;
+                            }
+
+                            .jmMigrationPath {
+                                display: block;
+                                color: var(--jm-text);
+                                overflow-wrap: anywhere;
+                            }
+                        </style>
+                        <div id="jmMigrationBanner" class="jmBanner jmToneWarn">
+                            <span class="jmDot" aria-hidden="true"></span>
+                            <div role="status">
+                                <p id="jmMigrationTitle"></p>
+                                <p id="jmMigrationText"></p>
+                                <p id="jmMigrationNext" hidden></p>
+                                <ul id="jmMigrationLibraries"></ul>
+                                <p id="jmMigrationProgress"></p>
+                                <p id="jmMigrationError" hidden></p>
+                                <div id="jmMigrationActions" class="jmActions" hidden>
+                                    <button type="button" id="jmMigrateAutomatic" is="emby-button" class="raised button-submit emby-button"></button>
+                                    <button type="button" id="jmMigrateManual" is="emby-button" class="raised emby-button"></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="jmColumns">
                         <dl id="jmSummary" class="jmFacts jmPanel"></dl>
                         <div id="jmSetup" hidden>
@@ -1148,6 +1338,8 @@
                     <h3 class="sectionTitle">Remote servers</h3>
                     <div id="jmServersSyncFailure" hidden class="jmAlert"></div>
                     <div id="jmServers" class="jmRowList"></div>
+                    <div id="jmHeldRemovals" class="jmAlert jmHeldRemovals" hidden></div>
+                    <div id="jmReleasedLibraries" class="jmAlert jmReleasedLibraries" hidden></div>
                     <details id="jmAddServerPart" class="jmDisclosure">
                         <summary>
                             <h3 class="sectionTitle">Add a server</h3>
@@ -1206,12 +1398,24 @@
                     <div id="jmSyncServers"></div>
 
                     <h3 class="sectionTitle">Duplicate films</h3>
-                    <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
+                    <p>JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: they become versions of one title, the best quality plays unless a user picks another version, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.</p>
                     <div id="jmMergeWarning" role="alert" hidden class="jmAlert"></div>
                     <div id="jmMergesFailure" role="alert" hidden class="jmAlert"></div>
                     <div id="jmMergeCases"></div>
                     <h3 class="sectionTitle">Merged films</h3>
                     <div id="jmMerges" class="jmRowList"></div>
+
+                    <h3 class="sectionTitle">Duplicate series</h3>
+                    <p>JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: the copies of each episode become its versions, each episode plays from its best copy unless a user picks another, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.</p>
+                    <div id="jmSeriesCases"></div>
+                    <h3 class="sectionTitle">Merged series</h3>
+                    <div id="jmSeriesMerges" class="jmRowList"></div>
+
+                    <h3 class="sectionTitle">Sync history</h3>
+                    <p>The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder, then the totals of the whole folder.</p>
+                    <div id="jmHistoryWarning" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmHistoryFailure" role="alert" hidden class="jmAlert"></div>
+                    <div id="jmSyncHistory" class="jmTableWrap" role="region" tabindex="0" aria-label="Sync history"></div>
                 </section>
 
                 <section data-jm-tab="sharing" role="tabpanel" aria-label="Sharing" hidden>
@@ -1267,12 +1471,21 @@
                         </div>
                         <div class="jmGroup">
                             <h3 class="sectionTitle">Metadata</h3>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
-                                <label class="emby-checkbox-label">
-                                    <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
-                                    <span>Protect metadata</span>
-                                </label>
-                                <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
+                            <div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input id="jmMetadataProtection" type="checkbox" is="emby-checkbox" />
+                                        <span>Protect metadata</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Locks federated items, so metadata fetchers and "Replace all metadata" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input id="jmFederateCollections" type="checkbox" is="emby-checkbox" />
+                                        <span>Write remote collections into films</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with "Automatically add to collection" turned on. Turning this off keeps the collections already made.</div>
+                                </div>
                             </div>
                         </div>
                         <div class="jmGroup">
@@ -1320,6 +1533,18 @@
                             </div>
                         </details>
                     </form>
+                    <div id="jmNewServers" class="jmGroup">
+                        <h3 class="sectionTitle">New servers</h3>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="jmNewServerMode">Folders of a server linked later</label>
+                            <select id="jmNewServerMode" is="emby-select" disabled>
+                                <option value="Manual">Add them by hand</option>
+                                <option value="Automatic">Add them automatically</option>
+                            </select>
+                            <div class="fieldDescription">Automatically adds the folders of a new server to every library that holds the folders of another server, except the libraries made for one server. Saved when chosen.</div>
+                            <div id="jmNewServerModeError" class="fieldDescription" role="alert" hidden></div>
+                        </div>
+                    </div>
                 </section>
 
                 <div class="jmDock">
@@ -1339,10 +1564,51 @@
         <script type="application/json" id="jmTranslations">
             {
                 "it": {
+                    "Add the folders of each server to the libraries": "Aggiungi alle librerie le cartelle di ogni server",
+                    "The federated folder now has a folder for each server. Until these folders are in the libraries and scanned, the old titles stay as they are.": "La cartella federata ora ha una cartella per ogni server. Finché queste cartelle non sono nelle librerie e analizzate, i vecchi titoli restano come sono.",
+                    "Moving the watch state to the folders of each server": "Spostamento dello stato di visione nelle cartelle di ogni server",
+                    "The watch state of the old titles moves to the new ones as the libraries are scanned.": "Lo stato di visione dei vecchi titoli passa ai nuovi man mano che le librerie vengono analizzate.",
+                    "Old titles left: {count}.": "Vecchi titoli rimasti: {count}.",
+                    "Waiting for a scan: {count}.": "In attesa di una scansione: {count}.",
+                    "Held for an empty remote library: {count}.": "Trattenuti per una libreria remota vuota: {count}.",
+                    "Blocked titles, tried again at every run: {count}.": "Titoli bloccati, riprovati a ogni passaggio: {count}.",
+                    "Remove the old folders from the libraries": "Rimuovi le vecchie cartelle dalle librerie",
+                    "Choose how to move to the folders of each server": "Scegli come passare alle cartelle di ogni server",
+                    "JellyMesh can add the folders of each server to the libraries that hold the old folders, move the watch state, and remove the old folders, without touching other folders or settings. Or you can change the libraries by hand. Until you choose, the old titles stay as they are.": "JellyMesh può aggiungere le cartelle di ogni server alle librerie che contengono le vecchie cartelle, spostare lo stato di visione e togliere le vecchie cartelle, senza toccare altre cartelle o impostazioni. Oppure puoi cambiare le librerie a mano. Finché non scegli, i vecchi titoli restano come sono.",
+                    "Migrate automatically": "Migra in automatico",
+                    "I'll do it by hand": "Lo faccio a mano",
+                    "Try again": "Riprova",
+                    "Migrating to the folders of each server": "Migrazione alle cartelle di ogni server",
+                    "Adding the folders of each server to the libraries.": "Aggiunta delle cartelle di ogni server alle librerie.",
+                    "Waiting for the library scan.": "In attesa della scansione delle librerie.",
+                    "Moving the watch state to the new titles.": "Spostamento dello stato di visione nei nuovi titoli.",
+                    "Removing the old folders from the libraries.": "Rimozione delle vecchie cartelle dalle librerie.",
+                    "Waiting for the last library scan.": "In attesa dell'ultima scansione delle librerie.",
+                    "The automatic migration stopped": "La migrazione automatica si è fermata",
+                    "The libraries could not be read.": "Non è stato possibile leggere le librerie.",
+                    "The folders of each server could not be added to the library {library}.": "Non è stato possibile aggiungere le cartelle di ogni server alla libreria {library}.",
+                    "No library holds the old folder of a kind with titles to move, so its folders of each server have nowhere to go.": "Nessuna libreria contiene la vecchia cartella di un tipo con titoli da spostare, quindi le sue cartelle di ogni server non hanno dove andare.",
+                    "A folder of a server left the libraries before the watch state moved.": "Una cartella di un server è uscita dalle librerie prima che lo stato di visione fosse spostato.",
+                    "The old folders could not be removed from the library {library}.": "Non è stato possibile togliere le vecchie cartelle dalla libreria {library}.",
+                    "A step failed.": "Un passo non è riuscito.",
+                    "New servers": "Nuovi server",
+                    "Folders of a server linked later": "Cartelle di un server collegato in seguito",
+                    "Add them by hand": "Aggiungile a mano",
+                    "Add them automatically": "Aggiungile automaticamente",
+                    "Automatically adds the folders of a new server to every library that holds the folders of another server, except the libraries made for one server. Saved when chosen.": "Aggiunge automaticamente le cartelle di un nuovo server a ogni libreria che contiene le cartelle di un altro server, tranne le librerie create per un solo server. Si salva appena scelto.",
+                    "The old folders still hold titles the plugin has no record of, or could not be read, so their watch state would be lost.": "Le vecchie cartelle contengono ancora titoli di cui il plugin non ha traccia, oppure non è stato possibile leggerle, quindi il loro stato di visione andrebbe perso.",
+                    "The old folders still work. Do the steps below by hand, or try again: the migration resumes from this step.": "Le vecchie cartelle funzionano ancora. Fai a mano i passi qui sotto, oppure riprova: la migrazione riprende da questo passo.",
+                    "The automatic migration is running. Try again when it stops.": "La migrazione automatica è in corso. Riprova quando si ferma.",
+                    "There is nothing to migrate.": "Non c'è niente da migrare.",
+                    "The automatic migration cannot go back to manual.": "La migrazione automatica non può tornare a quella manuale.",
+                    "The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.": "Lo stato di visione di ogni utente resta legato ai titoli: se gli stessi titoli ricompaiono entro 90 giorni, da questo server aggiunto di nuovo o da un altro, viene ripristinato.",
+                    "The watch state of each user stays with the titles: if the same titles appear again within 90 days, from those servers added back or from another one, it comes back.": "Lo stato di visione di ogni utente resta legato ai titoli: se gli stessi titoli ricompaiono entro 90 giorni, da quei server aggiunti di nuovo o da un altro, viene ripristinato.",
+                    "The watch state has moved to the new titles and the old folders are empty.": "Lo stato di visione è passato ai nuovi titoli e le vecchie cartelle sono vuote.",
                     "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Librerie e salva di nuovo la selezione.",
                     "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
                     "A dedicated non-admin user on the remote. API keys are not used.": "Un utente dedicato non amministratore sul remoto. Le chiavi API non vengono usate.",
                     "A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.": "Una cartella di questo server in cui Jellyfin può scrivere. JellyMesh scrive solo lì dentro.",
+                    "A library name was taken, so a library was not created.": "Un nome di libreria era già usato, quindi una libreria non è stata creata.",
                     "A library of {server} came back empty. Its {count} titles are kept.": "Una libreria di {server} è risultata vuota. I suoi {count} titoli restano.",
                     "A series in two folders stays split in {libraries}.": "Una serie presente in due cartelle resta divisa in {libraries}.",
                     "A sync is already running.": "Una sincronizzazione è già in corso.",
@@ -1355,20 +1621,19 @@
                     "Active. {problems}.": "Attivo. {problems}.",
                     "Add a remote server": "Aggiungi un server remoto",
                     "Add a server": "Aggiungi un server",
-                    "Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.": "Aggiungili a mano nel Pannello di controllo > Librerie, uno a una libreria di film e uno a una libreria di serie. JellyMesh non modifica mai le librerie.",
-                    "Add these paths by hand in Dashboard > Libraries.": "Aggiungi questi percorsi a mano nel Pannello di controllo > Librerie.",
+                    "Add the Film folder of each server to a film library and its Serie folder to a series library in Dashboard > Libraries, or turn on the automatic libraries of the server on the Servers tab.": "Aggiungi la cartella Film di ogni server a una libreria di film e la sua cartella Serie a una libreria di serie nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server nella scheda Server.",
                     "Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Librerie nella sua scheda per riprovare.",
                     "Added {server}. Choose its libraries.": "{server} è stato aggiunto. Scegli le sue librerie.",
                     "Added {server}. Open Libraries on its card to choose what to import.": "{server} è stato aggiunto. Apri Librerie nella sua scheda per scegliere cosa importare.",
-                    "Adding the server back brings the same titles and watch state.": "Aggiungendo di nuovo il server tornano gli stessi titoli e lo stato di visione.",
                     "Advanced playback times": "Tempi di riproduzione avanzati",
                     "Already merged.": "Già uniti.",
                     "Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.": "Un altro server JellyMesh accede qui con un utente dedicato non amministratore di questo server. Scegli quell'utente, cosa può leggere e quanti stream può tenere insieme. Un utente così non può raggiungere nient'altro su questo server.",
                     "At least 300 seconds.": "Almeno 300 secondi.",
+                    "Being updated": "In aggiornamento",
                     "Best version first.": "Prima la versione migliore.",
                     "Best version: {quality}": "Versione migliore: {quality}",
                     "Bitrate": "Bitrate",
-                    "Both paths are linked.": "Entrambi i percorsi sono collegati.",
+                    "Cancelled": "Annullata",
                     "Catalog": "Catalogo",
                     "Check that the URL leads to a Jellyfin server, then test the connection.": "Controlla che l'URL porti a un server Jellyfin, poi prova la connessione.",
                     "Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.": "Controlla che l'URL porti a un server Jellyfin. Se non è così, rimuovi questo server e aggiungilo di nuovo.",
@@ -1382,6 +1647,7 @@
                     "Close an idle remote transcode after (seconds)": "Chiudi una transcodifica remota inattiva dopo (secondi)",
                     "Close the transcode of an expired stream": "Chiudi la transcodifica di uno stream scaduto",
                     "Codec": "Codec",
+                    "Confirm to delete the libraries of this server.": "Conferma per eliminare le librerie di questo server.",
                     "Connect": "Connetti",
                     "Connect a server": "Connetti un server",
                     "Connect and choose libraries": "Connetti e scegli le librerie",
@@ -1389,24 +1655,34 @@
                     "Connected.": "Connesso.",
                     "Copied {value}.": "Copiato {value}.",
                     "Copy": "Copia",
-                    "Copy {library} path": "Copia il percorso di {library}",
+                    "Copy the {library} path of {server}": "Copia il percorso {library} di {server}",
                     "Copy: {label}": "Copia: {label}",
                     "Could not read {what}. {next} Reason: {reason}": "Impossibile leggere {what}. {next} Motivo: {reason}",
                     "Could not tell which copy would play. {reason}": "Impossibile dire quale copia verrebbe riprodotta. {reason}",
+                    "Create a Film and a Serie library for this server": "Crea una libreria Film e una Serie per questo server",
                     "Create a non-admin user for the other server first.": "Prima crea un utente non amministratore per l'altro server.",
+                    "Creating the libraries of {server}. JellyMesh then scans them.": "Creazione delle librerie di {server} in corso. Poi JellyMesh le analizza.",
+                    "Delete the libraries of this server?": "Eliminare le librerie di questo server?",
+                    "Deleting the libraries of {server}.": "Eliminazione delle librerie di {server} in corso.",
                     "Disconnect": "Disconnetti",
                     "Disconnect this server?": "Disconnettere questo server?",
                     "Disconnected {name}.": "{name} è stato disconnesso.",
                     "Dismiss": "Chiudi",
                     "Done": "Fatto",
                     "Duplicate films": "Film duplicati",
+                    "Duplicate series": "Serie duplicate",
                     "Duplicates to review": "Duplicati da rivedere",
+                    "Duration": "Durata",
+                    "Each server gets a Film and a Serie folder here. Add a server to see them.": "Qui ogni server ha una cartella Film e una Serie. Aggiungi un server per vederle.",
+                    "Each server has a Film and a Serie folder. Add them by hand in Dashboard > Libraries, the Film folder to a film library and the Serie folder to a series library, or turn on the automatic libraries of the server.": "Ogni server ha una cartella Film e una Serie. Aggiungile a mano nel Pannello di controllo > Librerie, la cartella Film a una libreria di film e la cartella Serie a una libreria di serie, oppure attiva le librerie automatiche del server.",
                     "Enter a name, a user and an http or https URL with no credentials, query or fragment.": "Inserisci un nome, un utente e un URL http o https senza credenziali, query o frammento.",
                     "Enter a time as hours and minutes.": "Inserisci un orario in ore e minuti.",
                     "Enter a whole number from {min} to {max}.": "Inserisci un numero intero da {min} a {max}.",
                     "Enter a whole number of at least {min}.": "Inserisci un numero intero di almeno {min}.",
                     "Enter an absolute path other than the filesystem root, without \"..\".": "Inserisci un percorso assoluto diverso dalla radice del filesystem, senza \"..\".",
+                    "Episodes": "Episodi",
                     "Error": "Errore",
+                    "Failed": "Non riuscita",
                     "Federated folder": "Cartella federata",
                     "Film library": "Libreria film",
                     "Fix the login on that server, or remove this server and add it again with a working one.": "Sistema l'accesso su quel server, oppure rimuovi questo server e aggiungilo di nuovo con un accesso funzionante.",
@@ -1422,12 +1698,27 @@
                     "Give the dedicated user access on that server, then test the connection.": "Dai accesso all'utente dedicato su quel server, poi prova la connessione.",
                     "HDR unknown": "HDR sconosciuto",
                     "IDs": "ID",
+                    "If merged, each episode plays from its best copy, and a local copy always wins. The other copies become versions a user can pick.": "Se le unisci, ogni episodio viene riprodotto dalla sua copia migliore, e una copia locale vince sempre. Le altre copie diventano versioni che l'utente può scegliere.",
                     "If merged, {name} plays, because a local copy always wins.": "Se li unisci viene riprodotto {name}, perché una copia locale vince sempre.",
-                    "If merged, {name} plays: {quality}. The others stay as backups.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri restano come riserve.",
-                    "It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.": "Legge i cataloghi e crea i due percorsi da collegare. Parte anche da sola a intervalli regolari.",
-                    "Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai film uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
-                    "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: the best quality plays, the others stay as backups, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: viene riprodotta la qualità migliore, gli altri restano come riserve, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
+                    "If merged, {name} plays: {quality}. The others become versions a user can pick.": "Se li unisci viene riprodotto {name}: {quality}. Gli altri diventano versioni che l'utente può scegliere.",
+                    "In no library yet": "Ancora in nessuna libreria",
+                    "In total: {created} created, {updated} updated, {removed} removed.": "In totale: {created} creati, {updated} aggiornati, {removed} rimossi.",
+                    "Incremental": "Incrementale",
+                    "It reads the catalogs and fills the Film and Serie folders of each server. It also runs by itself on a timer.": "Legge i cataloghi e riempie le cartelle Film e Serie di ogni server. Parte anche da sola a intervalli regolari.",
+                    "Its automatic libraries are deleted too.": "Vengono eliminate anche le sue librerie automatiche.",
+                    "Its automatic libraries are deleted too: {names}.": "Vengono eliminate anche le sue librerie automatiche: {names}.",
+                    "Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.": "Le sue copie escono subito dai titoli uniti, e un'unione che resta con una sola copia viene annullata. Aggiungendo di nuovo il server non vengono riunite.",
+                    "JellyMesh keeps these series apart because it cannot be sure they are one series. If they are, select them and merge: the copies of each episode become its versions, each episode plays from its best copy unless a user picks another, a local copy always wins, and watch state moves to the episode that stays. Local files are never changed.": "JellyMesh tiene separate queste serie perché non può essere certo che siano una sola serie. Se lo sono, selezionale e uniscile: le copie di ogni episodio diventano sue versioni, ogni episodio viene riprodotto dalla sua copia migliore se l'utente non ne sceglie un'altra, una copia locale vince sempre e lo stato di visione passa all'episodio che resta. I file locali non vengono mai modificati.",
+                    "JellyMesh keeps these titles apart because it cannot be sure they are one film. If they are, select them and merge: they become versions of one title, the best quality plays unless a user picks another version, a local copy always wins, and watch state moves to the title that stays. Local files are never changed.": "JellyMesh tiene separati questi titoli perché non può essere certo che siano un solo film. Se lo sono, selezionali e uniscili: diventano versioni di un solo titolo, viene riprodotta la qualità migliore se l'utente non sceglie un'altra versione, una copia locale vince sempre e lo stato di visione passa al titolo che resta. I file locali non vengono mai modificati.",
+                    "Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.": "Jellyfin mostra questa serie divisa, perché le cartelle Serie dei suoi server sono in librerie diverse: {libraries}. Aggiungile alle stesse librerie.",
+                    "JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.": "Quando è cambiata la cartella federata, JellyMesh ti ha lasciato queste librerie di server rimossi: {libraries}. Eliminale nel Pannello di controllo > Librerie se non ti servono.",
+                    "Hide from this page": "Nascondi da questa pagina",
+                    "Warning: the removal of {server} is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.": "Attenzione: la rimozione di {server} è in attesa finché non si salva lo stato di visione dei suoi titoli. Fino ad allora i suoi titoli e le sue cartelle restano, e JellyMesh riprova a ogni sincronizzazione.",
+                    "Warning: the removal of a server is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.": "Attenzione: la rimozione di un server è in attesa finché non si salva lo stato di visione dei suoi titoli. Fino ad allora i suoi titoli e le sue cartelle restano, e JellyMesh riprova a ogni sincronizzazione.",
+                    "These libraries are no longer listed here. They stay in Dashboard > Libraries.": "Queste librerie non sono più elencate qui. Restano nel Pannello di controllo > Librerie.",
+                    "These libraries are no longer listed. The page reads them again.": "Queste librerie non sono più elencate. La pagina le legge di nuovo.",
                     "JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.": "JellyMesh accede con questo utente, poi elenca le librerie che l'utente può vedere, così puoi scegliere cosa importare.",
+                    "JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.": "JellyMesh non gestisce più queste librerie, perché ne sono cambiati il percorso o il tipo, sono state eliminate o è cambiata la cartella federata: {libraries}. Quelle ancora presenti sono tue, da tenere o eliminare.",
                     "JellyMesh server": "server JellyMesh",
                     "Keep paused sessions (hours)": "Mantieni le sessioni in pausa (ore)",
                     "Last check": "Ultimo controllo",
@@ -1437,19 +1728,26 @@
                     "Last sync: {date}.": "Ultima sincronizzazione: {date}.",
                     "Length": "Durata",
                     "Libraries": "Librerie",
+                    "Libraries changed on the federated folder since the last sync, which links the versions again.": "Dall'ultima sincronizzazione sono cambiate librerie sulla cartella federata; la prossima collega di nuovo le versioni.",
+                    "Libraries no longer offered are no longer shared with this server.": "Le librerie non più offerte non sono più condivise con questo server.",
                     "Libraries saved for {server}. The next sync reads them.": "Librerie salvate per {server}. La prossima sincronizzazione le legge.",
                     "Libraries to import": "Librerie da importare",
                     "Libraries to import from {server}": "Librerie da importare da {server}",
-                    "Link the two paths": "Collega i due percorsi",
+                    "Link the folders of each server": "Collega le cartelle di ogni server",
                     "Linked": "Collegata",
                     "Locks federated items, so metadata fetchers and \"Replace all metadata\" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.": "Blocca gli elementi federati, così i recuperi di metadati e \"Sostituisci tutti i metadati\" non li toccano. Se disattivata, i recuperi completano i metadati e i titoli senza ID provider possono essere abbinati al film sbagliato.",
                     "Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.": "Accedi con un utente dedicato non amministratore di quel server, al suo indirizzo tailnet. Subito dopo compaiono le sue librerie.",
                     "Merge selected": "Unisci selezionati",
                     "Merge the ones that are one film.": "Unisci quelli che sono un solo film.",
+                    "Merge the ones that are one series.": "Unisci quelle che sono una sola serie.",
                     "Merge undone. The film list changes after the library scan that was queued.": "Unione annullata. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
+                    "Merge undone. The series list changes after the library scan that was queued.": "Unione annullata. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
                     "Merged films": "Film uniti",
                     "Merged on {date}": "Uniti il {date}",
+                    "Merged on {date}|series": "Unite il {date}",
+                    "Merged series": "Serie unite",
                     "Merged. The film list changes after the library scan that was queued.": "Uniti. L'elenco dei film cambia dopo la scansione della libreria messa in coda.",
+                    "Merged. The series list changes after the library scan that was queued.": "Unite. L'elenco delle serie cambia dopo la scansione della libreria messa in coda.",
                     "Metadata": "Metadati",
                     "Mode": "Modalità",
                     "Most servers can keep these values.": "La maggior parte dei server può tenere questi valori.",
@@ -1460,17 +1758,23 @@
                     "No connected servers": "Nessun server connesso",
                     "No connected servers yet.": "Ancora nessun server connesso.",
                     "No doubtful films.": "Nessun film dubbio.",
+                    "No doubtful series.": "Nessuna serie dubbia.",
                     "No libraries chosen, so nothing is imported from this server yet.": "Nessuna libreria scelta, quindi per ora da questo server non si importa nulla.",
                     "No remote servers yet.": "Ancora nessun server remoto.",
+                    "No remote servers.": "Nessun server remoto.",
                     "No server was left to forget.": "Non restava nessun server da dimenticare.",
+                    "No server yet": "Ancora nessun server",
+                    "No sync has run yet.": "Nessuna sincronizzazione eseguita finora.",
                     "None": "Nessuno",
                     "None yet": "Ancora nessuno",
                     "Not checked": "Non controllata",
                     "Not chosen": "Non scelta",
                     "Not in effect: a copy is missing, or the IDs already make these one film.": "Non attiva: manca una copia, oppure gli ID li rendono già un solo film.",
+                    "Not in effect: a copy is missing, or the IDs already make these one series.": "Non attiva: manca una copia, oppure gli ID le rendono già una sola serie.",
                     "Not known": "Non noto",
                     "Not linked": "Non collegata",
                     "Not read yet": "Non ancora letto",
+                    "Not read: {failure}.": "Non letto: {failure}.",
                     "Not since this server started": "Non dall'avvio di questo server",
                     "Nothing is imported from a server until you choose its libraries.": "Da un server non si importa nulla finché non scegli le sue librerie.",
                     "Nothing is imported from a server until you choose its libraries. Still to choose: {servers}.": "Da un server non si importa nulla finché non scegli le sue librerie. Ancora da scegliere: {servers}.",
@@ -1479,15 +1783,19 @@
                     "Open Libraries and save the selection again.": "Apri Librerie e salva di nuovo la selezione.",
                     "Open {tab}": "Apri {tab}",
                     "Other version: {quality}": "Altra versione: {quality}",
+                    "Outcome": "Esito",
                     "Overview": "Panoramica",
                     "Part of this page could not be loaded, and each part says so. {reason}": "Una parte di questa pagina non si è caricata, e ogni parte lo segnala. {reason}",
+                    "Partly failed": "Riuscita in parte",
                     "Password": "Password",
-                    "Playback already running may not stop right away.": "Una riproduzione già in corso potrebbe non fermarsi subito.",
                     "Protect metadata": "Proteggi i metadati",
+                    "Puts the collection a film has on its server into its .nfo. Jellyfin groups the films only in libraries with \"Automatically add to collection\" turned on. Turning this off keeps the collections already made.": "Mette nel .nfo di un film la collezione che ha sul suo server. Jellyfin raggruppa i film solo nelle librerie con \"Aggiungi automaticamente alla collezione\" attivo. Se la disattivi, le collezioni già create restano.",
                     "Quality not read: a local copy plays whatever its quality.": "Qualità non letta: una copia locale viene riprodotta qualunque sia la sua qualità.",
                     "Quality unknown": "Qualità sconosciuta",
                     "Range": "Gamma",
                     "Reading...": "Lettura...",
+                    "Reconciliation": "Riconciliazione",
+                    "Recreate missing libraries": "Ricrea le librerie mancanti",
                     "Reload the page before saving.": "Ricarica la pagina prima di salvare.",
                     "Remember the transcoding rights of a remote (minutes)": "Ricorda i diritti di transcodifica di un remoto (minuti)",
                     "Remote servers": "Server remoti",
@@ -1498,41 +1806,92 @@
                     "Remove this server?": "Rimuovere questo server?",
                     "Removed {server}. Its titles are leaving the libraries.": "{server} è stato rimosso. I suoi titoli stanno uscendo dalle librerie.",
                     "Resolution": "Risoluzione",
-                    "Restoring the settings or adding those servers again brings the same titles and watch state.": "Ripristinando le impostazioni o aggiungendo di nuovo quei server tornano gli stessi titoli e lo stato di visione.",
+                    "Restoring the settings brings its folders back, with the same titles and watch state.": "Ripristinando le impostazioni tornano le sue cartelle, con gli stessi titoli e lo stato di visione.",
+                    "Restoring the settings brings their folders back, with the same titles and watch state.": "Ripristinando le impostazioni tornano le loro cartelle, con gli stessi titoli e lo stato di visione.",
                     "Run the first sync": "Esegui la prima sincronizzazione",
                     "Running now": "In corso",
                     "Save": "Salva",
                     "Save libraries": "Salva le librerie",
                     "Saved {name}.": "{name} è stato salvato.",
+                    "Seasons": "Stagioni",
+                    "season": "stagione",
+                    "seasons": "stagioni",
                     "Select at least two titles of one group.": "Seleziona almeno due titoli di un gruppo.",
                     "Select at least two titles to merge them.": "Seleziona almeno due titoli per unirli.",
+                    "Select at most one series with a local copy: two local series cannot be merged.": "Seleziona al massimo una serie con una copia locale: due serie locali non si possono unire.",
                     "Select at most one title with a local copy: two local films cannot be merged.": "Seleziona al massimo un titolo con una copia locale: due film locali non si possono unire.",
                     "Series library": "Libreria serie",
                     "Server": "Server",
+                    "Server libraries": "Librerie del server",
                     "Servers": "Server",
                     "Set by JELLYMESH_FEDERATED_ROOT on the server. To choose it here, remove the variable and restart.": "Impostata da JELLYMESH_FEDERATED_ROOT sul server. Per sceglierla qui, rimuovi la variabile e riavvia.",
+                    "Set the federated folder first.": "Imposta prima la cartella federata.",
                     "Settings": "Impostazioni",
                     "Settings not saved. {reason}": "Impostazioni non salvate. {reason}",
                     "Settings not saved: the server answered with error {status}.": "Impostazioni non salvate: il server ha risposto con l'errore {status}.",
                     "Setup": "Configurazione",
                     "Shared libraries": "Librerie condivise",
                     "Sharing": "Condivisione",
+                    "Since the last sync, these libraries came over the federated folder: {libraries}. The next sync links their versions again.": "Dall'ultima sincronizzazione queste librerie sono arrivate sulla cartella federata: {libraries}. La prossima sincronizzazione ne collega di nuovo le versioni.",
+                    "Since the last sync, these libraries left the federated folder: {libraries}. The next sync links the versions again.": "Dall'ultima sincronizzazione queste librerie hanno lasciato la cartella federata: {libraries}. La prossima sincronizzazione collega di nuovo le versioni.",
+                    "Started": "Inizio",
                     "Status": "Stato",
                     "Status unknown.": "Stato sconosciuto.",
                     "Stored encrypted and never shown again.": "Salvata cifrata e mai più mostrata.",
                     "Stream limit": "Limite di stream",
                     "Streams": "Stream",
                     "Streams in use": "Stream in uso",
+                    "Succeeded": "Riuscita",
                     "Sync": "Sincronizzazione",
                     "Let JellyMesh keep its key file": "Permetti a JellyMesh di tenere il file della chiave",
                     "JellyMesh encrypts the stored logins with a key file in its plugin data folder, and it cannot write that file. Let Jellyfin write to that folder, then restart Jellyfin.": "JellyMesh cifra gli accessi salvati con un file della chiave nella cartella dati del plugin, e non riesce a scrivere quel file. Permetti a Jellyfin di scrivere in quella cartella, poi riavvia Jellyfin.",
                     "Enter the passwords again": "Inserisci di nuovo le password",
-                    "The missing servers are forgotten. Their titles are leaving the libraries.": "I server mancanti sono stati dimenticati. I loro titoli stanno uscendo dalle librerie.",
+                    "Sync history": "Storico delle sincronizzazioni",
+                    "The change failed. Try again.": "La modifica non è riuscita. Riprova.",
+                    "The federated folder could not be updated.": "Non è stato possibile aggiornare la cartella federata.",
+                    "The federation index could not be saved.": "Non è stato possibile salvare l'indice della federazione.",
+                    "The file of the sync history could not be read, so earlier syncs are not shown. A copy of the file is kept next to it.": "Non è stato possibile leggere il file dello storico delle sincronizzazioni, quindi le sincronizzazioni precedenti non sono mostrate. Una copia del file è conservata accanto.",
+                    "The files in the federated folder stay, and nothing changes on {server}.": "I file nella cartella federata restano e su {server} non cambia nulla.",
+                    "The folders of every server are linked.": "Le cartelle di ogni server sono collegate.",
+                    "The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder, then the totals of the whole folder.": "Le ultime 50 sincronizzazioni e le ultime 7 riconciliazioni, dalla più recente. Per ogni server: gli elementi del catalogo letti, e i titoli creati, aggiornati e rimossi nella sua cartella, poi i totali di tutta la cartella.",
+                    "The libraries of this server are being updated. Try again when it is done.": "Le librerie di questo server sono in aggiornamento. Riprova quando ha finito.",
+                    "The server refused to rename a library. Rename this server again with the same name to retry.": "Il server ha rifiutato di rinominare una libreria. Rinomina di nuovo questo server con lo stesso nome per riprovare.",
+                    "Being renamed. The libraries are scanned twice before it is done.": "Rinomina in corso. Le librerie vengono analizzate due volte prima che finisca.",
+                    "The rename finishes with the next library scan. Until then the titles of this server may show twice among the versions.": "La rinomina finisce con la prossima analisi delle librerie. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
+                    "The rename did not finish. Rename this server again with the same name to finish it.": "La rinomina non è finita. Rinomina di nuovo questo server con lo stesso nome per completarla.",
+                    "The rename is held up: an old title of this server cannot leave the versions it was grouped with. JellyMesh tries again after every library scan. Until then the server cannot be renamed again, and its titles may show twice among the versions.": "La rinomina è bloccata: un vecchio titolo di questo server non riesce a uscire dalle versioni con cui era raggruppato. JellyMesh riprova dopo ogni analisi delle librerie. Fino ad allora il server non si può rinominare di nuovo e i suoi titoli possono comparire due volte tra le versioni.",
+                    "{server}: its rename is held up because an old title cannot leave the versions it was grouped with. JellyMesh tries again after every library scan.": "{server}: la sua rinomina è bloccata perché un vecchio titolo non riesce a uscire dalle versioni con cui era raggruppato. JellyMesh riprova dopo ogni analisi delle librerie.",
+                    "Rename {server}": "Rinomina {server}",
+                    "The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.": "Il nome compare nell'elenco delle versioni e nei nomi delle sue librerie automatiche. La sua cartella resta la stessa.",
+                    "Rename": "Rinomina",
+                    "Enter a name.": "Inserisci un nome.",
+                    "{server} becomes {name}. Its titles move to the new name, with the watch state of each user.": "{server} diventa {name}. I suoi titoli passano al nuovo nome, con lo stato di visione di ogni utente.",
+                    "Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.": "Vengono rinominate anche le sue librerie automatiche: {names}. Ognuna si svuota e si riempie di nuovo, e ordinamento e vista ripartono da capo.",
+                    "The libraries are scanned twice. Until then the titles of this server may show twice among the versions.": "Le librerie vengono analizzate due volte. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
+                    "Rename this server?": "Rinominare questo server?",
+                    "Renaming {server} to {name}.": "Rinomina di {server} in {name} in corso.",
+                    "A library JellyMesh renamed keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.": "Una libreria rinominata da JellyMesh tiene il suo vecchio ID fino al riavvio di Jellyfin: fino ad allora, gli utenti che la aprono con quell'ID ricevono un errore. Riavvia Jellyfin appena puoi.",
+                    "This server is being renamed, or its titles wait for a library scan. Try again when it is done.": "Questo server è in fase di rinomina, oppure i suoi titoli aspettano un'analisi delle librerie. Riprova quando ha finito.",
+                    "Confirm to rename this server.": "Conferma per rinominare questo server.",
+                    "Cancel the pending rename": "Annulla la rinomina in sospeso",
+                    "Cancel the pending rename?": "Annullare la rinomina in sospeso?",
+                    "The titles of {server} keep the new name. Their old files are deleted now, and the watch state not yet carried to the new name is lost.": "I titoli di {server} tengono il nuovo nome. I loro vecchi file vengono eliminati subito, e lo stato di visione non ancora portato sul nuovo nome va perso.",
+                    "The pending rename of {server} is cancelled.": "La rinomina in sospeso di {server} è annullata.",
+                    "Some old files of this server could not be deleted. Try again.": "Non è stato possibile eliminare alcuni vecchi file di questo server. Riprova.",
+                    "The list of libraries could not be read. Try again.": "Non è stato possibile leggere l'elenco delle librerie. Riprova.",
+                    "The missing servers are forgotten. Their folders are being deleted.": "I server mancanti sono stati dimenticati. Le loro cartelle vengono eliminate.",
+                    "The Serie folders of the servers are in different libraries, so a series on more than one server stays split.": "Le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa.",
+                    "The server refused to create a library.": "Il server ha rifiutato di creare una libreria.",
+                    "The server refused to delete a library. Try again.": "Il server ha rifiutato di eliminare una libreria. Riprova.",
                     "The stored logins do not decrypt with the key file: it was lost or replaced. Enter the password of each marked server again.": "Gli accessi salvati non si decifrano con il file della chiave: è stato perso o sostituito. Inserisci di nuovo la password di ogni server segnato.",
                     "It waits until the stored logins can be used.": "Attende che gli accessi salvati si possano usare.",
                     "Suspended. Sync and remote playback are stopped until JellyMesh can keep its key file.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché JellyMesh non riesce a tenere il file della chiave.",
                     "Suspended. Sync and remote playback are stopped until the password of each marked server is entered again.": "Sospeso. Sincronizzazione e riproduzione remota sono ferme finché non inserisci di nuovo la password di ogni server segnato.",
                     "Connecting a server waits until the stored logins can be used. The Overview says what to do.": "Il collegamento di un server attende che gli accessi salvati si possano usare. La Panoramica dice cosa fare.",
+                    "These series are linked by shared provider IDs, but some of those IDs contradict each other.": "Queste serie sono legate da ID provider in comune, ma alcuni di quegli ID si contraddicono.",
+                    "These series have the same name and year, but nothing confirms they are one series.": "Queste serie hanno lo stesso nome e lo stesso anno, ma nulla conferma che siano una sola serie.",
+                    "the sync history": "lo storico delle sincronizzazioni",
+                    "These libraries are deleted now: {names}.": "Queste librerie vengono eliminate ora: {names}.",
                     "password needed": "password da inserire",
                     "The stored password no longer decrypts. Enter the login again below. {problem}": "La password salvata non si decifra più. Inserisci di nuovo l'accesso qui sotto. {problem}",
                     "Sync and remote playback are suspended until the stored logins can be used. {problem}": "Sincronizzazione e riproduzione remota sono sospese finché gli accessi salvati non si possono usare. {problem}",
@@ -1540,6 +1899,18 @@
                     "JellyMesh logs in with it before saving it, encrypted with the new key file.": "JellyMesh accede con questo prima di salvarlo, cifrato con il nuovo file della chiave.",
                     "Save login": "Salva l'accesso",
                     "Enter the user JellyMesh logs in with.": "Inserisci l'utente con cui JellyMesh accede.",
+                    "Titles not written or removed: {count}.": "Titoli non scritti o non rimossi: {count}.",
+                    "Type": "Tipo",
+                    "Users with access to only some libraries do not see these until you enable them for those users in Dashboard > Users.": "Gli utenti con accesso solo ad alcune librerie non le vedono finché non le abiliti per loro nel Pannello di controllo > Utenti.",
+                    "Warning: the Serie folders of the servers are in different libraries, so a series on more than one server stays split: {servers}. Put them in the same libraries to merge them.": "Attenzione: le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa: {servers}. Mettile nelle stesse librerie per unirle.",
+                    "Warning: {libraries} holds the whole federated folder or the folder of a server, so the versions of a title come apart and the libraries of the servers empty. Remove that path from it and add only the Film and Serie folders.": "Attenzione: {libraries} contiene tutta la cartella federata o la cartella di un server, quindi le versioni di un titolo si separano e le librerie dei server si svuotano. Togli quel percorso e aggiungi solo le cartelle Film e Serie.",
+                    "Warning: {libraries} is also on the folders of {server}, beside its automatic libraries, so its titles show twice. Delete it in Dashboard > Libraries if you do not need it.": "Attenzione: anche {libraries} è sulle cartelle di {server}, accanto alle sue librerie automatiche, quindi i suoi titoli compaiono due volte. Eliminala nel Pannello di controllo > Librerie se non ti serve.",
+                    "{hours} h {minutes} min": "{hours} h {minutes} min",
+                    "{libraries} holds the whole federated folder, so the versions of a title come apart.": "{libraries} contiene tutta la cartella federata, quindi le versioni di un titolo si separano.",
+                    "{libraries} shows the titles of a server a second time.": "{libraries} mostra una seconda volta i titoli di un server.",
+                    "{minutes} min {seconds} s": "{minutes} min {seconds} s",
+                    "{problems} Fix this by hand in Dashboard > Libraries, or turn on the automatic libraries of the server.": "{problems} Sistemalo a mano nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server.",
+                    "{seconds} s": "{seconds} s",
                     "{server}: login saved.": "{server}: accesso salvato.",
                     "JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.": "JELLYMESH_SECRET_KEY non si usa più: ora la chiave è un file nella cartella dati del plugin. Puoi togliere la variabile dall'ambiente di Jellyfin.",
                     "{server}: enter its login again.": "{server}: inserisci di nuovo il suo accesso.",
@@ -1557,7 +1928,7 @@
                     "The browser did not allow copying. {value} is selected, so copy it by hand.": "Il browser non ha permesso di copiare. {value} è selezionato: copialo a mano.",
                     "The catalog kept changing while it was read. Try again.": "Il catalogo continuava a cambiare durante la lettura. Riprova.",
                     "The connected servers could not be read. The page keeps trying.": "Non è stato possibile leggere i server connessi. La pagina continua a provare.",
-                    "The duplicate and merged films could not be read. The page keeps trying.": "Non è stato possibile leggere i film duplicati e uniti. La pagina continua a provare.",
+                    "The duplicate and merged titles could not be read. The page keeps trying.": "Non è stato possibile leggere i titoli duplicati e uniti. La pagina continua a provare.",
                     "The federation index was damaged and is empty until a sync fills it.": "L'indice della federazione era danneggiato ed è vuoto finché una sincronizzazione non lo riempie.",
                     "The federation index was damaged and no copy could be read. It is empty until a sync fills it again.": "L'indice della federazione era danneggiato e non è stato possibile leggerne una copia. È vuoto finché una sincronizzazione non lo riempie di nuovo.",
                     "The federation index was damaged and the previous copy was loaded. Run a sync to bring it up to date.": "L'indice della federazione era danneggiato ed è stata caricata la copia precedente. Esegui una sincronizzazione per aggiornarlo.",
@@ -1598,12 +1969,15 @@
                     "This account is an administrator. Use a dedicated non-admin user.": "Questo account è un amministratore. Usa un utente dedicato non amministratore.",
                     "This list follows the real state of the server and goes away when setup is complete.": "Questo elenco segue lo stato reale del server e sparisce quando la configurazione è completa.",
                     "This merge no longer exists.": "Questa unione non esiste più.",
+                    "This server is already configured as “{server}”.": "Questo server è già configurato come «{server}».",
+                    "This server is already configured.": "Questo server è già configurato.",
                     "This server is at its stream limit on that remote.": "Questo server ha raggiunto il suo limite di stream su quel remoto.",
                     "This server is not configured.": "Questo server non è configurato.",
                     "This user sees no film or series libraries. Give it access on that server, then open Libraries again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Librerie.",
-                    "Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "I titoli presenti solo lì vengono cancellati subito dalle librerie, con le loro immagini. I titoli presenti anche su un altro server restano, senza questa riserva. I film dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
+                    "The folders of this server are deleted now: its titles leave the libraries, with their images. The same titles from another server stay. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "Le cartelle di questo server vengono eliminate ora: i suoi titoli escono dalle librerie, con le loro immagini. Gli stessi titoli di un altro server restano. I titoli dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
                     "To do": "Da fare",
                     "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.": "Due film locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo un titolo con una copia locale.",
+                    "Two local series cannot be merged: JellyMesh does not change local files. Select at most one series with a local copy.": "Due serie locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo una serie con una copia locale.",
                     "URL": "URL",
                     "Undo merge": "Annulla unione",
                     "Undo this merge?": "Annullare questa unione?",
@@ -1612,6 +1986,7 @@
                     "Untitled": "Senza titolo",
                     "User": "Utente",
                     "Version {version}": "Versione {version}",
+                    "Write remote collections into films": "Scrivi le collezioni dei remoti nei film",
                     "Wait for a remote to answer (seconds)": "Attesa della risposta di un remoto (secondi)",
                     "Wait for each step of opening a stream (seconds)": "Attesa di ogni fase di apertura di uno stream (secondi)",
                     "Warning: \"Automatically merge series that are spread across multiple folders\" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.": "Attenzione: \"Unisci automaticamente le serie distribuite su più cartelle\" è disattivato in {libraries}, quindi una serie presente in due cartelle resta divisa. Attivalo nelle opzioni della libreria.",
@@ -1662,7 +2037,7 @@
                     "synced": "sincronizzato",
                     "the catalog kept changing": "il catalogo continuava a cambiare",
                     "the connected servers": "i server connessi",
-                    "the duplicate and merged films": "i film duplicati e uniti",
+                    "the duplicate and merged titles": "i titoli duplicati e uniti",
                     "the settings": "le impostazioni",
                     "the state of the sync": "lo stato della sincronizzazione",
                     "the status": "lo stato",
@@ -1672,9 +2047,9 @@
                     "unexpected answer": "risposta inattesa",
                     "unknown problem": "problema sconosciuto",
                     "{count} min": "{count} min",
-                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale o aggiungi di nuovo quei server. Se quei server non torneranno più, dimenticali qui sotto.",
+                    "{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them. If those servers are gone for good, forget them below: their folders are deleted.": "{count} titoli vengono da server che non sono più nelle impostazioni ma non sono stati rimossi da questa pagina. Restano in libreria e non si possono riprodurre. Se le impostazioni sono state azzerate, ripristinale. Se quei server non torneranno più, dimenticali qui sotto: le loro cartelle vengono eliminate.",
                     "{count} titles come from servers missing from the settings. They are kept until those servers are forgotten in Catalog.": "{count} titoli vengono da server assenti dalle impostazioni. Restano finché quei server non vengono dimenticati nel Catalogo.",
-                    "{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.": "{count} titoli presenti solo su quei server vengono eliminati ora dalle librerie, con le loro immagini. I titoli presenti anche su un server nelle impostazioni restano, senza quelle riserve. Su quei server non cambia nulla e i file locali non vengono toccati.",
+                    "The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.": "Le cartelle di quei server vengono eliminate ora, come quando si rimuove un server: i loro {count} titoli escono dalle librerie, con le loro immagini. Gli stessi titoli di un server nelle impostazioni restano. Su quei server non cambia nulla e i file locali non vengono toccati.",
                     "{field} was refused, so nothing was saved. {rule}": "{field} è stato rifiutato, quindi non è stato salvato nulla. {rule}",
                     "{films}, {series} series, {episodes}": "{films}, {series} serie, {episodes}",
                     "{first} Also marked: {more}.": "{first} Segnalati anche: {more}.",
@@ -1685,14 +2060,14 @@
                     "{online} of {total} online": "{online} di {total} online",
                     "{path} is in the field. Save the settings to use it.": "{path} è nel campo. Salva le impostazioni per usarlo.",
                     "{place}, not in the catalog now": "{place}, ora non è nel catalogo",
-                    "{problems} Fix this by hand in Dashboard > Libraries.": "{problems} Sistemalo a mano nel Pannello di controllo > Librerie.",
                     "{servers}, suspended": "{servers}, sospesi",
-                    "{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.": "{server} e il suo accesso salvato escono subito da JellyMesh. Su quel server l'accesso non viene revocato: il suo dispositivo JellyMesh resta in elenco.",
+                    "{server} and its stored login leave JellyMesh now. On that server the login is revoked if the server can be reached; otherwise its JellyMesh device stays listed.": "{server} e il suo accesso salvato escono subito da JellyMesh. Su quel server l'accesso viene revocato se il server è raggiungibile; altrimenti il suo dispositivo JellyMesh resta in elenco.",
                     "{server} is offline. Titles found only there do not play until it answers.": "{server} è offline. I titoli presenti solo lì non si riproducono finché non risponde.",
                     "{server}: connected, {mode}, importable libraries: {count}.": "{server}: connesso, {mode}, librerie importabili: {count}.",
                     "{server}: the last sync failed ({failure}). Its titles are kept as they were.": "{server}: l'ultima sincronizzazione non è riuscita ({failure}). I suoi titoli restano com'erano.",
                     "{server}: the last sync failed. Its titles are kept as they were.": "{server}: l'ultima sincronizzazione non è riuscita. I suoi titoli restano com'erano.",
                     "{server}: {outcome}.": "{server}: {outcome}.",
+                    "{server}: {read} read, {created} created, {updated} updated, {removed} removed.": "{server}: {read} letti, {created} creati, {updated} aggiornati, {removed} rimossi.",
                     "{title} on {place}": "{title} su {place}",
                     "{used} of {total}": "{used} di {total}",
                     "{used} of {total} by connected servers": "{used} di {total} dai server connessi",
@@ -1749,6 +2124,7 @@
                 var syncPollMilliseconds = 2000;
                 var idlePollMilliseconds = 5000;
                 var statusPollMilliseconds = 15000;
+                var migrationPollMilliseconds = 3000;
                 var optionsPollMilliseconds = 60000;
                 var readTimeoutMilliseconds = 15000;
                 var keepsTrying = t('What is shown here may be out of date, and the page keeps trying.');
@@ -1761,6 +2137,8 @@
                 var polling = false;
                 var pollTimer = null;
                 var nextStatusPoll = 0;
+                var migrationRunning = false;
+                var nextMigrationPoll = 0;
                 var peerOptions = null;
                 var nextOptionsRead = 0;
                 var fieldNotes = 0;
@@ -1775,7 +2153,11 @@
                 var stepIcons = { done: 'check_circle', todo: 'radio_button_unchecked', unknown: 'help_outline' };
                 var shownTab = tabNames[0];
                 var compareRows = ['Server', 'Length', 'Resolution', 'Range', 'Bitrate', 'Codec', 'IDs'];
-                var compareLabels = { Server: t('Server'), Length: t('Length'), Resolution: t('Resolution'), Range: t('Range'), Bitrate: t('Bitrate'), Codec: t('Codec'), IDs: t('IDs') };
+                var seriesCompareRows = ['Server', 'Episodes', 'Seasons', 'IDs'];
+                var runKinds = { Incremental: t('Incremental'), Reconciliation: t('Reconciliation') };
+                var runOutcomes = { Succeeded: t('Succeeded'), PartlyFailed: t('Partly failed'), Failed: t('Failed'), Cancelled: t('Cancelled') };
+                var runTones = { Succeeded: 'jmToneGood', PartlyFailed: 'jmToneWarn', Failed: 'jmToneBad', Cancelled: 'jmToneQuiet' };
+                var compareLabels = { Server: t('Server'), Length: t('Length'), Resolution: t('Resolution'), Range: t('Range'), Bitrate: t('Bitrate'), Codec: t('Codec'), IDs: t('IDs'), Episodes: t('Episodes'), Seasons: t('Seasons') };
                 var outcomeKinds = { Done: t('Done'), Error: t('Error') };
                 var reading = t('Reading...');
                 var savedSettings = null;
@@ -1794,9 +2176,10 @@
                 }
 
                 // Translates an English text, or keeps it when it has no translation, and fills its {names}.
+                // A text ending in |word is the same English with its own translation, for a word such as a gender.
                 function t(text, values) {
                     var strings = translations[pageLanguage] || {};
-                    var shown = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text;
+                    var shown = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text.replace(/\|\w+$/, '');
                     return shown.replace(/\{(\w+)\}/g, function (whole, name) {
                         return values && values[name] !== undefined ? values[name] : whole;
                     });
@@ -2071,6 +2454,7 @@
                             if (!response.ok) {
                                 var failure = new Error(data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status }));
                                 failure.failure = data.Failure;
+                                failure.serverName = data.ServerName;
                                 throw failure;
                             }
 
@@ -2446,6 +2830,89 @@
                     return { state: connectionLabel(failure), tone: 'jmStateBad', icon: 'error', cause: (problem + ' ' + step).trim(), failure: failure };
                 }
 
+                // The libraries the plugin keeps for a server, as an older server that sends none would have them.
+                function ownState(server) {
+                    return server.AutomaticLibraries || { Enabled: false, Busy: false, Libraries: [], Released: [], Error: 'None' };
+                }
+
+                // The rename of a server, as an older server that sends none would have it.
+                function renameState(server) {
+                    return server.Rename || { Busy: false, Pending: false, Failed: false, Stuck: false };
+                }
+
+                // Says where the rename of a server stands, or returns an empty text.
+                function renameProblem(state) {
+                    if (state.Busy) {
+                        return t('Being renamed. The libraries are scanned twice before it is done.');
+                    }
+
+                    if (state.Stuck) {
+                        return t('The rename is held up: an old title of this server cannot leave the versions it was grouped with. JellyMesh tries again after every library scan. Until then the server cannot be renamed again, and its titles may show twice among the versions.');
+                    }
+
+                    if (state.Pending) {
+                        return t('The rename finishes with the next library scan. Until then the titles of this server may show twice among the versions.');
+                    }
+
+                    return state.Failed ? t('The rename did not finish. Rename this server again with the same name to finish it.') : '';
+                }
+
+                // Shows the form that renames a server, then asks for the confirmation of Q38.
+                function renderRename(container, server) {
+                    container.textContent = '';
+                    var form = create('form');
+                    form.autocomplete = 'off';
+                    form.noValidate = true;
+                    var title = create('p', t('Rename {server}', { server: server.Name }));
+                    title.className = 'jmLibrariesTitle';
+                    form.appendChild(title);
+                    var note = create('p', t('The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.'));
+                    note.className = 'jmLibrariesNote';
+                    form.appendChild(note);
+                    var name = create('input');
+                    name.setAttribute('is', 'emby-input');
+                    name.setAttribute('label', t('Name'));
+                    name.type = 'text';
+                    name.required = true;
+                    name.value = server.Name;
+                    form.appendChild(fieldBox('inputContainer', name));
+                    var save = button(t('Rename'), function () {});
+                    save.type = 'submit';
+                    form.appendChild(save);
+                    form.addEventListener('submit', function (e) {
+                        e.preventDefault();
+                        clearField(name);
+                        var wanted = name.value.trim();
+                        if (!wanted) {
+                            markField(name, t('Enter a name.'));
+                            focusField(name);
+                            return;
+                        }
+
+                        // The same name runs the steps again, which finishes a rename that stopped halfway.
+                        var paragraphs = [
+                            t('{server} becomes {name}. Its titles move to the new name, with the watch state of each user.', { server: escapeHtml(server.Name), name: escapeHtml(wanted) })
+                        ];
+                        var names = ownState(server).Libraries.map(function (library) {
+                            return library.Name;
+                        });
+                        if (names.length > 0) {
+                            paragraphs.push(t('Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.', { names: escapeHtml(names.join(', ')) }));
+                        }
+
+                        paragraphs.push(t('The libraries are scanned twice. Until then the titles of this server may show twice among the versions.'));
+                        confirmAction(t('Rename this server?'), paragraphs, function () {
+                            act(api('POST', 'Servers/' + server.Id + '/Rename', { Name: wanted, Confirmed: true }).then(function () {
+                                container.textContent = '';
+                                showMessage(t('Renaming {server} to {name}.', { server: server.Name, name: wanted }));
+                                return loadStatus();
+                            }));
+                        });
+                    });
+                    container.appendChild(form);
+                    focusField(name);
+                }
+
                 function renderServer(server, report) {
                     var row = create('details');
                     row.className = 'jmServer';
@@ -2469,7 +2936,38 @@
                     var catalog = addFact(facts, t('Catalog'));
                     var checked = addFact(facts, t('Last check'));
                     var synced = addFact(facts, t('Last complete sync'));
+                    var own = addFact(facts, t('Server libraries'));
                     body.appendChild(facts);
+                    var ownSwitch = create('div');
+                    ownSwitch.className = 'checkboxList';
+                    var ownBox = addCheckbox(ownSwitch, server.Id, t('Create a Film and a Serie library for this server'));
+                    body.appendChild(ownSwitch);
+                    var ownNotes = create('div');
+                    ownNotes.className = 'jmOwnNotes';
+                    body.appendChild(ownNotes);
+                    var renameNote = create('p');
+                    renameNote.className = 'jmLibrariesNote';
+                    body.appendChild(renameNote);
+                    var renameCancel = button(t('Cancel the pending rename'), function () {
+                        confirmAction(t('Cancel the pending rename?'), [
+                            t('The titles of {server} keep the new name. Their old files are deleted now, and the watch state not yet carried to the new name is lost.', { server: escapeHtml(server.Name) })
+                        ], function () {
+                            act(api('POST', 'Servers/' + server.Id + '/Rename/Cancel').then(function () {
+                                showMessage(t('The pending rename of {server} is cancelled.', { server: server.Name }));
+                                return loadStatus();
+                            }));
+                        });
+                    }, 'jmRenameCancel');
+                    body.appendChild(renameCancel);
+                    var ownPending = false;
+                    var ownErrors = {
+                        NameTaken: t('A library name was taken, so a library was not created.'),
+                        CreateFailed: t('The server refused to create a library.'),
+                        RemoveFailed: t('The server refused to delete a library. Try again.'),
+                        ReadFailed: t('The list of libraries could not be read. Try again.'),
+                        RenameFailed: t('The server refused to rename a library. Rename this server again with the same name to retry.'),
+                        Failed: t('The change failed. Try again.')
+                    };
                     var problemShown = '';
                     row.jmUpdate = function (current, currentReport) {
                         server = current;
@@ -2499,8 +2997,64 @@
                         setText(catalog, catalogText);
                         setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : t('Not since this server started'));
                         setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : t('Not read yet'));
+                        var ownCurrent = ownState(server);
+                        if (!ownPending && !ownCurrent.Busy) {
+                            ownBox.checked = ownCurrent.Enabled;
+                        }
+
+                        ownBox.disabled = ownPending || ownCurrent.Busy;
+                        var ownNames = ownCurrent.Libraries.map(function (library) {
+                            return library.Name;
+                        }).join(', ');
+                        var ownError = ownErrors[ownCurrent.Error] || '';
+                        setText(own, ownCurrent.Busy ? t('Being updated') : ((ownNames || t('None')) + (ownError ? ' ' + ownError : '')));
+                        renderOwnNotes(ownNotes, ownCurrent, ownPending, function () {
+                            switchOwn(true, false);
+                        });
+                        var renameCurrent = renameState(server);
+                        var renameText = renameProblem(renameCurrent);
+                        setText(renameNote, renameText);
+                        renameNote.hidden = !renameText;
+                        renameCancel.hidden = !renameCurrent.Pending || renameCurrent.Busy;
                     };
                     row.jmUpdate(server, report);
+
+                    // Turns the libraries of the server on or off, then reads the state again.
+                    function switchOwn(enabled, confirmed) {
+                        ownPending = true;
+                        ownBox.disabled = true;
+                        return act(api('POST', 'Servers/' + server.Id + '/AutomaticLibraries', { Enabled: enabled, Confirmed: confirmed }).then(function () {
+                            showMessage(enabled
+                                ? t('Creating the libraries of {server}. JellyMesh then scans them.', { server: server.Name })
+                                : t('Deleting the libraries of {server}.', { server: server.Name }));
+                        })).then(function () {
+                            ownPending = false;
+                            return loadStatus();
+                        });
+                    }
+
+                    ownBox.addEventListener('change', function () {
+                        if (ownBox.checked) {
+                            switchOwn(true, false);
+                            return;
+                        }
+
+                        var names = ownState(server).Libraries.map(function (library) {
+                            return library.Name;
+                        });
+                        if (names.length === 0) {
+                            switchOwn(false, false);
+                            return;
+                        }
+
+                        ownBox.checked = true;
+                        confirmAction(t('Delete the libraries of this server?'), [
+                            t('These libraries are deleted now: {names}.', { names: escapeHtml(names.join(', ')) }),
+                            t('The files in the federated folder stay, and nothing changes on {server}.', { server: escapeHtml(server.Name) })
+                        ], function () {
+                            switchOwn(false, true);
+                        });
+                    });
 
                     var login = create('div');
                     login.className = 'jmLibraries';
@@ -2538,14 +3092,32 @@
                     actions.appendChild(button(t('Libraries'), function () {
                         act(row.jmShowLibraries());
                     }));
+                    var renameBox = create('div');
+                    renameBox.className = 'jmLibraries';
+                    actions.appendChild(button(t('Rename'), function () {
+                        renderRename(renameBox, server);
+                    }));
                     actions.appendChild(button(t('Remove'), function () {
-                        confirmAction(t('Remove this server?'), [
-                            t('{server} and its stored login leave JellyMesh now. On that server the login is not revoked: its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
-                            t('Titles found only there are deleted from the libraries now, with their images. Titles also on another server stay, without this backup. Doubtful films involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
-                            t('Its copies leave the merged films now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
-                            t('Playback already running may not stop right away.'),
-                            t('Adding the server back brings the same titles and watch state.')
-                        ], function () {
+                        var paragraphs = [
+                            t('{server} and its stored login leave JellyMesh now. On that server the login is revoked if the server can be reached; otherwise its JellyMesh device stays listed.', { server: escapeHtml(server.Name) }),
+                            t('The folders of this server are deleted now: its titles leave the libraries, with their images. The same titles from another server stay. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.'),
+                            t('Its copies leave the merged titles now, and a merge left with one copy is undone. Adding the server back does not merge them again.'),
+                            t('Restoring the settings brings its folders back, with the same titles and watch state.')
+                        ];
+                        paragraphs.push(t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.'));
+
+                        // Removing the server deletes its automatic libraries with no other confirmation (decision 156).
+                        var own = ownState(server);
+                        var ownNames = own.Libraries.map(function (library) {
+                            return library.Name;
+                        });
+                        if (ownNames.length > 0) {
+                            paragraphs.splice(1, 0, t('Its automatic libraries are deleted too: {names}.', { names: escapeHtml(ownNames.join(', ')) }));
+                        } else if (own.Enabled || own.Busy) {
+                            paragraphs.splice(1, 0, t('Its automatic libraries are deleted too.'));
+                        }
+
+                        confirmAction(t('Remove this server?'), paragraphs, function () {
                             act(api('DELETE', 'Servers/' + server.Id).then(function () {
                                 showMessage(t('Removed {server}. Its titles are leaving the libraries.', { server: server.Name }));
                                 return load();
@@ -2564,6 +3136,7 @@
                     }, 'jmDanger'));
                     body.appendChild(login);
                     body.appendChild(actions);
+                    body.appendChild(renameBox);
                     body.appendChild(libraries);
                     var update = row.jmUpdate;
                     row.jmUpdate = function (current, currentReport) {
@@ -2572,6 +3145,31 @@
                     };
                     row.jmShowLogin(server);
                     return row;
+                }
+
+                // Shows the notes under the switch of the automatic libraries, and rebuilds them only when they change.
+                function renderOwnNotes(container, own, pending, recreate) {
+                    var missing = own.Enabled && !own.Busy && !pending && own.Libraries.length < 2;
+                    var key = JSON.stringify([own.Enabled, own.Released, missing]);
+                    if (container.jmKey === key) {
+                        return;
+                    }
+
+                    container.jmKey = key;
+                    container.textContent = '';
+                    if (own.Enabled) {
+                        container.appendChild(create('p', t('Users with access to only some libraries do not see these until you enable them for those users in Dashboard > Users.')));
+                    }
+
+                    if (own.Released.length > 0) {
+                        container.appendChild(create('p', t('JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.', { libraries: own.Released.join(', ') })));
+                    }
+
+                    if (missing) {
+                        var actions = actionRow();
+                        actions.appendChild(button(t('Recreate missing libraries'), recreate));
+                        container.appendChild(actions);
+                    }
                 }
 
                 // Copies a text through a selected field, and returns whether it worked.
@@ -2634,10 +3232,6 @@
                     return row;
                 }
 
-                function renderPath(library, path) {
-                    return renderCopyRow(library, path, t('Copy {library} path', { library: library }));
-                }
-
                 function renderCommand(command) {
                     return renderCopyRow(command.label, command.value, t('Copy: {label}', { label: command.label }));
                 }
@@ -2655,38 +3249,113 @@
                     el('#jmFolderFromEnvironment').hidden = !fromEnvironment;
                     var notes = el('#jmFolderNotes');
                     notes.textContent = '';
-                    updateRows(el('#jmFolderPaths'), folder.Path ? [
-                        { key: 'film' + folder.MoviesPath, build: renderPath, args: [t('Film library'), folder.MoviesPath] },
-                        { key: 'series' + folder.SeriesPath, build: renderPath, args: [t('Series library'), folder.SeriesPath] }
-                    ] : []);
+                    var checked = folder.Link !== 'NotChecked';
+                    var servers = folder.Path ? folder.Servers : [];
+                    updateRows(el('#jmFolderPaths'), servers.map(function (server) {
+                        return { key: server.Id, build: renderServerFolder, args: [server, checked] };
+                    }));
                     if (!folder.Path) {
                         el('#jmFolderHint').textContent = t('Choose a folder to see the paths to link.');
                         return;
                     }
 
-                    el('#jmFolderHint').textContent = t('Add these paths by hand in Dashboard > Libraries.');
-                    if (folder.Link === 'NotChecked') {
+                    if (servers.length === 0) {
+                        el('#jmFolderHint').textContent = t('Each server gets a Film and a Serie folder here. Add a server to see them.');
+                        return;
+                    }
+
+                    el('#jmFolderHint').textContent = t('Each server has a Film and a Serie folder. Add them by hand in Dashboard > Libraries, the Film folder to a film library and the Serie folder to a series library, or turn on the automatic libraries of the server.');
+                    if (!checked) {
                         notes.appendChild(create('div', t('The libraries could not be read to check these paths.')));
                         return;
                     }
 
                     if (folder.Link === 'Linked') {
-                        notes.appendChild(create('div', t('Both paths are linked.')));
+                        notes.appendChild(create('div', t('The folders of every server are linked.')));
                     }
 
-                    var warnings = [
-                        pathWarning(folder.MoviesPath, t('film'), folder.Movies),
-                        pathWarning(folder.SeriesPath, t('series'), folder.Series)
-                    ];
-                    if (folder.SeriesGroupingOff.length > 0) {
-                        warnings.push(t('Warning: "Automatically merge series that are spread across multiple folders" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.', { libraries: folder.SeriesGroupingOff.join(', ') }));
-                    }
-
-                    warnings.filter(Boolean).forEach(function (text) {
-                        var warning = create('div', text);
-                        warning.className = 'jmFolderWarning';
-                        notes.appendChild(warning);
+                    folderWarnings(folder).forEach(function (text) {
+                        notes.appendChild(folderWarning(text));
                     });
+                }
+
+                // Builds the block of a server in the folder section, with its two paths and what is wrong with them.
+                // A change in the links updates the block in place, so a path row keeps its focus.
+                function renderServerFolder(server, checked) {
+                    var block = create('div');
+                    block.className = 'jmServerFolder';
+                    var name = create('div');
+                    name.className = 'jmServerFolderName';
+                    var paths = create('div');
+                    var warnings = create('div');
+                    block.appendChild(name);
+                    block.appendChild(paths);
+                    block.appendChild(warnings);
+                    block.jmUpdate = function (current, currentChecked) {
+                        setText(name, current.Name);
+                        updateRows(paths, [[t('Film library'), current.MoviesPath], [t('Series library'), current.SeriesPath]].map(function (path) {
+                            var copyLabel = t('Copy the {library} path of {server}', { library: path[0], server: current.Name });
+                            return { key: JSON.stringify([path[0], path[1], copyLabel]), build: renderCopyRow, args: [path[0], path[1], copyLabel] };
+                        }));
+                        warnings.textContent = '';
+                        if (currentChecked) {
+                            serverFolderWarnings(current).forEach(function (text) {
+                                warnings.appendChild(folderWarning(text));
+                            });
+                        }
+                    };
+                    block.jmUpdate(server, checked);
+                    return block;
+                }
+
+                function folderWarning(text) {
+                    var warning = create('div', text);
+                    warning.className = 'jmFolderWarning';
+                    return warning;
+                }
+
+                // Says what is wrong with the two folders of a server.
+                function serverFolderWarnings(server) {
+                    var warnings = [
+                        pathWarning(server.MoviesPath, t('film'), server.Movies),
+                        pathWarning(server.SeriesPath, t('series'), server.Series)
+                    ];
+                    if (server.SeriesGroupingOff.length > 0) {
+                        warnings.push(t('Warning: "Automatically merge series that are spread across multiple folders" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.', { libraries: server.SeriesGroupingOff.join(', ') }));
+                    }
+
+                    if (server.Unregistered.length > 0) {
+                        warnings.push(t('Warning: {libraries} is also on the folders of {server}, beside its automatic libraries, so its titles show twice. Delete it in Dashboard > Libraries if you do not need it.', { libraries: server.Unregistered.join(', '), server: server.Name }));
+                    }
+
+                    return warnings.filter(Boolean);
+                }
+
+                // Says what is wrong with the libraries over the federated folder as a whole.
+                function folderWarnings(folder) {
+                    var warnings = [];
+                    if (folder.Covering.length > 0) {
+                        warnings.push(t('Warning: {libraries} holds the whole federated folder or the folder of a server, so the versions of a title come apart and the libraries of the servers empty. Remove that path from it and add only the Film and Serie folders.', { libraries: folder.Covering.join(', ') }));
+                    }
+
+                    if (folder.SeriesSplit) {
+                        var sets = folder.Servers.filter(function (server) {
+                            return server.SeriesLibraries.length > 0;
+                        }).map(function (server) {
+                            return server.Name + ' (' + server.SeriesLibraries.join(', ') + ')';
+                        });
+                        warnings.push(t('Warning: the Serie folders of the servers are in different libraries, so a series on more than one server stays split: {servers}. Put them in the same libraries to merge them.', { servers: sets.join('; ') }));
+                    }
+
+                    if (folder.Changes.Added.length > 0) {
+                        warnings.push(t('Since the last sync, these libraries came over the federated folder: {libraries}. The next sync links their versions again.', { libraries: folder.Changes.Added.join(', ') }));
+                    }
+
+                    if (folder.Changes.Removed.length > 0) {
+                        warnings.push(t('Since the last sync, these libraries left the federated folder: {libraries}. The next sync links the versions again.', { libraries: folder.Changes.Removed.join(', ') }));
+                    }
+
+                    return warnings;
                 }
 
                 function pathWarning(path, kind, status) {
@@ -2714,6 +3383,67 @@
                     updateSyncButton();
                     showServers();
                     renderFolder(status.FederatedFolder);
+                    renderReleasedLibraries(status.ReleasedLibraries || []);
+                    renderHeldRemovals(status.HeldRemovals || []);
+                    if (mergesSection.data) {
+                        renderMergeLists(mergesSection.data);
+                    }
+
+                    var migration = status.FederatedFolder.Migration;
+                    migrationRunning = !!(migration && migration.Running);
+                    page.dispatchEvent(new CustomEvent('jmstatus', { detail: status }));
+                }
+
+                // Warns about each removed server whose removal waits until the watch state of its titles is saved (row 416).
+                function renderHeldRemovals(removals) {
+                    var notice = el('#jmHeldRemovals');
+                    var key = JSON.stringify(removals);
+                    notice.hidden = removals.length === 0;
+                    if (notice.jmKey === key) {
+                        return;
+                    }
+
+                    notice.jmKey = key;
+                    notice.textContent = '';
+                    removals.forEach(function (removal) {
+                        notice.appendChild(create('p', removal.Name
+                            ? t('Warning: the removal of {server} is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.', { server: removal.Name })
+                            : t('Warning: the removal of a server is on hold until the watch state of its titles is saved. Its titles and folders stay until then, and JellyMesh tries again at every sync.')));
+                    });
+                }
+
+                // Names the libraries of removed servers that JellyMesh left to the admin when the federated folder changed,
+                // with an action that takes them off this page. Rebuilds only when they change, so polling keeps the focus.
+                function renderReleasedLibraries(libraries) {
+                    var notice = el('#jmReleasedLibraries');
+                    var key = JSON.stringify(libraries);
+                    notice.hidden = libraries.length === 0;
+                    if (notice.jmKey === key) {
+                        return;
+                    }
+
+                    notice.jmKey = key;
+                    notice.textContent = '';
+                    if (libraries.length === 0) {
+                        return;
+                    }
+
+                    var names = libraries.map(function (library) {
+                        return library.Name;
+                    });
+                    notice.appendChild(create('p', t('JellyMesh left these libraries of removed servers to you when the federated folder changed: {libraries}. Delete them in Dashboard > Libraries if you do not need them.', { libraries: names.join(', ') })));
+                    var actions = actionRow();
+                    actions.appendChild(button(t('Hide from this page'), function () {
+                        act(api('POST', 'ReleasedLibraries/Hide', { Libraries: libraries }).then(function () {
+                            showMessage(t('These libraries are no longer listed here. They stay in Dashboard > Libraries.'));
+                            return loadStatus();
+                        }, function (error) {
+                            return loadStatus().then(function () {
+                                throw error;
+                            });
+                        }));
+                    }));
+                    notice.appendChild(actions);
                 }
 
                 function statusFailed(reason) {
@@ -2822,7 +3552,7 @@
                         return t('A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.', { server: held.ServerName, count: held.Stubs });
                     });
                     if (status.UnconfiguredStubs > 0) {
-                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the library and cannot play. If the settings were reset, restore them or add those servers again. If those servers are gone for good, forget them below.', { count: status.UnconfiguredStubs }));
+                        notes.push(t('{count} titles come from servers that are no longer in the settings but were not removed on this page. They stay in the libraries and cannot play. If the settings were reset, restore them. If those servers are gone for good, forget them below: their folders are deleted.', { count: status.UnconfiguredStubs }));
                     }
 
                     return notes.join(' ');
@@ -2848,6 +3578,7 @@
                     var finished = status.LastFinishedUtc || null;
                     if (lastFinished !== undefined && lastFinished !== finished) {
                         mergesSection.stale = true;
+                        historySection.stale = true;
                         statusSection.stale = true;
                     }
 
@@ -2952,6 +3683,13 @@
                     };
                 }
 
+                // Says a peer was saved, warning when libraries no longer offered were dropped from what it shares.
+                function peerSaved(text, result) {
+                    return result && result.DroppedLibraryIds && result.DroppedLibraryIds.length > 0
+                        ? text + ' ' + t('Libraries no longer offered are no longer shared with this server.')
+                        : text;
+                }
+
                 // Names a connected server, whose user can be deleted in the Dashboard while it stays connected.
                 function peerName(peer) {
                     return peer.UserName || t('A user no longer on this server');
@@ -2986,8 +3724,8 @@
                     row.jmUpdate(peer, libraries);
                     var actions = actionRow();
                     actions.appendChild(button(t('Save'), function () {
-                        act(editor.save().then(function () {
-                            showMessage(t('Saved {name}.', { name: peerName(peer) }));
+                        act(editor.save().then(function (result) {
+                            showMessage(peerSaved(t('Saved {name}.', { name: peerName(peer) }), result));
                             return loadPeers();
                         }));
                     }));
@@ -3050,8 +3788,8 @@
                     };
                     var actions = actionRow();
                     actions.appendChild(button(t('Connect'), function () {
-                        act(editor.save().then(function () {
-                            showMessage(t('Connected.'));
+                        act(editor.save().then(function (result) {
+                            showMessage(peerSaved(t('Connected.'), result));
                             editor.reset();
                             return loadPeers();
                         }));
@@ -3088,6 +3826,37 @@
                 }
 
                 var mergeDetails = 0;
+
+                // The words and comparison rows of the titles a merge joins, films or series (decision 51).
+                var mergeKinds = {
+                    films: {
+                        rows: compareRows,
+                        reasons: mergeReasons,
+                        empty: t('No doubtful films.'),
+                        twoLocal: t('Select at most one title with a local copy: two local films cannot be merged.'),
+                        merged: t('Merged. The film list changes after the library scan that was queued.'),
+                        undone: t('Merge undone. The film list changes after the library scan that was queued.'),
+                        unused: t('Not in effect: a copy is missing, or the IDs already make these one film.'),
+                        mergedOn: t('Merged on {date}'),
+                        forecast: describeForecast
+                    },
+                    series: {
+                        rows: seriesCompareRows,
+                        reasons: {
+                            ConflictingProviderIds: t('These series are linked by shared provider IDs, but some of those IDs contradict each other.'),
+                            PossibleDuplicate: t('These series have the same name and year, but nothing confirms they are one series.')
+                        },
+                        empty: t('No doubtful series.'),
+                        twoLocal: t('Select at most one series with a local copy: two local series cannot be merged.'),
+                        merged: t('Merged. The series list changes after the library scan that was queued.'),
+                        undone: t('Merge undone. The series list changes after the library scan that was queued.'),
+                        unused: t('Not in effect: a copy is missing, or the IDs already make these one series.'),
+                        mergedOn: t('Merged on {date}|series'),
+                        forecast: function () {
+                            return t('If merged, each episode plays from its best copy, and a local copy always wins. The other copies become versions a user can pick.');
+                        }
+                    }
+                };
 
                 function copyTitle(copy) {
                     return (copy.Copy.Title || t('Untitled')) + (copy.Copy.Year ? ' (' + copy.Copy.Year + ')' : '');
@@ -3152,11 +3921,20 @@
                     });
                 }
 
-                function renderCopy(copy) {
+                // Says how many episodes and seasons a series copy has, when the catalog knows it.
+                function contentLines(copy) {
+                    if (copy.EpisodeCount == null) {
+                        return [];
+                    }
+
+                    return [count(copy.EpisodeCount, 'episode', 'episodes') + ', ' + count(copy.SeasonCount, 'season', 'seasons')];
+                }
+
+                function renderCopy(copy, kind) {
                     var line = create('div');
                     line.className = 'jmMergeCopy';
                     line.appendChild(create('div', describeCopy(copy)));
-                    qualityLines(copy).forEach(function (quality) {
+                    (kind === mergeKinds.series ? contentLines(copy) : qualityLines(copy)).forEach(function (quality) {
                         var node = create('div', quality);
                         node.className = 'jmMergeQuality';
                         line.appendChild(node);
@@ -3179,6 +3957,10 @@
 
                     if (copy.Copy.Imdb) {
                         ids.push('IMDb ' + copy.Copy.Imdb);
+                    }
+
+                    if (copy.Copy.Tvdb) {
+                        ids.push('TVDB ' + copy.Copy.Tvdb);
                     }
 
                     return ids.length > 0 ? ids : [t('None')];
@@ -3205,11 +3987,13 @@
                 }
 
                 // Gives the lines of each row of the comparison, one per copy or version, in the order of compareRows.
-                function compareValues(title) {
-                    var values = { Server: [], Length: [], Resolution: [], Range: [], Bitrate: [], Codec: [], IDs: [] };
+                function compareValues(title, rows) {
+                    var values = { Server: [], Length: [], Resolution: [], Range: [], Bitrate: [], Codec: [], IDs: [], Episodes: [], Seasons: [] };
                     title.Copies.forEach(function (copy) {
                         values.Server.push(copy.IsFound ? copyPlace(copy) : t('{place}, not in the catalog now', { place: copyPlace(copy) }));
                         values.Length.push(copy.RunTimeTicks ? minutes(copy.RunTimeTicks) : t('Unknown'));
+                        values.Episodes.push(copy.EpisodeCount != null ? String(copy.EpisodeCount) : t('Unknown'));
+                        values.Seasons.push(copy.SeasonCount != null ? String(copy.SeasonCount) : t('Unknown'));
                         values.IDs = values.IDs.concat(idsOf(copy));
                         copy.Versions.forEach(function (version) {
                             values.Resolution.push(resolutionOf(version.Quality));
@@ -3218,15 +4002,15 @@
                             values.Codec.push(codecOf(version.Quality));
                         });
                     });
-                    return compareRows.map(function (name) {
+                    return rows.map(function (name) {
                         return { name: compareLabels[name], lines: values[name].length > 0 ? values[name] : [t('Unknown')] };
                     });
                 }
 
                 // Says what the rows cannot: a merge already made, the order of versions, and quality not read.
-                function compareNotes(title) {
+                function compareNotes(title, kind) {
                     var notes = title.MergeIds.length > 0 ? [t('Already merged.')] : [];
-                    title.Copies.forEach(function (copy) {
+                    (kind === mergeKinds.series ? [] : title.Copies).forEach(function (copy) {
                         if (copy.Versions.length > 1) {
                             notes.push(t('Best version first.'));
                         } else if (copy.Versions.length === 0 && copy.Copy.IsLocal && copy.IsFound) {
@@ -3252,7 +4036,7 @@
                 }
 
                 // A kept row gets new text and keeps its checkbox, so a refresh leaves the selection and the focus alone.
-                function renderMergeTitle(title, changed) {
+                function renderMergeTitle(title, changed, kind) {
                     var row = create('div');
                     row.className = 'jmMergeTitle';
                     var box = addCheckbox(row, title.WorkKey, titleName(title));
@@ -3268,10 +4052,10 @@
                         row.jmTitle = current;
                         setText(name, titleName(current));
                         details.textContent = '';
-                        compareValues(current).forEach(function (line) {
+                        compareValues(current, kind.rows).forEach(function (line) {
                             details.appendChild(renderCompareRow(line));
                         });
-                        var note = create('div', compareNotes(current));
+                        var note = create('div', compareNotes(current, kind));
                         note.className = 'jmCompareNote';
                         details.appendChild(note);
                     };
@@ -3280,11 +4064,11 @@
                 }
 
                 // Marks the rows whose values differ between the titles, without saying which is better: the server decides that.
-                function markDifferences(titles) {
+                function markDifferences(titles, rows) {
                     var columns = Array.prototype.map.call(titles.children, function (title) {
                         return title.querySelectorAll('.jmCompareRow');
                     });
-                    compareRows.forEach(function (name, index) {
+                    rows.forEach(function (name, index) {
                         var shown = columns.map(function (column) {
                             return column[index].textContent;
                         });
@@ -3311,12 +4095,12 @@
                         return t('Which copy would play cannot be known for sure, because some quality values are unknown. As the catalog stands, {name} would be chosen.', { name: name });
                     }
 
-                    return t('If merged, {name} plays: {quality}. The others stay as backups.', { name: name, quality: describeQuality(forecast.Version.Quality) });
+                    return t('If merged, {name} plays: {quality}. The others become versions a user can pick.', { name: name, quality: describeQuality(forecast.Version.Quality) });
                 }
 
-                function renderMergeCase(group) {
+                function renderMergeCase(group, kind) {
                     var row = create('div');
-                    row.className = 'jmMergeCase';
+                    row.className = kind === mergeKinds.series ? 'jmMergeCase jmMergeSeries' : 'jmMergeCase';
                     var reason = create('p');
                     reason.className = 'jmMergeReason';
                     row.appendChild(reason);
@@ -3359,7 +4143,7 @@
                         if (chosen.length < 2) {
                             hint = t('Select at least two titles to merge them.');
                         } else if (locals.length > 1) {
-                            hint = t('Select at most one title with a local copy: two local films cannot be merged.');
+                            hint = kind.twoLocal;
                         }
 
                         merge.disabled = hint !== '';
@@ -3373,7 +4157,7 @@
                         showResult(t('Checking which copy would play.'), true);
                         api('POST', 'Merges/Preview', { WorkKeys: keys() }, AbortSignal.timeout(readTimeoutMilliseconds)).then(function (forecast) {
                             if (current === ticket) {
-                                showResult(describeForecast(forecast), false);
+                                showResult(kind.forecast(forecast), false);
                             }
                         }).catch(function (error) {
                             if (current === ticket) {
@@ -3384,24 +4168,51 @@
 
                     var merge = button(t('Merge selected'), function () {
                         act(api('POST', 'Merges', { WorkKeys: keys() }).then(function () {
-                            showMessage(t('Merged. The film list changes after the library scan that was queued.'));
+                            showMessage(kind.merged);
                             return loadMerges();
                         }));
                     }, 'button-submit');
                     foot.appendChild(merge);
                     row.jmUpdate = function (current) {
-                        setText(reason, mergeReasons[current.Kind] || current.Kind);
+                        setText(reason, kind.reasons[current.Kind] || current.Kind);
                         updateRows(titles, current.Titles.map(function (title) {
-                            return { key: title.WorkKey, build: renderMergeTitle, args: [title, selectionChanged] };
+                            return { key: title.WorkKey, build: renderMergeTitle, args: [title, selectionChanged, kind] };
                         }));
-                        markDifferences(titles);
+                        markDifferences(titles, kind.rows);
                         selectionChanged();
                     };
                     row.jmUpdate(group);
                     return row;
                 }
 
-                function renderMerge(merge) {
+                function sameServer(left, right) {
+                    return left.replace(/-/g, '').toLowerCase() === right.replace(/-/g, '').toLowerCase();
+                }
+
+                // The servers of a merged series whose Serie folders sit in different libraries, where Jellyfin does not
+                // group it (Q46). The library of a local copy, or of a server no longer configured, is not known here.
+                function seriesSplit(merge) {
+                    var folder = statusSection.data && statusSection.data.FederatedFolder;
+                    if (!folder) {
+                        return [];
+                    }
+
+                    var servers = folder.Servers.filter(function (server) {
+                        return server.SeriesLibraries.length > 0 && merge.Copies.some(function (copy) {
+                            return !copy.Copy.IsLocal && sameServer(copy.Copy.ServerId, server.Id);
+                        });
+                    });
+                    var sets = servers.map(function (server) {
+                        return server.SeriesLibraries.filter(function (name, index, names) {
+                            return names.indexOf(name) === index;
+                        }).sort().join('\n');
+                    });
+                    return sets.some(function (set) {
+                        return set !== sets[0];
+                    }) ? servers : [];
+                }
+
+                function renderMerge(merge, kind) {
                     var row = create('div');
                     row.className = 'jmMerge';
                     var details = create('div');
@@ -3412,19 +4223,30 @@
                         date.className = 'jmMergeDate';
                         var time = create('time', formatDate(current.CreatedUtc));
                         time.setAttribute('datetime', current.CreatedUtc);
-                        var around = t('Merged on {date}').split('{date}');
+                        var around = kind.mergedOn.split('{date}');
                         date.appendChild(document.createTextNode(around[0]));
                         date.appendChild(time);
                         date.appendChild(document.createTextNode(around[1] || ''));
                         details.appendChild(date);
                         current.Copies.forEach(function (copy) {
-                            details.appendChild(renderCopy(copy));
+                            details.appendChild(renderCopy(copy, kind));
                         });
 
                         if (!current.IsInEffect) {
-                            var unused = create('div', t('Not in effect: a copy is missing, or the IDs already make these one film.'));
+                            var unused = create('div', kind.unused);
                             unused.className = 'jmMergeUnused';
                             details.appendChild(unused);
+                        }
+
+                        var split = kind === mergeKinds.series ? seriesSplit(current) : [];
+                        if (split.length > 0) {
+                            var warning = create('p', t('Jellyfin shows this series split, because the Serie folders of its servers are in different libraries: {libraries}. Add them to the same libraries.', {
+                                libraries: split.map(function (server) {
+                                    return server.Name + ' (' + server.SeriesLibraries.join(', ') + ')';
+                                }).join(', ')
+                            }));
+                            warning.className = 'jmAlert jmMergeSplit';
+                            details.appendChild(warning);
                         }
                     };
                     row.jmUpdate(merge);
@@ -3434,7 +4256,7 @@
                             t('The title that stays keeps its watch state. The others usually get theirs back, but can start again without it. Local files are not changed.')
                         ], function () {
                             act(api('DELETE', 'Merges/' + merge.Id).then(function () {
-                                showMessage(t('Merge undone. The film list changes after the library scan that was queued.'));
+                                showMessage(kind.undone);
                                 return loadMerges();
                             }));
                         });
@@ -3442,29 +4264,180 @@
                     return row;
                 }
 
+                // Keys a case by its first title, which stays while its data changes.
+                function renderCases(container, cases, kind) {
+                    var rows = cases.map(function (group) {
+                        return { key: group.Titles[0].WorkKey, build: renderMergeCase, args: [group, kind] };
+                    });
+                    if (cases.length === 0) {
+                        rows.push({ key: 'none', build: create, args: ['p', kind.empty] });
+                    }
+
+                    updateRows(container, rows);
+                }
+
+                // Keys a merge by its ID, which stays while its data changes.
+                function renderMergeList(container, merges, kind) {
+                    var rows = merges.map(function (merge) {
+                        return { key: merge.Id, build: renderMerge, args: [merge, kind] };
+                    });
+                    if (merges.length === 0) {
+                        rows.push({ key: 'none', build: create, args: ['p', t('Nothing merged.')] });
+                    }
+
+                    updateRows(container, rows);
+                }
+
                 function renderMerges(list) {
                     var warning = el('#jmMergeWarning');
                     warning.textContent = list.IsStoreDamaged ? t('The file of merges could not be read, so earlier merges are not applied. Repeat them below; a copy of the file is kept next to it.') : '';
                     warning.hidden = !list.IsStoreDamaged;
 
-                    // Keys a case by its first title and a merge by its ID, which stay while their data changes.
-                    var cases = list.Cases.map(function (group) {
-                        return { key: group.Titles[0].WorkKey, build: renderMergeCase, args: [group] };
+                    renderCases(el('#jmMergeCases'), list.Cases, mergeKinds.films);
+                    renderCases(el('#jmSeriesCases'), list.SeriesCases, mergeKinds.series);
+                    renderMergeLists(list);
+                }
+
+                // Lists the merges made. The status calls it too, since the warnings of merged series read it.
+                function renderMergeLists(list) {
+                    // A merge of series holds episodes, as the server names the kind of each copy.
+                    var series = list.Merges.filter(function (merge) {
+                        return merge.Copies.some(function (copy) {
+                            return copy.Copy.Kind !== 'Movie';
+                        });
                     });
-                    if (list.Cases.length === 0) {
-                        cases.push({ key: 'none', build: create, args: ['p', t('No doubtful films.')] });
+                    var films = list.Merges.filter(function (merge) {
+                        return series.indexOf(merge) < 0;
+                    });
+                    renderMergeList(el('#jmMerges'), films, mergeKinds.films);
+                    renderMergeList(el('#jmSeriesMerges'), series, mergeKinds.series);
+                }
+
+                // Gives a duration in the largest units that keep it short.
+                function formatDuration(milliseconds) {
+                    var seconds = Math.round(milliseconds / 1000);
+                    if (seconds < 60) {
+                        return t('{seconds} s', { seconds: seconds });
                     }
 
-                    updateRows(el('#jmMergeCases'), cases);
-
-                    var merges = list.Merges.map(function (merge) {
-                        return { key: merge.Id, build: renderMerge, args: [merge] };
-                    });
-                    if (list.Merges.length === 0) {
-                        merges.push({ key: 'none', build: create, args: ['p', t('Nothing merged.')] });
+                    var minutes = Math.floor(seconds / 60);
+                    if (minutes < 60) {
+                        return t('{minutes} min {seconds} s', { minutes: minutes, seconds: seconds % 60 });
                     }
 
-                    updateRows(el('#jmMerges'), merges);
+                    return t('{hours} h {minutes} min', { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+                }
+
+                // Says what one sync did for one server. Its name comes from the admin, so it only ever goes in as text.
+                function historyServerLine(server) {
+                    var line = t('{server}: {read} read, {created} created, {updated} updated, {removed} removed.', {
+                        server: server.ServerName,
+                        read: server.Read,
+                        created: server.Created,
+                        updated: server.Updated,
+                        removed: server.Removed
+                    });
+                    if (server.Failure) {
+                        line += ' ' + t('Not read: {failure}.', { failure: connectionLabel(server.Failure) });
+                    }
+
+                    if (server.Failed > 0) {
+                        line += ' ' + t('Titles not written or removed: {count}.', { count: server.Failed });
+                    }
+
+                    return line;
+                }
+
+                // Says what one sync did in the whole federated folder, with the single folder and the removed servers.
+                function historyTotalsLine(run) {
+                    var line = t('In total: {created} created, {updated} updated, {removed} removed.', {
+                        created: run.Created,
+                        updated: run.Updated,
+                        removed: run.Removed
+                    });
+                    if (run.Failed > 0) {
+                        line += ' ' + t('Titles not written or removed: {count}.', { count: run.Failed });
+                    }
+
+                    return line;
+                }
+
+                function historyRow(run) {
+                    var row = create('tr');
+                    var started = create('td');
+                    var time = create('time', formatDate(run.StartedUtc));
+                    time.dateTime = run.StartedUtc;
+                    started.appendChild(time);
+                    row.appendChild(started);
+
+                    var outcome = create('td');
+                    outcome.className = 'jmHistoryOutcome ' + (runTones[run.Outcome] || 'jmToneQuiet');
+                    var dot = create('span');
+                    dot.className = 'jmDot';
+                    dot.setAttribute('aria-hidden', 'true');
+                    outcome.appendChild(dot);
+                    outcome.appendChild(create('span', runOutcomes[run.Outcome] || run.Outcome));
+                    var notes = [];
+                    if (run.MaterializationFailed) {
+                        notes.push(t('The federated folder could not be updated.'));
+                    }
+
+                    if (run.IndexSaveFailed) {
+                        notes.push(t('The federation index could not be saved.'));
+                    }
+
+                    notes.forEach(function (text) {
+                        var note = create('span', text);
+                        note.className = 'jmHistoryNote';
+                        outcome.appendChild(note);
+                    });
+                    row.appendChild(outcome);
+                    row.appendChild(create('td', runKinds[run.Kind] || run.Kind));
+                    row.appendChild(create('td', formatDuration(run.DurationMilliseconds)));
+
+                    var servers = create('td');
+                    if (run.Servers.length === 0) {
+                        servers.appendChild(create('p', t('No remote servers.')));
+                    }
+
+                    run.Servers.forEach(function (server) {
+                        servers.appendChild(create('p', historyServerLine(server)));
+                    });
+                    servers.appendChild(create('p', historyTotalsLine(run)));
+                    row.appendChild(servers);
+                    return row;
+                }
+
+                function renderHistory(view) {
+                    var warning = el('#jmHistoryWarning');
+                    setText(warning, view.IsDamaged ? t('The file of the sync history could not be read, so earlier syncs are not shown. A copy of the file is kept next to it.') : '');
+                    warning.hidden = !view.IsDamaged;
+
+                    var container = el('#jmSyncHistory');
+                    container.textContent = '';
+                    if (view.Runs.length === 0) {
+                        container.appendChild(create('p', t('No sync has run yet.')));
+                        return;
+                    }
+
+                    var table = create('table');
+                    table.className = 'jmHistory';
+                    var caption = create('caption', t('Sync history'));
+                    caption.className = 'jmHidden';
+                    table.appendChild(caption);
+                    var head = create('tr');
+                    [t('Started'), t('Outcome'), t('Type'), t('Duration'), t('Servers')].forEach(function (text) {
+                        var cell = create('th', text);
+                        cell.scope = 'col';
+                        head.appendChild(cell);
+                    });
+                    table.appendChild(create('thead')).appendChild(head);
+                    var body = create('tbody');
+                    view.Runs.forEach(function (run) {
+                        body.appendChild(historyRow(run));
+                    });
+                    table.appendChild(body);
+                    container.appendChild(table);
                 }
 
                 function renderSettings(config) {
@@ -3472,6 +4445,7 @@
                     el('#jmReconciliationTime').value = config.ReconciliationTime;
                     el('#jmFederatedFolder').value = config.FederatedFolderPath;
                     el('#jmMetadataProtection').checked = config.MetadataProtection;
+                    el('#jmFederateCollections').checked = config.FederateCollections;
                     el('#jmCloseAtExpiry').checked = config.CloseTranscodeAtSlotExpiry;
                     el('#jmRemotePlaybackInfoTimeout').value = config.RemotePlaybackInfoTimeoutSeconds;
                     el('#jmStreamOpenTimeout').value = config.StreamOpenTimeoutSeconds;
@@ -3672,6 +4646,15 @@
                     }).filter(function (note) {
                         return note.text;
                     });
+                    (status ? status.Servers : []).forEach(function (server) {
+                        if (renameState(server).Stuck && !renameState(server).Busy) {
+                            notes.push({ key: 'renameStuck' + server.Id, text: t('{server}: its rename is held up because an old title cannot leave the versions it was grouped with. JellyMesh tries again after every library scan.', { server: server.Name }), tab: 'servers' });
+                        }
+                    });
+                    if (status && status.RenamedLibrariesNeedRestart) {
+                        notes.push({ key: 'renamedLibraries', text: t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.'), tab: 'servers' });
+                    }
+
                     if (status && status.LegacyKeySet && status.KeyState === 'Ok') {
                         notes.push({ key: 'legacyKey', text: t('JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.'), tab: 'servers', calm: true });
                     }
@@ -3797,17 +4780,57 @@
                     var folder = status && status.FederatedFolder;
                     if (folder && folder.Path && folder.Link === 'NotChecked') {
                         notes.push({ key: 'unchecked', text: t('The libraries could not be read to check the paths.'), tab: 'settings' });
-                    } else if (folder && folder.Path && folder.Link === 'NotLinked') {
-                        var problems = [pathProblem(folder.Movies, t('film')), pathProblem(folder.Series, t('series'))].filter(Boolean);
-                        notes.push({ key: 'link', text: t('{problems} Fix this by hand in Dashboard > Libraries.', { problems: problems.join(' ') }), tab: 'settings' });
+                    } else if (folder && folder.Path && folder.Link === 'NotLinked' && folder.Servers.length > 0) {
+                        var problems = folder.Servers.map(function (server) {
+                            var found = [pathProblem(server.Movies, t('film')), pathProblem(server.Series, t('series'))].filter(Boolean);
+                            return found.length > 0 ? server.Name + ': ' + found.join(' ') : '';
+                        }).filter(Boolean);
+                        notes.push({ key: 'link', text: t('{problems} Fix this by hand in Dashboard > Libraries, or turn on the automatic libraries of the server.', { problems: problems.join(' ') }), tab: 'settings' });
                     }
 
-                    if (folder && folder.SeriesGroupingOff.length > 0) {
-                        notes.push({ key: 'grouping', text: t('A series in two folders stays split in {libraries}.', { libraries: folder.SeriesGroupingOff.join(', ') }), tab: 'settings' });
+                    if (folder && folder.Path && folder.Link !== 'NotChecked') {
+                        folderOverviewNotes(folder).forEach(function (note) {
+                            notes.push(note);
+                        });
                     }
 
                     if (settingsSection.failure) {
                         notes.push({ key: 'failed', text: t('The settings could not be read. Reload the page before saving.'), tab: 'settings' });
+                    }
+
+                    return notes;
+                }
+
+                // Gives the overview notes about the libraries over the folders of the servers.
+                function folderOverviewNotes(folder) {
+                    var notes = [];
+                    var collect = function (name) {
+                        return folder.Servers.reduce(function (all, server) {
+                            return all.concat(server[name].filter(function (library) {
+                                return all.indexOf(library) < 0;
+                            }));
+                        }, []);
+                    };
+                    var groupingOff = collect('SeriesGroupingOff');
+                    if (groupingOff.length > 0) {
+                        notes.push({ key: 'grouping', text: t('A series in two folders stays split in {libraries}.', { libraries: groupingOff.join(', ') }), tab: 'settings' });
+                    }
+
+                    var unregistered = collect('Unregistered');
+                    if (unregistered.length > 0) {
+                        notes.push({ key: 'unregistered', text: t('{libraries} shows the titles of a server a second time.', { libraries: unregistered.join(', ') }), tab: 'settings' });
+                    }
+
+                    if (folder.Covering.length > 0) {
+                        notes.push({ key: 'covering', text: t('{libraries} holds the whole federated folder, so the versions of a title come apart.', { libraries: folder.Covering.join(', ') }), tab: 'settings' });
+                    }
+
+                    if (folder.SeriesSplit) {
+                        notes.push({ key: 'split', text: t('The Serie folders of the servers are in different libraries, so a series on more than one server stays split.'), tab: 'settings' });
+                    }
+
+                    if (folder.Changes.Added.length > 0 || folder.Changes.Removed.length > 0) {
+                        notes.push({ key: 'changes', text: t('Libraries changed on the federated folder since the last sync, which links the versions again.'), tab: 'settings', calm: true });
                     }
 
                     return notes;
@@ -3824,6 +4847,10 @@
                                 return t('Not chosen');
                             }
 
+                            if (folder.Servers.length === 0 && folder.Link !== 'NotChecked') {
+                                return t('No server yet');
+                            }
+
                             return { Linked: t('Linked'), NotLinked: t('Not linked') }[folder.Link] || t('Not checked');
                         })
                     };
@@ -3833,7 +4860,7 @@
                     var merges = current(mergesSection);
                     var notes = [];
                     if (mergesSection.failure) {
-                        notes.push({ key: 'failed', text: t('The duplicate and merged films could not be read. The page keeps trying.'), tab: 'catalog' });
+                        notes.push({ key: 'failed', text: t('The duplicate and merged titles could not be read. The page keeps trying.'), tab: 'catalog' });
                     }
 
                     if (merges && merges.IsStoreDamaged) {
@@ -3844,12 +4871,17 @@
                         notes.push({ key: 'review', text: t('Merge the ones that are one film.'), tab: 'catalog', calm: true });
                     }
 
+                    if (merges && merges.SeriesCases.length > 0) {
+                        notes.push({ key: 'reviewSeries', text: t('Merge the ones that are one series.'), tab: 'catalog', calm: true });
+                    }
+
                     return {
                         key: 'duplicates',
                         label: t('Duplicates to review'),
                         notes: notes,
                         value: factValue(mergesSection, function (data) {
-                            return data.Cases.length === 0 ? t('None') : String(data.Cases.length);
+                            var cases = data.Cases.length + data.SeriesCases.length;
+                            return cases === 0 ? t('None') : String(cases);
                         })
                     };
                 }
@@ -3946,13 +4978,13 @@
                         key: 'sync',
                         name: t('Run the first sync'),
                         state: firstSync,
-                        text: status.Suspended && firstSync !== 'done' ? t('It waits until the stored logins can be used.') : t('It reads the catalogs and creates the two paths to link. It also runs by itself on a timer.'),
+                        text: status.Suspended && firstSync !== 'done' ? t('It waits until the stored logins can be used.') : t('It reads the catalogs and fills the Film and Serie folders of each server. It also runs by itself on a timer.'),
                         tab: 'catalog'
                     }, {
                         key: 'link',
-                        name: t('Link the two paths'),
+                        name: t('Link the folders of each server'),
                         state: linkState(folder),
-                        text: t('Add them by hand in Dashboard > Libraries, one to a film library and one to a series library. JellyMesh never changes libraries.'),
+                        text: t('Add the Film folder of each server to a film library and its Serie folder to a series library in Dashboard > Libraries, or turn on the automatic libraries of the server on the Servers tab.'),
                         tab: 'settings'
                     }].filter(Boolean);
                 }
@@ -4082,7 +5114,13 @@
                 var mergesSection = section(function () {
                     return read('Merges');
                 }, renderMerges, function (reason) {
-                    showFailure('#jmMergesFailure', t('the duplicate and merged films'), keepsTrying, reason);
+                    showFailure('#jmMergesFailure', t('the duplicate and merged titles'), keepsTrying, reason);
+                });
+
+                var historySection = section(function () {
+                    return read('Sync/History');
+                }, renderHistory, function (reason) {
+                    showFailure('#jmHistoryFailure', t('the sync history'), keepsTrying, reason);
                 });
 
                 var settingsSection = section(function () {
@@ -4110,16 +5148,19 @@
                     return refresh(mergesSection);
                 }
 
-                function load() {
-                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges()]);
+                function loadHistory() {
+                    return refresh(historySection);
                 }
 
-                // Plans the next read while the page is open and its tab is shown, sooner while a sync runs.
+                function load() {
+                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges(), loadHistory()]);
+                }
+
+                // Plans the next read while the page is open and its tab is shown, sooner while a sync or a migration runs.
                 function schedule() {
                     window.clearTimeout(pollTimer);
-                    pollTimer = visible && !document.hidden
-                        ? window.setTimeout(poll, syncRunning ? syncPollMilliseconds : idlePollMilliseconds)
-                        : null;
+                    var wait = syncRunning ? syncPollMilliseconds : migrationRunning ? migrationPollMilliseconds : idlePollMilliseconds;
+                    pollTimer = visible && !document.hidden ? window.setTimeout(poll, wait) : null;
                 }
 
                 // Reads the sync, and what else is due or needs reading again, then plans the next read.
@@ -4133,8 +5174,15 @@
                         nextStatusPoll = Date.now() + statusPollMilliseconds;
                     }
 
-                    var parts = [syncSection, statusSection, peersSection, mergesSection].filter(function (part) {
-                        return part.pending === 0 && (part === syncSection || part.stale || (due && part !== mergesSection));
+                    // A running migration has its status read sooner, for the banner, and the rest at the usual pace.
+                    var migrationDue = due || (migrationRunning && Date.now() >= nextMigrationPoll);
+                    if (migrationDue) {
+                        nextMigrationPoll = Date.now() + migrationPollMilliseconds;
+                    }
+
+                    var parts = [syncSection, statusSection, peersSection, mergesSection, historySection].filter(function (part) {
+                        return part.pending === 0 && (part === syncSection || part.stale || (part === statusSection && migrationDue)
+                            || (due && part !== mergesSection && part !== historySection));
                     });
                     polling = true;
                     Promise.all(parts.map(refresh)).then(function () {
@@ -4235,6 +5283,13 @@
                     schedule();
                 });
 
+                // The migration banner asks for the status after its own actions, and shows it from the render above.
+                page.addEventListener('jmstatusneeded', function () {
+                    if (visible) {
+                        loadStatus();
+                    }
+                });
+
                 el('#jmDismiss').addEventListener('click', function () {
                     showMessage('');
                 });
@@ -4242,12 +5297,13 @@
                 el('#jmForgetMissing').addEventListener('click', function () {
                     var count = syncSection.data ? syncSection.data.UnconfiguredStubs : 0;
                     confirmAction(t('Forget the servers missing from the settings?'), [
-                        t('{count} titles that only those servers have are deleted from the libraries now, with their images. Titles also on a server in the settings stay, without those backups. Nothing changes on those servers, and local files are not touched.', { count: count }),
-                        t('Restoring the settings or adding those servers again brings the same titles and watch state.')
+                        t('The folders of those servers are deleted now, as when a server is removed: their {count} titles leave the libraries, with their images. The same titles from a server in the settings stay. Nothing changes on those servers, and local files are not touched.', { count: escapeHtml(String(count)) }),
+                        t('Restoring the settings brings their folders back, with the same titles and watch state.'),
+                        t('The watch state of each user stays with the titles: if the same titles appear again within 90 days, from those servers added back or from another one, it comes back.')
                     ], function () {
                         act(api('POST', 'MissingServers/Forget').then(function (result) {
                             showMessage(result.Servers > 0
-                                ? t('The missing servers are forgotten. Their titles are leaving the libraries.')
+                                ? t('The missing servers are forgotten. Their folders are being deleted.')
                                 : t('No server was left to forget.'));
                             return load();
                         }));
@@ -4271,7 +5327,13 @@
                         Password: password.value
                     };
                     password.value = '';
-                    act(api('POST', 'Servers', request).then(function (server) {
+                    act(api('POST', 'Servers', request).catch(function (error) {
+                        if (error.failure === 'AlreadyConfigured' && error.serverName) {
+                            throw new Error(t('This server is already configured as “{server}”.', { server: error.serverName }));
+                        }
+
+                        throw error;
+                    }).then(function (server) {
                         el('#jmAddServerForm').reset();
                         el('#jmAddServerPart').open = false;
                         return Promise.all([loadStatus(), loadSync()]).then(function () {
@@ -4314,6 +5376,7 @@
                         config.ReconciliationTime = el('#jmReconciliationTime').value;
                         config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
                         config.MetadataProtection = el('#jmMetadataProtection').checked;
+                        config.FederateCollections = el('#jmFederateCollections').checked;
                         config.CloseTranscodeAtSlotExpiry = el('#jmCloseAtExpiry').checked;
                         config.RemotePlaybackInfoTimeoutSeconds = parseInt(el('#jmRemotePlaybackInfoTimeout').value, 10);
                         config.StreamOpenTimeoutSeconds = parseInt(el('#jmStreamOpenTimeout').value, 10);
@@ -4328,6 +5391,269 @@
                     }, function (error) {
                         throw new Error(settingsFailure(error));
                     }));
+                });
+            })();
+        </script>
+        <script type="text/javascript">
+            (function () {
+                var page = document.querySelector('#JellyMeshConfigPage');
+                var translations = JSON.parse(page.querySelector('#jmTranslations').textContent);
+                var strings = translations[languageOf(document.documentElement.lang)] || {};
+                var sendingMode = false;
+                var automaticSteps = {
+                    AddPaths: t('Adding the folders of each server to the libraries.'),
+                    Scan: t('Waiting for the library scan.'),
+                    Carry: t('Moving the watch state to the new titles.'),
+                    RemoveOldPaths: t('Removing the old folders from the libraries.'),
+                    Finish: t('Waiting for the last library scan.')
+                };
+                var errors = {
+                    ReadFailed: function () { return t('The libraries could not be read.'); },
+                    AddFailed: function (library) { return t('The folders of each server could not be added to the library {library}.', { library: library }); },
+                    FoldersInNoLibrary: function () { return t('No library holds the old folder of a kind with titles to move, so its folders of each server have nowhere to go.'); },
+                    NewPathsLeft: function () { return t('A folder of a server left the libraries before the watch state moved.'); },
+                    RemoveFailed: function (library) { return t('The old folders could not be removed from the library {library}.', { library: library }); },
+                    Failed: function () { return t('A step failed.'); },
+                    OldStubsLeft: function () { return t('The old folders still hold titles the plugin has no record of, or could not be read, so their watch state would be lost.'); }
+                };
+                var steps = {
+                    AddPaths: {
+                        title: t('Add the folders of each server to the libraries'),
+                        text: t('The federated folder now has a folder for each server. Until these folders are in the libraries and scanned, the old titles stay as they are.')
+                    },
+                    Carrying: {
+                        title: t('Moving the watch state to the folders of each server'),
+                        text: t('The watch state of the old titles moves to the new ones as the libraries are scanned.')
+                    },
+                    RemoveOldPaths: {
+                        title: t('Remove the old folders from the libraries'),
+                        text: t('The watch state has moved to the new titles and the old folders are empty.')
+                    }
+                };
+
+                // Picks the translations of a language tag, or of its base language.
+                function languageOf(tag) {
+                    var name = (tag || '').toLowerCase();
+                    return [name, name.split('-')[0]].filter(function (candidate) {
+                        return Object.prototype.hasOwnProperty.call(translations, candidate);
+                    })[0] || '';
+                }
+
+                // Translates an English text, or keeps it when it has no translation, and fills its {names}.
+                function t(text, values) {
+                    var shownText = Object.prototype.hasOwnProperty.call(strings, text) ? strings[text] : text;
+                    return shownText.replace(/\{(\w+)\}/g, function (whole, name) {
+                        return values && values[name] !== undefined ? values[name] : whole;
+                    });
+                }
+
+                // Lists each library with the folders it has to gain or lose.
+                function renderLibraries(libraries, pathsOf) {
+                    var list = page.querySelector('#jmMigrationLibraries');
+                    list.replaceChildren();
+                    libraries.forEach(function (library) {
+                        var paths = pathsOf(library);
+                        if (paths.length === 0) {
+                            return;
+                        }
+
+                        var item = document.createElement('li');
+                        var name = document.createElement('strong');
+                        name.textContent = library.Name;
+                        item.appendChild(name);
+                        paths.forEach(function (path) {
+                            var line = document.createElement('span');
+                            line.className = 'jmMigrationPath';
+                            line.textContent = path;
+                            item.appendChild(line);
+                        });
+                        list.appendChild(item);
+                    });
+                    list.hidden = list.childElementCount === 0;
+                }
+
+                // The title and text of the banner: the choice, the automatic step or its error, or the manual step.
+                function wordsOf(migration, step, failed) {
+                    if (migration.Mode === 'None') {
+                        return {
+                            title: t('Choose how to move to the folders of each server'),
+                            text: t('JellyMesh can add the folders of each server to the libraries that hold the old folders, move the watch state, and remove the old folders, without touching other folders or settings. Or you can change the libraries by hand. Until you choose, the old titles stay as they are.')
+                        };
+                    }
+
+                    if (failed) {
+                        var error = errors[migration.Error] || errors.Failed;
+                        return {
+                            title: t('The automatic migration stopped'),
+                            text: error(migration.ErrorLibrary || '') + ' ' + t('The old folders still work. Do the steps below by hand, or try again: the migration resumes from this step.')
+                        };
+                    }
+
+                    // A finished run that finds old paths again shows the step left, and offers a new run.
+                    if (migration.Mode === 'Automatic' && migration.AutomaticStep !== 'Done') {
+                        return { title: t('Migrating to the folders of each server'), text: automaticSteps[migration.AutomaticStep] || '' };
+                    }
+
+                    return step;
+                }
+
+                // Shows the buttons of the banner: the two choices, the switch from manual, or the retry after an error.
+                function renderActions(migration, failed) {
+                    var automatic = page.querySelector('#jmMigrateAutomatic');
+                    var manual = page.querySelector('#jmMigrateManual');
+                    automatic.textContent = failed ? t('Try again') : t('Migrate automatically');
+                    manual.textContent = t('I\'ll do it by hand');
+                    manual.hidden = migration.Mode !== 'None';
+                    automatic.hidden = migration.Running || (migration.Mode === 'Automatic' && !failed && migration.AutomaticStep !== 'Done');
+                    page.querySelector('#jmMigrationActions').hidden = automatic.hidden && manual.hidden;
+                }
+
+                // Shows the step of the move to the folders of each server, or hides the banner when there is none.
+                function render(migration) {
+                    var step = migration && steps[migration.Step];
+                    page.querySelector('#jmMigration').hidden = !step;
+                    if (!step) {
+                        return;
+                    }
+
+                    var mode = migration.Mode || 'None';
+                    migration.Mode = mode;
+                    var failed = mode === 'Automatic' && !!migration.Error && migration.Error !== 'None';
+                    var ended = mode === 'Automatic' && migration.AutomaticStep === 'Done' && !migration.Running;
+                    var quiet = mode === 'Automatic' ? !failed && !ended : mode === 'Manual' && migration.Step === 'Carrying';
+                    var banner = page.querySelector('#jmMigrationBanner');
+                    banner.classList.toggle('jmToneWarn', !quiet);
+                    banner.classList.toggle('jmToneQuiet', quiet);
+                    var words = wordsOf(migration, step, failed);
+                    page.querySelector('#jmMigrationTitle').textContent = words.title;
+                    page.querySelector('#jmMigrationText').textContent = words.text;
+                    var next = page.querySelector('#jmMigrationNext');
+                    next.textContent = failed ? step.title : '';
+                    next.hidden = !failed;
+                    renderActions(migration, failed);
+
+                    // The folders to add or remove are the admin's to do in manual mode, or left by hand after an error.
+                    var byHand = mode === 'Manual' || failed || ended;
+                    var libraries = byHand ? (migration.Libraries || []).slice() : [];
+                    if (byHand && migration.Step === 'AddPaths' && (migration.UnlinkedFolders || []).length > 0) {
+                        libraries.push({ Name: t('In no library yet'), MissingPaths: migration.UnlinkedFolders });
+                    }
+
+                    renderLibraries(libraries, function (library) {
+                        if (migration.Step === 'AddPaths') {
+                            return library.MissingPaths || [];
+                        }
+
+                        return migration.Step === 'RemoveOldPaths' ? library.OldPaths || [] : [];
+                    });
+                    var carrying = migration.Step === 'Carrying' && mode !== 'None' && !failed;
+                    var progress = carrying ? [t('Old titles left: {count}.', { count: migration.OldTitles })] : [];
+                    if (carrying && migration.Waiting) {
+                        progress.push(t('Waiting for a scan: {count}.', { count: migration.Waiting }));
+                    }
+
+                    if (carrying && migration.Held) {
+                        progress.push(t('Held for an empty remote library: {count}.', { count: migration.Held }));
+                    }
+
+                    if (carrying && migration.Blocked) {
+                        progress.push(t('Blocked titles, tried again at every run: {count}.', { count: migration.Blocked }));
+                    }
+
+                    var progressNode = page.querySelector('#jmMigrationProgress');
+                    progressNode.textContent = progress.join(' ');
+                    progressNode.hidden = progress.length === 0;
+                }
+
+                // Asks the page for a new read of the status, which reaches the banner through the jmstatus event.
+                function readStatus() {
+                    page.dispatchEvent(new CustomEvent('jmstatusneeded'));
+                }
+
+                // Sends the choice in the banner, shows the reason of a refusal, and reads the banner again.
+                function choose(mode) {
+                    var error = page.querySelector('#jmMigrationError');
+                    error.hidden = true;
+                    page.querySelector('#jmMigrationActions').hidden = true;
+                    fetch(ApiClient.getUrl('JellyMesh/Admin/Migration'), {
+                        method: 'POST',
+                        headers: {
+                            Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
+                            Accept: 'application/json; profile="PascalCase"',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ Mode: mode })
+                    }).then(function (response) {
+                        return response.json().catch(function () {
+                            return {};
+                        }).then(function (data) {
+                            if (!response.ok) {
+                                error.textContent = data && data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status });
+                                error.hidden = false;
+                            }
+                        });
+                    }).catch(function () {
+                        return null;
+                    }).then(readStatus);
+                }
+
+                // Shows the mode for the servers linked later, and allows a change once it is known, unless a choice is being sent.
+                function renderNewServerMode(mode) {
+                    var select = page.querySelector('#jmNewServerMode');
+                    if (!sendingMode && (mode === 'Manual' || mode === 'Automatic')) {
+                        select.value = mode;
+                        select.disabled = false;
+                    }
+                }
+
+                // Sends the mode for the servers linked later, shows the reason of a refusal, and reads the status again.
+                function setNewServerMode(mode) {
+                    var select = page.querySelector('#jmNewServerMode');
+                    var error = page.querySelector('#jmNewServerModeError');
+                    error.hidden = true;
+                    select.disabled = true;
+                    sendingMode = true;
+                    fetch(ApiClient.getUrl('JellyMesh/Admin/Migration/NewServers'), {
+                        method: 'POST',
+                        headers: {
+                            Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
+                            Accept: 'application/json; profile="PascalCase"',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ Mode: mode })
+                    }).then(function (response) {
+                        return response.ok ? null : response.json().catch(function () {
+                            return {};
+                        }).then(function (data) {
+                            error.textContent = data && data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status });
+                            error.hidden = false;
+                        });
+                    }).catch(function () {
+                        error.textContent = t('The server cannot be reached.');
+                        error.hidden = false;
+                    }).then(function () {
+                        sendingMode = false;
+                        readStatus();
+                    });
+                }
+
+                page.querySelector('#jmNewServerMode').addEventListener('change', function (event) {
+                    setNewServerMode(event.target.value);
+                });
+
+                page.querySelector('#jmMigrateAutomatic').addEventListener('click', function () {
+                    choose('Automatic');
+                });
+
+                page.querySelector('#jmMigrateManual').addEventListener('click', function () {
+                    choose('Manual');
+                });
+
+                // Shows the migration and the mode for later servers from each status the page reads; a failed read leaves them.
+                page.addEventListener('jmstatus', function (event) {
+                    var folder = event.detail.FederatedFolder;
+                    render(folder && folder.Migration);
+                    renderNewServerMode(folder && folder.NewServerMode);
                 });
             })();
         </script>

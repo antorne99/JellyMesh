@@ -12,6 +12,7 @@ BASE, TOKEN, USER, SERVER, ITEM, SCENARIO, CAP = sys.argv[1:8]
 SECONDS = int(sys.argv[8]) if len(sys.argv) > 8 else 12
 import os
 MAXBIT = os.environ.get('MAXBIT', '')
+DEVICE = os.environ.get('DEVICE_ID', 'jm-play-browser')
 CRED = {"Servers": [{"Id": SERVER, "Name": "p", "AccessToken": TOKEN, "UserId": USER, "ManualAddress": BASE,
                      "LocalAddress": BASE, "LastConnectionMode": 2, "manualAddressOnly": True,
                      "DateLastAccessed": int(time.time() * 1000)}]}
@@ -33,7 +34,7 @@ def state(pg):
 with sync_playwright() as p:
     b = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
     c = b.new_context(locale="it-IT", viewport={"width": 1280, "height": 720})
-    c.add_init_script("localStorage.setItem('jellyfin_credentials', " + json.dumps(json.dumps(CRED)) + ");localStorage.setItem('enableAutoLogin','true');localStorage.setItem('_deviceId2','jm-play-browser');" + ''.join(f"localStorage.setItem('enableautobitratebitrate-Video-{n}','false');localStorage.setItem('maxbitrate-Video-{n}','{MAXBIT}');" for n in ('true','false') if MAXBIT))
+    c.add_init_script("localStorage.setItem('jellyfin_credentials', " + json.dumps(json.dumps(CRED)) + ");localStorage.setItem('enableAutoLogin','true');localStorage.setItem('_deviceId2'," + json.dumps(DEVICE) + ");" + ''.join(f"localStorage.setItem('enableautobitratebitrate-Video-{n}','false');localStorage.setItem('maxbitrate-Video-{n}','{MAXBIT}');" for n in ('true','false') if MAXBIT))
     pg = c.new_page()
     posts = []
 

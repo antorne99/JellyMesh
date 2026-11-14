@@ -299,20 +299,6 @@ public class ManualMergeTests
     }
 
     [Fact]
-    public void ACaseOfSeries_IsNotListed_AndEpisodesIgnoreMerges()
-    {
-        var first = Episode(Standard, "Serie", 2020, new ContentIds("1"), 1, 1, _hd);
-        var second = Episode(RemoteJellyMesh, "Serie", 2020, new ContentIds("2"), 1, 1, _fullHd) with { ItemId = "altro" };
-        var merge = Merge(1, first, second);
-
-        var result = Resolve([first, second], merge);
-
-        Assert.Equal(2, result.Decisions.Count);
-        Assert.Single(result.Issues);
-        Assert.Empty(result.MergeCases);
-    }
-
-    [Fact]
     public void RemoteItemsAreSorted()
     {
         var result = Resolve([_c, _b, _a], Merge(1, _a, _b, _c));

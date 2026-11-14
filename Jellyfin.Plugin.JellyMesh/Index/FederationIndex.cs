@@ -67,7 +67,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
 
                 return current with
                 {
-                    Servers = WithServer(current, catalog with { LastAttemptUtc = syncedUtc, Mark = mark, Items = Merged(catalog.Items, changed) })
+                    Servers = WithServer(current, catalog with { LastAttemptUtc = syncedUtc, Mark = mark, Items = changed.Count == 0 ? catalog.Items : Merged(catalog.Items, changed) })
                 };
             },
             cancellationToken,

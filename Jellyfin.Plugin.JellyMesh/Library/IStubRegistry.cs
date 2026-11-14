@@ -1,3 +1,5 @@
+using System;
+
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
@@ -19,4 +21,25 @@ public interface IStubRegistry
     /// <param name="path">The file path, <c>BaseItem.Path</c>.</param>
     /// <returns>The stub, null for anything that is not one.</returns>
     StubEntry? FindByPath(string? path);
+
+    /// <summary>
+    /// Finds the version group of a stub, read from memory.
+    /// </summary>
+    /// <param name="stubId">The stub.</param>
+    /// <returns>The group, null if the stub is in none.</returns>
+    VersionGroup? FindGroup(string stubId);
+
+    /// <summary>
+    /// Finds the version group of a local copy, read from memory.
+    /// </summary>
+    /// <param name="itemId">The Jellyfin item of the local copy.</param>
+    /// <returns>The group, null if the item is in none.</returns>
+    VersionGroup? FindGroupOfLocal(Guid itemId);
+
+    /// <summary>
+    /// Tells whether a stub or a stub series of a server is still in the registry.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>Whether the server still has titles in the federated folder.</returns>
+    bool HasTitlesOf(Guid serverId);
 }

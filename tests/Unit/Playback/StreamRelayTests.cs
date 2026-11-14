@@ -89,6 +89,140 @@ public class StreamRelayTests
         Assert.False(aborted.Aborted);
     }
 
+    // Decision 413: a stream of a server being removed ends at once, as a broken connection, and is no failure of the source.
+    [Fact]
+    public async Task A_stream_of_a_server_being_removed_breaks_the_connection_at_once_and_is_not_told_as_stopped()
+    {
+        using var ended = new CancellationTokenSource();
+        using var content = Content(new SilentStream()).EndsWith(ended.Token);
+        var aborted = new AbortRecorder();
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var relay = StreamRelay.CopyAsync(content, context, TimeSpan.FromMinutes(5), CancellationToken.None);
+        await ended.CancelAsync();
+        var stopped = await relay.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(aborted.Aborted);
+        Assert.False(stopped);
+    }
+
+    [Fact]
+    public async Task A_stream_opened_after_its_server_was_closed_sends_nothing()
+    {
+        using var content = Content(new MemoryStream([1, 2, 3])).EndsWith(new CancellationToken(canceled: true));
+        var aborted = new AbortRecorder();
+        using var target = new MemoryStream();
+        var context = Context(target);
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        await StreamRelay.CopyAsync(content, context, TimeSpan.FromMinutes(5), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(aborted.Aborted);
+        Assert.Equal(0, target.Length);
+    }
+
+    [Fact]
+    public async Task A_remote_that_goes_silent_is_told_as_a_remote_that_stopped()
+    {
+        using var content = Content(new SilentStream());
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromMilliseconds(100), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(stopped);
+    }
+
+    [Fact]
+    public async Task A_remote_that_drops_mid_stream_breaks_the_connection_and_is_told_as_stopped()
+    {
+        using var content = Content(new BrokenStream(read: true));
+        var aborted = new AbortRecorder();
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.True(stopped);
+        Assert.True(aborted.Aborted);
+    }
+
+    [Fact]
+    public async Task A_client_that_drops_mid_stream_is_no_remote_that_stopped()
+    {
+        using var content = Content(new MemoryStream(new byte[] { 1, 2, 3 }));
+        var aborted = new AbortRecorder();
+        var context = Context(new BrokenStream(read: false));
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.False(stopped);
+        Assert.True(aborted.Aborted);
+    }
+
+    [Fact]
+    public async Task A_client_that_leaves_or_a_copy_that_ends_is_no_remote_that_stopped()
+    {
+        using var whole = Content(new MemoryStream(new byte[] { 1, 2, 3 }));
+        using var silent = Content(new SilentStream());
+        var context = Context(new MemoryStream());
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+        using var left = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        Assert.False(await StreamRelay.CopyAsync(whole, context, TimeSpan.FromSeconds(30), CancellationToken.None));
+        Assert.False(await StreamRelay.CopyAsync(silent, context, TimeSpan.FromSeconds(30), left.Token).WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task A_break_right_after_a_long_client_pause_is_no_remote_that_stopped()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(2));
+        var aborted = new AbortRecorder();
+        var context = Context(new ClockedStream(clock, write => write == 1 ? TimeSpan.FromMinutes(6) : TimeSpan.Zero));
+        context.Features.Set<IHttpRequestLifetimeFeature>(aborted);
+
+        var stopped = await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock);
+
+        Assert.False(stopped);
+        Assert.True(aborted.Aborted);
+    }
+
+    [Fact]
+    public async Task A_break_while_the_client_reads_is_a_remote_that_stopped()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(3));
+        var context = Context(new ClockedStream(clock, _ => TimeSpan.FromSeconds(5)));
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        Assert.True(await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock));
+    }
+
+    [Fact]
+    public async Task A_short_wait_for_the_client_is_no_pause()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(2));
+        var context = Context(new ClockedStream(clock, write => write == 1 ? RemoteContent.ClientPause - TimeSpan.FromSeconds(1) : TimeSpan.Zero));
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        Assert.True(await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock));
+    }
+
+    [Fact]
+    public async Task A_break_long_after_the_client_resumed_is_a_remote_that_stopped_again()
+    {
+        var clock = new ManualClock();
+        using var content = Content(new ChunksThenBreak(30));
+        var context = Context(new ClockedStream(clock, write => write == 1 ? TimeSpan.FromMinutes(6) : TimeSpan.FromSeconds(5)));
+        context.Features.Set<IHttpRequestLifetimeFeature>(new AbortRecorder());
+
+        Assert.True(await StreamRelay.CopyAsync(content, context, TimeSpan.FromSeconds(30), CancellationToken.None, clock));
+    }
+
     [Theory]
     [InlineData("text/html", "application/octet-stream")]
     [InlineData("text/html; charset=utf-8", "application/octet-stream")]
@@ -117,6 +251,101 @@ public class StreamRelayTests
         public CancellationToken RequestAborted { get; set; }
 
         public void Abort() => Aborted = true;
+    }
+
+    // A connection that breaks: on the first read for a remote, on the first write for a client.
+    private sealed class BrokenStream : Stream
+    {
+        private readonly bool _read;
+
+        public BrokenStream(bool read) => _read = read;
+
+        public override bool CanRead => _read;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => !_read;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => throw new IOException("The connection broke.");
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => throw new IOException("The connection broke.");
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    // A remote body that sends some chunks, then breaks.
+    private sealed class ChunksThenBreak : Stream
+    {
+        private int _left;
+
+        public ChunksThenBreak(int chunks) => _left = chunks;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_left-- <= 0)
+            {
+                throw new IOException("The connection broke.");
+            }
+
+            buffer.Span[0] = 1;
+            return ValueTask.FromResult(1);
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    // A client whose writes take the time given per write, numbered from 1, on a clock moved by hand.
+    private sealed class ClockedStream : MemoryStream
+    {
+        private readonly ManualClock _clock;
+        private readonly Func<int, TimeSpan> _duration;
+        private int _writes;
+
+        public ClockedStream(ManualClock clock, Func<int, TimeSpan> duration)
+        {
+            _clock = clock;
+            _duration = duration;
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _clock.Advance(_duration(++_writes));
+            return base.WriteAsync(buffer, cancellationToken);
+        }
     }
 
     private sealed class SilentStream : Stream

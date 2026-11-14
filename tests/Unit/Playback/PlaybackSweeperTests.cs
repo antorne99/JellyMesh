@@ -1,10 +1,14 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -53,5 +57,122 @@ public class PlaybackSweeperTests
         await StopReportedAsync(new User("other", "auth", "reset") { Id = Guid.NewGuid() }, () => false);
 
         Assert.True(_fixture.Sessions.IsLocalOfAnother(Guid.NewGuid(), "local-play"));
+    }
+
+    [Fact]
+    public async Task A_sweep_that_fails_is_logged_and_the_next_one_still_runs()
+    {
+        var clock = new HandClock();
+        var store = new FailingOnceStore(_fixture.Store);
+        var logger = new CapturingLogger<PlaybackSweeper>();
+        using var sweeper = new PlaybackSweeper(_fixture.Coordinator, _sessionManager.Object, _fixture.Sessions, store, clock, logger);
+        using var stop = new CancellationTokenSource();
+        await sweeper.StartAsync(stop.Token);
+        for (var waited = 0; waited < 200 && store.Reads < 2; waited++)
+        {
+            clock.Tick();
+            await Task.Delay(10);
+        }
+
+        await stop.CancelAsync();
+        await sweeper.StopAsync(CancellationToken.None);
+
+        Assert.True(store.Reads >= 2, store.Reads.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Contains(LogLevel.Error, logger.Levels);
+        Assert.DoesNotContain(logger.Lines, line => line.Contains(FailingOnceStore.Secret, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_session_whose_source_dropped_gets_its_remote_transcode_closed_at_the_next_check()
+    {
+        await _fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(_fixture.Sessions.All);
+        _fixture.Coordinator.ReportFailure(session);
+        var clock = new HandClock();
+        using var sweeper = new PlaybackSweeper(_fixture.Coordinator, _sessionManager.Object, _fixture.Sessions, _fixture.Store, clock, NullLogger<PlaybackSweeper>.Instance);
+        using var stop = new CancellationTokenSource();
+        await sweeper.StartAsync(stop.Token);
+        for (var waited = 0; waited < 200 && _fixture.Client.Stopped.Count == 0; waited++)
+        {
+            clock.Tick();
+            await Task.Delay(10);
+        }
+
+        var closedWhileRunning = _fixture.Client.Stopped.ToList();
+        await stop.CancelAsync();
+        await sweeper.StopAsync(CancellationToken.None);
+
+        Assert.Equal([session.RemotePlaySessionId!], closedWhileRunning);
+    }
+
+    // A clock whose timers fire only when the test ticks it.
+    private sealed class HandClock : TimeProvider
+    {
+        private readonly List<(TimerCallback Callback, object? State)> _timers = [];
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            lock (_timers)
+            {
+                _timers.Add((callback, state));
+            }
+
+            return new HandTimer();
+        }
+
+        public void Tick()
+        {
+            List<(TimerCallback Callback, object? State)> timers;
+            lock (_timers)
+            {
+                timers = _timers.ToList();
+            }
+
+            foreach (var (callback, state) in timers)
+            {
+                callback(state);
+            }
+        }
+
+        private sealed class HandTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    // Throws on its first read, with a remote address and a token in the message.
+    private sealed class FailingOnceStore(IPluginConfigurationStore inner) : IPluginConfigurationStore
+    {
+        public const string Secret = "http://10.9.8.7:8096?api_key=sweeper-secret";
+
+        private int _reads;
+
+        public event EventHandler? SettingsChanged
+        {
+            add => inner.SettingsChanged += value;
+            remove => inner.SettingsChanged -= value;
+        }
+
+        public int Reads => Volatile.Read(ref _reads);
+
+        public T Read<T>(Func<PluginConfiguration, T> read)
+        {
+            if (Interlocked.Increment(ref _reads) == 1)
+            {
+                throw new InvalidOperationException(Secret);
+            }
+
+            return inner.Read(read);
+        }
+
+        public void Update(Action<PluginConfiguration> update) => inner.Update(update);
+
+        public void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback) => inner.Update(update, rollback);
     }
 }

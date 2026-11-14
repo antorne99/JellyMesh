@@ -55,7 +55,11 @@ internal sealed class StubFixture : IDisposable
             Remover,
             new StubUrlBuilder(Host.Object, Network.Object, Signer),
             Sync.Clock,
-            Logger);
+            Logger,
+            Refresher,
+            Linker.Object);
+        Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
     }
 
     public SyncFixture Sync { get; }
@@ -98,13 +102,23 @@ internal sealed class StubFixture : IDisposable
 
     public LibraryMaterializer Materializer { get; }
 
+    public RecordingRefresher Refresher { get; } = new();
+
+    public Mock<IVersionLinker> Linker { get; } = new();
+
     public string[] Files => Directory.Exists(Root)
         ? Directory.GetFiles(Root, "*", SearchOption.AllDirectories).Select(file => Path.GetRelativePath(Root, file)).Order(StringComparer.Ordinal).ToArray()
         : [];
 
     public static string Text(string path) => File.ReadAllText(path);
 
+    /// <summary>Builds a path relative to the root, inside the folder of a server.</summary>
+    public static string In(RemoteServerInfo server, params string[] parts) => Path.Combine(FederatedPaths.ServerFolder(server.Id), Path.Combine(parts));
+
     public string Path_(params string[] parts) => Path.Combine(Root, Path.Combine(parts));
+
+    /// <summary>Builds an absolute path inside the folder of a server.</summary>
+    public string Path_(RemoteServerInfo server, params string[] parts) => Path.Combine(Root, In(server, parts));
 
     public async Task SyncAndMaterializeAsync()
     {
@@ -142,6 +156,17 @@ internal sealed class StubFixture : IDisposable
             after();
             return view;
         }
+    }
+
+    internal sealed class RecordingRefresher : ILocalRefreshRequester
+    {
+        public List<Guid> Requested { get; } = [];
+
+        public void Request(IReadOnlyCollection<Guid> itemIds) => Requested.AddRange(itemIds);
+
+        public bool IsOverdue(Guid itemId) => false;
+
+        public bool TryTakeArrival(Guid itemId) => false;
     }
 
     internal sealed class FakeCatalog : ILocalCatalogReader

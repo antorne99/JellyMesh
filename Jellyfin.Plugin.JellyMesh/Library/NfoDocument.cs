@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Xml;
+using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -29,6 +30,9 @@ public static class NfoDocument
         MetadataField.OfficialRating
     ];
 
+    /// <summary>The fields locked on a season, a parent of episodes like a series (decisions 1 and 50).</summary>
+    public static readonly IReadOnlyList<MetadataField> SeasonLockedFields = [MetadataField.Name, MetadataField.Overview];
+
     /// <summary>
     /// Writes the document of a film.
     /// </summary>
@@ -37,6 +41,7 @@ public static class NfoDocument
     public static string Movie(StubMetadata metadata) => Write("movie", metadata, static (writer, value) =>
     {
         WriteOptional(writer, "premiered", FormatDate(value.PremiereDate));
+        WriteSet(writer, value);
         if (value.IsProtected)
         {
             writer.WriteElementString("lockdata", "true");
@@ -80,6 +85,20 @@ public static class NfoDocument
         WriteOptional(writer, "enddate", FormatDate(value.EndDate));
         WriteOptional(writer, "status", value.Status);
         writer.WriteElementString("lockedfields", string.Join('|', SeriesLockedFields));
+    });
+
+    /// <summary>
+    /// Writes the <c>season.nfo</c> of a season: its name, its plot with protection on, and its number.
+    /// </summary>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>The XML.</returns>
+    public static string Season(StubMetadata metadata) => Write("season", metadata, static (writer, value) =>
+    {
+        WriteOptional(writer, "seasonnumber", value.SeasonNumber?.ToString(CultureInfo.InvariantCulture));
+        if (value.IsProtected)
+        {
+            writer.WriteElementString("lockedfields", string.Join('|', SeasonLockedFields));
+        }
     });
 
     private static string Write(string root, StubMetadata metadata, Action<XmlWriter, StubMetadata> writeSpecific)
@@ -137,6 +156,30 @@ public static class NfoDocument
             WriteOptional(writer, "type", person.Type);
             writer.WriteEndElement();
         }
+
+        // The one form Jellyfin reads from an .nfo; it turns it into a YouTube watch address.
+        foreach (var id in metadata.TrailerIds.Where(YouTubeTrailer.IsId))
+        {
+            writer.WriteElementString("trailer", YouTubeTrailer.KodiPrefix + id);
+        }
+    }
+
+    // Jellyfin joins films to a collection by this exact name, and only when the admin turns it on (decision 52).
+    private static void WriteSet(XmlWriter writer, StubMetadata metadata)
+    {
+        if (string.IsNullOrEmpty(metadata.CollectionName))
+        {
+            return;
+        }
+
+        writer.WriteStartElement("set");
+        if (!string.IsNullOrEmpty(metadata.TmdbCollectionId))
+        {
+            writer.WriteAttributeString("tmdbcolid", Clean(metadata.TmdbCollectionId));
+        }
+
+        WriteOptional(writer, "name", metadata.CollectionName);
+        writer.WriteEndElement();
     }
 
     private static void WriteEach(XmlWriter writer, string element, IEnumerable<string> values)

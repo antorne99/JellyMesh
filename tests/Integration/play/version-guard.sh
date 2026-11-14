@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Task 862: a stock route that names a stub by videoId or as the version it picks, also in the legacy params, wants a
 # local user who can see that stub, as itemId does. Without it, anyone could ask for an attachment of a stub, which
-# makes stock refresh the stub. Then the reuse of a local play session over a real socket (D10, D11): the remote user
-# cannot transcode, so the stub plays through a local transcode with a stock play session.
+# makes stock refresh the stub. Then the reuse of a local play session over a real socket (D9, D10, D11): the remote user
+# cannot transcode, so the stub plays through a local transcode with a stock play session. Then integration test 4 of
+# the per-server spec (Q54, D8): a local copy in Privato linked as a version of the stub of its title in Film, with the
+# play session guard on its versions (S6, S7), and a stub left in no library (D17).
 # Builds its own pair with the plugin of this checkout: PREFIX and PORT keep it off the jm-play-* pair.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-play-guard] [PORT=18436] [UP=0] [DOWN=0] version-guard.sh
 set -euo pipefail
@@ -21,6 +23,7 @@ down() {
 
 FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg
 TITLE="Tears of Steel"
+LINKED="JM Audio e Sottotitoli (2026)"
 
 up() {
   down
@@ -39,30 +42,49 @@ up() {
   docker exec "$PREFIX-local" sh -c 'mkdir -p /media/film "/media/privata/JM Privato (2026)" && touch /media/film/.keep'
   docker exec "$PREFIX-local" "$FFMPEG" -hide_banner -loglevel error -y -f lavfi -i testsrc=d=10:s=320x180:r=25 \
     -c:v libx264 -preset ultrafast -pix_fmt yuv420p "/media/privata/JM Privato (2026)/JM Privato (2026).mkv"
-  library local Film movies /media/film /federata/Film
+  # A local copy of a remote title, with its ids, so that it becomes the primary version of the stub.
+  docker exec "$PREFIX-local" mkdir -p "/media/privata/$LINKED"
+  docker cp "$MEDIA/remoto-standard/film/$LINKED/movie.nfo" "$PREFIX-local:/media/privata/$LINKED/movie.nfo"
+  docker exec "$PREFIX-local" "$FFMPEG" -hide_banner -loglevel error -y -f lavfi -i testsrc=d=10:s=320x180:r=25 \
+    -c:v libx264 -preset ultrafast -pix_fmt yuv420p "/media/privata/$LINKED/$LINKED.mkv"
+  library local Film movies /media/film
   library local Privato movies /media/privata
   user local viewer >/dev/null
   user local viewer2 >/dev/null
   user local outsider >/dev/null
+  user local both >/dev/null
   only viewer Film
   only viewer2 Film
   only outsider Privato
+  only both Film Privato
 
   bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
   sleep 3
   wait_ready local
   login local
   settings local '.FederatedFolderPath = "/federata"' >/dev/null
-  import_all local "$(add_remote local remote "http://host.docker.internal:$((PORT + 1))" jellymesh)"
+  local id
+  id=$(add_remote local remote "http://host.docker.internal:$((PORT + 1))" jellymesh)
+  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
+  import_all local "$id"
   sync_now local
   scan local
+  # The link sometimes needs more than one sync after the scan, so sync until the local copy has two versions.
+  local i both_id
+  both_id=$(user_id local both)
+  for i in $(seq 1 10); do
+    sync_now local
+    [ "$(get local "/Items/$(local_item local "$LINKED")?userId=$both_id" | jq '.MediaSources | length')" = 2 ] && break
+    sleep 5
+  done
 }
 
-only() { # only <user> <library>: the user sees that library alone
-  local lib uid policy
-  lib=$(get local /Library/VirtualFolders | jq -r --arg n "$2" '.[] | select(.Name == $n) | .ItemId')
-  uid=$(user_id local "$1")
-  policy=$(get local "/Users/$uid" | jq -c --arg f "$lib" '.Policy | .EnableAllFolders = false | .EnabledFolders = [$f]')
+only() { # only <user> <library>...: the user sees those libraries alone
+  local user=$1 libs uid policy
+  shift
+  libs=$(get local /Library/VirtualFolders | jq -c --args '[.[] | select(.Name | IN($ARGS.positional[])) | .ItemId]' "$@")
+  uid=$(user_id local "$user")
+  policy=$(get local "/Users/$uid" | jq -c --argjson f "$libs" '.Policy | .EnableAllFolders = false | .EnabledFolders = $f')
   post local "/Users/$uid/Policy" "$policy" >/dev/null
 }
 
@@ -133,12 +155,123 @@ check "a stream of a stub the user cannot see is not found" 404 "$(as outsider "
 check "a stream of a stub the user sees is served" 206 "$(as viewer "$stream" -H 'Range: bytes=0-99')"
 check "a stream of a local film with its own version goes to stock" 206 "$(as outsider "/Videos/$private/stream?static=true&mediaSourceId=$private_n" -H 'Range: bytes=0-99')"
 
-# Integration test 5: the play session of a local transcode of the stub, used by another user over a real socket.
-open_local() { # open_local <user>: opens the stub through the local transcode, prints its play session
-  as "$1" "/Items/$stub/PlaybackInfo?userId=$(user_id local "$1")" -X POST -H "$ACCEPT" -H 'Content-Type: application/json' \
-    -d "$PROFILE_HLS" >/dev/null
+# Integration test 4 of the per-server spec (Q54): the local copy in Privato is the primary version of the stub B of
+# the same title in Film. Viewer sees only B, outsider only the local copy, both sees the two.
+linked=$(local_item local "$LINKED")
+linked_n=${linked//-/}
+b_n=$(get local "/Items/$linked?userId=$(user_id local both)" | jq -r --arg l "$linked_n" '[.MediaSources[].Id | select(. != $l)][0] // ""')
+check "the local copy and the stub of its title are linked versions" 2 \
+  "$(get local "/Items/$linked?userId=$(user_id local both)" | jq '.MediaSources | length')"
+check "the other version is the stub" 1 "$(get local "/Items/$b_n" | jq -r '.Path // ""' | grep -c '^/federata/.*\.strm$' || true)"
+check "viewer sees only the stub among the versions" "$b_n" \
+  "$(get local "/Items/$b_n?userId=$(user_id local viewer)" | jq -r '[.MediaSources[].Id] | join(",")')"
+
+hidden() { # hidden <what> <path>: 404 for viewer, who sees the stub and not the local copy, 401 for anonymous
+  check "$1 is not found for viewer" 404 "$(as viewer "$2" -H 'Range: bytes=0-99')"
+  check "$1 is refused to anonymous" 401 "$(as anonymous "$2" -H 'Range: bytes=0-99')"
+}
+hidden "a stream of the stub with the local version" "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n"
+hidden "a master playlist of the stub with the local version" "/Videos/$b_n/master.m3u8?mediaSourceId=$linked_n&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts&DeviceId=jm-play-viewer"
+hidden "a segment of the stub with the local version" "/videos/$b_n/hls1/main/0.ts?mediaSourceId=$linked_n&playSessionId=f09&VideoCodec=h264&AudioCodec=aac&SegmentContainer=ts&runtimeTicks=0&actualSegmentLengthTicks=30000000"
+hidden "a subtitle of the stub with the local version" "/Videos/$b_n/$linked_n/Subtitles/0/Stream.srt"
+hidden "an attachment of the stub with the local version" "/Videos/$b_n/$linked_n/Attachments/0"
+hidden "a trickplay playlist of the stub with the local version" "/Videos/$b_n/Trickplay/320/tiles.m3u8?mediaSourceId=$linked_n"
+hidden "a stream of the stub with the local version in the legacy params" "/Videos/$b_n/stream?static=true&mediaSourceId=$b_n&params=;;$linked_n"
+hidden "a stream of the local copy alone" "/Videos/$linked_n/stream?static=true&mediaSourceId=$linked_n"
+hidden "a stream of the local copy with the stub as its version" "/Videos/$linked_n/stream?static=true&mediaSourceId=$b_n"
+check "a stream of the stub with its own version is served to viewer" 206 \
+  "$(as viewer "/Videos/$b_n/stream?static=true&mediaSourceId=$b_n" -H 'Range: bytes=0-99')"
+check "a stream of the stub with the local version is served to both" 206 \
+  "$(as both "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n" -H 'Range: bytes=0-99')"
+check "a stream of the local copy is served to outsider" 206 \
+  "$(as outsider "/Videos/$linked_n/stream?static=true&mediaSourceId=$linked_n" -H 'Range: bytes=0-99')"
+check "a stream of the local copy with the stub as its version is not found for outsider" 404 \
+  "$(as outsider "/Videos/$linked_n/stream?static=true&mediaSourceId=$b_n" -H 'Range: bytes=0-99')"
+
+# D8: a Playstate report that names the hidden local version gets 204 and writes nothing. Stock writes the watch state
+# of a report on the version its MediaSourceId names, so the user data of the local copy is the sign.
+watched() { # watched <user>: 1 if a user data row of the local copy has a position or played, read from the database
+  local copy f uid
+  uid=$(user_id local "$1")
+  copy=$(mktemp -d)
+  for f in jellyfin.db jellyfin.db-wal jellyfin.db-shm; do docker cp "$PREFIX-local:/config/data/$f" "$copy/$f" >/dev/null 2>&1 || true; done
+  sqlite3 "$copy/jellyfin.db" "select count(*) > 0 from UserData where lower(replace(ItemId, '-', '')) = '$linked_n'
+    and lower(replace(UserId, '-', '')) = '${uid//-/}' and (PlaybackPositionTicks > 0 or Played = 1);"
+  rm -rf "$copy"
+}
+on_version() { # on_version <user> <path>: a Playstate report on the stub that names the local copy as its version
+  as "$1" "$2" -X POST -H 'Content-Type: application/json' \
+    -d "{\"ItemId\":\"$b_n\",\"MediaSourceId\":\"$linked_n\",\"PositionTicks\":50000000}"
+}
+check "viewer's start report on the hidden local version is a 204" 204 "$(on_version viewer /Sessions/Playing)"
+check "and their progress report" 204 "$(on_version viewer /Sessions/Playing/Progress)"
+check "and their stop report" 204 "$(on_version viewer /Sessions/Playing/Stopped)"
+check "and the legacy progress report" 204 "$(as viewer "/PlayingItems/$b_n/Progress?mediaSourceId=$linked_n&positionTicks=50000000" -X POST)"
+check "and the legacy stop report" 204 "$(as viewer "/PlayingItems/$b_n?mediaSourceId=$linked_n&positionTicks=50000000" -X DELETE)"
+check "and none of them reached stock" "" "$(get local /Sessions | jq -r '[.[] | select(.UserName == "viewer") | .NowPlayingItem.Id // empty] | join(",")')"
+check "nor wrote the watch state of the local copy" 0 "$(watched viewer)"
+check "the same reports of both, who sees the local copy, are served" "204 204 204" \
+  "$(on_version both /Sessions/Playing) $(on_version both /Sessions/Playing/Progress) $(on_version both /Sessions/Playing/Stopped)"
+check "and write the watch state of the local copy" 1 "$(watched both)"
+
+# S6 and S7 on linked versions (F20): a local play session of viewer on the linked stub B, named by other users through
+# either version. Who sees both versions passes the version guard, so only the play session guard stops them.
+open_on() { # open_on <user> <item> [version]: opens the item through the local transcode, prints its play session
+  as "$1" "/Items/$2/PlaybackInfo?userId=$(user_id local "$1")${3:+&mediaSourceId=$3}" -X POST -H "$ACCEPT" \
+    -H 'Content-Type: application/json' -d "$PROFILE_HLS" >/dev/null
   jq -r '.PlaySessionId // ""' "$WORK/as-body"
 }
+on_linked() { # on_linked <user> <item> <play session>: a stream of a linked version that names the play session
+  as "$1" "/Videos/$2/stream?static=true&mediaSourceId=$2&playSessionId=$3" -H 'Range: bytes=0-99'
+}
+linked_play=$(open_on viewer "$b_n")
+check "viewer opens the linked stub through a local transcode" 1 \
+  "$([ -n "$linked_play" ] && jq -r '.MediaSources[0].TranscodingUrl // ""' "$WORK/as-body" | grep -qi "PlaySessionId=$linked_play" && echo 1 || echo 0)"
+check "who sees both versions cannot name that play session through the local copy" 404 "$(on_linked both "$linked_n" "$linked_play")"
+check "nor through the stub" 404 "$(on_linked both "$b_n" "$linked_play")"
+check "nor can another user who sees the stub" 404 "$(on_linked viewer2 "$b_n" "$linked_play")"
+check "anonymous cannot name it through the local copy" 401 "$(on_linked anonymous "$linked_n" "$linked_play")"
+check "its owner names it through the stub" 206 "$(on_linked viewer "$b_n" "$linked_play")"
+stopped=$(as both /Sessions/Playing/Stopped -X POST -H 'Content-Type: application/json' \
+  -d "{\"ItemId\":\"$linked_n\",\"PlaySessionId\":\"$linked_play\"}")
+check "another user's stop report on it is a 204" 204 "$stopped"
+[ "$stopped" = 204 ] || echo "info the stop report answered: $(head -c 300 "$WORK/as-body")"
+check "and their DELETE ActiveEncodings" 204 "$(as both "/Videos/ActiveEncodings?deviceId=jm-play-viewer&playSessionId=$linked_play" -X DELETE)"
+check "after both it is still out of their reach" 404 "$(on_linked both "$linked_n" "$linked_play")"
+check "the owner's DELETE ActiveEncodings ends it" 204 "$(as viewer "/Videos/ActiveEncodings?deviceId=jm-play-viewer&playSessionId=$linked_play" -X DELETE)"
+check "after which the local copy streams again to who sees both" 206 "$(on_linked both "$linked_n" "$linked_play")"
+# F10 records the version a play session serves: who sees both opens the local copy with the stub as its version.
+cross_play=$(open_on both "$linked_n" "$b_n")
+check "who sees both opens the local copy with the stub as its version" 1 "$([ -n "$cross_play" ] && echo 1 || echo 0)"
+check "outsider cannot name that play session through the local copy" 404 "$(on_linked outsider "$linked_n" "$cross_play")"
+check "nor viewer through the stub" 404 "$(on_linked viewer "$b_n" "$cross_play")"
+check "nor anonymous" 401 "$(on_linked anonymous "$b_n" "$cross_play")"
+check "its owner names it through the local copy" 206 "$(on_linked both "$linked_n" "$cross_play")"
+check "and ends it" 204 "$(as both "/Videos/ActiveEncodings?deviceId=jm-play-both&playSessionId=$cross_play" -X DELETE)"
+
+# Q168, Q169: the group leaves the registry while Jellyfin still links its versions, which only the nightly run detaches
+# (Q144). The admin gives the local copy another title and no ids, so that it no longer matches the stub.
+grouped() { # grouped: how many times the registry names the local copy
+  docker exec "$PREFIX-local" sh -c 'cat "$(find /config -name federated-stubs.json | head -1)"' |
+    grep -ci "$linked_n\|${linked_n:0:8}-${linked_n:8:4}-${linked_n:12:4}-${linked_n:16:4}-${linked_n:20:12}" || true
+}
+check "before, the registry groups the local copy with the stub" 1 "$([ "$(grouped)" -gt 0 ] && echo 1 || echo 0)"
+get local "/Items/$linked?userId=$(user_id local both)" |
+  jq -c '.Name = "JM Sciolto" | .OriginalTitle = "JM Sciolto" | .ProductionYear = 1999 | .PremiereDate = null | .ProviderIds = {}' >"$WORK/dissolved.json"
+check "the admin renames the local copy and drops its ids" 204 "$(post local "/Items/$linked" "$(cat "$WORK/dissolved.json")" >/dev/null; status)"
+sync_now local
+check "after a sync the registry no longer groups the local copy" 0 "$(grouped)"
+check "while Jellyfin still links the two versions" 2 \
+  "$(get local "/Items/$linked?userId=$(user_id local both)" | jq '.MediaSources | length')"
+hidden "after the group left, a stream of the stub with the local version" "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n"
+hidden "after the group left, a stream of the local copy alone" "/Videos/$linked_n/stream?static=true&mediaSourceId=$linked_n"
+check "after the group left, a stream of the stub with its own version is served to viewer" 206 \
+  "$(as viewer "/Videos/$b_n/stream?static=true&mediaSourceId=$b_n" -H 'Range: bytes=0-99')"
+check "and a stream of the stub with the local version is served to both" 206 \
+  "$(as both "/Videos/$b_n/stream?static=true&mediaSourceId=$linked_n" -H 'Range: bytes=0-99')"
+
+# Integration test 5: the play session of a local transcode of the stub, used by another user over a real socket.
+open_local() { open_on "$1" "$stub"; } # open_local <user>: opens the stub through the local transcode, prints its play session
 transcode_url() { jq -r '.MediaSources[0].TranscodingUrl // ""' "$WORK/as-body"; }
 transcodes() { # how many transcode jobs the local server keeps, by the hash their files share: stock deletes them on a kill
   # ffmpeg itself ends as soon as it encoded the one-minute film, while its job lives on until it is killed or idle.
@@ -179,10 +312,16 @@ sleep 2
 # Both stops would delete the files of the job. One from a segment would not: the owner's stop below proves it still ran.
 check "and its transcode job is still there for its owner" 1 "$(transcodes)"
 check "whose next segment is served" 200 "$(as viewer "/videos/$stub/${segment/0.ts/1.ts}")"
-# The legacy segment route belongs to D9 (F20): recorded here, not checked.
+# D9: the legacy segment route serves a file of the transcode folder by name, whatever item its route names.
 playlist=$(docker exec "$PREFIX-local" sh -c 'ls /cache/transcodes 2>/dev/null | cut -c1-32 | head -1')
 legacy="/Videos/$stub/hls/$playlist/${playlist}0.ts"
-echo "info legacy segment route: anonymous $(as anonymous "$legacy"), another user $(as viewer2 "$legacy")"
+check "anonymous cannot read a legacy segment of the job" 401 "$(as anonymous "$legacy")"
+check "nor with a film of their own in the route" 401 "$(as anonymous "/Videos/$private/hls/$playlist/${playlist}0.ts")"
+check "another user who sees the stub cannot read it" 404 "$(as viewer2 "$legacy")"
+check "nor another user through a film of their own" 404 "$(as outsider "/Videos/$private/hls/$playlist/${playlist}0.ts")"
+check "nor by its playlist with another segment name" 404 "$(as outsider "/Videos/$private/hls/$playlist/none.ts")"
+check "its owner reads it" 200 "$(as viewer "$legacy")"
+check "and the legacy segments left the job running" 1 "$(transcodes)"
 
 # D11: more than 256 play sessions of the owner, while the first stays in use.
 flood=$WORK/flood
@@ -196,7 +335,7 @@ check "none of them is the first" 0 "$(grep -c -x "$psid" "$flood" || true)"
 check "after them the first is still out of reach of another user" 404 "$(through_private outsider "$psid")"
 
 # D10: the stub is renamed, so that its item is gone, while its play session is open.
-strm=$(docker exec "$PREFIX-local" sh -c "find /federata/Film -name '*.strm' | grep -F \"$TITLE\" | head -1")
+strm=$(docker exec "$PREFIX-local" sh -c "find /federata/*/Film -name '*.strm' | grep -F \"$TITLE\" | head -1")
 folder=$(dirname "$strm")
 keep_job
 docker exec "$PREFIX-local" mv "$folder" "$folder (rinominata)"
@@ -205,6 +344,8 @@ keep_job
 check "after the scan the old stub is gone" 404 "$(as viewer "/Items/$stub")"
 check "its play session is still out of reach of another user" 404 "$(through_private outsider "$psid")"
 check "and of anonymous" 401 "$(through_private anonymous "$psid")"
+check "and its legacy segment of another user" 404 "$(as outsider "/Videos/$private/hls/$playlist/${playlist}1.ts")"
+check "and of anonymous" 401 "$(as anonymous "/Videos/$private/hls/$playlist/${playlist}1.ts")"
 check "another user's DELETE ActiveEncodings is still a 204" 204 "$(kill_encodings outsider "$psid")"
 sleep 2
 check "and the transcode job is still there" 1 "$(transcodes)"
@@ -324,6 +465,57 @@ check "and the owner's job without a device still runs" 1 "$(still_ran)"
 open_job bare
 check "the owner's own such segment goes to stock" 200 "$(as viewer "$(segment_of_private "")")"
 check "and stock stops their job without a device" 0 "$(still_ran)"
+
+# D17: Jellyfin keeps a path taken off a library in that library until the library itself is refreshed; refreshed
+# alone, the library leaves the items of that path in no library, which Jellyfin shows to everyone until a scan.
+film_folder=$(dirname "$(dirname "$(strm_file local "$TITLE")")")
+film_library=$(get local /Library/VirtualFolders | jq -r '.[] | select(.Name == "Film") | .ItemId')
+stub=$(stub_item local "$TITLE")
+stub_n=${stub//-/}
+on_stub() { as "$1" "/Videos/$stub/stream?static=true&mediaSourceId=$stub_n" -H 'Range: bytes=0-99'; }
+refresh_film() { # refresh_film <user> <status>: refreshes the library Film alone, until the stub item answers so to the user
+  post local "/Items/$film_library/Refresh?Recursive=false" "" >/dev/null
+  local i
+  for i in $(seq 1 30); do [ "$(as "$1" "/Users/$(user_id local "$1")/Items/$stub")" = "$2" ] && break; sleep 2; done
+}
+check "before, viewer streams the stub" 206 "$(on_stub viewer)"
+check "and outsider does not see it" 404 "$(as outsider "/Users/$(user_id local outsider)/Items/$stub")"
+check "the folder of the server leaves the library Film" 204 "$(unlink_folder local Film "$film_folder")"
+refresh_film outsider 200
+check "after a refresh of Film alone Jellyfin shows the stub to outsider" 200 "$(as outsider "/Users/$(user_id local outsider)/Items/$stub")"
+check "its stream is not found for viewer" 404 "$(on_stub viewer)"
+check "nor for outsider" 404 "$(on_stub outsider)"
+check "and refused to anonymous" 401 "$(on_stub anonymous)"
+check "an admin streams it" 206 "$(on_stub admin)"
+info_of() { as "$1" "/Items/$2/PlaybackInfo?userId=$(user_id local "$1")${3:+&mediaSourceId=$3}" -X POST -H "$ACCEPT" \
+  -H 'Content-Type: application/json' -d "$PROFILE_HLS"; }
+check "its PlaybackInfo is not found for viewer" 404 "$(info_of viewer "$stub")"
+check "and answered to an admin" 200 "$(info_of admin "$stub")"
+as admin "/Videos/ActiveEncodings?deviceId=jm-play-admin&playSessionId=$(jq -r '.PlaySessionId // ""' "$WORK/as-body")" -X DELETE >/dev/null
+check "the stub named as the version of the local copy in PlaybackInfo is not found for who sees both" 404 "$(info_of both "$linked_n" "$b_n")"
+check "the stub as the version of the local copy is not found for who sees both" 404 \
+  "$(as both "/Videos/$linked_n/stream?static=true&mediaSourceId=$b_n" -H 'Range: bytes=0-99')"
+check "while the local copy alone streams to them" 206 \
+  "$(as both "/Videos/$linked_n/stream?static=true&mediaSourceId=$linked_n" -H 'Range: bytes=0-99')"
+check "the folder of the server joins the library Film again" 204 "$(link_folder local Film "$film_folder")"
+refresh_film outsider 404
+check "after a refresh of Film the stub is out of outsider's sight again" 404 "$(as outsider "/Users/$(user_id local outsider)/Items/$stub")"
+check "and viewer streams it again" 206 "$(on_stub viewer)"
+
+# D10 on linked versions: the linked stub B is renamed while a local play session of viewer is open on it.
+linked_play=$(open_on viewer "$b_n")
+linked_strm=$(docker exec "$PREFIX-local" sh -c "find /federata/*/Film -name '*.strm' | grep -F \"${LINKED% (*}\" | head -1")
+linked_folder=$(dirname "$linked_strm")
+check "viewer opens the linked stub again" 1 "$([ -n "$linked_play" ] && [ -n "$linked_strm" ] && echo 1 || echo 0)"
+docker exec "$PREFIX-local" mv "$linked_folder" "$linked_folder (rinominata)"
+scan local
+check "after the scan the linked stub is gone" 404 "$(as admin "/Items/$b_n")"
+check "its play session is still out of reach through the local copy" 404 "$(on_linked both "$linked_n" "$linked_play")"
+check "and through a film of another user" 404 "$(through_private outsider "$linked_play")"
+check "and of anonymous" 401 "$(on_linked anonymous "$linked_n" "$linked_play")"
+docker exec "$PREFIX-local" mv "$linked_folder (rinominata)" "$linked_folder"
+scan local
+as viewer "/Videos/ActiveEncodings?deviceId=jm-play-viewer&playSessionId=$linked_play" -X DELETE >/dev/null
 
 [ "${DOWN:-0}" = 1 ] && down
 exit $FAILED

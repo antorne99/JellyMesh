@@ -14,13 +14,19 @@ namespace Jellyfin.Plugin.JellyMesh.Index;
 public sealed record MergeForecast(MergeCopyView? Copy, MediaVersion? Version, bool IsCertain)
 {
     /// <summary>
-    /// Works out what would play. A local copy wins, otherwise <see cref="QualityRanking"/> decides.
+    /// Works out what would play. A local copy wins, otherwise <see cref="QualityRanking"/> decides. A series is decided
+    /// per episode, so it has no single answer and gets none.
     /// </summary>
     /// <param name="titles">The titles that would be merged.</param>
     /// <returns>The forecast.</returns>
     public static MergeForecast Of(IEnumerable<MergeTitleView> titles)
     {
         var copies = titles.SelectMany(title => title.Copies).ToList();
+        if (copies.Exists(copy => copy.Copy.Kind != ContentKind.Movie))
+        {
+            return new MergeForecast(null, null, false);
+        }
+
         if (copies.Find(copy => copy.Copy.IsLocal) is { } local)
         {
             return new MergeForecast(local, null, true);

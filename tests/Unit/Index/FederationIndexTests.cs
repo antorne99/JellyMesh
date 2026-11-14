@@ -215,6 +215,19 @@ public sealed class FederationIndexTests : IDisposable
         Assert.Equal((later, mark), (catalog.LastAttemptUtc, catalog.Mark));
     }
 
+    // The sync tells an unchanged catalog by its list of items (Q386).
+    [Fact]
+    public async Task AMergeWithNoChangesKeepsTheListOfItems()
+    {
+        using var index = NewIndex();
+        await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
+        var items = index.Snapshot.Find(_first)!.Items;
+
+        await index.MergeServerAsync(_first, [], _now.AddMinutes(15), new SyncMark(_now.AddMinutes(15), ["library"]), CancellationToken.None);
+
+        Assert.Same(items, index.Snapshot.Find(_first)!.Items);
+    }
+
     [Fact]
     public async Task AMergeNeverMakesAStaleServerAuthoritative()
     {

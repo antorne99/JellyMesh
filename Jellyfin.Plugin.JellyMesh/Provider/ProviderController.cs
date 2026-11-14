@@ -105,6 +105,42 @@ public class ProviderController : ControllerBase
     }
 
     /// <summary>
+    /// Reads a page of the films of a shared library that are in a collection, with the name and TMDb ID of that collection.
+    /// </summary>
+    /// <param name="parentId">The library.</param>
+    /// <param name="startIndex">The index of the first film.</param>
+    /// <param name="limit">The most films to return, capped at <see cref="ProviderProtocol.MaxItemsPerPage"/>.</param>
+    /// <returns>The films with their collections.</returns>
+    [HttpGet("Collections")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ProviderCollectionsResponse>> GetCollections(
+        [FromQuery] Guid? parentId,
+        [FromQuery] int startIndex = 0,
+        [FromQuery] int limit = ProviderProtocol.MaxItemsPerPage)
+    {
+        if (await _peers.FindCallerAsync(HttpContext).ConfigureAwait(false) is not { } caller)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        if (startIndex < 0 || limit < 1)
+        {
+            return BadRequest();
+        }
+
+        // Not shared is the same as not there.
+        if (parentId is not { } libraryId || !caller.Grant.SharedLibraryIds.Contains(libraryId.ToString("N")))
+        {
+            return NotFound();
+        }
+
+        return _catalog.ReadCollections(caller, libraryId, startIndex, Math.Min(limit, ProviderProtocol.MaxItemsPerPage));
+    }
+
+    /// <summary>
     /// Reads the change feed.
     /// </summary>
     /// <param name="cursor">Where to read from. Without it, the answer is the current position and a reset.</param>

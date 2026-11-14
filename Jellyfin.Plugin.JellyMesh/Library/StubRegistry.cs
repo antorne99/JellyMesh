@@ -33,6 +33,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     private readonly ILogger<StubRegistry> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile Lookup _lookup;
+    private long _generation;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubRegistry"/> class.
@@ -53,8 +54,45 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// </summary>
     public StubState State => _lookup.State;
 
+    /// <summary>
+    /// Gets how many saves succeeded since the start, so that a reader can tell whether the state changed since it looked.
+    /// </summary>
+    public long Generation => Interlocked.Read(ref _generation);
+
     /// <inheritdoc />
     public StubEntry? Find(string stubId) => _lookup.ById.TryGetValue(stubId, out var stub) ? stub : null;
+
+    /// <inheritdoc />
+    public VersionGroup? FindGroup(string stubId) => _lookup.GroupsByStub.TryGetValue(stubId, out var group) ? group : null;
+
+    /// <inheritdoc />
+    public VersionGroup? FindGroupOfLocal(Guid itemId) => _lookup.GroupsByLocal.TryGetValue(itemId, out var group) ? group : null;
+
+    /// <inheritdoc />
+    public bool HasTitlesOf(Guid serverId)
+    {
+        var state = _lookup.State;
+        return state.Stubs.Any(stub => stub.ServerId == serverId) || state.Series.Any(series => series.ServerId == serverId);
+    }
+
+    /// <summary>
+    /// Finds the episode stubs of a remote series on one server, through the series stubs it is a source of (decision 51).
+    /// </summary>
+    /// <param name="serverId">The remote server.</param>
+    /// <param name="seriesItemId">The series item on that server.</param>
+    /// <returns>The episode stubs, empty if the series has none.</returns>
+    public IReadOnlyList<StubEntry> FindEpisodesOfSeries(Guid serverId, string seriesItemId)
+    {
+        var state = _lookup.State;
+        var series = state.Series
+            .Where(entry => entry.ServerId == serverId && entry.Sources.Any(source => source.ServerId == serverId
+                && string.Equals(source.ItemId, seriesItemId, StringComparison.OrdinalIgnoreCase)))
+            .Select(entry => entry.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        return state.Stubs
+            .Where(stub => stub.Kind == StubKind.Episode && stub.ServerId == serverId && stub.SeriesStubId is { } id && series.Contains(id))
+            .ToList();
+    }
 
     /// <inheritdoc />
     public StubEntry? FindByPath(string? path)
@@ -111,6 +149,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
 
         _lookup = new Lookup(state);
+        Interlocked.Increment(ref _generation);
     }
 
     /// <summary>
@@ -226,6 +265,11 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
                 return state;
             }
 
+            if (state?.Version == StubState.FlatLayoutVersion)
+            {
+                return state with { Version = StubState.CurrentVersion };
+            }
+
             _logger.LogError("The stub registry has an unsupported format. Stubs are minted again at the next sync");
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
@@ -242,7 +286,42 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         {
             State = state;
             ById = state.Stubs.ToFrozenDictionary(stub => stub.Id, StringComparer.Ordinal);
-            ByPath = state.Stubs.ToFrozenDictionary(stub => stub.RelativePath, StringComparer.Ordinal);
+
+            // The old path of a renamed stub finds it too, until its old item is gone; a current path always wins.
+            var byPath = new Dictionary<string, StubEntry>(StringComparer.Ordinal);
+            foreach (var stub in state.Stubs)
+            {
+                byPath.TryAdd(stub.RelativePath, stub);
+            }
+
+            foreach (var rename in state.Renames)
+            {
+                if (ById.TryGetValue(rename.StubId, out var stub))
+                {
+                    byPath.TryAdd(rename.OldPath, stub);
+                }
+            }
+
+            ByPath = byPath.ToFrozenDictionary(StringComparer.Ordinal);
+
+            // The first group wins for a member listed twice, which the planner never writes.
+            var byStub = new Dictionary<string, VersionGroup>(StringComparer.Ordinal);
+            var byLocal = new Dictionary<Guid, VersionGroup>();
+            foreach (var group in state.Groups)
+            {
+                foreach (var stubId in group.StubIds)
+                {
+                    byStub.TryAdd(stubId, group);
+                }
+
+                foreach (var itemId in group.LocalItemIds)
+                {
+                    byLocal.TryAdd(itemId, group);
+                }
+            }
+
+            GroupsByStub = byStub.ToFrozenDictionary(StringComparer.Ordinal);
+            GroupsByLocal = byLocal.ToFrozenDictionary();
         }
 
         public StubState State { get; }
@@ -250,5 +329,9 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         public FrozenDictionary<string, StubEntry> ById { get; }
 
         public FrozenDictionary<string, StubEntry> ByPath { get; }
+
+        public FrozenDictionary<string, VersionGroup> GroupsByStub { get; }
+
+        public FrozenDictionary<Guid, VersionGroup> GroupsByLocal { get; }
     }
 }

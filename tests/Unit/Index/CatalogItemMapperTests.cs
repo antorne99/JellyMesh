@@ -36,6 +36,7 @@ public class CatalogItemMapperTests
         Assert.Equal(new ContentIds("72", "tt71", "71"), item.Ids);
         Assert.Equal((2, 3), (item.SeasonNumber, item.EpisodeNumber));
         Assert.Equal(_serverId.ToString("N"), item.ServerId);
+        Assert.Equal("s", item.SeriesId);
     }
 
     [Theory]
@@ -150,6 +151,19 @@ public class CatalogItemMapperTests
 
         Assert.True(indexed.Versions[0].IsRemote);
         Assert.Equal(new SourceQuality(null, false, null, null) { IsRangeKnown = false }, CatalogItemMapper.ToCatalogItems(Catalog(indexed))[0].Versions[0].Quality);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void WhetherAVersionHasSegmentsIsKept(bool? hasSegments)
+    {
+        var movie = TestItems.Movie("m") with { MediaSources = [TestItems.Source("a", 1080, 1000) with { HasSegments = hasSegments }] };
+
+        var indexed = Map(movie, RemoteItemType.Movie);
+
+        Assert.Equal(hasSegments, indexed.Versions[0].HasSegments);
     }
 
     [Fact]

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -46,6 +47,11 @@ public sealed class StubItemUpdater
         item.Name = metadata.Title ?? item.Name;
         item.ProductionYear = metadata.Year ?? item.ProductionYear;
         item.ProviderIds = new Dictionary<string, string>(metadata.ProviderIds, StringComparer.OrdinalIgnoreCase);
+        if (item is Movie && !string.IsNullOrEmpty(metadata.TmdbCollectionId))
+        {
+            // Jellyfin sets it from tmdbcolid when it first reads the .nfo.
+            item.SetProviderId(MetadataProvider.TmdbCollection, metadata.TmdbCollectionId);
+        }
 
         var isSeries = item is Series;
         item.IsLocked = metadata.IsProtected && !isSeries;
@@ -66,6 +72,17 @@ public sealed class StubItemUpdater
             item.EndDate = metadata.EndDate?.UtcDateTime;
         }
 
+        if (metadata.IsProtected && item is Movie or Series)
+        {
+            item.RemoteTrailers = metadata.TrailerIds.Select(id => new MediaUrl { Url = YouTubeTrailer.WatchPrefix + id }).ToArray();
+        }
+
+        // Unprotected films keep a collection the admin may have set; protected ones follow the remote.
+        if (item is Movie movie && (metadata.CollectionName is not null || (metadata.WritesCollections && metadata.IsProtected)))
+        {
+            movie.CollectionName = metadata.CollectionName;
+        }
+
         // Not MetadataEdit: on that reason Jellyfin rewrites any .nfo it finds, in its own format, inside the federated
         // folder, even with its metadata savers off (observed on 12.4).
         await SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
@@ -74,6 +91,28 @@ public sealed class StubItemUpdater
         {
             await _library.UpdatePeopleAsync(item, metadata.People.Select(ToPerson).OfType<PersonInfo>().ToList(), cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Applies the name and plot of a <c>season.nfo</c> to a season that exists. Its provider IDs stay the fetchers'.
+    /// </summary>
+    /// <param name="item">The season.</param>
+    /// <param name="metadata">The metadata.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public Task ApplySeasonAsync(BaseItem item, StubMetadata metadata, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        item.Name = metadata.Title ?? item.Name;
+        if (metadata.IsProtected)
+        {
+            item.Overview = metadata.Overview;
+        }
+
+        item.LockedFields = metadata.IsProtected ? NfoDocument.SeasonLockedFields.ToArray() : [];
+        return SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken);
     }
 
     /// <summary>
@@ -116,6 +155,27 @@ public sealed class StubItemUpdater
         }
 
         await SaveAsync(item, ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Drops an image from an item when it shows one of the given files. An image set by hand elsewhere stays.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="type">The image type.</param>
+    /// <param name="paths">The files the plugin wrote for that image.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public async Task RemoveImageAsync(BaseItem item, ImageType type, IReadOnlyCollection<string> paths, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(paths);
+
+        var images = item.GetImages(type).Where(image => paths.Contains(image.Path, StringComparer.Ordinal)).ToList();
+        if (images.Count > 0)
+        {
+            item.RemoveImages(images);
+            await SaveAsync(item, ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>

@@ -28,4 +28,10 @@ public interface ILibraryMaterializer
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The outcome.</returns>
     Task<MaterializationReport> MaterializeAsync(bool verifyEveryStub, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes the folders of every configured server with their hidden files, so that a library can point at them before
+    /// any sync. An error is logged, not thrown.
+    /// </summary>
+    void PrepareServerFolders();
 }

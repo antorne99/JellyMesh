@@ -29,7 +29,7 @@ public sealed class FileSecretKeySource : ISecretKeySource
     /// <param name="folder">The folder of the key.</param>
     /// <param name="logger">The logger.</param>
     public FileSecretKeySource(string folder, ILogger<FileSecretKeySource> logger)
-        : this(folder, logger, GuardForThisSystem())
+        : this(folder, logger, KeyFileGuards.ForThisSystem())
     {
     }
 
@@ -49,17 +49,6 @@ public sealed class FileSecretKeySource : ISecretKeySource
 
     /// <inheritdoc />
     public string? GetSecretKey() => _key;
-
-    // Picks the access list on Windows and the owner-only mode elsewhere.
-    private static IKeyFileGuard GuardForThisSystem()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return new WindowsKeyFileGuard();
-        }
-
-        return new UnixKeyFileGuard();
-    }
 
     private static string? LoadOrCreate(string path, ILogger logger, IKeyFileGuard guard)
     {

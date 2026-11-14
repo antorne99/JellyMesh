@@ -46,7 +46,7 @@ Copy `.env.example` to `.env` to set `BIND_ADDRESS`. Ports bind to loopback by d
 
 - `media/<instance>/film` and `media/<instance>/serie` are mounted read-only at `/media`.
 - `federata/` is mounted writable at `/federata` on `locale` only. It stands in for the federated folder and is empty until something writes to it.
-- On `locale`, the `Film` library has the paths `/media/film` and `/federata/Film`, and `Serie` has `/media/serie` and `/federata/Serie`. These are the two-path libraries the Phase 0 spikes need.
+- On `locale`, the `Film` library has the paths `/media/film` and `/federata/Film`, and `Serie` has `/media/serie` and `/federata/Serie`. These are the two-path libraries the Phase 0 spikes need. The plugin writes stubs only into `/federata/<server id>/Film` and `/Serie`, made when a server is added, so run `provision.sh` again after adding servers: it adds those folders to the libraries.
 
 Default metadata fetchers stay on, as on the real server, so the spikes see normal Jellyfin behaviour. Nothing is locked in the `.nfo` files.
 
@@ -151,9 +151,9 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 |---|---|---|---|---|
 | `materializer/` | Phase 4: stubs, metadata protection, watch state | `jm-mat` | 18310 | `remoto-standard` and `remoto-jellymesh` of this stack |
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
-| `provider/` | Phase 7: two JellyMesh servers federated to each other | `jm-prov-a`, `jm-prov-b` | 18410-18411, gates on 18412-18414 | `remoto-standard` of this stack, `python3`, `WORK` |
+| `provider/` | Phase 7: two JellyMesh servers federated to each other | `$PREFIX-a`, `$PREFIX-b` (default `jm-prov`), `$PREFIX-s` with `STOCK=own` | `PORT_A` and the next one (default 18410-18411), gates on the next three | `remoto-standard` of this stack unless `STOCK=own`, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15) | `jm-play-local`, `jm-play-remote`, `jm-play-peer`; `$PREFIX-*` for `last-served.sh` | 18430-18432; `PORT` and the next two for `last-served.sh` | A checkout in `OLD`, from before signing |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15) | `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` (default `jm-play`) | `PORT` and the next two (default 18430-18432) | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
@@ -185,8 +185,13 @@ bash playback/final.sh            # the whole proof in order, then final2.sh, fi
 
 `MEDIA` and `WORK` are required. The gates on the host carry all traffic between the servers, so a test can slow one down or cut it off. Scripts print `ok` or `FAIL`, and `leaks.sh` fails if it saw no tokens to look for.
 
+To run beside another stack, give every script the same `PREFIX` and `PORT_A`: the servers are `$PREFIX-a` and `$PREFIX-b` on `PORT_A` and `PORT_A+1`, and the gates listen on `PORT_A+2` to `PORT_A+4`. The stock remote is the `remoto-standard` of this stack on `STOCK_PORT` (default 8097). With `STOCK=own`, `up.sh` starts a private one instead, `$PREFIX-s` on `PORT_A+5` unless `STOCK_PORT` says otherwise, and `down.sh` removes it. `down.sh` stops only the gates on this run's ports. `peer-device.sh` makes one server of its own, with defaults `jm-q92` and 8280.
+
+Stubs go to a folder per remote server, `/federata/<server id>/Film` and `/Serie`, so `federate.sh` adds the folders of each server it connects to the libraries, as an admin would. The limit tests need `a` to win ties against the stock remote, which falls to the server ID. A remote added back is a new server with a new ID, so when the draw goes the wrong way, `federate.sh` removes the stock remote and adds it again. The `Film` library keeps `/media/film` and `/extra/film`, so it holds local copies and stays one a peer can be given.
+
 ```sh
 export MEDIA=<main checkout>/tests/Integration/media WORK=<scratch folder>
+export PREFIX=jm-prov-2 PORT_A=18510 STOCK=own   # optional: anything else that runs at the same time
 bash provider/up.sh               # two servers with the plugin, each with the media of one remote
 bash provider/federate.sh         # connects them, and b with the stock remote too
 bash provider/boundaries.sh       # what a peer can reach, no cycles, shared libraries
@@ -210,27 +215,29 @@ bash dedup/down.sh                # removes containers, volumes and network
 
 ### `play/`
 
-`MEDIA` and `OLD` are required. `OLD` is a checkout of a commit before the signed URLs, made with `git archive` and `tar`. `WORK` defaults to `$TMPDIR/jm-play-run`. `all.sh` runs everything from fresh containers, in the order the steps need: `up`, `upgrade`, `endpoint`, `fallback`, `settings`, `localcopy`, `cycle`, `leaks`. Scripts print `ok` or `FAIL`, and `all.sh` exits non-zero if a step failed.
+`MEDIA` and `OLD` are required. `OLD` is a checkout of a commit before the signed URLs, made with `git archive` and `tar`. `PREFIX` (default `jm-play`) names the containers and volumes, `PORT` (default 18430) is the port of `local`, and `remote` and `peer` take the next two. `WORK` defaults to `$TMPDIR/$PREFIX-run`. Every script in this folder reads `PREFIX` and `PORT`, with its own defaults where it makes its own containers, and `provider/` reads `PREFIX` too, so set them per command rather than exporting them. `all.sh` runs everything from fresh containers, in the order the steps need: `up`, `upgrade`, `endpoint`, `fallback`, `settings`, `localcopy`, `cycle`, `leaks`. Scripts print `ok` or `FAIL`, and `all.sh` exits non-zero if a step failed.
 
 ```sh
-MEDIA=<main checkout>/tests/Integration/media OLD=<folder> bash play/all.sh
+MEDIA=<main checkout>/tests/Integration/media OLD=<folder> [PREFIX=jm-play] [PORT=18430] bash play/all.sh
 ```
 
 It leaves the containers up. `down` in `play/lib.sh` removes them and their volumes.
 
-`removal-series.sh` proves the promise of the removal dialog on a series, with its own `jm-rms-local` and `jm-rms-remote` containers on ports 18470-18471. Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without. The server is removed and added back, and every episode and series row keeps the same item ID and the same watch state. Jellyfin keeps the user data of removed items by key, so the promise holds as long as stub paths and the IDs in the `.nfo` stay the same. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+`up` installs the `OLD` build, which writes the flat layout into `/federata/Film`. `upgrade` checks that the current build keeps and signs those stubs and writes a stub of its own for each film into the folder of the server, `/federata/<server id>/Film`, with the server name in the file name; then it moves the `Film` library from the flat path to that folder, where the later steps play. The other scripts add the folder of each server to their libraries after adding it.
+
+`removal-series.sh` proves the promise of the removal dialog on a series, with its own `$PREFIX-local` and `$PREFIX-remote` containers (default `jm-rms`) on `PORT` and the next one (default 18470). Two local users watch, half watch and mark favourite episodes of a series with provider IDs and one without, and a film without IDs in a Film library. The server is removed and added back. A server added back is a new server with a new ID (decision 408), so its stubs come back in a new folder, which the script adds to the library; it compares paths inside the folder, and checks that adding the server once more while it is configured is refused (decision 120). While the server is gone, the plugin keeps each user's watch state of its titles in `watch-state.db` in its data folder (decision 412): the script checks the series and film without IDs are there, under local users only, with no remote address or token. After the server is added back, every series, episode and film, with or without IDs, must have its watch state again, and the kept records must be gone. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/removal-series.sh
 ```
 
-`watchstate.sh` proves decision 41 on its own, with fresh `jm-play-local` and `jm-play-remote` containers and the current build. It needs only `MEDIA`. A film watched or stopped on the consumer changes no user's watch state on the remote, and a film the dedicated user and another remote user watch stays unwatched on the consumer after a sync. The clips are shorter than the 300 seconds Jellyfin needs to keep a resume point, so a film stopped halfway counts as watched.
+`watchstate.sh` proves decision 41 on its own, with fresh `$PREFIX-local` and `$PREFIX-remote` containers and the current build. It needs only `MEDIA`. A film watched or stopped on the consumer changes no user's watch state on the remote, and a film the dedicated user and another remote user watch stays unwatched on the consumer after a sync. The clips are shorter than the 300 seconds Jellyfin needs to keep a resume point, so a film stopped halfway counts as watched.
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/watchstate.sh
 ```
 
-`collections.sh` proves that films a remote groups into collections still reach the consumer, with its own `jm-col-local` and `jm-col-remote` containers on ports 18480-18481. The stock remote turns on "Group movies into collections" (`EnableGroupingMoviesIntoCollections`) and puts two films in a collection. Asked the sync query as the dedicated user, Jellyfin 12.4 answers the collection in place of both films, and one fewer in `TotalRecordCount`, unless the query carries `collapseBoxSetItems=false`. With it, the consumer gets a stub for each film and none for the collection. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
+`collections.sh` proves that films a remote groups into collections still reach the consumer, with its own `$PREFIX-local` and `$PREFIX-remote` containers (default `jm-col`) on `PORT` and the next one (default 18480). The stock remote turns on "Group movies into collections" (`EnableGroupingMoviesIntoCollections`) and puts two films in a collection. Asked the sync query as the dedicated user, Jellyfin 12.4 answers the collection in place of both films, and one fewer in `TotalRecordCount`, unless the query carries `collapseBoxSetItems=false`. With it, the consumer gets a stub for each film and none for the collection. It needs only `MEDIA`, and `KEEP=1` leaves the containers up.
 
 ```sh
 MEDIA=<main checkout>/tests/Integration/media bash play/collections.sh
@@ -250,12 +257,13 @@ MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] bash
 
 ### `merge/`
 
-Proves decision 20 on private containers named `jm-merge-*`, on ports 18441-18443:
+Proves manual merges on the per-server layout (decision 20, Q23), on two stock remotes and a consumer whose Film library holds both server folders. Copies of one server keep one stub, which takes the state of the other; copies of two servers and a local copy become versions, linked as soon as the merge is saved; a new stub is linked by the scan that makes its item (Q145). The containers are `$PREFIX-local`, `$PREFIX-remote` and `$PREFIX-peer` (default `jm-merge`, on `PORT` and the next two, default 18441). Checks marked `PENDING (row 144)` wait for the thorough detach that dissolves a group after an undo.
 
 ```sh
+export MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-merge] [PORT=18441]
 bash merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
-bash merge/run.sh                 # list, merge, restart, sync, a copy that changes or goes, undo, the page, a local copy
-bash merge/down.sh                # removes containers, volumes, network and scratch files
+bash merge/run.sh                 # list, merge, restart, a copy that changes or goes away, a new stub, undo, the page, a local copy
+bash merge/down.sh                # removes containers, volumes and scratch files
 ```
 
 ### `ui/`
@@ -273,10 +281,10 @@ bash ui/down.sh                   # removes containers, volumes, network and scr
 
 | Server | Port | Media | What it shows |
 |---|---|---|---|
-| `fresh` | `UI_PORT` | `locale` | Plugin, consumer of the two below, a synced catalog, doubtful films, the connected server `jellymesh`, the free user `friend` |
+| `fresh` | `UI_PORT` | `locale` | Plugin, consumer of the two below, a synced catalog, doubtful films, the connected server `jellymesh`, the free user `friend`. The Film and Serie folders of each remote are in the libraries, and the single folders of 0.4 are not, so there is no migration to do |
 | `stock` | `UI_PORT+1` | `remoto-standard` | No plugin |
 | `peer` | `UI_PORT+2` | `remoto-jellymesh` | Plugin, shares its libraries |
-| `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured |
+| `first` | `UI_PORT+3` | `locale` | Plugin, nothing configured, libraries without the single folders of 0.4 |
 
 `check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), `nokey` to delete the credential key file (on `fresh` by default), `blockkey` to put a folder where the key file goes (on `first` by default), and `key` to fix either, entering the logins again. Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
 
@@ -310,7 +318,7 @@ Source films are from the Blender Foundation under Creative Commons: Elephants D
 
 ## Hardening
 
-`hardening/run.sh` puts a real server with the plugin in front of `hardening/hostile.py`, a fake remote that sends huge bodies, redirects to another host, stalls after its headers and answers with poisoned URLs. It proves each case with what reached a second port standing for a third host (nothing), the memory of a container capped at 1500 MB, and a log at the most verbose level. `hardening/proofs.sh` runs the proofs in `provider/` on private servers to show the limits leave real playback alone, and `hardening/auth-statuses.sh` shows which statuses a real server gives, which is what decides when a new login is due. All of them use `jm-hard-*` containers on ports 18450-18459 and remove them at the end.
+`hardening/run.sh` puts a real server with the plugin in front of `hardening/hostile.py`, a fake remote that sends huge bodies, redirects to another host, stalls after its headers and answers with poisoned URLs. It proves each case with what reached a second port standing for a third host (nothing), the memory of a container capped at 1500 MB, and a log at the most verbose level. `hardening/proofs.sh` runs the proofs in `provider/` on private servers to show the limits leave real playback alone, and `hardening/auth-statuses.sh` shows which statuses a real server gives, which is what decides when a new login is due. All of them use `jm-hard-*` containers on ports 18450-18459 and remove them at the end. To run beside another stack, give `run.sh` its own `NAME`, `PORT`, `FAKE` and `THIRD`, `proofs.sh` its own `PREFIX`, `PORT_A` (and the next four) and `STOCK_PORT`, and `auth-statuses.sh` its own `PORT`.
 
 ## Scale
 

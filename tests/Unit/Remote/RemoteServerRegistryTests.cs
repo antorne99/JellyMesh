@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Xunit;
@@ -131,7 +132,7 @@ public class RemoteServerRegistryTests
         fixture.KeySource.Key = TestValues.OtherKey;
         Assert.Equal(KeyState.Wrong, fixture.Vault.GetKeyState());
 
-        Assert.True(fixture.Registry.Remove(server.Id));
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
 
         Assert.Empty(fixture.Registry.GetServers());
         Assert.Equal(KeyState.Ok, fixture.Vault.GetKeyState());
@@ -145,14 +146,17 @@ public class RemoteServerRegistryTests
 
         var result = await fixture.Registry.RunWithSessionAsync(
             server.Id,
-            (_, _, _) =>
+            async (_, _, _) =>
             {
-                fixture.Registry.Remove(server.Id);
-                return Task.FromResult(RemoteResult.Fail<int>(RemoteFailure.AuthenticationFailed));
+                await fixture.Registry.RemoveAsync(server.Id);
+                return RemoteResult.Fail<int>(RemoteFailure.AuthenticationFailed);
             },
             CancellationToken.None);
 
-        Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
+        // The retry finds the server removed under the login gate, so it does not log in again (413).
+        Assert.Equal(RemoteFailure.UnknownServer, result.Failure);
+        Assert.Equal(1, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Users/AuthenticateByName"));
+        Assert.Equal(1, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Sessions/Logout"));
     }
 
     [Theory]
@@ -167,19 +171,75 @@ public class RemoteServerRegistryTests
         var last = await fixture.AddServerAsync();
         fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(failure)!;
 
-        Assert.Throws(failure, () => fixture.Registry.Remove(server.Id));
+        await Assert.ThrowsAsync(failure, () => fixture.Registry.RemoveAsync(server.Id));
 
         Assert.Equal([first.Id, server.Id, last.Id], fixture.Registry.GetServers().Select(item => item.Id));
         fixture.Store.SaveFailure = null;
-        Assert.True(fixture.Registry.Remove(server.Id));
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
     }
 
     [Fact]
-    public void RemovingAnUnknownServerReturnsFalse()
+    public async Task RemovingAServerHoldsItsAutomaticLibrariesForDeletion()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var record = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "b2" };
+        fixture.Store.Update(config =>
+        {
+            var stored = config.Servers.Single();
+            stored.AutomaticLibraries = true;
+            stored.AutomaticLibraryRegistry.Add(record);
+            stored.PreexistingLibraryIds.Add("c3");
+            stored.FollowedLibraryIds.Add("d4");
+            stored.FollowSkipped = true;
+        });
+
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
+
+        var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Equal(server.Id, held.ServerId);
+        Assert.Equal(("Casa - Serie", "b2"), (Assert.Single(held.Libraries).Name, held.Libraries[0].ItemId));
+        Assert.Equal(["c3"], held.PreexistingLibraryIds);
+        Assert.Equal(["d4"], held.FollowedLibraryIds);
+        Assert.True(held.FollowSkipped);
+    }
+
+    [Fact]
+    public async Task RemovingAServerWithItsSwitchOffHoldsNothing()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+
+        Assert.True(await fixture.Registry.RemoveAsync(server.Id));
+
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task ARemovalThatCannotBeSavedHoldsNoAutomaticLibrary()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        fixture.Store.Update(config =>
+        {
+            var stored = config.Servers.Single();
+            stored.AutomaticLibraries = true;
+            stored.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film" });
+        });
+        fixture.Store.SaveFailure = new IOException("disk full");
+
+        await Assert.ThrowsAsync<IOException>(() => fixture.Registry.RemoveAsync(server.Id));
+
+        Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+        Assert.Single(Assert.Single(fixture.Store.Configuration.Servers).AutomaticLibraryRegistry);
+    }
+
+    [Fact]
+    public async Task RemovingAnUnknownServerReturnsFalse()
     {
         using var fixture = new RegistryFixture();
 
-        Assert.False(fixture.Registry.Remove(Guid.NewGuid()));
+        Assert.False(await fixture.Registry.RemoveAsync(Guid.NewGuid()));
     }
 
     [Fact]
@@ -333,6 +393,22 @@ public class RemoteServerRegistryTests
 
         Assert.Equal(["1", "2"], fixture.Registry.GetServers().Single().ImportedLibraryIds);
         Assert.False(fixture.Registry.SetImportedLibraries(Guid.NewGuid(), ["1"]));
+    }
+
+    [Fact]
+    public async Task RenameChangesOnlyTheNameOfAKnownServer()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+
+        Assert.True(fixture.Registry.Rename(server.Id, "  Casa nuova "));
+
+        var renamed = Assert.Single(fixture.Registry.GetServers());
+        Assert.Equal("Casa nuova", renamed.Name);
+        Assert.Equal(server.Id, renamed.Id);
+        Assert.Equal(server.Url, renamed.Url);
+        Assert.False(fixture.Registry.Rename(Guid.NewGuid(), "Altro"));
+        Assert.Throws<ArgumentException>(() => fixture.Registry.Rename(server.Id, "  "));
     }
 
     [Fact]

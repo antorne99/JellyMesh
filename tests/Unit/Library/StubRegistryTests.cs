@@ -50,6 +50,40 @@ public sealed class StubRegistryTests : IDisposable
     }
 
     [Fact]
+    public async Task TheOldPathOfARenamedStubFindsItUntilTheRenameIsDone()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState
+        {
+            Stubs = [Entry("abc", "S/Film/A/A - Mare.strm")],
+            Renames = [new StubRename("abc", "S/Film/A/A - Casa.strm")]
+        });
+
+        Assert.Equal("abc", registry.FindByPath("/federata/S/Film/A/A - Casa.strm")?.Id);
+        Assert.Equal("abc", registry.FindByPath("/federata/S/Film/A/A - Mare.strm")?.Id);
+
+        using var reloaded = Create();
+        Assert.Equal("abc", reloaded.FindByPath("/federata/S/Film/A/A - Casa.strm")?.Id);
+
+        await SeedAsync(registry, registry.State with { Renames = [] });
+        Assert.Null(registry.FindByPath("/federata/S/Film/A/A - Casa.strm"));
+    }
+
+    [Fact]
+    public async Task ACurrentPathWinsOverTheOldPathOfAnotherStub()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState
+        {
+            Stubs = [Entry("abc", "S/Film/A/A - Mare.strm"), Entry("def", "S/Film/A/A - Casa.strm")],
+            Renames = [new StubRename("abc", "S/Film/A/A - Casa.strm"), new StubRename("gone", "S/Film/B/B - Casa.strm")]
+        });
+
+        Assert.Equal("def", registry.FindByPath("/federata/S/Film/A/A - Casa.strm")?.Id);
+        Assert.Null(registry.FindByPath("/federata/S/Film/B/B - Casa.strm"));
+    }
+
+    [Fact]
     public void ARegistryWrittenBeforeTheLastEpisodeNumberExistedStillLoads()
     {
         Directory.CreateDirectory(_folder);
@@ -215,6 +249,40 @@ public sealed class StubRegistryTests : IDisposable
     }
 
     [Fact]
+    public async Task AServerHasTitlesWhileOneOfItsStubsOrSeriesIsLeft()
+    {
+        var (withStub, withSeries, without) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var registry = Create();
+        await SeedAsync(registry, new StubState
+        {
+            Stubs = [Entry("abc", "S/Film/A/A.strm") with { ServerId = withStub }],
+            Series = [new SeriesStub { Id = "s", ServerId = withSeries, RelativePath = "S/Serie/B", WorkKey = "series|b", Sources = [] }]
+        });
+
+        Assert.True(registry.HasTitlesOf(withStub));
+        Assert.True(registry.HasTitlesOf(withSeries));
+        Assert.False(registry.HasTitlesOf(without));
+    }
+
+    // The sync tells whether anyone saved the registry since its last run by this number (Q386).
+    [Fact]
+    public async Task EachSaveRaisesTheGenerationAndAFailedOneDoesNot()
+    {
+        using var registry = Create();
+        var start = registry.Generation;
+
+        await registry.SaveAsync(new StubState { Stubs = [Entry("abc", "Film/A/A.strm")] }, CancellationToken.None);
+        await registry.SaveAsync(registry.State, CancellationToken.None);
+        Assert.Equal(start + 2, registry.Generation);
+
+        Directory.Delete(_folder, true);
+        await File.WriteAllTextAsync(_folder, string.Empty);
+        await Assert.ThrowsAnyAsync<IOException>(() => registry.SaveAsync(new StubState(), CancellationToken.None));
+        File.Delete(_folder);
+        Assert.Equal(start + 2, registry.Generation);
+    }
+
+    [Fact]
     public async Task AStubIsFoundByIdAndByPath()
     {
         using var registry = Create();
@@ -261,5 +329,89 @@ public sealed class StubRegistryTests : IDisposable
         await registry.SaveAsync(new StubState { Stubs = [Entry("abc", "Film/A/A.strm")] }, CancellationToken.None);
 
         Assert.Null(registry.FindByPath("/federata/Film/A/A.strm"));
+    }
+
+    [Fact]
+    public void ARegistryOfTheFlatLayoutLoadsAsTheCurrentVersionWithNoServerAndNoGroup()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, StubRegistry.FileName),
+            "{\"Version\":1,\"Stubs\":[{\"Id\":\"abc\",\"Kind\":\"Movie\",\"RelativePath\":\"Film/A/A.strm\",\"IdentityKey\":\"key\",\"Sources\":[]}],\"Series\":[{\"Id\":\"s\",\"RelativePath\":\"Serie/S\",\"WorkKey\":\"w\"}]}");
+
+        using var registry = Create();
+
+        Assert.Equal(2, registry.State.Version);
+        Assert.Null(registry.Find("abc")!.ServerId);
+        Assert.Null(Assert.Single(registry.State.Series).ServerId);
+        Assert.Empty(registry.State.Groups);
+    }
+
+    [Fact]
+    public void ARegistryOfAnUnknownVersionIsNotRead()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, StubRegistry.FileName), "{\"Version\":99,\"Stubs\":[],\"Series\":[]}");
+
+        using var registry = Create();
+
+        Assert.Empty(registry.State.Stubs);
+        Assert.Contains(_logger.Lines, line => line.Contains("unsupported format", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheServerOfAStubAndTheVersionGroupsSurviveARestart()
+    {
+        var server = Guid.NewGuid();
+        var local = Guid.NewGuid();
+        var group = new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["abc", "def"], LocalItemIds = [local], PrimaryStubId = "abc" };
+        using (var registry = Create())
+        {
+            await registry.SaveAsync(
+                new StubState
+                {
+                    Stubs = [Entry("abc", "x/Film/A/A - Casa.strm") with { ServerId = server }, Entry("def", "y/Film/A/A - Ufficio.strm")],
+                    Series = [new SeriesStub { Id = "s", RelativePath = "x/Serie/S", WorkKey = "w", ServerId = server }],
+                    Groups = [group],
+                    Labels = new Dictionary<Guid, string> { [server] = "Casa" }
+                },
+                CancellationToken.None);
+        }
+
+        using var reloaded = Create();
+
+        Assert.Equal("Casa", Assert.Single(reloaded.State.Labels, label => label.Key == server).Value);
+        Assert.Equal(server, reloaded.Find("abc")!.ServerId);
+        Assert.Equal(server, Assert.Single(reloaded.State.Series).ServerId);
+        var loaded = Assert.Single(reloaded.State.Groups);
+        Assert.Equal(("g", "key", "abc"), (loaded.Id, loaded.IdentityKey, loaded.PrimaryStubId));
+        Assert.Equal(["abc", "def"], loaded.StubIds);
+        Assert.Equal([local], loaded.LocalItemIds);
+    }
+
+    [Fact]
+    public async Task AVersionGroupIsFoundByEachOfItsStubsAndLocalCopies()
+    {
+        var local = Guid.NewGuid();
+        var group = new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["abc", "def"], LocalItemIds = [local] };
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", "x/Film/A/A.strm"), Entry("def", "y/Film/A/A.strm")], Groups = [group] });
+
+        Assert.Equal("g", registry.FindGroup("abc")?.Id);
+        Assert.Equal("g", registry.FindGroup("def")?.Id);
+        Assert.Equal("g", registry.FindGroupOfLocal(local)?.Id);
+        Assert.Null(registry.FindGroup("other"));
+        Assert.Null(registry.FindGroupOfLocal(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task AStubListedInTwoGroupsDoesNotBreakTheRegistry()
+    {
+        var first = new VersionGroup { Id = "g1", IdentityKey = "key", StubIds = ["abc"] };
+        var second = new VersionGroup { Id = "g2", IdentityKey = "key", StubIds = ["abc"] };
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", "x/Film/A/A.strm")], Groups = [first, second] });
+
+        Assert.Equal("g1", registry.FindGroup("abc")?.Id);
     }
 }

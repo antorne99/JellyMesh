@@ -61,7 +61,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     // Everything a catalog entry keeps. ImageTags, BackdropImageTags, ratings, dates and numbers come by default, and
     // MediaSources holds the streams of each version. The list is what can reach the index: see RemoteItem.
-    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters";
+    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers";
 
     // Waits before each new try of a sync read, and the longest wait a Retry-After can ask for (decision 47).
     private static readonly TimeSpan[] _retryWaits = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
@@ -112,7 +112,16 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
         return result.User.Policy.IsAdministrator
             ? RemoteResult.Fail<RemoteSession>(RemoteFailure.AdministratorAccount)
-            : RemoteResult.Success<RemoteSession>(new RemoteSession(result.AccessToken!, result.User.Id));
+            : RemoteResult.Success<RemoteSession>(new RemoteSession(result.AccessToken!, result.User.Id) { ServerId = ServerIdOf(result.ServerId) });
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<bool>> LogoutAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var response = await SendAsync(endpoint, HttpMethod.Post, "/Sessions/Logout", session, null, cancellationToken).ConfigureAwait(false);
+        return response.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(response.Failure);
     }
 
     /// <inheritdoc />
@@ -212,6 +221,39 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     /// <inheritdoc />
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        // With BoxSet as the only type, stock turns the library into "has a film in it" (checked on 12.4).
+        return ReadBriefPageAsync(endpoint, session, libraryId, "includeItemTypes=BoxSet&fields=ProviderIds", startIndex, limit, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        return ReadBriefPageAsync(endpoint, session, collectionId, "includeItemTypes=Movie&collapseBoxSetItems=false&excludeLocationTypes=Virtual", startIndex, limit, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<RemoteCollectionPage>> GetSharedCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var path = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{ProviderPath}/Collections?parentId={Uri.EscapeDataString(libraryId)}&startIndex={startIndex}&limit={limit}");
+        var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteCollectionPage>(response.Failure);
+        }
+
+        var page = Parse<CollectionsResponse>(response.Body);
+        return page is { Items: not null, TotalRecordCount: not null } && page.Items.All(entry => entry is not null)
+            ? RemoteResult.Success(new RemoteCollectionPage(page.Items, page.TotalRecordCount.Value) { ByteCount = response.Body.Length })
+            : RemoteResult.Fail<RemoteCollectionPage>(RemoteFailure.InvalidResponse);
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -237,6 +279,26 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         return response.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true && response.Body.Length > 0
             ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType))
             : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
+    }
+
+    // A page of names and IDs, in a fixed order, without the heavy fields of the catalog.
+    private async Task<RemoteResult<RemoteItemPage>> ReadBriefPageAsync(RemoteEndpoint endpoint, RemoteSession session, string parentId, string filter, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var path = string.Create(
+            CultureInfo.InvariantCulture,
+            $"/Items?userId={Uri.EscapeDataString(session.UserId)}&parentId={Uri.EscapeDataString(parentId)}&recursive=true&{filter}&sortBy=SortName&sortOrder=Ascending&enableUserData=false&enableImages=false&startIndex={startIndex}&limit={limit}");
+        var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteItemPage>(response.Failure);
+        }
+
+        var page = Parse<ItemsResponse>(response.Body);
+        return page is { Items: not null, TotalRecordCount: not null } && page.Items.All(RemoteAnswers.IsWellFormed)
+            ? RemoteResult.Success(new RemoteItemPage(page.Items, page.TotalRecordCount.Value) { ByteCount = response.Body.Length })
+            : RemoteResult.Fail<RemoteItemPage>(RemoteFailure.InvalidResponse);
     }
 
     private static IReadOnlyList<RemoteItem> WithQuality(IReadOnlyList<RemoteItem> items, IReadOnlyDictionary<string, RemoteQuality>? quality)
@@ -304,6 +366,12 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         {
             return null;
         }
+    }
+
+    // The Server Id a remote gives itself, as 32 lowercase digits. Anything that is not an id counts as none.
+    private static string? ServerIdOf(string? value)
+    {
+        return Guid.TryParse(value, out var id) && id != Guid.Empty ? id.ToString("N") : null;
     }
 
     internal static string AuthorizationHeader(RemoteEndpoint endpoint, RemoteSession? session)
@@ -483,7 +551,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     private sealed record AuthenticateRequest(string Username, string Pw);
 
-    private sealed record AuthenticateResponse(string? AccessToken, AuthenticatedUser? User);
+    private sealed record AuthenticateResponse(string? AccessToken, AuthenticatedUser? User, string? ServerId);
 
     private sealed record AuthenticatedUser(string? Id, UserPolicy? Policy);
 
@@ -496,6 +564,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     private sealed record UserView(string? Id, string? Name, string? CollectionType);
 
     private sealed record ItemsResponse(IReadOnlyList<RemoteItem>? Items, int? TotalRecordCount, IReadOnlyDictionary<string, RemoteQuality>? Quality);
+
+    private sealed record CollectionsResponse(IReadOnlyList<RemoteCollectionEntry>? Items, int? TotalRecordCount);
 
     private sealed record ChangesResponse(bool Reset, string? Cursor, bool HasMore, IReadOnlyList<RemoteChange>? Changes);
 }

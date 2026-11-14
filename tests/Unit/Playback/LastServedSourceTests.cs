@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -157,5 +159,11 @@ internal sealed class InMemoryLastServedStore : ILastServedSourceStore
     {
         _servers[(userId, stubId)] = serverId;
         return Task.CompletedTask;
+    }
+
+    public int Prune(Func<string, bool> stubExists, IReadOnlySet<Guid> removedServers)
+    {
+        var gone = _servers.Where(pair => !stubExists(pair.Key.StubId) || removedServers.Contains(pair.Value)).Select(pair => pair.Key).ToList();
+        return gone.Count(key => _servers.TryRemove(key, out _));
     }
 }

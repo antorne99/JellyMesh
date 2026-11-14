@@ -25,6 +25,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan RemoteStop = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// Limit on closing a transcode on a remote that is being removed, so that a dead remote cannot hold the removal up
+    /// (413). Its streams here are already ended by then.
+    /// </summary>
+    public static readonly TimeSpan RemovalStop = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// Limit on closing all sessions at shutdown, so that a dead remote cannot hold the server up.
     /// </summary>
     public static readonly TimeSpan Shutdown = TimeSpan.FromSeconds(5);
@@ -57,6 +63,18 @@ public static class PlaybackTimeouts
     /// ffmpeg dies at once when its input is refused, so this only has to cover the way back to the client.
     /// </summary>
     public static readonly TimeSpan FileRefusalMemory = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How long a source that stopped serving a user during playback goes after the others for that user and title, and how
+    /// long its failure counts towards <see cref="PlaybackLimits.Reconnections"/> (row 57).
+    /// </summary>
+    public static readonly TimeSpan FailedSourceMemory = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// How long after a pause a break of the remote stream is put down to the pause and not to the source (row 273): what
+    /// was held on the way drains first, and a remote or a proxy between can close a connection left unread meanwhile.
+    /// </summary>
+    public static readonly TimeSpan AfterClientPause = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// Default time without requests after which a session is forgotten. Until then a paused player can resume with its

@@ -12,8 +12,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <see cref="IFederatedFolderLinkChecker"/> over the libraries of this server. Only reads them.
 /// </summary>
 /// <remarks>
-/// A path counts only if a library has exactly it: a library on a parent folder would index <c>Film</c> and <c>Serie</c>
-/// as ordinary content. Paths compare as Jellyfin compares them, which is by exact case except on Windows.
+/// A path counts only if a library has exactly it: a library on a parent folder would index the server folders as
+/// ordinary content, and is reported as covering them. Paths compare as Jellyfin compares them, which is by exact case except on Windows.
 /// </remarks>
 public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
 {
@@ -34,7 +34,7 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     }
 
     /// <inheritdoc />
-    public FederatedFolderLinkReport Check(string federatedFolderPath)
+    public FederatedFolderLinkReport Check(string federatedFolderPath, IReadOnlyList<Guid> serverIds)
     {
         List<VirtualFolderInfo> libraries;
         try
@@ -47,18 +47,64 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
             return FederatedFolderLinkReport.NotChecked;
         }
 
-        var series = FederatedFolderLayout.SeriesPath(federatedFolderPath);
-        var groupingOff = libraries
-            .Where(library => library.CollectionType == CollectionTypeOptions.tvshows
-                && library.LibraryOptions is { EnableAutomaticSeriesGrouping: false }
-                && Holds(library, series, _pathComparison))
+        var servers = serverIds.Select(server => LinkOf(libraries, federatedFolderPath, server)).ToList();
+        var tops = serverIds.Select(server => FederatedFolderLayout.ServerPath(federatedFolderPath, server)).Prepend(federatedFolderPath).ToList();
+        var covering = libraries
+            .Where(library => Locations(library).Any(location => tops.Any(top => IsAncestorOrSame(location, top))))
             .Select(library => library.Name)
             .ToList();
 
-        return new FederatedFolderLinkReport(
-            StatusOf(libraries, FederatedFolderLayout.MoviesPath(federatedFolderPath), CollectionTypeOptions.movies),
+        // Series of different servers merge only where their folders sit in the same libraries (Q46, R:prova §5).
+        var seriesSets = servers.Where(server => server.SeriesLibraries.Count > 0).Select(server => server.SeriesLibraries).ToList();
+        var split = seriesSets.Skip(1).Any(set => !set.ToHashSet().SetEquals(seriesSets[0]));
+        return new FederatedFolderLinkReport(servers, covering, split);
+    }
+
+    /// <summary>Tells whether a library location is the given folder, as the link check compares them.</summary>
+    /// <param name="location">The library location.</param>
+    /// <param name="path">The folder.</param>
+    /// <returns>Whether they are the same folder.</returns>
+    internal static bool IsSamePath(string location, string path) => Holds(new VirtualFolderInfo { Locations = [location] }, path, _pathComparison);
+
+    /// <summary>Tells whether a library location is the given folder or one of its parents, on a separator boundary.</summary>
+    /// <param name="location">The library location.</param>
+    /// <param name="path">The folder.</param>
+    /// <returns>Whether the location holds the folder.</returns>
+    internal static bool IsAncestorOrSame(string location, string path)
+    {
+        var folder = Normalized(location);
+        var target = Normalized(path);
+        if (string.Equals(folder, target, _pathComparison))
+        {
+            return true;
+        }
+
+        var prefix = Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar;
+        return target.StartsWith(prefix, _pathComparison);
+    }
+
+    private static ServerFolderLink LinkOf(List<VirtualFolderInfo> libraries, string root, Guid serverId)
+    {
+        var movies = FederatedFolderLayout.ServerMoviesPath(root, serverId);
+        var series = FederatedFolderLayout.ServerSeriesPath(root, serverId);
+        var holdingSeries = libraries.Where(library => Holds(library, series, _pathComparison)).ToList();
+        var groupingOff = holdingSeries
+            .Where(library => library.CollectionType == CollectionTypeOptions.tvshows && library.LibraryOptions is { EnableAutomaticSeriesGrouping: false })
+            .Select(library => library.Name)
+            .ToList();
+        var onlyOnItsFolders = libraries
+            .Where(library => Locations(library).Any() && Locations(library).All(location => IsSame(location, movies) || IsSame(location, series)))
+            .Select(library => library.Name)
+            .ToList();
+        return new ServerFolderLink(
+            serverId,
+            movies,
+            series,
+            StatusOf(libraries, movies, CollectionTypeOptions.movies),
             StatusOf(libraries, series, CollectionTypeOptions.tvshows),
-            groupingOff);
+            groupingOff,
+            Names(holdingSeries),
+            onlyOnItsFolders);
     }
 
     private static FederatedPathStatus StatusOf(List<VirtualFolderInfo> libraries, string path, CollectionTypeOptions expected)
@@ -91,8 +137,31 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     private static bool Holds(VirtualFolderInfo library, string path, StringComparison comparison)
     {
         var wanted = Normalized(path);
-        return library.Locations.Any(location => !string.IsNullOrWhiteSpace(location) && string.Equals(Normalized(location), wanted, comparison));
+        return Locations(library).Any(location => string.Equals(Normalized(location), wanted, comparison));
     }
+
+    private static IEnumerable<string> Locations(VirtualFolderInfo library) => (library.Locations ?? []).Where(IsPath);
+
+    // A location that is no path, such as one with a null character, holds no folder and must not stop the check.
+    private static bool IsPath(string location)
+    {
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = Path.GetFullPath(location);
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSame(string location, string path) => string.Equals(Normalized(location), Normalized(path), _pathComparison);
 
     // Trailing separators, doubled ones and dots do not make another folder.
     private static string Normalized(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));

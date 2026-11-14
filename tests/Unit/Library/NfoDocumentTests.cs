@@ -51,6 +51,32 @@ public class NfoDocumentTests
     }
 
     [Fact]
+    public void AProtectedSeasonHasItsNameAndPlotWithLockedFieldsNotLockdata()
+    {
+        var metadata = new StubMetadata { IsProtected = true, Title = "The Beginning", Overview = "Season plot", SeasonNumber = 2 };
+
+        var root = XDocument.Parse(NfoDocument.Season(metadata)).Root!;
+
+        Assert.Equal("season", root.Name.LocalName);
+        Assert.Equal("The Beginning", root.Element("title")?.Value);
+        Assert.Equal("Season plot", root.Element("plot")?.Value);
+        Assert.Equal("2", root.Element("seasonnumber")?.Value);
+        Assert.Equal("Name|Overview", root.Element("lockedfields")?.Value);
+        Assert.Null(root.Element("lockdata"));
+    }
+
+    [Fact]
+    public void AnUnprotectedSeasonHasItsNameAndNumberOnly()
+    {
+        var metadata = new StubMetadata { IsProtected = false, Title = "The Beginning", SeasonNumber = 0 };
+
+        var root = XDocument.Parse(NfoDocument.Season(metadata)).Root!;
+
+        Assert.Equal(["title", "seasonnumber"], root.Elements().Select(element => element.Name.LocalName));
+        Assert.Equal("0", root.Element("seasonnumber")?.Value);
+    }
+
+    [Fact]
     public void AStubOfSeveralEpisodesSaysWhereItEnds()
     {
         var root = XDocument.Parse(NfoDocument.Episode(Protected() with { SeasonNumber = 1, EpisodeNumber = 2, EpisodeNumberEnd = 3 })).Root!;
@@ -115,6 +141,150 @@ public class NfoDocumentTests
         var names = XDocument.Parse(xml).Root!.Elements().Select(element => element.Name.LocalName).Distinct().Order();
 
         Assert.Equal(["title", "uniqueid", "year"], names);
+    }
+
+    private static readonly IndexedItem _plain = new()
+    {
+        ItemId = "i",
+        Kind = IndexedItemKind.Movie,
+        LibraryId = "l",
+        LastSeenUtc = DateTimeOffset.UnixEpoch,
+        Name = "Title",
+        ProductionYear = 2020,
+        Overview = "Plot",
+        Genres = ["Genre"],
+        People = [new IndexedPerson("Actor", "Role", "Actor")],
+        ProviderIds = new Dictionary<string, string> { ["Tmdb"] = "1" }
+    };
+
+    [Fact]
+    public void AProtectedFilmWithoutTrailersIsWrittenAsBefore()
+    {
+        const string Expected = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
+            + "<movie>\n"
+            + "  <title>Title</title>\n"
+            + "  <year>2020</year>\n"
+            + "  <uniqueid type=\"tmdb\">1</uniqueid>\n"
+            + "  <plot>Plot</plot>\n"
+            + "  <genre>Genre</genre>\n"
+            + "  <actor>\n"
+            + "    <name>Actor</name>\n"
+            + "    <role>Role</role>\n"
+            + "    <type>Actor</type>\n"
+            + "  </actor>\n"
+            + "  <lockdata>true</lockdata>\n"
+            + "</movie>";
+
+        Assert.Equal(Expected, NfoDocument.Movie(StubMetadata.From(_plain, true)).ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void AProtectedSeriesWithoutTrailersIsWrittenAsBefore()
+    {
+        const string Expected = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
+            + "<tvshow>\n"
+            + "  <title>Title</title>\n"
+            + "  <year>2020</year>\n"
+            + "  <uniqueid type=\"tmdb\">1</uniqueid>\n"
+            + "  <plot>Plot</plot>\n"
+            + "  <genre>Genre</genre>\n"
+            + "  <actor>\n"
+            + "    <name>Actor</name>\n"
+            + "    <role>Role</role>\n"
+            + "    <type>Actor</type>\n"
+            + "  </actor>\n"
+            + "  <lockedfields>Cast|Genres|ProductionLocations|Studios|Tags|Name|Overview|OfficialRating</lockedfields>\n"
+            + "</tvshow>";
+
+        Assert.Equal(Expected, NfoDocument.Series(StubMetadata.From(_plain with { Kind = IndexedItemKind.Series }, true)).ReplaceLineEndings("\n"));
+    }
+
+    [Theory]
+    [InlineData(IndexedItemKind.Movie, "lockdata")]
+    [InlineData(IndexedItemKind.Series, "lockedfields")]
+    public void AProtectedFilmOrSeriesHasItsTrailersInTheKodiForm(IndexedItemKind kind, string last)
+    {
+        var item = _plain with { Kind = kind, TrailerIds = ["dQw4w9WgXcQ", "a-b_c123456"] };
+        var metadata = StubMetadata.From(item, true);
+
+        var root = XDocument.Parse(kind == IndexedItemKind.Movie ? NfoDocument.Movie(metadata) : NfoDocument.Series(metadata)).Root!;
+
+        Assert.Equal(
+            ["plugin://plugin.video.youtube/play/?video_id=dQw4w9WgXcQ", "plugin://plugin.video.youtube/play/?video_id=a-b_c123456"],
+            root.Elements("trailer").Select(trailer => trailer.Value));
+        Assert.Equal(last, root.Elements().Last().Name.LocalName);
+    }
+
+    [Fact]
+    public void WithoutProtectionAFilmHasNoTrailer()
+    {
+        var metadata = StubMetadata.From(_plain with { TrailerIds = ["dQw4w9WgXcQ"] }, false);
+
+        Assert.Null(XDocument.Parse(NfoDocument.Movie(metadata)).Root!.Element("trailer"));
+    }
+
+    [Fact]
+    public void AnEpisodeHasNoTrailer()
+    {
+        var metadata = StubMetadata.From(_plain with { Kind = IndexedItemKind.Episode, TrailerIds = ["dQw4w9WgXcQ"] }, true);
+
+        Assert.Null(XDocument.Parse(NfoDocument.Episode(metadata)).Root!.Element("trailer"));
+    }
+
+    [Fact]
+    public void AnIdThatIsNotOneIsNeverWritten()
+    {
+        var metadata = StubMetadata.From(_plain, true) with { TrailerIds = ["x\"><evil/>", "dQw4w9WgXcQ&a=1"] };
+
+        Assert.Null(XDocument.Parse(NfoDocument.Movie(metadata)).Root!.Element("trailer"));
+    }
+
+    [Fact]
+    public void AFilmWithoutACollectionIsWrittenAsBefore()
+    {
+        const string Expected = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
+            + "<movie>\n"
+            + "  <title>Title</title>\n"
+            + "  <year>2020</year>\n"
+            + "  <uniqueid type=\"imdb\">tt1</uniqueid>\n"
+            + "  <uniqueid type=\"tmdb\">1</uniqueid>\n"
+            + "</movie>";
+
+        Assert.Equal(Expected, NfoDocument.Movie(Thin()).ReplaceLineEndings("\n"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AFilmInACollectionHasASetWithItsName(bool isProtected)
+    {
+        var metadata = StubMetadata.From(_item, isProtected) with { CollectionName = "Saga <Uno> & \"Due\"\u0001", TmdbCollectionId = "1241" };
+
+        var root = XDocument.Parse(NfoDocument.Movie(metadata)).Root!;
+
+        var set = Assert.Single(root.Elements("set"));
+        Assert.Equal("1241", set.Attribute("tmdbcolid")?.Value);
+        Assert.Equal("Saga <Uno> & \"Due\"", set.Element("name")?.Value);
+        Assert.Equal(isProtected ? "lockdata" : "set", root.Elements().Last().Name.LocalName);
+    }
+
+    [Fact]
+    public void ACollectionWithoutTmdbIdHasNoAttribute()
+    {
+        var root = XDocument.Parse(NfoDocument.Movie(Protected() with { CollectionName = "Saga" })).Root!;
+
+        var set = Assert.Single(root.Elements("set"));
+        Assert.Empty(set.Attributes());
+        Assert.Equal("Saga", set.Element("name")?.Value);
+    }
+
+    [Fact]
+    public void OnlyFilmsHaveASet()
+    {
+        var metadata = Protected() with { CollectionName = "Saga", SeasonNumber = 1, EpisodeNumber = 2 };
+
+        Assert.Null(XDocument.Parse(NfoDocument.Episode(metadata)).Root!.Element("set"));
+        Assert.Null(XDocument.Parse(NfoDocument.Series(metadata)).Root!.Element("set"));
     }
 
     [Theory]

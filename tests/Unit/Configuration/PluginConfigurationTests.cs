@@ -143,6 +143,189 @@ public class PluginConfigurationTests
         Assert.True(PlaybackTimeouts.Idle.TotalSeconds <= PluginConfiguration.MaxPlaybackIdleSeconds);
     }
 
+    [Fact]
+    public void HoldingLibrariesAgainKeepsASkippedCheckOfTheEntry()
+    {
+        var config = new PluginConfiguration();
+        var serverId = Guid.NewGuid();
+        config.HoldAutomaticLibraries(serverId, [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "a1" }], [], [], true);
+
+        config.HoldAutomaticLibraries(serverId, [new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "b2" }], [], [], false);
+
+        Assert.True(Assert.Single(config.RemovedServerLibraries).FollowSkipped);
+    }
+
+    [Fact]
+    public void TakingBackHeldLibrariesKeepsAnEntryOnlyWhileItListsReleasedOnes()
+    {
+        var config = new PluginConfiguration();
+        var kept = Guid.NewGuid();
+        var dropped = Guid.NewGuid();
+        var library = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film", ItemId = "a1" };
+        config.HoldAutomaticLibraries(kept, [library], [], [], false);
+        config.RemovedServerLibraries[0].ReleasedLibraries.Add("Casa - Serie");
+        config.HoldAutomaticLibraries(dropped, [library], [], [], false);
+
+        config.ReleaseHeldAutomaticLibraries(kept, [library]);
+        config.ReleaseHeldAutomaticLibraries(dropped, [library]);
+
+        var held = Assert.Single(config.RemovedServerLibraries);
+        Assert.Equal(kept, held.ServerId);
+        Assert.Empty(held.Libraries);
+        Assert.Equal(["Casa - Serie"], held.ReleasedLibraries);
+    }
+
+    [Fact]
+    public void TheServerRemovalDialogSaysItsAutomaticLibrariesAreDeletedToo()
+    {
+        var page = ConfigPage();
+        var start = page.IndexOf("button(t('Remove'), function () {", StringComparison.Ordinal);
+        var end = page.IndexOf("act(api('DELETE', 'Servers/'", start, StringComparison.Ordinal);
+        var dialog = page[start..end];
+
+        Assert.Contains("ownState(server)", dialog, StringComparison.Ordinal);
+        Assert.Contains("t('Its automatic libraries are deleted too: {names}.', { names: escapeHtml(", dialog, StringComparison.Ordinal);
+        Assert.Contains("t('Its automatic libraries are deleted too.')", dialog, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSyncHistoryShowsTheOutcomeRightAfterTheStart()
+    {
+        var page = ConfigPage();
+        var row = Slice(page, "function historyRow(run)", "function renderHistory(view)");
+        var table = Slice(page, "function renderHistory(view)", "container.appendChild(table)");
+
+        Assert.Contains("[t('Started'), t('Outcome'), t('Type'), t('Duration'), t('Servers')]", table, StringComparison.Ordinal);
+        var cells = new[] { "row.appendChild(started)", "row.appendChild(outcome)", "runKinds[run.Kind]", "formatDuration(run.DurationMilliseconds)", "row.appendChild(servers)" }
+            .Select(cell => row.IndexOf(cell, StringComparison.Ordinal))
+            .ToList();
+        Assert.DoesNotContain(-1, cells);
+        Assert.Equal(cells.Order(), cells);
+    }
+
+    // Decision 191: the totals also count the stubs of the single folder and of removed servers.
+    [Fact]
+    public void TheSyncHistoryShowsTheTotalsOfEachRun()
+    {
+        var history = Slice(ConfigPage(), "function historyServerLine(server)", "function renderHistory(view)");
+
+        Assert.Contains("t('In total: {created} created, {updated} updated, {removed} removed.'", history, StringComparison.Ordinal);
+        foreach (var total in new[] { "run.Created", "run.Updated", "run.Removed", "run.Failed" })
+        {
+            Assert.Contains(total, history, StringComparison.Ordinal);
+        }
+    }
+
+    // Decision 211: the intro of the history names the totals line under the server lines.
+    [Fact]
+    public void TheSyncHistoryIntroMentionsTheTotals()
+    {
+        var page = ConfigPage();
+        var intro = Slice(page, "<h3 class=\"sectionTitle\">Sync history</h3>", "id=\"jmHistoryWarning\"");
+
+        Assert.Contains("removed in its folder, then the totals of the whole folder.</p>", intro, StringComparison.Ordinal);
+        Assert.Contains("rimossi nella sua cartella, poi i totali di tutta la cartella.\"", page, StringComparison.Ordinal);
+    }
+
+    // Decision 51: series cases and series merges have a section of their own, apart from the films.
+    [Fact]
+    public void SeriesToMergeHaveTheirOwnSection()
+    {
+        var page = ConfigPage();
+        var section = Slice(page, "<h3 class=\"sectionTitle\">Duplicate series</h3>", "<h3 class=\"sectionTitle\">Sync history</h3>");
+        var render = Slice(page, "function renderMerges(list)", "function formatDuration(milliseconds)");
+
+        Assert.Contains("id=\"jmSeriesCases\"", section, StringComparison.Ordinal);
+        Assert.Contains("<h3 class=\"sectionTitle\">Merged series</h3>", section, StringComparison.Ordinal);
+        Assert.Contains("id=\"jmSeriesMerges\"", section, StringComparison.Ordinal);
+        Assert.Contains("renderCases(el('#jmMergeCases'), list.Cases, mergeKinds.films)", render, StringComparison.Ordinal);
+        Assert.Contains("renderCases(el('#jmSeriesCases'), list.SeriesCases, mergeKinds.series)", render, StringComparison.Ordinal);
+    }
+
+    // The merges come in one list, so each goes to the section of its kind, as the server names it.
+    [Fact]
+    public void EachMergeIsShownWithItsKind()
+    {
+        var render = Slice(ConfigPage(), "function renderMerges(list)", "function formatDuration(milliseconds)");
+
+        Assert.Contains("return copy.Copy.Kind !== 'Movie';", render, StringComparison.Ordinal);
+        Assert.Contains("renderMergeList(el('#jmMerges'), films, mergeKinds.films)", render, StringComparison.Ordinal);
+        Assert.Contains("renderMergeList(el('#jmSeriesMerges'), series, mergeKinds.series)", render, StringComparison.Ordinal);
+    }
+
+    // A series is compared by what it holds, since its quality is decided per episode.
+    [Fact]
+    public void SeriesAreComparedByEpisodesSeasonsAndIds()
+    {
+        var page = ConfigPage();
+        var kinds = Slice(page, "var mergeKinds = {", "};");
+        var values = Slice(page, "function compareValues(title, rows)", "function compareNotes(");
+        var ids = Slice(page, "function idsOf(copy)", "function resolutionOf(");
+
+        Assert.Contains("var seriesCompareRows = ['Server', 'Episodes', 'Seasons', 'IDs'];", page, StringComparison.Ordinal);
+        Assert.Contains("rows: seriesCompareRows", kinds, StringComparison.Ordinal);
+        Assert.Contains("copy.EpisodeCount", values, StringComparison.Ordinal);
+        Assert.Contains("copy.SeasonCount", values, StringComparison.Ordinal);
+        Assert.Contains("'TVDB ' + copy.Copy.Tvdb", ids, StringComparison.Ordinal);
+    }
+
+    // Every text a series case shows speaks of series, never of films.
+    [Fact]
+    public void TheSeriesWordsDoNotSpeakOfFilms()
+    {
+        var kinds = Slice(ConfigPage(), "var mergeKinds = {", "};");
+        var series = kinds[kinds.IndexOf("series: {", StringComparison.Ordinal)..];
+
+        Assert.DoesNotContain("film", series, StringComparison.OrdinalIgnoreCase);
+        foreach (var word in new[] { "reasons:", "twoLocal:", "merged:", "undone:", "unused:", "forecast:", "empty:" })
+        {
+            Assert.Contains(word, series, StringComparison.Ordinal);
+        }
+    }
+
+    // Titles and names come from remote servers, so the merge views build their nodes with textContent.
+    [Fact]
+    public void TheMergeViewsWriteNoMarkup()
+    {
+        var views = Slice(ConfigPage(), "var mergeDetails = 0;", "function formatDuration(milliseconds)");
+
+        Assert.DoesNotContain("innerHTML", views, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertAdjacentHTML", views, StringComparison.Ordinal);
+    }
+
+    // Q411: the migration banner shows what the main Status read brings, and reads no Status of its own.
+    [Fact]
+    public void TheMigrationBannerReadsNoStatusOfItsOwn()
+    {
+        var page = ConfigPage();
+        var banner = Slice(page, "var automaticSteps = {", "</script>");
+
+        Assert.Equal(1, Count(page, "read('Status')"));
+        Assert.DoesNotContain("Admin/Status", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("setTimeout", banner, StringComparison.Ordinal);
+        Assert.Contains("page.addEventListener('jmstatus'", banner, StringComparison.Ordinal);
+    }
+
+    private static int Count(string text, string part)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(part, StringComparison.Ordinal); at >= 0; at = text.IndexOf(part, at + part.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static string Slice(string page, string start, string end)
+    {
+        var from = page.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, start);
+        var to = page.IndexOf(end, from, StringComparison.Ordinal);
+        Assert.True(to >= 0, end);
+        return page[from..to];
+    }
+
     private static string ConfigPage()
     {
         using var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.JellyMesh.Configuration.configPage.html")!;

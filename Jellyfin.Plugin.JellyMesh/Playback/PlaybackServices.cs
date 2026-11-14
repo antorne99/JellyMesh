@@ -1,5 +1,7 @@
 using System;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Segments;
+using MediaBrowser.Controller.MediaSegments;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -19,23 +21,36 @@ public static class PlaybackServices
     public static void AddPlayback(this IServiceCollection services)
     {
         services.TryAddSingleton(TimeProvider.System);
-        services.AddSingleton<IRemotePlaybackClient, RemotePlaybackClient>();
+        services.AddSingleton<RemotePlaybackClient>();
+        services.AddSingleton<IRemotePlaybackClient>(provider => provider.GetRequiredService<RemotePlaybackClient>());
+        services.AddSingleton<IRemoteSegmentClient>(provider => provider.GetRequiredService<RemotePlaybackClient>());
         services.AddSingleton<PlaybackSessionStore>();
-        services.AddSingleton<ILastServedSourceStore>(provider => new LastServedSourceStore(
+        services.AddSingleton(provider => new LastServedSourceStore(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<LastServedSourceStore>>()));
+            provider.GetRequiredService<ILogger<LastServedSourceStore>>(),
+            provider.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<ILastServedSourceStore>(provider => provider.GetRequiredService<LastServedSourceStore>());
+        services.AddHostedService(provider => provider.GetRequiredService<LastServedSourceStore>());
         services.AddSingleton<PlaybackCoordinator>();
         services.AddSingleton<PlaybackRefusal>();
         services.AddSingleton<StubLookup>();
         services.AddSingleton<LocalCopyLookup>();
+        services.AddSingleton<PlaybackVersions>();
         services.AddSingleton<PlaybackInfoFilter>();
         services.AddSingleton<StockRouteGuardFilter>();
+        services.AddSingleton<StubSegments>();
+        services.AddSingleton<IMediaSegmentProvider, StubSegmentProvider>();
+        services.AddSingleton<SegmentOffer>();
+        services.AddSingleton<SegmentRouteFilter>();
         services.AddHostedService<PlaybackSweeper>();
+        services.AddSingleton<NewStubSegments>();
+        services.AddHostedService(provider => provider.GetRequiredService<NewStubSegments>());
 
         services.Configure<MvcOptions>(options =>
         {
             options.Filters.AddService<PlaybackInfoFilter>();
             options.Filters.AddService<StockRouteGuardFilter>();
+            options.Filters.AddService<SegmentRouteFilter>();
         });
     }
 }

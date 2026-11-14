@@ -1,0 +1,87 @@
+# Row 232: what it comes to
+
+At 10,000 films and 1,000 collections (7,490 member films), measured with collections-cost.sh (raw output below):
+- A page of Provider/Collections takes 0.22-0.25 s (median, first, middle and last page alike; slowest single page
+  0.27 s; the first request after a restart 0.44 s), against the consumer's 30 s timeout. The full walk of 15
+  pages takes 4.3 s (3.6 s in the server) and 4.0 CPU-seconds, with the resident set at 550-590 MiB against 442 MiB idle.
+- For comparison, a page of Provider/Items takes 0.21-0.23 s and its full walk of 20 pages 6.2 s (4.7 s in the
+  server), 4.9 CPU-seconds, with 1.28 MB per page against 30 KB for Collections.
+- Most of a Collections page is fixed: limit=1 takes 0.23 s against 0.03 s on Items. That fixed part is what each page
+  rebuilds and filters by (every collection and its members); it grew from 0.05 s at 1,946 members (250 collections)
+  to 0.20 s at 7,490, about 27 us per member, so the walk grows with the square of the member films.
+- Four walks at once (one peer login, standing in for four consumers): 9.0 s for the four Collections walks
+  (28 CPU-seconds), 17 s for four Items walks (46 CPU-seconds), with the process peaking at 661 MiB. Running at once
+  roughly doubles the time and CPU of each walk on both routes alike.
+
+Projected, not measured, from 27 us per member and pages of 500, at the same 7.5 films per collection (both
+checkpoints had it, so a cost per collection, about 200 us, fits as well): 20,000 member films would take about 0.55 s
+a page and 22 s a walk; 50,000 about 1.4 s a page and 2.3 min a walk. A page stays far under the 30 s timeout in
+either case, and the consumer accepts totals up to 1,000,000 (MaxItemsPerQuery). How the fixed part splits between
+rebuilding the map and filtering the query by thousands of ids was not measured.
+
+Limits of the measure: films with no metadata (no people, genres, overview or images), so Items pages are lighter than
+on a real library while Collections pages are not affected; the consumer side of a sync (reading this route through a
+real JellyMesh consumer) was not run; a shared library that also holds federated folders, films in several
+collections and several distinct peers were not tried; one machine, Docker VM of 8 CPUs, nothing else loaded.
+POST /Collections on stock 12.4 fails when calls overlap ("boxsets.collection" in use), so the script creates them one at a time.
+
+# Row 232: cost of GET JellyMesh/Provider/Collections, measured on 2026-11-14 at 6953ec8
+
+Provider: Jellyfin 12.4 (jellyfin/jellyfin:12.4.20261026-211555) with the plugin, alone on a Docker VM of 8 CPUs and 7.7 GiB.
+Library: 10000 films, every one a probed file (hard links of one 1 s video), no metadata or images; scan took 168 s.
+Collections: 1000, each of 2-20 films nobody else has, sizes 2 + floor(18 u^2):
+  7490 member films in all (mean 7.5); by size 2-4: 427, 5-9: 254, 10-14: 160, 15-20: 159
+Requests: as the dedicated user granted the film library, from the host over loopback; times are curl time_total.
+The first call of a page is right after the previous step, the repeats follow it at once. CPU is the usage_usec
+of the container's cgroup over the walk; rss is the resident set of the Jellyfin process sampled every 0.25 s.
+The consumer reads this route in pages of 500, one after the other, with a 30 s timeout per request.
+
+== 250 collections, 1946 member films (other containers: jellymesh-sdk 0.00%; )
+ idle after restart: 444 MiB resident
+ Collections (1946 films, pages of 500):
+  first request of the route         0.300 s (status 200)
+  limit=1 at 0                       first call 0.091 s, then median 0.077 s (min 0.073, max 0.090, n=5); 1 entries, 96 bytes
+  first page (0)                     first call 0.105 s, then median 0.096 s (min 0.091, max 0.097, n=5); 500 entries, 30535 bytes
+  middle page (500)                  first call 0.115 s, then median 0.090 s (min 0.084, max 0.154, n=5); 500 entries, 30535 bytes
+  last page (1500)                   first call 0.123 s, then median 0.108 s (min 0.091, max 0.112, n=5); 446 entries, 27241 bytes
+  full walk 1: 0.56 s (pages 0.33 s), 4 pages, 1946 entries, slowest page 0.098 s, CPU 0.44 s, rss 512-516 MiB
+  full walk 2: 0.65 s (pages 0.36 s), 4 pages, 1946 entries, slowest page 0.106 s, CPU 0.48 s, rss 520-523 MiB
+  full walk 3: 0.66 s (pages 0.41 s), 4 pages, 1946 entries, slowest page 0.131 s, CPU 0.57 s, rss 523-526 MiB
+  4 concurrent walks of Collections: 1.18 s for all, slowest walk 0.91 s, CPU 2.30 s, rss 526-555 MiB
+ Items (10000 films, pages of 500):
+  first request of the route         0.178 s (status 200)
+  limit=1 at 0                       first call 0.032 s, then median 0.031 s (min 0.029, max 0.033, n=5); 1 entries, 2611 bytes
+  first page (0)                     first call 0.242 s, then median 0.229 s (min 0.196, max 0.237, n=5); 500 entries, 1281548 bytes
+  middle page (5000)                 first call 0.229 s, then median 0.223 s (min 0.216, max 0.252, n=5); 500 entries, 1281548 bytes
+  last page (9500)                   first call 0.228 s, then median 0.217 s (min 0.207, max 0.234, n=5); 500 entries, 1281548 bytes
+  full walk 1: 6.26 s (pages 4.72 s), 20 pages, 10000 entries, slowest page 0.334 s, CPU 4.97 s, rss 591-613 MiB
+  full walk 2: 6.06 s (pages 4.53 s), 20 pages, 10000 entries, slowest page 0.273 s, CPU 4.76 s, rss 579-607 MiB
+  full walk 3: 6.25 s (pages 4.73 s), 20 pages, 10000 entries, slowest page 0.312 s, CPU 4.82 s, rss 599-625 MiB
+  4 concurrent walks of Items: 15.47 s for all, slowest walk 15.17 s, CPU 40.44 s, rss 595-675 MiB
+ resident after the measurements: 672 MiB, peak of the process 675 MiB
+
+== 1000 collections, 7490 member films (other containers: jellymesh-sdk 0.00%; )
+ idle after restart: 442 MiB resident
+ Collections (7490 films, pages of 500):
+  first request of the route         0.441 s (status 200)
+  limit=1 at 0                       first call 0.256 s, then median 0.233 s (min 0.230, max 0.267, n=5); 1 entries, 96 bytes
+  first page (0)                     first call 0.224 s, then median 0.236 s (min 0.215, max 0.239, n=5); 500 entries, 30535 bytes
+  middle page (3500)                 first call 0.273 s, then median 0.222 s (min 0.219, max 0.266, n=5); 500 entries, 30553 bytes
+  last page (7000)                   first call 0.246 s, then median 0.250 s (min 0.215, max 0.255, n=5); 490 entries, 29961 bytes
+  full walk 1: 4.29 s (pages 3.53 s), 15 pages, 7490 entries, slowest page 0.269 s, CPU 3.91 s, rss 564-589 MiB
+  full walk 2: 4.33 s (pages 3.60 s), 15 pages, 7490 entries, slowest page 0.273 s, CPU 3.96 s, rss 565-589 MiB
+  full walk 3: 4.32 s (pages 3.62 s), 15 pages, 7490 entries, slowest page 0.258 s, CPU 4.04 s, rss 549-583 MiB
+  4 concurrent walks of Collections: 9.04 s for all, slowest walk 8.75 s, CPU 28.08 s, rss 560-661 MiB
+ Items (10000 films, pages of 500):
+  first request of the route         0.180 s (status 200)
+  limit=1 at 0                       first call 0.043 s, then median 0.031 s (min 0.030, max 0.035, n=5); 1 entries, 2611 bytes
+  first page (0)                     first call 0.210 s, then median 0.230 s (min 0.218, max 0.284, n=5); 500 entries, 1281548 bytes
+  middle page (5000)                 first call 0.261 s, then median 0.227 s (min 0.211, max 0.253, n=5); 500 entries, 1281548 bytes
+  last page (9500)                   first call 0.245 s, then median 0.213 s (min 0.203, max 0.266, n=5); 500 entries, 1281548 bytes
+  full walk 1: 6.30 s (pages 4.69 s), 20 pages, 10000 entries, slowest page 0.338 s, CPU 4.87 s, rss 608-629 MiB
+  full walk 2: 6.16 s (pages 4.63 s), 20 pages, 10000 entries, slowest page 0.266 s, CPU 4.87 s, rss 582-616 MiB
+  full walk 3: 6.30 s (pages 4.75 s), 20 pages, 10000 entries, slowest page 0.314 s, CPU 4.91 s, rss 560-593 MiB
+  4 concurrent walks of Items: 17.15 s for all, slowest walk 16.82 s, CPU 45.70 s, rss 552-649 MiB
+ resident after the measurements: 645 MiB, peak of the process 661 MiB
+
+failed checks: 0

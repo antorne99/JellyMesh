@@ -15,6 +15,11 @@ public class RemoteServerConfig
     public Guid Id { get; set; }
 
     /// <summary>
+    /// Gets or sets the Server Id the remote gives itself at login, as 32 lowercase digits, empty while not known.
+    /// </summary>
+    public string JellyfinServerId { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets the display name.
     /// </summary>
     public string Name { get; set; } = string.Empty;
@@ -43,4 +48,43 @@ public class RemoteServerConfig
     /// Gets the identifiers of the remote libraries to import.
     /// </summary>
     public Collection<string> ImportedLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the plugin keeps a Film and a Serie library for this server.
+    /// </summary>
+    public bool AutomaticLibraries { get; set; }
+
+    /// <summary>
+    /// Gets the libraries the plugin created for this server and still manages.
+    /// </summary>
+    public Collection<AutomaticLibraryConfig> AutomaticLibraryRegistry { get; } = [];
+
+    /// <summary>
+    /// Gets the ids of the libraries there when the switch was last turned on, outside the registry: they are the admin's,
+    /// so the plugin never takes them for its own (decision 131).
+    /// </summary>
+    public Collection<string> PreexistingLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets the ids of the libraries there at the last check of the registry: none of them is ever taken for a renamed one
+    /// (decision 157).
+    /// </summary>
+    public Collection<string> FollowedLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a check of the registry was skipped or failed since
+    /// <see cref="FollowedLibraryIds"/> was recorded: the next one takes no library for a renamed one (decision 173).
+    /// </summary>
+    public bool FollowSkipped { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a rename of this server started and has not finished, so the page shows it
+    /// after a restart too (§10 row 289).
+    /// </summary>
+    public bool RenameUnfinished { get; set; }
+
+    /// <summary>
+    /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.
+    /// </summary>
+    public Collection<string> ReleasedAutomaticLibraries { get; } = [];
 }

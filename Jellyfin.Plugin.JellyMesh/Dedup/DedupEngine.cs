@@ -55,30 +55,84 @@ public static class DedupEngine
         };
     }
 
+    /// <summary>
+    /// Pairs saved copies with current copies of the same content, by the identity <see cref="Resolve"/> gives (plan
+    /// §4.1): films and episodes by their identity, series by their work. A copy with no identity pairs with nothing, and
+    /// no manual merge applies.
+    /// </summary>
+    /// <param name="saved">The saved films and episodes.</param>
+    /// <param name="savedSeries">The saved series, each as an episode with no numbers that carries the series' data.</param>
+    /// <param name="current">The current films and episodes.</param>
+    /// <param name="currentSeries">The current series, in the same form.</param>
+    /// <returns>Each saved copy with every current copy of its content.</returns>
+    public static IReadOnlyList<ContentPair> Pair(
+        IReadOnlyCollection<CatalogItem> saved,
+        IReadOnlyCollection<CatalogItem> savedSeries,
+        IReadOnlyCollection<CatalogItem> current,
+        IReadOnlyCollection<CatalogItem> currentSeries)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        ArgumentNullException.ThrowIfNull(savedSeries);
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(currentSeries);
+
+        var works = WorkResolver.Create([.. saved, .. savedSeries, .. current, .. currentSeries], []);
+        var currentByKey = current
+            .SelectMany(item => Identify(item, works).Select(identity => (identity.Key, Item: item)))
+            .ToLookup(entry => entry.Key, entry => entry.Item, StringComparer.Ordinal);
+        var seriesByWork = currentSeries
+            .Select(item => (works.Find(item)?.Key, Item: item))
+            .Where(entry => entry.Key is not null)
+            .ToLookup(entry => entry.Key!, entry => entry.Item, StringComparer.Ordinal);
+
+        var titles = saved.SelectMany(item => Identify(item, works)
+            .SelectMany(identity => currentByKey[identity.Key])
+            .Distinct()
+            .Select(match => new ContentPair(item, match)));
+        var series = savedSeries.SelectMany(item => works.Find(item) is { } work
+            ? seriesByWork[work.Key].Select(match => new ContentPair(item, match))
+            : []);
+        return titles.Concat(series).ToList();
+    }
+
     // Issues that share a title become one case, or a title would show twice and could be merged two ways. A case needs a
-    // title with no local copy: two local films cannot become one, because a local item is never touched.
+    // title with no local copy: two local films or series cannot become one, because a local item is never touched. An
+    // episode whose series is not known names no copy, so its work is in no case unless another copy names it. A work with
+    // a local film or series awaiting its refresh waits outside the cases (decision 214, Q244).
     private static List<MergeCase> MergeCases(List<CatalogItem> local, List<CatalogItem> remote, WorkResolver works)
     {
         var films = local.Select(item => new WorkCopy(item, true))
             .Concat(remote.Select(item => new WorkCopy(item, false)))
-            .Where(copy => copy.Item.Kind == ContentKind.Movie)
+            .Where(copy => WorkResolver.CopyItemOf(copy.Item) is not null)
             .Select(copy => (Copy: copy, works.Find(copy.Item)?.Key))
             .Where(film => film.Key is not null)
             .ToLookup(film => film.Key!, film => film.Copy, StringComparer.Ordinal);
+        var waiting = films
+            .Where(work => work.Any(copy => copy.IsLocal && copy.Item.AwaitsRefresh))
+            .Select(work => work.Key)
+            .ToHashSet(StringComparer.Ordinal);
 
         var cases = new List<(DedupIssueKind Kind, SortedSet<string> Keys)>();
-        foreach (var issue in works.Issues.Where(issue => issue.WorkKeys.Count > 1 && issue.WorkKeys.All(films.Contains)))
+        foreach (var (issueKind, keys) in works.Issues.Select(issue => (issue.Kind, Keys: issue.WorkKeys.Where(key => !waiting.Contains(key)).ToList())))
         {
-            var overlapping = cases.Where(entry => entry.Keys.Overlaps(issue.WorkKeys)).ToList();
+            if (keys.Count <= 1 || !keys.TrueForAll(films.Contains))
+            {
+                continue;
+            }
+
+            var overlapping = cases.Where(entry => entry.Keys.Overlaps(keys)).ToList();
             cases.RemoveAll(overlapping.Contains);
 
             // Issues are sorted by kind, so the earliest kind of the case is the one already there.
-            var kind = overlapping.Count > 0 ? overlapping.Min(entry => entry.Kind) : issue.Kind;
-            cases.Add((kind, new SortedSet<string>(overlapping.SelectMany(entry => entry.Keys).Concat(issue.WorkKeys), StringComparer.Ordinal)));
+            var kind = overlapping.Count > 0 ? overlapping.Min(entry => entry.Kind) : issueKind;
+            cases.Add((kind, new SortedSet<string>(overlapping.SelectMany(entry => entry.Keys).Concat(keys), StringComparer.Ordinal)));
         }
 
         return cases
-            .Select(entry => new MergeCase(entry.Kind, entry.Keys.Select(key => CaseWork(key, films[key], works)).ToList()))
+            .Select(entry => new MergeCase(entry.Kind, entry.Keys.Select(key => CaseWork(key, films[key], works)).ToList())
+            {
+                ContentKind = films[entry.Keys.Min!].First().Item.Kind
+            })
             .Where(entry => entry.Works.Any(work => !work.HasLocalCopy))
             .OrderBy(entry => entry.Works[0].WorkKey, StringComparer.Ordinal)
             .ToList();
@@ -90,10 +144,12 @@ public static class DedupEngine
             .Where(merge => string.Equals(merge.WorkKey, key, StringComparison.Ordinal))
             .Select(merge => merge.Merge.Id)
             .ToList();
+        // A series is one copy, shown by its lowest episode.
         var sorted = copies
-            .DistinctBy(copy => (copy.Item.ServerId, copy.Item.ItemId))
             .OrderBy(copy => copy.Item.ServerId, StringComparer.Ordinal)
+            .ThenBy(copy => WorkResolver.CopyItemOf(copy.Item), StringComparer.Ordinal)
             .ThenBy(copy => copy.Item.ItemId, StringComparer.Ordinal)
+            .DistinctBy(copy => (copy.Item.ServerId, WorkResolver.CopyItemOf(copy.Item)))
             .ToList();
         return new MergeCaseWork(key, mergeIds, sorted);
     }

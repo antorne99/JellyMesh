@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
@@ -12,6 +13,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Http;
@@ -41,11 +43,12 @@ internal sealed class ProviderFixture
             .ReturnsAsync(() => new AuthorizationInfo { User = Caller, DeviceId = CallerDevice });
 
         Directory = new PeerDirectory(Store, Authorization.Object);
-        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store);
+        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store, CatalogLogger);
 
         AddItem(SharedItem, new Movie { Path = "/media/film/a.mkv" }, SharedLibrary);
         AddItem(PrivateItem, new Movie { Path = "/other/film/b.mkv" }, PrivateLibrary);
         AddItem(StubItem, new Movie { Path = "/federata/Film/c/c.strm", ShortcutPath = "http://127.0.0.1:8096/JellyMesh/Play/stub" }, SharedLibrary);
+        WithLibrary(SharedLibrary, "/media/film");
         Connect();
     }
 
@@ -77,6 +80,8 @@ internal sealed class ProviderFixture
 
     public ProviderCatalog Catalog { get; }
 
+    public CapturingLogger<ProviderCatalog> CatalogLogger { get; } = new();
+
     public PeerCaller PeerCaller => new(Directory.Find(Peer.Id)!, Peer);
 
     /// <summary>Makes a play session the peer's, as its own <c>PlaybackInfo</c> does, with no slot left behind.</summary>
@@ -95,6 +100,23 @@ internal sealed class ProviderFixture
         peer.SharedLibraryIds.Add(SharedLibrary.ToString("N"));
         Store.Configuration.Peers.Add(peer);
         Caller = Peer;
+    }
+
+    /// <summary>Makes a film library with these paths the only one on the server.</summary>
+    public void WithLibrary(Guid id, params string[] locations)
+    {
+        Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+        [
+            new VirtualFolderInfo { Name = "Film", ItemId = id.ToString(), CollectionType = CollectionTypeOptions.movies, Locations = locations }
+        ]);
+    }
+
+    /// <summary>Makes a path a folder Jellyfin has indexed.</summary>
+    public Folder WithFolder(string path)
+    {
+        var folder = new Folder { Id = Guid.NewGuid(), Path = path };
+        Library.Setup(manager => manager.FindByPath(path, true)).Returns(folder);
+        return folder;
     }
 
     public void AddItem(Guid id, BaseItem item, Guid library)

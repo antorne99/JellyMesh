@@ -58,10 +58,26 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
         list.AddRange(items);
     }
 
+    /// <summary>The Server Id the remote gives itself at login. Null gives none, as a server before this was read.</summary>
+    public string? ServerId { get; set; }
+
+    /// <summary>The device of each login, in order.</summary>
+    public List<string> LoginDevices { get; } = [];
+
+    /// <summary>The device of each session ended.</summary>
+    public List<string> LogoutDevices { get; } = [];
+
     public Task<RemoteResult<RemoteSession>> AuthenticateAsync(RemoteEndpoint endpoint, RemoteCredentials credentials, CancellationToken cancellationToken)
     {
         Logins++;
-        return Task.FromResult(RemoteResult.Success(new RemoteSession(TestValues.Token, "abc")));
+        LoginDevices.Add(endpoint.DeviceId);
+        return Task.FromResult(RemoteResult.Success(new RemoteSession(TestValues.Token, "abc") { ServerId = ServerId }));
+    }
+
+    public Task<RemoteResult<bool>> LogoutAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        LogoutDevices.Add(endpoint.DeviceId);
+        return Task.FromResult(RemoteResult.Success(true));
     }
 
     /// <summary>What the capability endpoint answers.</summary>
@@ -172,5 +188,50 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
 
         var page = new RemoteItemPage(all.Skip(query.StartIndex).Take(query.Limit).ToList(), all.Count);
         return Task.FromResult(RemoteResult.Success(Rewrite(query, page)));
+    }
+
+    /// <summary>The collections, each with its library and the IDs of its films.</summary>
+    public List<(string Library, RemoteItem Collection, List<string> Films)> Collections { get; } = [];
+
+    /// <summary>The collection reads, as library or collection ID and start index.</summary>
+    public List<string> CollectionReads { get; } = [];
+
+    /// <summary>Fails the collection reads.</summary>
+    public RemoteFailure CollectionFailure { get; set; }
+
+    public void AddCollection(string library, string id, string name, params string[] films)
+        => Collections.Add((library, new RemoteItem { Id = id, Name = name }, films.ToList()));
+
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        CollectionReads.Add(libraryId + "@" + startIndex);
+        var all = Collections.Where(entry => entry.Library == libraryId).Select(entry => entry.Collection).ToList();
+        return Task.FromResult(CollectionFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteItemPage(all.Skip(startIndex).Take(limit).ToList(), all.Count))
+            : RemoteResult.Fail<RemoteItemPage>(CollectionFailure));
+    }
+
+    /// <summary>What the ProviderApi of a JellyMesh remote answers on collections, by library.</summary>
+    public List<(string Library, RemoteCollectionEntry Entry)> SharedCollections { get; } = [];
+
+    /// <summary>Rewrites a page of the ProviderApi on collections before it is returned.</summary>
+    public Func<RemoteCollectionPage, RemoteCollectionPage> RewriteSharedCollections { get; set; } = page => page;
+
+    public Task<RemoteResult<RemoteCollectionPage>> GetSharedCollectionsAsync(RemoteEndpoint endpoint, RemoteSession session, string libraryId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        CollectionReads.Add("peer:" + libraryId + "@" + startIndex);
+        var all = SharedCollections.Where(entry => entry.Library == libraryId).Select(entry => entry.Entry).ToList();
+        return Task.FromResult(CollectionFailure == RemoteFailure.None
+            ? RemoteResult.Success(RewriteSharedCollections(new RemoteCollectionPage(all.Skip(startIndex).Take(limit).ToList(), all.Count)))
+            : RemoteResult.Fail<RemoteCollectionPage>(CollectionFailure));
+    }
+
+    public Task<RemoteResult<RemoteItemPage>> GetCollectionFilmsAsync(RemoteEndpoint endpoint, RemoteSession session, string collectionId, int startIndex, int limit, CancellationToken cancellationToken)
+    {
+        CollectionReads.Add(collectionId + "@" + startIndex);
+        var films = Collections.Where(entry => entry.Collection.Id == collectionId).SelectMany(entry => entry.Films).Select(id => new RemoteItem { Id = id }).ToList();
+        return Task.FromResult(CollectionFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteItemPage(films.Skip(startIndex).Take(limit).ToList(), films.Count))
+            : RemoteResult.Fail<RemoteItemPage>(CollectionFailure));
     }
 }
