@@ -342,6 +342,69 @@ public class PlaybackCoordinatorTests
         fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "local-staying", It.IsAny<Func<string, bool>>()), Moq.Times.Never);
     }
 
+    // A kill that hangs, before or after it returns its task, is left to finish: the removal goes on at the limit (413).
+    [Fact]
+    public async Task A_server_about_to_go_closes_its_local_transcodes_together_and_does_not_wait_past_the_limit()
+    {
+        var logger = new CapturingLogger<PlaybackCoordinator>();
+        var fixture = new CoordinatorFixture(logger: logger);
+        var leaving = PlaybackValues.Source("leaving");
+        var user = Guid.NewGuid();
+        foreach (var playSession in new[] { "local-blocking", "local-hanging", "local-quick" })
+        {
+            fixture.Coordinator.RecordLocalPlaySession(user, Guid.NewGuid(), playSession, ["device"]);
+            fixture.Coordinator.RecordLocalTranscode(playSession, leaving);
+        }
+
+        using var blocked = new ManualResetEventSlim();
+        var hanging = new TaskCompletionSource();
+        fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "local-blocking", It.IsAny<Func<string, bool>>()))
+            .Returns(() =>
+            {
+                blocked.Wait(TimeSpan.FromSeconds(30));
+                return Task.CompletedTask;
+            });
+        fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "local-hanging", It.IsAny<Func<string, bool>>())).Returns(hanging.Task);
+        fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "local-quick", It.IsAny<Func<string, bool>>())).Returns(Task.CompletedTask);
+        fixture.Coordinator.RemovalLimit = TimeSpan.FromMilliseconds(300);
+
+        try
+        {
+            await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
+
+            fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(string.Empty, "local-quick", It.IsAny<Func<string, bool>>()), Moq.Times.Once);
+            fixture.Transcodes.Verify(manager => manager.KillTranscodingJobs(string.Empty, "local-hanging", It.IsAny<Func<string, bool>>()), Moq.Times.Once);
+            Assert.Contains(logger.Lines, line => line.Contains("local transcode", StringComparison.Ordinal) && line.Contains("still", StringComparison.Ordinal));
+        }
+        finally
+        {
+            blocked.Set();
+            hanging.TrySetResult();
+        }
+    }
+
+    // The local transcodes close beside the remote sessions, so one hang of each still costs one limit (413).
+    [Fact]
+    public async Task A_server_about_to_go_stops_its_remote_sessions_while_a_local_transcode_is_still_closing()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        fixture.Coordinator.RecordLocalPlaySession(Guid.NewGuid(), Guid.NewGuid(), "local-hanging", ["device"]);
+        fixture.Coordinator.RecordLocalTranscode("local-hanging", leaving);
+        var hanging = new TaskCompletionSource();
+        fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "local-hanging", It.IsAny<Func<string, bool>>())).Returns(hanging.Task);
+        fixture.Coordinator.RemovalLimit = TimeSpan.FromMinutes(5);
+
+        var closing = fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+
+        Assert.True(SpinWait.SpinUntil(() => fixture.Client.Stopped.Count == 1, TimeSpan.FromSeconds(10)));
+        Assert.False(closing.IsCompleted);
+        hanging.SetResult();
+        await closing.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     [Fact]
     public async Task A_local_transcode_its_user_ended_is_not_closed_again()
     {
