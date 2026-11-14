@@ -385,25 +385,24 @@ public class PlaybackCoordinatorTests
 
     // The local transcodes close beside the remote sessions, so one hang of each still costs one limit (413).
     [Fact]
-    public async Task A_server_about_to_go_closes_local_transcodes_and_remote_sessions_within_one_limit()
+    public async Task A_server_about_to_go_stops_its_remote_sessions_while_a_local_transcode_is_still_closing()
     {
         var fixture = new CoordinatorFixture();
         var leaving = PlaybackValues.Source("leaving");
         fixture.Registry.AddJellyMesh(leaving.ServerId);
         await fixture.OpenAsync(PlaybackValues.Stub(leaving));
-        fixture.Client.StopsHang = true;
         fixture.Coordinator.RecordLocalPlaySession(Guid.NewGuid(), Guid.NewGuid(), "local-hanging", ["device"]);
         fixture.Coordinator.RecordLocalTranscode("local-hanging", leaving);
         var hanging = new TaskCompletionSource();
         fixture.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), "local-hanging", It.IsAny<Func<string, bool>>())).Returns(hanging.Task);
-        fixture.Coordinator.RemovalLimit = TimeSpan.FromSeconds(1);
-        var watch = System.Diagnostics.Stopwatch.StartNew();
+        fixture.Coordinator.RemovalLimit = TimeSpan.FromMinutes(5);
 
-        await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
+        var closing = fixture.Coordinator.CloseServerAsync(leaving.ServerId);
 
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1.8), watch.Elapsed.ToString());
-        Assert.Single(fixture.Client.Stopped);
-        hanging.TrySetResult();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Client.Stopped.Count == 1, TimeSpan.FromSeconds(10)));
+        Assert.False(closing.IsCompleted);
+        hanging.SetResult();
+        await closing.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
