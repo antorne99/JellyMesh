@@ -20,6 +20,7 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - JellyMesh 0.5.0.1 stopped Jellyfin 12.1, 12.2 and 12.3 from starting; it now starts on every Jellyfin from 12.1 on.
+  - JellyMesh 0.5.0.0 and 0.5.0.1 stopped Jellyfin 12.1, 12.2 and 12.3 from starting; 0.5.0.2 starts on every Jellyfin from 12.1 on.
+  - If your server stopped, start Jellyfin again: it turns JellyMesh off by itself and starts. Then install 0.5.0.2 from the catalog.
 
-  Not verified: Jellyfin 12.2 and installs outside Docker, such as Windows and macOS.
+  Not verified: Jellyfin 12.2, installs outside Docker such as Windows and macOS, and the install from the catalog after the server stopped, checked by copying the plugin into place.
