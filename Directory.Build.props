@@ -5,7 +5,7 @@
         <FileVersion>0.5.0.1</FileVersion>
         <!-- Jellyfin.Controller and Jellyfin.Model version; override with -p:JellyfinPackageVersion=... -->
         <JellyfinPackageVersion>12.1.0</JellyfinPackageVersion>
-        <!-- Microsoft.Data.Sqlite as Jellyfin 12.4 ships it, with SQLitePCLRaw 2.1.13. -->
-        <SqlitePackageVersion>10.0.14</SqlitePackageVersion>
+        <!-- Microsoft.Data.Sqlite as Jellyfin 12.1 ships it, with SQLitePCLRaw 2.1.12; it binds on 12.1-12.4. -->
+        <SqlitePackageVersion>10.0.11</SqlitePackageVersion>
     </PropertyGroup>
 </Project>
