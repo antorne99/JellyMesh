@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.5.0.1"
+version: "0.5.0.2"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -20,7 +20,6 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - After you choose to migrate automatically, JellyMesh now syncs the servers before it scans, so the migration no longer waits for the next scheduled sync with every old title waiting for a scan.
-  - A migration left waiting that way on 0.5.0.0 carries on by itself after the update, with no action.
+  - JellyMesh 0.5.0.1 stopped Jellyfin 12.1, 12.2 and 12.3 from starting; it now starts on every Jellyfin from 12.1 on.
 
-  Not verified: a remote server that is offline or fails during that sync, checked only in unit tests.
+  Not verified: Jellyfin 12.2 and installs outside Docker, such as Windows and macOS.

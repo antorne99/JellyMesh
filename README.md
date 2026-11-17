@@ -42,7 +42,7 @@ Both roles are active on every server with the plugin.
 
 ## Requirements
 
-- Jellyfin 12.1 or a later 12.x. The plugin is compiled against the 12.1 packages and the manifest allows any server from 12.1. It has been tested on 12.4; on 12.1 it has only been checked to install and load.
+- Jellyfin 12.1 or a later 12.x. The plugin is compiled against the 12.1 packages and the manifest allows any server from 12.1. It has been tested on 12.4; on 12.1 and 12.3 it has only been checked to start and open its watch state database.
 - A tailnet between your servers. Tailscale is managed outside the plugin.
 - `EnableAutomaticSeriesGrouping` on in every series library that holds a server's `Serie` folder, so that a local series, its remote episodes and the same series from other servers merge. In the Dashboard it is called "Automatically merge series that are spread across multiple folders". The plugin page warns if it is off and does not change it for you. The automatic libraries are created with it on.
 - A dedicated non-admin user on each remote.
@@ -279,7 +279,7 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.
 - **Seasons from two servers:** when two servers give different names or plots for a season of the same series, which one Jellyfin shows is effectively random, and stays the same on a given install. Each episode keeps the season name of its own server.
-- **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 only installing and loading the plugin has been checked.
+- **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 and 12.3 only starting the plugin and opening its watch state database have been checked.
 - **Provider restart:** a stream in progress ends when the provider restarts, and the client has to open the title again.
 
 ### Built-in limits
