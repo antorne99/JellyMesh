@@ -1905,6 +1905,7 @@
                     "Save login": "Salva l'accesso",
                     "Enter the user JellyMesh logs in with.": "Inserisci l'utente con cui JellyMesh accede.",
                     "Titles not written or removed: {count}.": "Titoli non scritti o non rimossi: {count}.",
+                    "Remote libraries gone, no longer imported: {names}.": "Librerie remote sparite, non più importate: {names}.",
                     "Type": "Tipo",
                     "Users with access to only some libraries do not see these until you enable them for those users in Dashboard > Users.": "Gli utenti con accesso solo ad alcune librerie non le vedono finché non le abiliti per loro nel Pannello di controllo > Utenti.",
                     "Warning: the Serie folders of the servers are in different libraries, so a series on more than one server stays split: {servers}. Put them in the same libraries to merge them.": "Attenzione: le cartelle Serie dei server sono in librerie diverse, quindi una serie presente su più server resta divisa: {servers}. Mettile nelle stesse librerie per unirle.",
@@ -4361,6 +4362,10 @@
 
                     if (server.Failed > 0) {
                         line += ' ' + t('Titles not written or removed: {count}.', { count: server.Failed });
+                    }
+
+                    if (server.Warning && server.Warning.VanishedLibraries && server.Warning.VanishedLibraries.length > 0) {
+                        line += ' ' + t('Remote libraries gone, no longer imported: {names}.', { names: server.Warning.VanishedLibraries.join(', ') });
                     }
 
                     return line;

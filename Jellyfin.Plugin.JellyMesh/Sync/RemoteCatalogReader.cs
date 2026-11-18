@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -55,6 +56,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<RemoteCatalogReader> _logger;
     private readonly IActivityWriter? _activity;
+    private readonly ConcurrentDictionary<Guid, IReadOnlyList<string>> _vanished = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RemoteCatalogReader"/> class.
@@ -414,6 +416,12 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
             Replace(kept.VanishedLibraries, records);
         });
 
+        if (vanished.Count > 0)
+        {
+            var names = vanished.Select(library => library.Name.Length > 0 ? library.Name : library.Id).ToList();
+            _vanished.AddOrUpdate(server.Id, names, (_, kept) => [.. kept, .. names]);
+        }
+
         foreach (var library in vanished)
         {
             var name = LogText.Clean(library.Name.Length > 0 ? library.Name : library.Id) ?? library.Id;
@@ -423,6 +431,10 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
         return vanished.Select(library => library.Id).ToList();
     }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> TakeVanishedLibraries(Guid serverId)
+        => _vanished.TryRemove(serverId, out var names) ? names : [];
 
     private static void Replace<T>(System.Collections.ObjectModel.Collection<T> target, IReadOnlyList<T> values)
     {
