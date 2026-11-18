@@ -341,8 +341,8 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Saves an edit of a server all or nothing, after the same checks as its check (row 432). What follows the save on the
-    /// libraries, the streams and the old user is not done here yet.
+    /// Saves an edit of a server all or nothing, after the same checks as its check (row 432), then stops the streams and
+    /// ends the login of an old user, renames, writes the server folders and starts a sync of the server as needed (row 434).
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The edit form.</param>
@@ -779,17 +779,45 @@ public class FederationAdminController : ControllerBase
         }
     }
 
-    // Runs what follows a saved edit, in order: rename (row 434).
+    // Runs what follows a saved edit, in order, after the old user was logged out by the save: rename, libraries, library
+    // mode, then the sync of the server. A step that fails is logged and leaves the save and the next steps (rows 432, 434).
     private void AfterSave(Guid serverId, RemoteEditChanges changes, string name)
     {
         if (changes.HasFlag(RemoteEditChanges.Name) && _renamer is not null)
         {
-            // The name is saved and was checked before the save, so the rename needs no confirmation here.
-            var answer = _renamer.Rename(serverId, name, confirmed: true);
-            if (answer.Outcome != ServerRenameOutcome.Started)
+            RunStep("rename", () =>
             {
-                _logger.LogWarning("The rename after an edit of a server did not start: {Outcome}", answer.Outcome);
-            }
+                // The name is saved and was checked before the save, so the rename needs no confirmation here.
+                var answer = _renamer.Rename(serverId, name, confirmed: true);
+                if (answer.Outcome != ServerRenameOutcome.Started)
+                {
+                    _logger.LogWarning("The rename after an edit of a server did not start: {Outcome}", answer.Outcome);
+                }
+            });
+        }
+
+        if (changes.HasFlag(RemoteEditChanges.Libraries))
+        {
+            RunStep("libraries", _sync.PrepareServerFolders);
+        }
+
+        // The library mode joins the edit in F40, with its own safeguards; it comes here, before the sync.
+        if ((changes & (RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Libraries)) != RemoteEditChanges.None)
+        {
+            RunStep("sync", () => _sync.StartServerSync(serverId));
+        }
+    }
+
+    private void RunStep(string step, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception exception)
+        {
+            // The type only: a message could hold a path or an address.
+            _logger.LogError("The {Step} step after an edit of a server failed: {Error}", step, exception.GetType().Name);
         }
     }
 

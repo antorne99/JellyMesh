@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Sync;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Microsoft.AspNetCore.Http;
 using Moq;
@@ -225,7 +226,7 @@ public sealed partial class ServerEditTests
 
         var controller = new FederationAdminController(
             registry, _fixture.Vault, _fixture.Store, Mock.Of<IFederatedFolderLinkChecker>(), _playback.Coordinator,
-            new FixedFederatedRootSource(null), Mock.Of<Jellyfin.Plugin.JellyMesh.Sync.ICatalogSyncService>(), new InMemoryMergeStore(), _libraries.Object,
+            new FixedFederatedRootSource(null), _sync.Object, new InMemoryMergeStore(), _libraries.Object,
             new CapturingLogger<FederationAdminController>());
         var save = controller.SaveServerEdit(id, Edit(user: "someone", password: "new-pass"), CancellationToken.None);
         Assert.IsType<ServerStatus>((await save).Value);
@@ -343,6 +344,73 @@ public sealed partial class ServerEditTests
         }
 
         Assert.Equal(before, Snapshot());
+    }
+
+    [Fact]
+    public async Task After_a_save_the_old_user_is_logged_out_then_the_server_renamed_then_its_folders_written_then_synced()
+    {
+        var id = await AddAsync("1", "2");
+        await KeepLoginAsync(id);
+        _token = "new-user-token";
+        var renamer = Renamer(new ServerRenameState(false, false, false));
+        renamer.Setup(service => service.Rename(id, "Casa", true))
+            .Returns(() => Step("rename", new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, [])));
+        _sync.Setup(service => service.PrepareServerFolders()).Callback(() => _steps.Add("libraries"));
+        _sync.Setup(service => service.StartServerSync(id)).Returns(() => Step("sync", SyncStartResult.Started));
+
+        await Controller(renamer.Object).SaveServerEdit(id, Edit(name: "Casa", user: "someone", password: "new-pass", libraries: ["1"]), CancellationToken.None);
+
+        Assert.Equal(["logout", "rename", "libraries", "sync"], _steps);
+    }
+
+    [Theory]
+    [InlineData(OtherUrl, null, null)]
+    [InlineData(null, "someone", null)]
+    [InlineData(null, null, "2")]
+    public async Task A_new_address_user_or_library_starts_a_sync_of_the_server(string? url, string? user, string? library)
+    {
+        var id = await AddAsync("1", "2");
+
+        await Controller().SaveServerEdit(id, Edit(url: url ?? TestValues.Url, user: user ?? TestValues.Username, password: user is null ? null : "new-pass", libraries: library is null ? null : [library]), CancellationToken.None);
+
+        _sync.Verify(service => service.StartServerSync(id), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_new_name_or_password_alone_starts_no_sync_and_writes_no_folder()
+    {
+        var id = await AddAsync("1");
+
+        await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+        await Controller().SaveServerEdit(id, Edit(name: "Casa", password: "new-pass"), CancellationToken.None);
+
+        _sync.Verify(service => service.StartServerSync(It.IsAny<Guid>()), Times.Never);
+        _sync.Verify(service => service.PrepareServerFolders(), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_step_after_the_save_that_fails_leaves_the_save_and_the_next_steps()
+    {
+        var id = await AddAsync("1", "2");
+        var renamer = Renamer(new ServerRenameState(false, false, false));
+        renamer.Setup(service => service.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>())).Throws(new InvalidOperationException("boom"));
+
+        var result = await Controller(renamer.Object).SaveServerEdit(id, Edit(name: "Casa", libraries: ["1"]), CancellationToken.None);
+
+        Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
+        _sync.Verify(service => service.StartServerSync(id), Times.Once);
+    }
+
+    [Fact]
+    public async Task The_steps_after_the_save_do_not_stop_with_the_request()
+    {
+        var id = await AddAsync("1", "2");
+        using var cancel = new CancellationTokenSource();
+        _sync.Setup(service => service.PrepareServerFolders()).Callback(cancel.Cancel);
+
+        await Controller().SaveServerEdit(id, Edit(libraries: ["1"]), cancel.Token);
+
+        _sync.Verify(service => service.StartServerSync(id), Times.Once);
     }
 
     // Makes the registry keep a login, as a call would, with the token of the saved user.

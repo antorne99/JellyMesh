@@ -30,6 +30,8 @@ public sealed partial class ServerEditTests : IDisposable
     private readonly RegistryFixture _fixture;
     private readonly CoordinatorFixture _playback = new();
     private readonly Mock<IServerLibraryManager> _libraries = new();
+    private readonly Mock<ICatalogSyncService> _sync = new();
+    private readonly List<string> _steps = [];
     private string _serverId = FirstId;
     private string _views = TestValues.ViewsJson;
     private HttpStatusCode _login = HttpStatusCode.OK;
@@ -64,9 +66,15 @@ public sealed partial class ServerEditTests : IDisposable
         "/Users/AuthenticateByName" => _login == HttpStatusCode.OK ? StubHandler.Json(LoginAnswer) : StubHandler.Status(_login),
         "/UserViews" => StubHandler.Json(_views),
         "/System/Info/Public" => StubHandler.Json(PublicInfo),
-        "/Sessions/Logout" => StubHandler.Status(_logout),
+        "/Sessions/Logout" => Step("logout", StubHandler.Status(_logout)),
         _ => StubHandler.Status(HttpStatusCode.NotFound)
     };
+
+    private T Step<T>(string step, T value)
+    {
+        _steps.Add(step);
+        return value;
+    }
 
     private FederationAdminController Controller(IServerRenamer? renamer = null) => new(
         _fixture.Registry,
@@ -75,7 +83,7 @@ public sealed partial class ServerEditTests : IDisposable
         Mock.Of<IFederatedFolderLinkChecker>(),
         _playback.Coordinator,
         new FixedFederatedRootSource(null),
-        Mock.Of<ICatalogSyncService>(),
+        _sync.Object,
         new InMemoryMergeStore(),
         _libraries.Object,
         new CapturingLogger<FederationAdminController>(),
