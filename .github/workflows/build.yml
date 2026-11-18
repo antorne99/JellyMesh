@@ -18,15 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # The names come from a CI variable, so that no versioned file holds them.
+      # The names come from a CI secret, so that no versioned file or log shows them.
       - name: Check for network names
         env:
-          NETWORK_NAMES: ${{ vars.NETWORK_NAMES }}
+          NETWORK_NAMES: ${{ secrets.NETWORK_NAMES }}
         run: .github/scripts/check-network-names.sh
 
       - name: Build and test
         env:
-          NETWORK_NAMES: ${{ vars.NETWORK_NAMES }}
+          NETWORK_NAMES: ${{ secrets.NETWORK_NAMES }}
         run: |
           docker run --rm -e NETWORK_NAMES -v "$PWD":/src -v jellymesh-nuget:/root/.nuget/packages -w /src \
             "$SDK_IMAGE" dotnet test
