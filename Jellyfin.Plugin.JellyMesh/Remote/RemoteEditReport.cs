@@ -29,7 +29,7 @@ public sealed record RemoteEditReport(RemoteEditField Field)
     public IReadOnlyList<string> LibraryIds { get; init; } = [];
 
     /// <summary>
-    /// Gets a value indicating whether the remote did not answer a check that needs it for nothing (D28).
+    /// Gets a value indicating whether the remote did not answer, or answered with an error, a check that needs it for nothing (D28).
     /// </summary>
     public bool RemoteOffline { get; init; }
 }

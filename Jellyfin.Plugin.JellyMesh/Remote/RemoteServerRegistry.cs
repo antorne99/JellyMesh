@@ -728,11 +728,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private static (EditPlan? Plan, RemoteResult<RemoteEditReport> Refusal) Refuse(RemoteFailure failure, RemoteEditField field)
         => (null, RemoteResult.Fail(failure, new RemoteEditReport(field)));
 
-    // A remote that does not answer blocks only an edit that needs it; otherwise the check succeeds without a read (D28).
+    // A remote that does not answer, or answers with an error, blocks only an edit that needs it; otherwise the check
+    // succeeds without a read, as the save does (D28).
     private static RemoteResult<RemoteEditReport> OfflineOr(EditPlan plan, RemoteFailure failure, RemoteEditReport refusal)
     {
         const RemoteEditChanges remote = RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Password | RemoteEditChanges.Libraries;
-        return failure is RemoteFailure.Unreachable or RemoteFailure.Timeout && (plan.Changes & remote) == RemoteEditChanges.None
+        return failure is not (RemoteFailure.Suspended or RemoteFailure.UnknownServer) && (plan.Changes & remote) == RemoteEditChanges.None
             ? RemoteResult.Success(new RemoteEditReport(RemoteEditField.None) { Changes = plan.Changes, LibraryIds = plan.Saved.LibraryIds, RemoteOffline = true })
             : RemoteResult.Fail(failure, refusal);
     }

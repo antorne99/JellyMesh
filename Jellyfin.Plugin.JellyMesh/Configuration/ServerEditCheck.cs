@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 public sealed record ServerEditCheck(string ServerName, IReadOnlyList<LibraryOption> Libraries, ServerEditConsequences Consequences)
 {
     /// <summary>
-    /// Gets a value indicating whether the remote did not answer: only the name and the library mode can change, and the
+    /// Gets a value indicating whether the remote did not answer or answered with an error: only the name and the library mode can change, and the
     /// libraries were not read (D28).
     /// </summary>
     public bool RemoteOffline { get; init; }

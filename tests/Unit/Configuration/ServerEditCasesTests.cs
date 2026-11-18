@@ -315,6 +315,33 @@ public sealed partial class ServerEditTests
         Assert.Equal(["1"], _fixture.Store.Configuration.Servers.Single().ImportedLibraryIds);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task A_check_of_a_new_name_with_the_remote_answering_an_error_succeeds_as_its_save(HttpStatusCode answer)
+    {
+        var id = await AddAsync("1");
+        _login = answer;
+
+        var check = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+        var save = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        Assert.True(Assert.IsType<ServerEditCheck>(check.Value).RemoteOffline);
+        Assert.Equal("Casa", Assert.IsType<ServerStatus>(save.Value).Name);
+    }
+
+    [Fact]
+    public async Task A_check_of_a_new_name_with_another_server_at_the_address_succeeds_as_its_save()
+    {
+        var id = await AddAsync("1");
+        _serverId = OtherId;
+
+        var check = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        Assert.True(Assert.IsType<ServerEditCheck>(check.Value).RemoteOffline);
+    }
+
     [Fact]
     public async Task A_check_with_the_remote_up_says_it_is_not_offline()
     {
