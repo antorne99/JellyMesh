@@ -380,7 +380,9 @@ public class PluginConfigurationTests
     {
         var page = ConfigPage();
 
-        foreach (var setting in typeof(PluginSettings).GetProperties().Where(property => property.Name != nameof(PluginSettings.FixedByEnvironment)))
+        // The library mode of new servers is chosen in the add form, which the page gets in F46.
+        string[] notInputs = [nameof(PluginSettings.FixedByEnvironment), nameof(PluginSettings.NewServerLibraryMode)];
+        foreach (var setting in typeof(PluginSettings).GetProperties().Where(property => !notInputs.Contains(property.Name)))
         {
             var id = Regex.Match(page, "\\b" + setting.Name + ": '(jm\\w+)'").Groups[1].Value;
             Assert.Matches("<input id=\"" + id + "\"", page);

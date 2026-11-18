@@ -156,7 +156,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     }
 
     // Inserts the unsaved runs oldest first, drops what the limits leave out, and reads the history back.
-    private static List<SyncRun> Save(SqliteConnection connection, SqliteTransaction transaction, List<SyncRun> unsaved)
+    internal static List<SyncRun> Save(SqliteConnection connection, SqliteTransaction transaction, List<SyncRun> unsaved)
     {
         foreach (var run in Enumerable.Reverse(unsaved))
         {

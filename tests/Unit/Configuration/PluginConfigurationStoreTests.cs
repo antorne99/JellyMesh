@@ -58,6 +58,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             config.PlaybackIdleSeconds = 45;
             config.SessionRetentionHours = 3;
             config.PolicyCacheMinutes = 9;
+            config.NewServerLibraryMode = LibraryMode.ByRemoteLibrary;
 
             var server = new RemoteServerConfig
             {
@@ -68,13 +69,21 @@ public sealed class PluginConfigurationStoreTests : IDisposable
                 EncryptedCredentials = Ciphertext,
                 Mode = RemoteMode.JellyMesh,
                 ProtocolVersion = 2,
-                AutomaticLibraries = true,
+                LibraryMode = LibraryMode.ByRemoteLibrary,
                 FollowSkipped = true,
                 RenameUnfinished = true
             };
+            server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = "library-2", Name = "Cartoni", CollectionType = "tvshows" });
+            server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = "library-1", Name = "Film 4K", CollectionType = "movies" });
+            server.CreatedLibraryKeys.Add("library-2");
+            server.CreatedLibraryKeys.Add("Movies");
+            var pending = new PendingLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film 4K", RemoteLibraryId = "library-1" };
+            pending.Paths.Add("/federata/b/library-1/Film");
+            pending.Paths.Add("/federata/b/library-1/Film\nnuova");
+            server.PendingLibraries.Add(pending);
             server.ImportedLibraryIds.Add("library-2");
             server.ImportedLibraryIds.Add("library-1");
-            server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" });
+            server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0", RemoteLibraryId = "library-2" });
             server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film" });
             server.PreexistingLibraryIds.Add("9a8b7c6d5e4f30211203f4e5d6c7b8a9");
             server.FollowedLibraryIds.Add("5d6c7b8a99a8b7c6d5e4f30211203f4e");
@@ -110,15 +119,24 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             (loaded.SyncIntervalSeconds, loaded.ReconciliationTime, loaded.FederatedFolderPath, loaded.MetadataProtection, loaded.FederateCollections, loaded.CloseTranscodeAtSlotExpiry,
                 loaded.RemotePlaybackInfoTimeoutSeconds, loaded.StreamOpenTimeoutSeconds, loaded.PlaybackIdleSeconds, loaded.SessionRetentionHours, loaded.PolicyCacheMinutes));
 
+        Assert.Equal(LibraryMode.ByRemoteLibrary, loaded.NewServerLibraryMode);
         Assert.Equal(["Casa", "Amici"], loaded.Servers.Select(server => server.Name));
         var casa = loaded.Servers[0];
         Assert.Equal(
             (serverId, "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b", TestValues.Url, Ciphertext, RemoteMode.JellyMesh, 2, true, true, true),
             (casa.Id, casa.JellyfinServerId, casa.Url, casa.EncryptedCredentials, casa.Mode, casa.ProtocolVersion, casa.AutomaticLibraries, casa.FollowSkipped, casa.RenameUnfinished));
         Assert.Equal(["library-2", "library-1"], casa.ImportedLibraryIds);
+        Assert.Equal((LibraryMode.ByRemoteLibrary, LibraryMode.None), (casa.LibraryMode, loaded.Servers[1].LibraryMode));
         Assert.Equal(
-            [(ServerLibraryKind.Series, "Casa - Serie", "0f1e2d3c4b5a69788796a5b4c3d2e1f0"), (ServerLibraryKind.Movies, "Casa - Film", string.Empty)],
-            casa.AutomaticLibraryRegistry.Select(library => (library.Kind, library.Name, library.ItemId)));
+            [("library-2", "Cartoni", "tvshows"), ("library-1", "Film 4K", "movies")],
+            casa.RemoteLibraries.Select(library => (library.Id, library.Name, library.CollectionType)));
+        Assert.Equal(["library-2", "Movies"], casa.CreatedLibraryKeys);
+        var loadedPending = Assert.Single(casa.PendingLibraries);
+        Assert.Equal((ServerLibraryKind.Movies, "Casa - Film 4K", "library-1"), (loadedPending.Kind, loadedPending.Name, loadedPending.RemoteLibraryId));
+        Assert.Equal(["/federata/b/library-1/Film", "/federata/b/library-1/Film\nnuova"], loadedPending.Paths);
+        Assert.Equal(
+            [(ServerLibraryKind.Series, "Casa - Serie", "0f1e2d3c4b5a69788796a5b4c3d2e1f0", "library-2"), (ServerLibraryKind.Movies, "Casa - Film", string.Empty, string.Empty)],
+            casa.AutomaticLibraryRegistry.Select(library => (library.Kind, library.Name, library.ItemId, library.RemoteLibraryId)));
         Assert.Equal(["9a8b7c6d5e4f30211203f4e5d6c7b8a9"], casa.PreexistingLibraryIds);
         Assert.Equal(["5d6c7b8a99a8b7c6d5e4f30211203f4e"], casa.FollowedLibraryIds);
         Assert.Equal(["Casa - Vecchia"], casa.ReleasedAutomaticLibraries);
@@ -144,10 +162,84 @@ public sealed class PluginConfigurationStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AServerKeptBeforeTheLibraryModesHasThemPerTypeWhereItsLibrariesWereOnAndNoneElsewhere()
+    {
+        var on = Guid.NewGuid();
+        var off = Guid.NewGuid();
+        var before = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All.Take(4).ToList(), 1);
+        await before.WriteAsync(
+            (connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"""
+                    INSERT INTO servers VALUES ('{on:D}', 0, '', 'Casa', 'http://casa.invalid', '', 'Unknown', 0, 1, 0, 0);
+                    INSERT INTO servers VALUES ('{off:D}', 1, '', 'Amici', 'http://amici.invalid', '', 'Unknown', 0, 0, 0, 0);
+                    INSERT INTO server_automatic_libraries VALUES ('{on:D}', 0, 'Movies', 'Casa - Film', 'item-1');
+                    """;
+                command.ExecuteNonQuery();
+            },
+            CancellationToken.None);
+        before.Dispose();
+        SqliteConnection.ClearAllPools();
+
+        var loaded = Store().Read(config => config);
+
+        Assert.Equal([LibraryMode.ByType, LibraryMode.None], loaded.Servers.Select(server => server.LibraryMode));
+        Assert.Equal([true, false], loaded.Servers.Select(server => server.AutomaticLibraries));
+        Assert.Equal(("Casa - Film", string.Empty), Assert.Single(loaded.Servers[0].AutomaticLibraryRegistry) is var library ? (library.Name, library.RemoteLibraryId) : default);
+        Assert.Equal(LibraryMode.ByType, loaded.NewServerLibraryMode);
+    }
+
+    [Fact]
+    public async Task AnAutomaticLibraryKeptBeforeTheLibraryModesCountsAsMadeSoItIsNeverMadeAgain()
+    {
+        var on = Guid.NewGuid();
+        var before = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All.Take(4).ToList(), 1);
+        await before.WriteAsync(
+            (connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"""
+                    INSERT INTO servers VALUES ('{on:D}', 0, '', 'Casa', 'http://casa.invalid', '', 'Unknown', 0, 1, 0, 0);
+                    INSERT INTO server_automatic_libraries VALUES ('{on:D}', 0, 'Movies', 'Casa - Film', 'item-1');
+                    INSERT INTO server_automatic_libraries VALUES ('{on:D}', 1, 'Series', 'Casa - Serie', 'item-2');
+                    """;
+                command.ExecuteNonQuery();
+            },
+            CancellationToken.None);
+        before.Dispose();
+        SqliteConnection.ClearAllPools();
+        var store = Store();
+
+        Assert.Equal(["Movies", "Series"], store.Read(config => config.Servers[0].CreatedLibraryKeys.ToList()));
+
+        // Once a follow drops the record of a deleted library, the key stays.
+        store.Update(config => config.Servers[0].AutomaticLibraryRegistry.RemoveAt(0));
+        SqliteConnection.ClearAllPools();
+        Assert.Equal(["Movies", "Series"], Store().Read(config => config.Servers[0].CreatedLibraryKeys.ToList()));
+    }
+
+    [Fact]
+    public void TurningLibrariesOnKeepsTheModeChosenAndChoosesPerTypeOtherwise()
+    {
+        var server = new RemoteServerConfig { LibraryMode = LibraryMode.ByRemoteLibrary };
+        server.AutomaticLibraries = true;
+        var kept = server.LibraryMode;
+        server.AutomaticLibraries = false;
+        var off = server.LibraryMode;
+        server.AutomaticLibraries = true;
+
+        Assert.Equal((LibraryMode.ByRemoteLibrary, LibraryMode.None, LibraryMode.ByType), (kept, off, server.LibraryMode));
+    }
+
+    [Fact]
     public void AnEmptyDatabaseGivesTheDefaults()
     {
         var loaded = Store().Read(config => config);
 
+        Assert.Equal(LibraryMode.ByType, loaded.NewServerLibraryMode);
         Assert.Equal((900, "03:00", string.Empty, true), (loaded.SyncIntervalSeconds, loaded.ReconciliationTime, loaded.FederatedFolderPath, loaded.MetadataProtection));
         Assert.Empty(loaded.Servers);
         Assert.Empty(loaded.Peers);
@@ -632,5 +724,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => inner.BackUpAsync(cancellationToken);
 
         public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => inner.DeleteExpiredDamagedAsync(cancellationToken);
+
+        public Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken) => inner.DeleteExpiredMigratedAsync(cancellationToken);
     }
 }

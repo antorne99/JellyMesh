@@ -42,6 +42,9 @@ public sealed class PluginSettings
     /// <summary>Gets <see cref="PluginConfiguration.PolicyCacheMinutes"/>.</summary>
     public int PolicyCacheMinutes { get; init; }
 
+    /// <summary>Gets <see cref="PluginConfiguration.NewServerLibraryMode"/>.</summary>
+    public LibraryMode NewServerLibraryMode { get; init; }
+
     /// <summary>Gets the settings an environment variable decides, which the page shows read-only.</summary>
     public IReadOnlyList<FixedSetting> FixedByEnvironment { get; init; } = [];
 
@@ -67,6 +70,7 @@ public sealed class PluginSettings
             PlaybackIdleSeconds = config.PlaybackIdleSeconds,
             SessionRetentionHours = config.SessionRetentionHours,
             PolicyCacheMinutes = config.PolicyCacheMinutes,
+            NewServerLibraryMode = config.NewServerLibraryMode,
             FixedByEnvironment = fixedByEnvironment
         };
     }

@@ -131,7 +131,7 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_library_that_lost_the_server_folder_is_released_even_with_its_type_folders()
+    public async Task A_library_holding_only_type_folders_of_its_server_stays_its_own_and_takes_back_the_folder_its_titles_use()
     {
         var fixture = new Fixture();
         HoldsFilms(fixture, _filmsFolder);
@@ -140,7 +140,7 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
-        Assert.DoesNotContain(fixture.Server.AutomaticLibraryRegistry, record => record.Kind == ServerLibraryKind.Movies);
-        Assert.Empty(fixture.Libraries.AddedPaths);
+        Assert.Contains(fixture.Server.AutomaticLibraryRegistry, record => record.Kind == ServerLibraryKind.Movies);
+        Assert.Equal([("Casa - Film", _movies)], fixture.Libraries.AddedPaths);
     }
 }

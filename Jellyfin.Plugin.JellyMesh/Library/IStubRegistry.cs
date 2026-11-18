@@ -50,4 +50,8 @@ public interface IStubRegistry
     /// <param name="type">The type folder.</param>
     /// <returns>The folders, or null while the registry cannot tell, as for <see cref="HasTitlesOf"/>.</returns>
     IReadOnlyList<string>? TypeFoldersOf(Guid serverId, TypeFolder type);
+
+    /// <summary>Tells whether any title is still in the flat or the 0.5 server folder layout, which new titles then follow too.</summary>
+    /// <returns>The answer, or null while the registry cannot tell, as for <see cref="HasTitlesOf"/>.</returns>
+    bool? UsesOlderLayout();
 }

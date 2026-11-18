@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -9,6 +10,7 @@ using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.Mvc;
@@ -41,9 +43,15 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.TryAddSingleton(TimeProvider.System);
 
         // Opens on first use; the services move into it from later phases.
-        serviceCollection.AddSingleton(provider => new PluginDatabase(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<PluginDatabase>>()));
+        serviceCollection.AddSingleton(provider =>
+        {
+            var folder = Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized.");
+            var legacy = new LegacyImport(
+                folder,
+                Path.Combine(provider.GetRequiredService<IApplicationPaths>().PluginConfigurationsPath, LegacyImport.ConfigurationFileName),
+                provider.GetRequiredService<ILogger<LegacyImport>>());
+            return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy);
+        });
         serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
         serviceCollection.AddSingleton<IFederationIndex, FederationIndex>();
         serviceCollection.AddSingleton<ILocalCatalogReader, LocalCatalogReader>();

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -50,6 +51,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
     private readonly IRemoteServerRegistry _registry;
     private readonly IJellyfinRemoteClient _client;
+    private readonly IPluginConfigurationStore _store;
     private readonly ILogger<RemoteCatalogReader> _logger;
 
     /// <summary>
@@ -57,11 +59,13 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     /// </summary>
     /// <param name="registry">The server registry.</param>
     /// <param name="client">The remote client.</param>
+    /// <param name="store">The configuration, which keeps the imported libraries as last read.</param>
     /// <param name="logger">The logger.</param>
-    public RemoteCatalogReader(IRemoteServerRegistry registry, IJellyfinRemoteClient client, ILogger<RemoteCatalogReader> logger)
+    public RemoteCatalogReader(IRemoteServerRegistry registry, IJellyfinRemoteClient client, IPluginConfigurationStore store, ILogger<RemoteCatalogReader> logger)
     {
         _registry = registry;
         _client = client;
+        _store = store;
         _logger = logger;
     }
 
@@ -372,6 +376,32 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return RemoteFailure.None;
     }
 
+    // Keeps the name and type of each imported library, which its local libraries follow; a read that finds them unchanged writes nothing.
+    private void RememberLibraries(Guid serverId, IReadOnlyList<RemoteLibrary> libraries)
+    {
+        static bool Same(IEnumerable<RemoteLibraryConfig> kept, IReadOnlyList<RemoteLibrary> read)
+            => kept.Select(library => (library.Id, library.Name, library.CollectionType)).SequenceEqual(read.Select(library => (library.Id, library.Name, library.CollectionType)));
+
+        if (_store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is not { } server || Same(server.RemoteLibraries, libraries)))
+        {
+            return;
+        }
+
+        _store.Update(config =>
+        {
+            if (config.Servers.FirstOrDefault(server => server.Id == serverId) is not { } server || Same(server.RemoteLibraries, libraries))
+            {
+                return;
+            }
+
+            server.RemoteLibraries.Clear();
+            foreach (var library in libraries)
+            {
+                server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = library.Id, Name = library.Name, CollectionType = library.CollectionType });
+            }
+        });
+    }
+
     private async Task<RemoteResult<IReadOnlyList<IndexedItem>>> ReadEntriesAsync(
         RemoteServerInfo server,
         DateTimeOffset? sinceUtc,
@@ -392,12 +422,14 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
             return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(libraries.Failure);
         }
 
-        var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).ToList();
-        if (chosen.Count != server.ImportedLibraryIds.Count)
+        // Each library once, so a remote that repeats one in place of another fails the count.
+        var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).DistinctBy(library => library.Id).ToList();
+        if (chosen.Count != server.ImportedLibraryIds.Distinct().Count())
         {
             return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(RemoteFailure.LibraryUnavailable);
         }
 
+        RememberLibraries(server.Id, chosen);
         var entries = new Dictionary<string, IndexedItem>(StringComparer.Ordinal);
         var budget = new ReadBudget();
         foreach (var library in chosen)

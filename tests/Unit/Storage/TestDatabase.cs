@@ -164,6 +164,9 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => _inner.DeleteExpiredDamagedAsync(cancellationToken);
 
+    /// <inheritdoc />
+    public Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken) => _inner.DeleteExpiredMigratedAsync(cancellationToken);
+
     /// <summary>Runs a statement in a write of its own, as a restored copy whose rows differ from those read before.</summary>
     [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "A statement of the test.")]
     public Task ExecuteAsync(string sql) => _inner.WriteAsync(

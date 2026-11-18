@@ -352,6 +352,36 @@ public sealed class SyncTaskTests : IDisposable
         _database.Verify(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // The files of the older version go after the damaged files, each night, once their 30 days are over (D25).
+    [Fact]
+    public async Task TheReconciliationDeletesTheExpiredFilesOfTheOlderVersionAfterTheSweep()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sweep")).Returns(Task.CompletedTask);
+        _database.Setup(d => d.DeleteExpiredMigratedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("migrated")).ReturnsAsync(true);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["sweep", "migrated"], steps);
+    }
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task OldFilesThatCannotBeDeletedAreLoggedAndDoNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredMigratedAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+    }
+
     [Theory]
     [MemberData(nameof(CopyFailures))]
     public async Task ASweepThatCannotRunIsLoggedAndDoesNotFailTheReconciliation(Exception failure)

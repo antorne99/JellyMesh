@@ -287,6 +287,25 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Null(registry.TypeFoldersOf(server, TypeFolder.Movies));
     }
 
+    [Fact]
+    public async Task TheLayoutInUseIsKnownOnlyOnceTheRegistryIsRead()
+    {
+        var server = Guid.NewGuid();
+        var films = FederatedPaths.TypeFolderOf(server, TestLibraries.Films, TypeFolder.Movies);
+        _database.Suspended = true;
+        using var registry = Create();
+        Assert.Null(registry.UsesOlderLayout());
+
+        _database.Suspended = false;
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", FederatedPaths.MovieStubIn(films, "A", "Casa")) with { ServerId = server }] });
+        var current = registry.UsesOlderLayout();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", FederatedPaths.MovieFolder(server, "A (2020)") + "/A.strm") with { ServerId = server }] });
+
+        Assert.Equal((false, true), (current, registry.UsesOlderLayout()));
+        _database.Reopen();
+        Assert.Null(registry.UsesOlderLayout());
+    }
+
     // A removed server's libraries wait for its titles (decision 278), so a registry that cannot tell says it has some.
     [Fact]
     public async Task ARegistryNotReadOrReopenedCannotTellThatAServerHasNoTitles()

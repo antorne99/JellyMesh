@@ -24,6 +24,12 @@ internal static class ConfigurationTables
     /// <summary>The libraries the plugin created for each server.</summary>
     public const string ServerAutomaticLibraries = "server_automatic_libraries";
 
+    /// <summary>The imported remote libraries of each server, as last read (schema step 6).</summary>
+    public const string ServerRemoteLibraries = "server_remote_libraries";
+
+    /// <summary>The libraries asked of the server for each server and not recorded yet (schema step 6).</summary>
+    public const string ServerPendingLibraries = "server_pending_libraries";
+
     /// <summary>Removed servers whose libraries are still to delete (decision 140).</summary>
     public const string RemovedServers = "removed_servers";
 
@@ -54,12 +60,14 @@ internal static class ConfigurationTables
     public static IReadOnlyList<Table> All { get; } =
     [
         new(Settings, ["name", "value"], "name"),
-        new(Servers, ["id", "position", "jellyfin_server_id", "name", "url", "encrypted_credentials", "mode", "protocol_version", "automatic_libraries", "follow_skipped", "rename_unfinished"], "position"),
+        new(Servers, ["id", "position", "jellyfin_server_id", "name", "url", "encrypted_credentials", "mode", "protocol_version", "automatic_libraries", "follow_skipped", "rename_unfinished", "library_mode"], "position"),
         new(ServerValues, ["server_id", "list", "position", "value"], "server_id, list, position"),
-        new(ServerAutomaticLibraries, ["server_id", "position", "kind", "name", "item_id"], "server_id, position"),
+        new(ServerAutomaticLibraries, ["server_id", "position", "kind", "name", "item_id", "remote_library_id"], "server_id, position"),
+        new(ServerRemoteLibraries, ["server_id", "position", "library_id", "name", "collection_type"], "server_id, position"),
+        new(ServerPendingLibraries, ["server_id", "position", "kind", "name", "remote_library_id", "paths"], "server_id, position"),
         new(RemovedServers, ["server_id", "position", "follow_skipped"], "position"),
         new(RemovedServerValues, ["server_id", "list", "position", "value"], "server_id, list, position"),
-        new(RemovedServerLibraries, ["server_id", "position", "kind", "name", "item_id"], "server_id, position"),
+        new(RemovedServerLibraries, ["server_id", "position", "kind", "name", "item_id", "remote_library_id"], "server_id, position"),
         new(LayoutMigration, ["id", "mode", "step", "error", "error_library"], "id"),
         new(LayoutMigrationPlacedServers, ["server_id", "position"], "position"),
         new(Peers, ["user_id", "position", "max_streams"], "position"),
@@ -92,6 +100,32 @@ internal static class ConfigurationTables
             CREATE TABLE {LayoutMigrationPlacedServers} (server_id TEXT PRIMARY KEY, position INTEGER NOT NULL) WITHOUT ROWID;
             CREATE TABLE {Peers} (user_id TEXT PRIMARY KEY, position INTEGER NOT NULL, max_streams INTEGER NOT NULL) WITHOUT ROWID;
             CREATE TABLE {PeerSharedLibraries} (user_id TEXT NOT NULL, position INTEGER NOT NULL, library_id TEXT NOT NULL, PRIMARY KEY (user_id, position)) WITHOUT ROWID;
+            """);
+    }
+
+    /// <summary>
+    /// Adds the library modes, as schema step 6: the mode of each server, on per type where its switch was on and none
+    /// where it was off (§10 row 445); the remote library of a plugin library; the imported remote libraries as last read;
+    /// the libraries asked of the server and not recorded yet.
+    /// </summary>
+    /// <param name="connection">The writer connection.</param>
+    /// <param name="transaction">The step's transaction.</param>
+    public static void AddLibraryModes(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        Execute(
+            connection,
+            transaction,
+            $"""
+            ALTER TABLE {Servers} ADD COLUMN library_mode TEXT NOT NULL DEFAULT 'None';
+            UPDATE {Servers} SET library_mode = CASE WHEN automatic_libraries <> 0 THEN 'ByType' ELSE 'None' END;
+            ALTER TABLE {ServerAutomaticLibraries} ADD COLUMN remote_library_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE {RemovedServerLibraries} ADD COLUMN remote_library_id TEXT NOT NULL DEFAULT '';
+            CREATE TABLE {ServerRemoteLibraries} (
+                server_id TEXT NOT NULL, position INTEGER NOT NULL, library_id TEXT NOT NULL, name TEXT NOT NULL,
+                collection_type TEXT NOT NULL, PRIMARY KEY (server_id, position)) WITHOUT ROWID;
+            CREATE TABLE {ServerPendingLibraries} (
+                server_id TEXT NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
+                remote_library_id TEXT NOT NULL, paths TEXT NOT NULL, PRIMARY KEY (server_id, position)) WITHOUT ROWID;
             """);
     }
 

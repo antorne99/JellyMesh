@@ -441,7 +441,7 @@ public sealed partial class ServerLibraryManagerTests
     private static async Task<RemoteServerConfig> TwoServersFollowedAsync(Fixture fixture)
     {
         await fixture.Manager.Enable(_serverId).Job;
-        var other = new RemoteServerConfig { Id = _otherId, Name = "Mare" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = _otherId, Name = "Mare" });
         fixture.Store.Update(config => config.Servers.Add(other));
         await fixture.Manager.Enable(other.Id).Job;
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
