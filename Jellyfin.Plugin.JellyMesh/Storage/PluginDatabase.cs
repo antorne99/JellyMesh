@@ -362,7 +362,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _writer = null;
 
         // A recovery cut short after the set-aside goes on, and no empty file takes the place of the copy it was restoring.
+        // A note whose damaged file was never set aside, as after a crash between the two, is dropped.
         var note = ReadNote();
+        if (note is { Restoring: true } && !File.Exists(Path.Combine(_folder, Path.GetFileName(note.DamagedFile))))
+        {
+            _logger.LogWarning("The JellyMesh database recovery note names a damaged file that was never set aside and is dropped");
+            TryDeleteNote();
+            note = null;
+        }
+
         Volatile.Write(ref _note, note);
         try
         {
@@ -443,23 +451,36 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Sets the damaged file aside with its logs, then replaces it (row 427). The note is kept from the set-aside on, so a
-    // replacement cut short goes on at the next open. When the file cannot be set aside nothing new is made.
+    // Writes the note, then sets the damaged file aside with its logs and replaces it (row 427). The note comes first, so a
+    // recovery cut short at any point goes on at the next open; without it, or when the file cannot be set aside, nothing
+    // moves, nothing new is made and the store stays damaged.
     private StoreHealth Recover(StoreHealth damage)
     {
         var now = _time.GetUtcNow();
-        string damaged;
+        var target = StoreBackups.DamagedPath(_folder, now);
+        var damaged = Path.GetFileName(target);
         try
         {
-            damaged = Path.GetFileName(SetAside(now));
+            WriteNote(new RecoveryNote(now, damaged, null, Restoring: true));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be written, so the damaged database is not set aside. Sync and remote playback stay suspended");
+            return damage with { Reason = damage.Reason + " The recovery note cannot be written: " + exception.Message };
+        }
+
+        try
+        {
+            SetAside(target);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            TryDeleteNote();
+            Volatile.Write(ref _note, null);
             _logger.LogWarning(exception, "The damaged JellyMesh database cannot be set aside. Sync and remote playback stay suspended");
             return damage with { Reason = damage.Reason + " It cannot be set aside: " + exception.Message };
         }
 
-        Remember(new RecoveryNote(now, damaged, null, Restoring: true));
         return Replace(now, damaged);
     }
 
@@ -488,8 +509,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 }
 
                 _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the server list", damaged, copy.CreatedAt);
-                Remember(new RecoveryNote(recoveredAt, damaged, copy.CreatedAt));
-                return health;
+                return Complete(health, new RecoveryNote(recoveredAt, damaged, copy.CreatedAt));
             }
 
             _guard.CreatePrivate(_path).Dispose();
@@ -501,15 +521,30 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
 
         _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty", damaged);
-        Remember(new RecoveryNote(recoveredAt, damaged, null));
-        return OpenFile();
+        return Complete(OpenFile(), new RecoveryNote(recoveredAt, damaged, null));
+    }
+
+    // Ends a recovery by replacing its note in one step. Until then the note says it is restoring and the database is not
+    // used, so the next open may replace it again; a note that cannot be replaced keeps the store suspended.
+    private StoreHealth Complete(StoreHealth health, RecoveryNote note)
+    {
+        try
+        {
+            WriteNote(note);
+            return health;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _writer?.Dispose();
+            _writer = null;
+            return Unavailable("The database was replaced, but the recovery note cannot be updated", exception);
+        }
     }
 
     // Moves the logs, then the file, to a free .damaged-<date> name, so the path never holds a log without its file; the
     // shared-memory index is rebuilt by SQLite, so it goes. Logs moved for a file that does not move go back.
-    private string SetAside(DateTimeOffset now)
+    private void SetAside(string target)
     {
-        var target = StoreBackups.DamagedPath(_folder, now);
         var moved = new List<string>();
         try
         {
@@ -535,7 +570,6 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
 
         File.Delete(_path + "-shm");
-        return target;
     }
 
     private void TryMove(string from, string to)
@@ -580,20 +614,48 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Keeps the recovery for the page, in a private file so it outlives a restart; when the file cannot be written the
-    // page still has it until the next restart.
-    private void Remember(RecoveryNote note)
+    // Keeps the recovery for the page in a private file, so it outlives a restart. It is written aside, flushed and moved over
+    // the old note, so the note on disk is always whole.
+    private void WriteNote(RecoveryNote note)
     {
+        var temporary = RecoveryPath + ".tmp";
+        try
+        {
+            File.Delete(temporary);
+            using (var stream = _guard.CreatePrivate(temporary))
+            {
+                JsonSerializer.Serialize(stream, note);
+                stream.Flush(true);
+            }
+
+            File.Move(temporary, RecoveryPath, overwrite: true);
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(temporary);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogDebug(exception, "A temporary JellyMesh recovery note cannot be deleted");
+            }
+
+            throw;
+        }
+
         Volatile.Write(ref _note, note);
+    }
+
+    private void TryDeleteNote()
+    {
         try
         {
             File.Delete(RecoveryPath);
-            using var stream = _guard.CreatePrivate(RecoveryPath);
-            JsonSerializer.Serialize(stream, note);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "The JellyMesh database recovery cannot be kept for after a restart");
+            _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be deleted");
         }
     }
 

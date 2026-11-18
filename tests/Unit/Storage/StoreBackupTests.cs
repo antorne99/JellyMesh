@@ -416,6 +416,57 @@ public sealed class StoreBackupTests : IDisposable
         Assert.Equal(new StoreRecovery(_clock.Now, "jellymesh.db.damaged-20261120030000", new DateTimeOffset(2026, 11, 19, 3, 0, 0, TimeSpan.Zero)), database.Recovery);
     }
 
+    // The note is what a recovery cut short goes on from, so without it the damaged file is not moved.
+    [Fact]
+    public async Task ANoteThatCannotBeWrittenLeavesTheDamagedFileInPlace()
+    {
+        var damaged = await DamageAfterTwoCopiesAsync();
+
+        var database = Open(new NoteFailingGuard(failFrom: 1));
+
+        Assert.Equal(StoreState.Damaged, database.Health.State);
+        Assert.Equal(damaged, await File.ReadAllBytesAsync(DatabasePath));
+        Assert.Empty(Directory.GetFiles(Folder, "*damaged*"));
+    }
+
+    // A database restored without its note updated is never used, so the next open may still replace it.
+    [Fact]
+    public async Task ARestoreWhoseNoteCannotBeUpdatedStaysSuspendedUntilTheNextOpenFinishesIt()
+    {
+        await DamageAfterTwoCopiesAsync();
+
+        var failed = Open(new NoteFailingGuard(failFrom: 2));
+
+        Assert.True(failed.Health.Suspended);
+        failed.Dispose();
+        _opened.Remove(failed);
+
+        var database = Open();
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(["first", "second"], await ItemsAsync(database));
+        Assert.Equal(new DateTimeOffset(2026, 11, 19, 3, 0, 0, TimeSpan.Zero), database.Recovery?.CopyDate);
+    }
+
+    // A note written just before a crash that kept the damaged file from moving.
+    [Fact]
+    public async Task ARestoringNoteWhoseFileWasNeverSetAsideIsDropped()
+    {
+        var database = Open();
+        await AddItemAsync(database, "kept");
+        database.Dispose();
+        _opened.Remove(database);
+        await File.WriteAllTextAsync(
+            Path.Combine(Folder, "jellymesh.db.recovery"),
+            "{\"RecoveredAt\":\"2026-11-18T02:00:00+00:00\",\"DamagedFile\":\"jellymesh.db.damaged-20261118020000\",\"CopyDate\":null,\"Restoring\":true}");
+
+        var reopened = Open();
+
+        Assert.Equal(StoreState.Healthy, reopened.Health.State);
+        Assert.Equal(["kept"], await ItemsAsync(reopened));
+        Assert.Null(reopened.Recovery);
+    }
+
     [Fact]
     public void AHealthyOpenHasNoRecovery()
     {
@@ -455,6 +506,25 @@ public sealed class StoreBackupTests : IDisposable
 
         public FileStream CreatePrivate(string path) =>
             path == databasePath ? throw new IOException("No space left on device") : _inner.CreatePrivate(path);
+
+        public void KeepPrivate(string path) => _inner.KeepPrivate(path);
+    }
+
+    // Cannot write the recovery note from its given write on, counting from 1.
+    private sealed class NoteFailingGuard(int failFrom) : IKeyFileGuard
+    {
+        private readonly IKeyFileGuard _inner = KeyFileGuards.ForThisSystem();
+        private int _notes;
+
+        public FileStream CreatePrivate(string path)
+        {
+            if (Path.GetFileName(path).StartsWith(PluginDatabase.FileName + ".recovery", StringComparison.Ordinal) && ++_notes >= failFrom)
+            {
+                throw new IOException("The file is locked");
+            }
+
+            return _inner.CreatePrivate(path);
+        }
 
         public void KeepPrivate(string path) => _inner.KeepPrivate(path);
     }
