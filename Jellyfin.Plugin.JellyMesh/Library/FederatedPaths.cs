@@ -133,10 +133,11 @@ public static partial class FederatedPaths
     public static string MovieStub(Guid serverId, string folderName, string label)
         => MovieStubIn(Path.Combine(ServerFolder(serverId), MoviesFolder), folderName, label);
 
-    /// <summary>Tells whether a remote library id can name a folder: only a Jellyfin id, 32 hexadecimal digits.</summary>
+    /// <summary>Tells whether a remote library id can name a folder: only a Jellyfin id, 32 lowercase hexadecimal digits.</summary>
     /// <param name="libraryId">The id the remote gave.</param>
     /// <returns>True for an id that is safe as a folder name.</returns>
-    public static bool IsLibraryId([NotNullWhen(true)] string? libraryId) => Guid.TryParseExact(libraryId, "N", out _);
+    public static bool IsLibraryId([NotNullWhen(true)] string? libraryId)
+        => Guid.TryParseExact(libraryId, "N", out var parsed) && string.Equals(parsed.ToString("N"), libraryId, StringComparison.Ordinal);
 
     /// <summary>Builds the relative folder of a remote library in the folder of its server.</summary>
     /// <param name="serverId">The server.</param>

@@ -77,6 +77,11 @@ public class FederatedLayoutTests
     [InlineData("0123456789abcdef0123456789abcde")]
     [InlineData("0123456789abcdef0123456789abcdeg")]
     [InlineData("01234567-89ab-cdef-0123-456789abcdef")]
+    [InlineData("{01234567-89ab-cdef-0123-456789abcdef}")]
+    [InlineData("0123456789abcdef0123456789abcdef ")]
+    [InlineData(" 0123456789abcdef0123456789abcdef")]
+    [InlineData("0123456789abcdef0123456789abcdef\n")]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF")]
     public void ARemoteLibraryIdThatIsNotAPlainIdNeverBecomesAFolder(string libraryId)
     {
         Assert.False(FederatedPaths.IsLibraryId(libraryId));
@@ -85,7 +90,7 @@ public class FederatedLayoutTests
 
     [Theory]
     [InlineData("0123456789abcdef0123456789abcdef")]
-    [InlineData("0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("f11e0000000000000000000000000001")]
     public void AJellyfinLibraryIdIsAFolderName(string libraryId)
     {
         Assert.True(FederatedPaths.IsLibraryId(libraryId));
