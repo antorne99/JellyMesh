@@ -94,7 +94,7 @@ Mount the federated folder at one path only, and add its folders to your librari
 
 Remote credentials, user and password, are encrypted before they are saved in the plugin database, with a key that JellyMesh makes by itself at its first start: a random file named `credential.key` in its data folder. In the Docker image that is `/config/plugins/Jellyfin.Plugin.JellyMesh/`. On Linux and macOS only its owner can read it. On Windows it gets its own access list, which lets in only the account running Jellyfin, SYSTEM and Administrators and ignores the permissions of that folder. The access list is checked by unit tests, but applying it has not been tried on a Windows server yet. There is nothing to set.
 
-The key never goes into the database. Someone who copies the database alone sees the name, address and ID of each server, but not its user or password. When you change a password or remove a server, its old encrypted login is cleared from the database file and its log; copies of the database made before still hold it.
+The key never goes into the database. Someone who copies the database alone sees the name, address and ID of each server, but not its user or password. When you change a password or remove a server, its old encrypted login is cleared from the database file and its log right after the save, or at the latest at the next start or nightly copy if the log is busy then; copies of the database made before still hold it.
 
 **Back up the key file, separately from the Jellyfin config.** Without it the saved passwords can't be decrypted.
 
