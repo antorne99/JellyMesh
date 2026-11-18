@@ -34,6 +34,21 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(state.Conflicts);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("/media/\0film")]
+    public async Task An_admin_library_with_a_location_that_is_no_path_does_not_stop_the_check(string location)
+    {
+        var fixture = OnTypeFolders();
+        fixture.Libraries.Add("Strana", CollectionTypeOptions.movies, [location.Replace("\\0", "\0", StringComparison.Ordinal)]);
+        fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
+
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+
+        Assert.Contains(fixture.Server.AutomaticLibraryRegistry, record => record is { Name: "Film di casa", Adopted: true });
+        Assert.Equal(["Casa - Serie"], fixture.Libraries.Created.Select(call => call.Name));
+    }
+
     [Fact]
     public async Task An_adopted_library_stays_in_the_registry_after_a_restart_and_its_checks()
     {

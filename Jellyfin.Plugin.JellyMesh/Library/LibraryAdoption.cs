@@ -51,10 +51,11 @@ internal static class LibraryAdoption
         return string.IsNullOrEmpty(exact[0].ItemId) ? new AdoptionOutcome(null, true, []) : new AdoptionOutcome(exact[0], false, []);
     }
 
-    // Null when the library does not touch the paths; SamePaths when it holds exactly them with the type.
+    // Null when the library does not touch the paths; SamePaths when it holds exactly them with the type. A location that
+    // is no path holds no folder.
     private static LibraryConflictReason? ReasonOf(PlannedLibrary planned, CollectionTypeOptions type, VirtualFolderInfo folder)
     {
-        var locations = folder.Locations ?? [];
+        var locations = (folder.Locations ?? []).Where(FederatedFolderLinkChecker.IsPath).ToArray();
         if (locations.Any(location => planned.Paths.Any(path => IsStrictAncestor(location, path))))
         {
             return LibraryConflictReason.ParentPath;
