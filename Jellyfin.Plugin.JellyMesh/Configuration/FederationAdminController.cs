@@ -404,7 +404,7 @@ public class FederationAdminController : ControllerBase
         AfterSave(serverId, result.Value!.Changes, request.Name!.Trim());
 
         var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
-        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server);
+        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server) with { RemoteWarning = result.Value.RemoteWarning };
     }
 
     /// <summary>
@@ -898,7 +898,8 @@ public class FederationAdminController : ControllerBase
             visible.Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, kept.Contains(library.Id))).ToList(),
             new ServerEditConsequences(rename, removed, streams))
         {
-            RemoteOffline = report.RemoteOffline
+            RemoteOffline = report.RemoteOffline,
+            RemoteWarning = report.RemoteWarning
         };
     }
 

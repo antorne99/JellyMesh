@@ -402,48 +402,58 @@ public sealed partial class ServerEditTests
 
         var check = Assert.IsType<ServerEditCheck>(result.Value);
         Assert.True(check.RemoteOffline);
+        Assert.Equal(RemoteFailure.Unreachable, check.RemoteWarning);
         Assert.Empty(check.Libraries);
         Assert.Empty(check.Consequences.RemovedLibraries);
         Assert.Equal("Casa", check.Consequences.Rename!.NewName);
     }
 
     [Fact]
-    public async Task A_save_of_a_new_name_with_the_remote_down_is_saved()
+    public async Task A_save_of_a_new_name_with_the_remote_down_is_saved_and_says_why()
     {
         var id = await AddAsync("1");
         _offline = true;
 
         var result = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
 
-        Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
+        var status = Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal("Casa", status.Name);
+        Assert.Equal(RemoteFailure.Unreachable, status.RemoteWarning);
         Assert.Equal(["1"], _fixture.Store.Configuration.Servers.Single().ImportedLibraryIds);
     }
 
+    // D28: a remote that answers with an error blocks no new name, but it is not offline: the reason is a warning.
     [Theory]
-    [InlineData(HttpStatusCode.InternalServerError)]
-    [InlineData(HttpStatusCode.Unauthorized)]
-    [InlineData(HttpStatusCode.Forbidden)]
-    public async Task A_check_of_a_new_name_with_the_remote_answering_an_error_succeeds_as_its_save(HttpStatusCode answer)
+    [InlineData(HttpStatusCode.InternalServerError, RemoteFailure.ServerError)]
+    [InlineData(HttpStatusCode.Unauthorized, RemoteFailure.AuthenticationFailed)]
+    [InlineData(HttpStatusCode.Forbidden, RemoteFailure.AuthenticationFailed)]
+    public async Task A_new_name_with_the_remote_answering_an_error_passes_the_check_and_the_save_with_the_reason(HttpStatusCode answer, RemoteFailure reason)
     {
         var id = await AddAsync("1");
         _login = answer;
 
-        var check = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
-        var save = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+        var check = Assert.IsType<ServerEditCheck>((await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None)).Value);
+        var save = Assert.IsType<ServerStatus>((await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None)).Value);
 
-        Assert.True(Assert.IsType<ServerEditCheck>(check.Value).RemoteOffline);
-        Assert.Equal("Casa", Assert.IsType<ServerStatus>(save.Value).Name);
+        Assert.False(check.RemoteOffline);
+        Assert.Equal(reason, check.RemoteWarning);
+        Assert.Equal("Casa", save.Name);
+        Assert.Equal(reason, save.RemoteWarning);
     }
 
+    // Another server at the saved address is never hidden, and the check and the save say the same.
     [Fact]
-    public async Task A_check_of_a_new_name_with_another_server_at_the_address_succeeds_as_its_save()
+    public async Task A_new_name_with_another_server_at_the_address_is_refused_by_the_check_and_the_save()
     {
         var id = await AddAsync("1");
         _serverId = OtherId;
 
         var check = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+        var save = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
 
-        Assert.True(Assert.IsType<ServerEditCheck>(check.Value).RemoteOffline);
+        Assert.Equal(RemoteFailure.OtherServer, Refusal(check).Failure.Failure);
+        Assert.Equal(RemoteFailure.OtherServer, Refusal(save).Failure.Failure);
+        Assert.Equal("Friend", _fixture.Store.Configuration.Servers.Single().Name);
     }
 
     [Fact]
@@ -452,8 +462,11 @@ public sealed partial class ServerEditTests
         var id = await AddAsync("1");
 
         var result = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+        var save = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
 
         Assert.False(Assert.IsType<ServerEditCheck>(result.Value).RemoteOffline);
+        Assert.Equal(RemoteFailure.None, result.Value!.RemoteWarning);
+        Assert.Equal(RemoteFailure.None, Assert.IsType<ServerStatus>(save.Value).RemoteWarning);
     }
 
     [Theory]

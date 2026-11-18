@@ -18,6 +18,9 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// </summary>
 public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 {
+    // The changes of an edit that need the remote to answer (D28).
+    private const RemoteEditChanges RemoteChanges = RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Password | RemoteEditChanges.Libraries;
+
     /// <summary>
     /// The longest a removal waits for the remote to end its login (413).
     /// </summary>
@@ -337,17 +340,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         ArgumentNullException.ThrowIfNull(edit);
 
         var (plan, refusal) = PlanEdit(serverId, edit);
-        if (plan is null)
-        {
-            return refusal;
-        }
+        return plan is null ? refusal : await CheckPlanAsync(plan, cancellationToken).ConfigureAwait(false);
+    }
 
+    // Logs in with the edited data on a check device, accepts only the saved Server Id and reads what the user sees.
+    private async Task<RemoteResult<RemoteEditReport>> CheckPlanAsync(EditPlan plan, CancellationToken cancellationToken)
+    {
         if (await RefuseNewAddressAsync(plan, cancellationToken).ConfigureAwait(false) is { } refused)
         {
             return refused;
         }
 
-        var endpoint = CheckEndpointOf(serverId, plan.Url);
+        var endpoint = CheckEndpointOf(plan.ServerId, plan.Url);
         var login = await LogInAsync(endpoint, plan.Credentials, plan.Name, cancellationToken).ConfigureAwait(false);
         if (login.Value is not { } session)
         {
@@ -378,17 +382,29 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return refusal;
         }
 
-        // Only a new name needs no remote (D28).
-        const RemoteEditChanges remote = RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Password | RemoteEditChanges.Libraries;
-        if ((plan.Changes & remote) == RemoteEditChanges.None)
+        // Only a new name needs no remote (D28): it goes through the same check, so that both give the same outcome.
+        if ((plan.Changes & RemoteChanges) == RemoteEditChanges.None)
         {
+            var checkedEdit = await CheckPlanAsync(plan, cancellationToken).ConfigureAwait(false);
+            if (!checkedEdit.IsSuccess)
+            {
+                return checkedEdit;
+            }
+
             if (!StoreEdit(plan, null, null, null))
             {
                 return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal;
             }
 
             _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
-            return RemoteResult.Success(new RemoteEditReport(RemoteEditField.None) { Changes = plan.Changes, LibraryIds = plan.Saved.LibraryIds });
+            var report = checkedEdit.Value!;
+            return RemoteResult.Success(new RemoteEditReport(RemoteEditField.None)
+            {
+                Changes = plan.Changes,
+                LibraryIds = plan.Saved.LibraryIds,
+                RemoteOffline = report.RemoteOffline,
+                RemoteWarning = report.RemoteWarning
+            });
         }
 
         if (await RefuseNewAddressAsync(plan, cancellationToken).ConfigureAwait(false) is { } refused)
@@ -728,13 +744,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private static (EditPlan? Plan, RemoteResult<RemoteEditReport> Refusal) Refuse(RemoteFailure failure, RemoteEditField field)
         => (null, RemoteResult.Fail(failure, new RemoteEditReport(field)));
 
-    // A remote that does not answer, or answers with an error, blocks only an edit that needs it; otherwise the check
-    // succeeds without a read, as the save does (D28).
+    // A remote that cannot be read blocks only an edit that needs it; otherwise the edit goes on with the reason as a
+    // warning, offline only when the remote did not answer. Another server at the address always blocks (D28).
     private static RemoteResult<RemoteEditReport> OfflineOr(EditPlan plan, RemoteFailure failure, RemoteEditReport refusal)
     {
-        const RemoteEditChanges remote = RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Password | RemoteEditChanges.Libraries;
-        return failure is not (RemoteFailure.Suspended or RemoteFailure.UnknownServer) && (plan.Changes & remote) == RemoteEditChanges.None
-            ? RemoteResult.Success(new RemoteEditReport(RemoteEditField.None) { Changes = plan.Changes, LibraryIds = plan.Saved.LibraryIds, RemoteOffline = true })
+        return failure is not (RemoteFailure.Suspended or RemoteFailure.UnknownServer or RemoteFailure.OtherServer) && (plan.Changes & RemoteChanges) == RemoteEditChanges.None
+            ? RemoteResult.Success(new RemoteEditReport(RemoteEditField.None)
+            {
+                Changes = plan.Changes,
+                LibraryIds = plan.Saved.LibraryIds,
+                RemoteOffline = failure is RemoteFailure.Unreachable or RemoteFailure.Timeout,
+                RemoteWarning = failure
+            })
             : RemoteResult.Fail(failure, refusal);
     }
 

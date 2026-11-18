@@ -489,15 +489,17 @@ public sealed partial class ServerEditTests : IDisposable
     }
 
     [Fact]
-    public async Task A_new_name_alone_is_saved_with_no_remote()
+    public async Task A_new_name_alone_is_saved_whatever_the_remote_answers_and_touches_no_kept_login()
     {
         var id = await AddAsync("1");
         _login = HttpStatusCode.ServiceUnavailable;
 
         var result = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
 
-        Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
-        Assert.Empty(Requests);
+        var status = Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal("Casa", status.Name);
+        Assert.NotEqual(RemoteFailure.None, status.RemoteWarning);
+        Assert.All(Requests, request => Assert.Equal($"jellymesh-{id:N}-check", DeviceOf(request)));
     }
 
     [Fact]
