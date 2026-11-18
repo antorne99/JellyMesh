@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Integration 6 of the 0.6 spec (F40): a change of library mode from the Edit form. The libraries of the new mode are
 # made and scanned before the plugin's old ones go, item ids and watch state stay (F23), "none" deletes only the plugin's
-# libraries and lists the manual paths, and the mode changes with the remote down (§10 row 438, D28).
+# libraries and lists the manual paths, and the mode changes with the remote down (§10 row 438, D28). A user with access
+# to the film library only and a user who blocks the series library see the same titles after each change.
 # A stock remote with a film and a series library, and a consumer with the plugin.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f40] [PORT=18970] [KEEP=1] modes.sh
 set -euo pipefail
@@ -55,6 +56,26 @@ played() { get local "/UserItems/$1/UserData?userId=$ME" | jq -r .Played; }
 # watched: the state of the film and the two episodes marked before the first change.
 watched() { echo "$(played "$TEARS") $(played "$E3") $(get local "/UserItems/$E4/UserData?userId=$ME" | jq -r .PlaybackPositionTicks)"; }
 # ids: the ids of the federated films and episodes, sorted, to compare before and after a change.
+# sees <user id>: the ids of the federated films and episodes the user sees, sorted.
+sees() { get local "/Items?userId=$1&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path" | jq -c '[.Items[] | select((.Path // "") | startswith("/federata")) | .Id] | sort'; }
+kinds() { get local "/Items?userId=$1&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path" | jq -c '[.Items[] | select((.Path // "") | startswith("/federata")) | .Type] | unique'; }
+# policy <user id> <jq filter>: changes the policy of a local user.
+policy() { local p; p=$(get local "/Users/$1" | jq -c ".Policy | $2"); post local "/Users/$1/Policy" "$p" >/dev/null; }
+# seen: what both users see, to compare before and after a change.
+seen() { echo "$(sees "$LIMITED") $(sees "$BLOCKING")"; }
+dashed() { local id=$1; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+# block <user id> <library id>: blocks one library with the server stopped; 12.4 does not save BlockedMediaFolders from
+# the policy route.
+block() {
+  docker stop "$PREFIX-local" >/dev/null
+  docker run --rm --name "$PREFIX-sqlite" -v "$PREFIX-local-config:/config" alpine sh -c \
+    'apk add -q sqlite >/dev/null && sqlite3 /config/data/jellyfin.db "$1"' sh \
+    "update Preferences set Value = '$(dashed "$2")' where Kind = 2 and UserId = '$(dashed "$1" | tr a-f A-F)';"
+  docker start "$PREFIX-local" >/dev/null
+  sleep 3
+  wait_ready local
+  login local
+}
 ids() { get local '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path' | jq -c '[.Items[] | select((.Path // "") | startswith("/federata")) | "\(.Id) \(.Path | split("/") | last)"] | sort'; }
 
 echo "--- setup: $PREFIX-local on $PORT, $PREFIX-remote on $((PORT + 1))"
@@ -89,11 +110,18 @@ post local "/UserItems/$E3/UserData?userId=$ME" '{"Played":true}' >/dev/null
 post local "/UserItems/$E4/UserData?userId=$ME" '{"PlaybackPositionTicks":600000000}' >/dev/null
 check "the film and an episode are played, another episode is half seen" "true true 600000000" "$(watched)"
 BEFORE=$(ids)
+LIMITED=$(user local ristretto)
+BLOCKING=$(user local bloccato)
+policy "$LIMITED" ".EnableAllFolders = false | .EnabledFolders = [\"$(folder 'Casa - Film' | jq -r .ItemId)\"]"
+block "$BLOCKING" "$(folder 'Casa - Serie' | jq -r .ItemId)"
+check "the restricted user sees only films" '["Movie"]' "$(kinds "$LIMITED")"
+check "the user blocking the series library sees only films" '["Movie"]' "$(kinds "$BLOCKING")"
+SEEN=$(seen)
 
 echo "--- the check lists the change and saves nothing [row 438]"
 answer=$(check_edit '{"LibraryMode":"ByRemoteLibrary"}')
 check "the check answers 200" 200 "$(status)"
-check "it lists the libraries the change deletes" '["Casa - Film","Casa - Serie"]' "$(echo "$answer" | jq -c '.Consequences.ModeChange.DeletedLibraries | sort')"
+check "it lists the libraries the change deletes" '["Casa - Film","Casa - Serie"]' "$(echo "$answer" | jq -c '.Consequences.ModeChange.Deleted | sort')"
 check "the mode is still per type" ByType "$(own | jq -r .Mode)"
 
 echo "--- per type to per remote library: new libraries made and scanned, then the old ones deleted [row 438, F23]"
@@ -106,6 +134,7 @@ check "the film library has the film folder" "$(own | jq -c '[.ManualPaths[] | s
 check "the items keep their ids" "$BEFORE" "$(ids)"
 check "the film keeps its id" "$TEARS" "$(film "Tears of Steel")"
 check "the watch state stays" "true true 600000000" "$(watched)"
+check "the restricted and the blocking user see what they saw" "$SEEN" "$(seen)"
 
 echo "--- with the remote down the mode still changes [D28]"
 docker stop "$PREFIX-remote" >/dev/null
@@ -115,6 +144,7 @@ wait_own
 check "the per type libraries are back" '[["Casa - Film",false],["Casa - Serie",false]]' "$(registry)"
 check "the items keep their ids" "$BEFORE" "$(ids)"
 check "the watch state stays" "true true 600000000" "$(watched)"
+check "the restricted and the blocking user see what they saw" "$SEEN" "$(seen)"
 docker start "$PREFIX-remote" >/dev/null
 wait_ready remote
 
@@ -127,5 +157,6 @@ check "the registry is empty" '[]' "$(registry)"
 check "the plugin's libraries are deleted, the admin's stays" '["Mie"]' "$(lib_names)"
 check "the state lists a film and a series path" '["movies","tvshows"]' "$(own | jq -c '[.ManualPaths[].LibraryType] | sort')"
 check "the mode is none" None "$(own | jq -r .Mode)"
+check "with the plugin's libraries gone neither user sees a federated title" "[] []" "$(seen)"
 
 [ "$FAILED" = 0 ] && echo "all passed" || { echo "some checks failed"; exit 1; }
