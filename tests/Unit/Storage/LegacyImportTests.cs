@@ -360,18 +360,62 @@ public sealed class LegacyImportTests : IDisposable
         Assert.Equal([$"{oldItem:N}|Episode|Pilot|{user:N}|3|8.5"], rows);
     }
 
+    // Files that come back after the migration, as a return to 0.5 would write them, are neither read nor moved over the copies.
     [Fact]
-    public async Task TheImportRunsOnceSoALaterOpenDoesNotReadTheOldFilesAgain()
+    public async Task OldFilesThatComeBackAfterTheImportStayWhereTheyAreWithOneWarning()
     {
         CopyFixtures();
         Open().Dispose();
         SqliteConnection.ClearAllPools();
-        File.Copy(Fixture("sync-history.json"), Path.Combine(Folder, "sync-history.json"));
+        var kept = await File.ReadAllBytesAsync(Path.Combine(Migrated, "sync-history.json"));
+        await File.WriteAllTextAsync(Path.Combine(Folder, "sync-history.json"), """{"Version":1,"Runs":[]}""");
+        await File.WriteAllTextAsync(ConfigurationFile, "<PluginConfiguration />");
+        Logger.Levels.Clear();
+
+        var database = Open();
+
+        Assert.Equal(2, await CountAsync(database, "sync_runs"));
+        Assert.Single((await ConfigurationOf(database)).Servers);
+        Assert.Equal("""{"Version":1,"Runs":[]}""", await File.ReadAllTextAsync(Path.Combine(Folder, "sync-history.json")));
+        Assert.True(File.Exists(ConfigurationFile));
+        Assert.Equal(kept, await File.ReadAllBytesAsync(Path.Combine(Migrated, "sync-history.json")));
+        Assert.Equal([LogLevel.Warning], Logger.Levels.Where(level => level >= LogLevel.Warning));
+    }
+
+    // Each move is a rename, so a start cut short after the import leaves only files without a copy, which the next start moves.
+    [Fact]
+    public async Task AnOldFileAMoveCutShortLeftInPlaceMovesAtTheNextStart()
+    {
+        CopyFixtures();
+        Open().Dispose();
+        SqliteConnection.ClearAllPools();
+        File.Move(Path.Combine(Migrated, "sync-history.json"), Path.Combine(Folder, "sync-history.json"));
+        Logger.Levels.Clear();
 
         var database = Open();
 
         Assert.Equal(2, await CountAsync(database, "sync_runs"));
         Assert.False(File.Exists(Path.Combine(Folder, "sync-history.json")));
+        Assert.True(File.Exists(Path.Combine(Migrated, "sync-history.json")));
+        Assert.DoesNotContain(LogLevel.Warning, Logger.Levels);
+    }
+
+    // Once the folder is erased, files that come back are left alone instead of filling a folder the next night would erase.
+    [Fact]
+    public async Task OldFilesThatComeBackAfterTheErasureStayWhereTheyAre()
+    {
+        CopyFixtures();
+        var database = Open();
+        _clock.Now += TimeSpan.FromDays(31);
+        Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        database.Dispose();
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllTextAsync(Path.Combine(Folder, "sync-history.json"), """{"Version":1,"Runs":[]}""");
+
+        Open();
+
+        Assert.True(File.Exists(Path.Combine(Folder, "sync-history.json")));
+        Assert.False(Directory.Exists(Migrated));
     }
 
     // A stub file that parses but holds a null entry or path counts as damaged, so the import completes with its warning.

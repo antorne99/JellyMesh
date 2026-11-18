@@ -166,7 +166,7 @@ public sealed class LegacyImport
 
     /// <summary>
     /// Imports the old files and marks the migration, the first time; then moves the old files away, which a later open
-    /// finishes if it was cut short. Called with the database gate held, on the writer.
+    /// finishes if it was cut short. Files that come back later are left in place. Called with the database gate held.
     /// </summary>
     /// <param name="writer">The writer connection of the database.</param>
     /// <param name="now">The time of the migration.</param>
@@ -174,7 +174,8 @@ public sealed class LegacyImport
     internal void Run(SqliteConnection writer, DateTimeOffset now)
     {
         var files = OldFiles();
-        if (ReadMark(writer) is null)
+        var mark = ReadMark(writer);
+        if (mark is null)
         {
             var damaged = new List<string>();
             var data = Read(damaged);
@@ -193,6 +194,18 @@ public sealed class LegacyImport
             if (files.Count > 0)
             {
                 _logger.LogInformation("The data of the older JellyMesh version moved into the plugin database. The old files are kept in {Folder} for 30 days", FolderName);
+            }
+        }
+        else
+        {
+            // Each move is a rename, so a start cut short leaves only files without a copy; any other file came back later.
+            var returned = mark.Value.DeletedUtc is null
+                ? files.Where(file => File.Exists(Path.Combine(MigratedFolder, Path.GetFileName(file)))).ToList()
+                : files;
+            if (returned.Count > 0)
+            {
+                _logger.LogWarning("Files of the older JellyMesh version came back after the migration and are neither read nor moved: {Files}", string.Join(", ", returned.Select(Path.GetFileName)));
+                files = files.Except(returned).ToList();
             }
         }
 
@@ -375,7 +388,7 @@ public sealed class LegacyImport
         return files;
     }
 
-    // Moves each file over any copy a move cut short left, then keeps it and the folder private (row 428), never through a link.
+    // Moves each file into the folder, then keeps it and the folder private (row 428), never through a link.
     private void Move(List<string> files)
     {
         try
@@ -399,7 +412,7 @@ public sealed class LegacyImport
             foreach (var file in files)
             {
                 var moved = Path.Combine(target, Path.GetFileName(file));
-                File.Move(file, moved, overwrite: true);
+                File.Move(file, moved);
                 if (new FileInfo(moved).LinkTarget is null)
                 {
                     _guard.KeepPrivate(moved);
