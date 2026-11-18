@@ -192,6 +192,17 @@ public sealed class FederationSettingsControllerTests
         Assert.Equal(FederationSettingsController.StoreSuspended, Assert.IsType<FailureResponse>(result.Value).Message);
     }
 
+    [Fact]
+    public void AFailedSaveLeavesEverySettingAsItWas()
+    {
+        _store.Configuration.PlaybackIdleSeconds = 45;
+        _store.SaveFailure = new InvalidOperationException("disk full");
+
+        Assert.Throws<InvalidOperationException>(() => Controller().SetSettings(new SettingsRequest { SyncIntervalSeconds = 600, PlaybackIdleSeconds = 60, FederatedFolderPath = "/federata" }));
+
+        Assert.Equal((900, 45, string.Empty), (_store.Configuration.SyncIntervalSeconds, _store.Configuration.PlaybackIdleSeconds, _store.Configuration.FederatedFolderPath));
+    }
+
     private static SettingRefusal Refusal(ActionResult<PluginSettings> result)
         => Assert.IsType<SettingRefusal>(Assert.IsType<BadRequestObjectResult>(result.Result).Value);
 

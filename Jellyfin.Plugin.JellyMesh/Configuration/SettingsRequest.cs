@@ -41,6 +41,30 @@ public sealed class SettingsRequest
     public int? PolicyCacheMinutes { get; set; }
 
     /// <summary>
+    /// Takes every setting of a configuration, so that applying it puts them back.
+    /// </summary>
+    /// <param name="config">The configuration.</param>
+    /// <returns>The settings, all set.</returns>
+    public static SettingsRequest From(PluginConfiguration config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return new SettingsRequest
+        {
+            SyncIntervalSeconds = config.SyncIntervalSeconds,
+            ReconciliationTime = config.ReconciliationTime,
+            FederatedFolderPath = config.FederatedFolderPath,
+            MetadataProtection = config.MetadataProtection,
+            FederateCollections = config.FederateCollections,
+            CloseTranscodeAtSlotExpiry = config.CloseTranscodeAtSlotExpiry,
+            RemotePlaybackInfoTimeoutSeconds = config.RemotePlaybackInfoTimeoutSeconds,
+            StreamOpenTimeoutSeconds = config.StreamOpenTimeoutSeconds,
+            PlaybackIdleSeconds = config.PlaybackIdleSeconds,
+            SessionRetentionHours = config.SessionRetentionHours,
+            PolicyCacheMinutes = config.PolicyCacheMinutes
+        };
+    }
+
+    /// <summary>
     /// Sets the settings this request holds on <paramref name="config"/>, leaving the others.
     /// </summary>
     /// <param name="config">The configuration to change.</param>

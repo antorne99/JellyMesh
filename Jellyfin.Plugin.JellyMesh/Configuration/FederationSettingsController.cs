@@ -87,7 +87,15 @@ public class FederationSettingsController : ControllerBase
 
         try
         {
-            _store.Update(request.ApplyTo);
+            // A failed save puts every setting back, so the page and the schedule never run on unsaved values.
+            SettingsRequest? previous = null;
+            _store.Update(
+                config =>
+                {
+                    previous = SettingsRequest.From(config);
+                    request.ApplyTo(config);
+                },
+                config => previous?.ApplyTo(config));
         }
         catch (StoreSuspendedException)
         {
