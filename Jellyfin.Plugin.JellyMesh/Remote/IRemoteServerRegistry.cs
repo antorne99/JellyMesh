@@ -55,13 +55,15 @@ public interface IRemoteServerRegistry
     /// <summary>
     /// Saves an edit of a server all or nothing (row 432): checks it as <see cref="CheckEditAsync"/> does, then saves name,
     /// address, credentials, imported libraries and capabilities in one write. A new user or password logs in on the kept
-    /// device and keeps that login; otherwise the kept login stays. Only a new name needs no remote.
+    /// device and keeps that login; otherwise the kept login stays. Only a new name needs no remote. After the save of a new
+    /// user, runs <paramref name="stopStreams"/>, then ends the login of the old user within a short time (row 434).
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="edit">The fields of the form.</param>
+    /// <param name="stopStreams">What stops the streams of the server when its user changes, or null.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>What the edit changed, or why it is refused.</returns>
-    Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken);
+    Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, Func<Task>? stopStreams, CancellationToken cancellationToken);
 
     /// <summary>
     /// Enters the edit of a server, so that its checks and saves run one at a time and the last save wins (row 434).

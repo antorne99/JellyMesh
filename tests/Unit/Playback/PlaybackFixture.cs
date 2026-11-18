@@ -94,7 +94,7 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
     public Task<RemoteResult<RemoteEditReport>> CheckEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 
-    public Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
+    public Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, Func<Task>? stopStreams, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 
     public Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken)

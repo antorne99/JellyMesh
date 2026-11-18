@@ -36,13 +36,16 @@ public sealed partial class ServerEditTests : IDisposable
     private bool _admin;
     private bool _publicSet;
     private string? _publicOverride;
+    private string _token = TestValues.Token;
+    private HttpStatusCode _logout = HttpStatusCode.NoContent;
 
     private string? PublicId => _publicSet ? _publicOverride : _serverId;
 
     private string PublicInfo => "{\"ServerName\":\"" + (PublicId == FirstId ? "Friend box" : "Stranger box") + "\""
         + (PublicId is null ? string.Empty : ",\"Id\":\"" + PublicId + "\"") + "}";
 
-    private string LoginAnswer => "{\"ServerId\":\"" + _serverId + "\"," + (_admin ? TestValues.LoginJson[1..].Replace("false", "true", StringComparison.Ordinal) : TestValues.LoginJson[1..]);
+    private string LoginAnswer => "{\"ServerId\":\"" + _serverId + "\"," + (_admin ? TestValues.LoginJson[1..].Replace("false", "true", StringComparison.Ordinal) : TestValues.LoginJson[1..])
+        .Replace(TestValues.Token, _token, StringComparison.Ordinal);
 
     public ServerEditTests()
     {
@@ -60,7 +63,7 @@ public sealed partial class ServerEditTests : IDisposable
         "/Users/AuthenticateByName" => _login == HttpStatusCode.OK ? StubHandler.Json(LoginAnswer) : StubHandler.Status(_login),
         "/UserViews" => StubHandler.Json(_views),
         "/System/Info/Public" => StubHandler.Json(PublicInfo),
-        "/Sessions/Logout" => StubHandler.Status(HttpStatusCode.NoContent),
+        "/Sessions/Logout" => StubHandler.Status(_logout),
         _ => StubHandler.Status(HttpStatusCode.NotFound)
     };
 

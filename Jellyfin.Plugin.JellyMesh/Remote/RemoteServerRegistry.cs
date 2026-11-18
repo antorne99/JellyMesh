@@ -368,7 +368,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
+    public async Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, Func<Task>? stopStreams, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(edit);
 
@@ -396,9 +396,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return refused;
         }
 
-        return (plan.Changes & (RemoteEditChanges.User | RemoteEditChanges.Password)) == RemoteEditChanges.None
-            ? await SaveEditWithCheckLoginAsync(plan, cancellationToken).ConfigureAwait(false)
-            : await SaveEditWithNewLoginAsync(plan, cancellationToken).ConfigureAwait(false);
+        if ((plan.Changes & (RemoteEditChanges.User | RemoteEditChanges.Password)) == RemoteEditChanges.None)
+        {
+            return await SaveEditWithCheckLoginAsync(plan, cancellationToken).ConfigureAwait(false);
+        }
+
+        var (saved, replaced) = await SaveEditWithNewLoginAsync(plan, cancellationToken).ConfigureAwait(false);
+        if (saved.IsSuccess && plan.Changes.HasFlag(RemoteEditChanges.User))
+        {
+            await EndOldUserAsync(plan, replaced, stopStreams).ConfigureAwait(false);
+        }
+
+        return saved;
     }
 
     /// <inheritdoc />
@@ -768,7 +777,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         changes |= requested is null || SameLibraries(requested, saved.LibraryIds) ? RemoteEditChanges.None : RemoteEditChanges.Libraries;
 
         var credentials = new RemoteCredentials { Username = edit.Username, Password = keepsPassword ? stored!.Password : edit.Password! };
-        return (new EditPlan(serverId, name, url, credentials, changes, saved, requested), RemoteResult.Fail<RemoteEditReport>(RemoteFailure.None));
+        return (new EditPlan(serverId, name, url, credentials, changes, saved, requested) { Stored = stored }, RemoteResult.Fail<RemoteEditReport>(RemoteFailure.None));
     }
 
     // Saves an edit whose user and password stay with a login on the check device, so the kept login goes on (419).
@@ -807,7 +816,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     // Saves an edit with a new user or password: logs in on the kept device under the login gate, as for new credentials,
     // and keeps that login only once the edit is saved; a refused or unsaved edit ends it (413, 419).
-    private async Task<RemoteResult<RemoteEditReport>> SaveEditWithNewLoginAsync(EditPlan plan, CancellationToken cancellationToken)
+    // Returns the login it replaced, if any.
+    private async Task<(RemoteResult<RemoteEditReport> Result, RemoteSession? Replaced)> SaveEditWithNewLoginAsync(EditPlan plan, CancellationToken cancellationToken)
     {
         var serverId = plan.ServerId;
         var endpoint = EndpointOf(serverId, plan.Url);
@@ -824,13 +834,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var kept = false;
         RemoteEditReport report;
+        RemoteSession? replaced;
         try
         {
             var login = await LogInAsync(endpoint, plan.Credentials, plan.Name, cancellationToken).ConfigureAwait(false);
             if (login.Value is not { } session)
             {
                 _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
-                return RemoteResult.Fail(login.Failure, new RemoteEditReport(FieldOf(login.Failure)));
+                return (RemoteResult.Fail(login.Failure, new RemoteEditReport(FieldOf(login.Failure))), null);
             }
 
             RemoteResult<EditRead> read;
@@ -847,7 +858,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             if (!read.IsSuccess)
             {
                 await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
-                return RemoteResult.Fail(read.Failure, read.Value!.Report);
+                return (RemoteResult.Fail(read.Failure, read.Value!.Report), null);
             }
 
             // Credentials that cannot be encrypted are not saved, so their login ends (419).
@@ -855,7 +866,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             if (encrypted is null)
             {
                 await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
-                return Refuse(RemoteFailure.Suspended, RemoteEditField.None).Refusal;
+                return (Refuse(RemoteFailure.Suspended, RemoteEditField.None).Refusal, null);
             }
 
             bool found;
@@ -870,10 +881,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
 
             // As in GetSessionAsync: a removal that ended meanwhile must not leave this login behind (413).
+            replaced = runtime.Session;
             if (!found || !runtime.TryKeep(session) || !IsConfigured(serverId))
             {
                 await EndLoginOfRemovedAsync(serverId, runtime, endpoint, session, plan.Name).ConfigureAwait(false);
-                return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal;
+                return (Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal, null);
             }
 
             kept = true;
@@ -891,7 +903,66 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         Record(runtime, plan.Name, RemoteFailure.None, countsForActivity: true);
         _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
-        return RemoteResult.Success(report);
+        return (RemoteResult.Success(report), replaced);
+    }
+
+    // After a new user is saved: stops the streams of the server, then ends the login of the old user within the logout
+    // limit, the live one or, without it, one made with the old credentials on the same device (row 434, 413).
+    private async Task EndOldUserAsync(EditPlan plan, RemoteSession? replaced, Func<Task>? stopStreams)
+    {
+        var name = LogText.Clean(plan.Name);
+        if (stopStreams is not null)
+        {
+            try
+            {
+                await stopStreams().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                // The type only: a message could hold an address. The edit is saved, so it must not fail now.
+                _logger.LogWarning("Could not stop the streams of remote server {ServerName} after its user changed: {Error}", name, exception.GetType().Name);
+            }
+        }
+
+        var endpoint = EndpointOf(plan.ServerId, plan.Url);
+        using var limit = new CancellationTokenSource(LogoutLimit);
+        RemoteFailure failure;
+        try
+        {
+            if (replaced is not null)
+            {
+                failure = await LogOutUntilAsync(endpoint, replaced, limit).ConfigureAwait(false);
+            }
+            else if (plan.Stored is { } old && old.Username != plan.Credentials.Username)
+            {
+                var login = await _client.AuthenticateAsync(endpoint, old, limit.Token).ConfigureAwait(false);
+                failure = login.Value is { } session ? await LogOutUntilAsync(endpoint, session, limit).ConfigureAwait(false) : login.Failure;
+            }
+            else
+            {
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (limit.IsCancellationRequested)
+        {
+            failure = RemoteFailure.Timeout;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold an address.
+            _logger.LogWarning("Could not end the login of the old user on remote server {ServerName}: {Error}; its JellyMesh device may stay listed there", name, exception.GetType().Name);
+            return;
+        }
+
+        // A refused token was revoked already, as when the user is in fact the same.
+        if (failure is RemoteFailure.None or RemoteFailure.AuthenticationFailed)
+        {
+            _logger.LogInformation("Ended the login of the old user on remote server {ServerName}", name);
+        }
+        else
+        {
+            _logger.LogWarning("Could not end the login of the old user on remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there", name, failure);
+        }
     }
 
     // Writes an edit in one save; a failed save puts every field back under the same lock (row 432). False if the server is gone.
@@ -1472,7 +1543,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private sealed record SavedServer(string Name, string Url, string JellyfinServerId, IReadOnlyList<string> LibraryIds);
 
     // An edit whose fields are valid, with the credentials it logs in with. The password is in no generated text.
-    private sealed record EditPlan(Guid ServerId, string Name, string Url, RemoteCredentials Credentials, RemoteEditChanges Changes, SavedServer Saved, IReadOnlyList<string>? RequestedLibraryIds);
+    private sealed record EditPlan(Guid ServerId, string Name, string Url, RemoteCredentials Credentials, RemoteEditChanges Changes, SavedServer Saved, IReadOnlyList<string>? RequestedLibraryIds)
+    {
+        // The saved credentials, or null when they do not decrypt.
+        public RemoteCredentials? Stored { get; init; }
+    }
 
     // What the remote offers with the edited data, and its capabilities for the save.
     private sealed record EditRead(RemoteEditReport Report, RemoteCapabilities? Capabilities);

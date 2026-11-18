@@ -369,7 +369,7 @@ public class FederationAdminController : ControllerBase
             return refusedName;
         }
 
-        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
+        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), () => StopStreamsAsync(serverId), cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
             return EditFailed(result);
@@ -764,6 +764,19 @@ public class FederationAdminController : ControllerBase
 
         var state = _renamer.GetState(serverId);
         return state.Busy || state.Pending || state.Failed || _renamer.NeedsRestart;
+    }
+
+    // Closes the playback of a server whose user changed, then lets it play again with the new user (row 434).
+    private async Task StopStreamsAsync(Guid serverId)
+    {
+        try
+        {
+            await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
+        }
+        finally
+        {
+            _playback.ReopenServer(serverId);
+        }
     }
 
     // Runs what follows a saved edit, in order: rename (row 434).

@@ -1,10 +1,12 @@
 using System;
+using System.Net;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Microsoft.AspNetCore.Http;
 using Moq;
 using Xunit;
@@ -185,6 +187,108 @@ public sealed partial class ServerEditTests
         await Controller(renamer.Object).SaveServerEdit(id, Edit(name: "FRIEND"), CancellationToken.None);
 
         renamer.Verify(service => service.Rename(id, "FRIEND", true), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_new_user_stops_the_streams_of_the_server_then_ends_the_login_of_the_old_user()
+    {
+        var id = await AddAsync("1");
+        await KeepLoginAsync(id);
+        var other = PlaybackValues.Source();
+        await _playback.OpenAsync(PlaybackValues.Stub(new StubSource(id, "remote-item", "remote-item-ms")));
+        await _playback.OpenAsync(PlaybackValues.Stub(other));
+        _token = "new-user-token";
+
+        var result = await Controller().SaveServerEdit(id, Edit(user: "someone", password: "new-pass"), CancellationToken.None);
+
+        Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal(0, _playback.Coordinator.CountServerSessions(id));
+        Assert.Equal(1, _playback.Coordinator.CountServerSessions(other.ServerId));
+        var logout = Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        Assert.Contains(TestValues.Token, logout.Authorization, StringComparison.Ordinal);
+        Assert.Equal($"jellymesh-{id:N}", DeviceOf(logout));
+
+        // The server plays again, with the login of the new user.
+        await _playback.OpenAsync(PlaybackValues.Stub(new StubSource(id, "remote-item", "remote-item-ms")));
+        Assert.Equal(1, _playback.Coordinator.CountServerSessions(id));
+        _fixture.Handler.Requests.Clear();
+        await _fixture.Registry.RunWithSessionAsync(id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
+        Assert.Empty(Requests);
+    }
+
+    [Fact]
+    public async Task A_new_user_without_a_live_login_ends_the_device_of_the_old_user_with_its_saved_credentials()
+    {
+        var id = await AddAsync("1");
+        _fixture.Registry.Dispose();
+        var registry = new RemoteServerRegistry(_fixture.Store, _fixture.Vault, _fixture.Client, _fixture.Logger);
+
+        var controller = new FederationAdminController(
+            registry, _fixture.Vault, _fixture.Store, Mock.Of<IFederatedFolderLinkChecker>(), _playback.Coordinator,
+            new FixedFederatedRootSource(null), Mock.Of<Jellyfin.Plugin.JellyMesh.Sync.ICatalogSyncService>(), new InMemoryMergeStore(), _libraries.Object,
+            new CapturingLogger<FederationAdminController>());
+        var save = controller.SaveServerEdit(id, Edit(user: "someone", password: "new-pass"), CancellationToken.None);
+        Assert.IsType<ServerStatus>((await save).Value);
+
+        var logins = Requests.Where(request => request.Uri.AbsolutePath == "/Users/AuthenticateByName").ToList();
+        Assert.Equal(2, logins.Count);
+        Assert.Contains("someone", logins[0].Body, StringComparison.Ordinal);
+        Assert.Contains(TestValues.Username, logins[1].Body, StringComparison.Ordinal);
+        var logout = Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        Assert.Equal($"jellymesh-{id:N}", DeviceOf(logout));
+        registry.Dispose();
+    }
+
+    [Fact]
+    public async Task A_logout_of_the_old_user_that_fails_is_logged_without_token_or_address_and_the_save_stands()
+    {
+        var id = await AddAsync("1");
+        await KeepLoginAsync(id);
+        _token = "new-user-token";
+        _logout = HttpStatusCode.InternalServerError;
+
+        var result = await Controller().SaveServerEdit(id, Edit(url: OtherUrl, user: "someone", password: "new-pass"), CancellationToken.None);
+
+        Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal("someone", _fixture.Vault.Unprotect(id, _fixture.Store.Configuration.Servers.Single().EncryptedCredentials)!.Username);
+        var warning = Assert.Single(_fixture.Logger.Lines, line => line.Contains("old user", StringComparison.Ordinal));
+        foreach (var secret in new[] { TestValues.Token, "new-user-token", "other.invalid", TestValues.Host })
+        {
+            Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(secret, StringComparison.Ordinal));
+        }
+
+        Assert.Contains("ServerError", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_new_password_alone_stops_no_stream_and_sends_no_logout()
+    {
+        var id = await AddAsync("1");
+        await KeepLoginAsync(id);
+        await _playback.OpenAsync(PlaybackValues.Stub(new StubSource(id, "remote-item", "remote-item-ms")));
+
+        await Controller().SaveServerEdit(id, Edit(password: "new-pass"), CancellationToken.None);
+
+        Assert.Equal(1, _playback.Coordinator.CountServerSessions(id));
+        Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+    }
+
+    [Fact]
+    public async Task A_new_address_with_the_same_user_keeps_the_streams()
+    {
+        var id = await AddAsync("1");
+        await _playback.OpenAsync(PlaybackValues.Stub(new StubSource(id, "remote-item", "remote-item-ms")));
+
+        await Controller().SaveServerEdit(id, Edit(url: OtherUrl), CancellationToken.None);
+
+        Assert.Equal(1, _playback.Coordinator.CountServerSessions(id));
+    }
+
+    // Makes the registry keep a login, as a call would, with the token of the saved user.
+    private async Task KeepLoginAsync(Guid id)
+    {
+        await _fixture.Registry.RunWithSessionAsync(id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
+        _fixture.Handler.Requests.Clear();
     }
 
     private static Mock<IServerRenamer> Renamer(ServerRenameState state)
