@@ -40,12 +40,14 @@ public class StubLookupTests
     }
 
     [Fact]
-    public void WhileTheSettingsCannotBeReadAFilmLinkedToAStrmHasVersions()
+    public void WhileTheSettingsCannotBeReadAFilmLinkedToAStrmHasVersionsAndTwoLocalOnesStayStock()
     {
         var strm = Item("/federata/S/Film/A/A.strm");
         var local = Item("/media/film/A.mkv");
         local.LinkedAlternateVersions = [new LinkedChild { ItemId = strm.Id }];
         var alone = Item("/media/film/B.mkv");
+        var other = Item("/media/film/B 4K.mkv");
+        alone.LinkedAlternateVersions = [new LinkedChild { ItemId = other.Id }];
         _store.Unavailable = true;
 
         Assert.True(Lookup().HasVersions(local.Id));
