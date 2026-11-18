@@ -22,6 +22,9 @@ internal sealed class ConfigurationRows
     private const string HiddenReleasedLibrary = "hidden_released_library";
     private const string CreatedLibrary = "created_library";
 
+    // The positions of the adopted libraries in the list of a server, so no schema step is needed (§10 row 441).
+    private const string AdoptedLibrary = "adopted_library";
+
     private static readonly Setting[] _settings =
     [
         Number(nameof(PluginConfiguration.SyncIntervalSeconds), config => config.SyncIntervalSeconds, (config, value) => config.SyncIntervalSeconds = value),
@@ -82,6 +85,7 @@ internal sealed class ConfigurationRows
             serverValues.AddRange(Values(id, ReleasedLibrary, server.ReleasedAutomaticLibraries));
             serverValues.AddRange(Values(id, CreatedLibrary, server.CreatedLibraryKeys));
             automatic.AddRange(Libraries(id, server.AutomaticLibraryRegistry));
+            serverValues.AddRange(Values(id, AdoptedLibrary, AdoptedPositions(server.AutomaticLibraryRegistry)));
             remoteLibraries.AddRange(server.RemoteLibraries.Select((library, position) => Row(id, position, library.Id, library.Name, library.CollectionType)));
             pendingLibraries.AddRange(server.PendingLibraries.Select((library, position)
                 => Row(id, position, library.Kind.ToString(), library.Name, library.RemoteLibraryId, JsonSerializer.Serialize(library.Paths))));
@@ -99,6 +103,7 @@ internal sealed class ConfigurationRows
             removedValues.AddRange(Values(id, ReleasedLibrary, held.ReleasedLibraries));
             removedValues.AddRange(Values(id, HiddenReleasedLibrary, held.HiddenReleasedLibraries));
             removedLibraries.AddRange(Libraries(id, held.Libraries));
+            removedValues.AddRange(Values(id, AdoptedLibrary, AdoptedPositions(held.Libraries)));
         }
 
         var migration = config.LayoutMigration;
@@ -206,6 +211,7 @@ internal sealed class ConfigurationRows
             Fill(server.ReleasedAutomaticLibraries, serverValues, id, ReleasedLibrary);
             Fill(server.CreatedLibraryKeys, serverValues, id, CreatedLibrary);
             Fill(server.AutomaticLibraryRegistry, automatic, id);
+            MarkAdopted(server.AutomaticLibraryRegistry, serverValues, id);
 
             // A library kept by an older version, or by its imported files, counts as made, so one deleted is never made again.
             foreach (var key in server.AutomaticLibraryRegistry.Select(record => record.KeyOf()).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
@@ -240,6 +246,7 @@ internal sealed class ConfigurationRows
             Fill(held.ReleasedLibraries, removedValues, id, ReleasedLibrary);
             Fill(held.HiddenReleasedLibraries, removedValues, id, HiddenReleasedLibrary);
             Fill(held.Libraries, removedLibraries, id);
+            MarkAdopted(held.Libraries, removedValues, id);
             config.RemovedServerLibraries.Add(held);
         }
 
@@ -318,6 +325,21 @@ internal sealed class ConfigurationRows
         foreach (var row in lists[(owner, list)].OrderBy(row => (long)row[2]))
         {
             target.Add((string)row[3]);
+        }
+    }
+
+    private static IEnumerable<string> AdoptedPositions(IEnumerable<AutomaticLibraryConfig> libraries)
+        => libraries.Select((library, position) => (library.Adopted, position)).Where(pair => pair.Adopted).Select(pair => pair.position.ToString(CultureInfo.InvariantCulture));
+
+    // Marks as adopted the libraries at the positions kept for them, read in the order of their positions.
+    private static void MarkAdopted(Collection<AutomaticLibraryConfig> target, ILookup<(string Owner, string List), object[]> lists, string owner)
+    {
+        foreach (var row in lists[(owner, AdoptedLibrary)])
+        {
+            if (int.TryParse((string)row[3], NumberStyles.None, CultureInfo.InvariantCulture, out var position) && position < target.Count)
+            {
+                target[position].Adopted = true;
+            }
         }
     }
 
