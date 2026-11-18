@@ -91,17 +91,21 @@ public sealed partial class ServerLibraryManager
             .OfType<VirtualFolderInfo>()
             .ToHashSet();
 
-        // One made and never recorded, as after a crash, passes as the own library of a server with the switch on that lacks
-        // it; one there at switch-on or left to the admin is the admin's (§10 row 393).
+        // One made and never recorded, as after a crash, passes as the own library of a server with a mode that lacks it; one
+        // there at switch-on or left to the admin is the admin's (§10 row 393).
         var unrecorded = config.Servers.Any(server =>
         {
             var preexisting = IdSet(server.PreexistingLibraryIds);
-            return server.AutomaticLibraries && _kinds.Any(kind =>
-                server.AutomaticLibraryRegistry.All(record => record.Kind != kind)
+            // While the remote libraries are not known yet, each kind may still get one.
+            var wanted = server.RemoteLibraries.Count == 0
+                ? _kinds.Select(kind => (Key: kind.ToString(), Kind: kind, RemoteLibraryId: string.Empty)).ToList()
+                : LibraryPlan.For(server, root, false).Select(planned => (planned.Key, planned.Kind, planned.RemoteLibraryId)).ToList();
+            return server.AutomaticLibraries && wanted.Any(planned =>
+                server.AutomaticLibraryRegistry.All(record => !string.Equals(KeyOf(record), planned.Key, StringComparison.OrdinalIgnoreCase))
                 && folders.Any(folder => !automatic.Contains(folder)
                     && !preexisting.Contains(folder.ItemId ?? string.Empty)
                     && !server.ReleasedAutomaticLibraries.Contains(folder.Name, StringComparer.Ordinal)
-                    && Passes(folder, kind, root, server.Id)));
+                    && Passes(folder, planned.Kind, planned.RemoteLibraryId, root, server.Id)));
         });
         return unrecorded ? null : new PlacementLibraries(folders, automatic);
     });
@@ -110,7 +114,7 @@ public sealed partial class ServerLibraryManager
     private static bool PassesAsHeld(VirtualFolderInfo folder, RemovedServerLibrariesConfig held, string root) =>
         !(folder.ItemId is { Length: > 0 } id && held.PreexistingLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase))
         && !held.ReleasedLibraries.Contains(folder.Name, StringComparer.Ordinal)
-        && _kinds.Any(kind => Passes(folder, kind, root, held.ServerId));
+        && _kinds.Any(kind => Passes(folder, kind, string.Empty, root, held.ServerId));
 
     // A complete follow covers the checks of the syncs that found the gate held meanwhile; otherwise their mark is made now.
     private void EndPlacementFollow(bool followed)

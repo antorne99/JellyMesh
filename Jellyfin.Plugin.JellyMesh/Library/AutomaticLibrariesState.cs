@@ -16,4 +16,11 @@ public sealed record AutomaticLibrariesState(
     bool Busy,
     IReadOnlyList<AutomaticLibraryStatus> Libraries,
     IReadOnlyList<string> Released,
-    AutomaticLibrariesError Error);
+    AutomaticLibrariesError Error)
+{
+    /// <summary>Gets the library mode of the server.</summary>
+    public LibraryMode Mode { get; init; }
+
+    /// <summary>Gets the folders of the server to add to libraries by hand in "none" mode, each with the type it needs.</summary>
+    public IReadOnlyList<ManualLibraryPath> ManualPaths { get; init; } = [];
+}

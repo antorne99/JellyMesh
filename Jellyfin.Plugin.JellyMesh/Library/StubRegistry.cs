@@ -95,6 +95,15 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             : StubLayout.TypeFoldersOf(lookup.State, serverId, type);
     }
 
+    /// <inheritdoc />
+    public bool? UsesOlderLayout()
+    {
+        var lookup = _lookup;
+        return !lookup.TitlesKnown || !_loaded || _database.Generation != Interlocked.Read(ref _readGeneration)
+            ? null
+            : StubLayout.IsLegacy(lookup.State);
+    }
+
     /// <summary>
     /// Finds the episode stubs of a remote series on one server, through the series stubs it is a source of (decision 51).
     /// </summary>

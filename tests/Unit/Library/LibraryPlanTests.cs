@@ -99,10 +99,26 @@ public sealed class LibraryPlanTests
     [Fact]
     public void TheManualPathsOfAServerAreTheTypeFoldersOfItsImportedLibraries()
     {
-        var paths = LibraryPlan.ManualPaths(Server(LibraryMode.None, (Films, "Film", "movies"), (Shows, "Serie TV", "tvshows")), Root);
+        var paths = LibraryPlan.ManualPaths(Server(LibraryMode.None, (Films, "Film", "movies"), (Shows, "Serie TV", "tvshows")), Root, olderLayout: false);
 
         Assert.Equal(
             [(Folder(Films, "Film"), "movies", "Film"), (Folder(Shows, "Serie"), "tvshows", "Serie TV")],
             paths.Select(path => (path.Path, path.LibraryType, path.RemoteLibrary)));
+    }
+
+    [Fact]
+    public void InTheOlderLayoutTheManualPathsAreTheFoldersOfTheServerForTheTypesPresent()
+    {
+        var paths = LibraryPlan.ManualPaths(Server(LibraryMode.None, (Films, "Film", "movies"), (Films4K, "Film 4K", "movies")), Root, olderLayout: true);
+
+        Assert.Equal([($"{Root}/{_serverId:D}/Film", "movies")], paths.Select(path => (path.Path, path.LibraryType)));
+    }
+
+    [Fact]
+    public void TheTypeFoldersOfAServerAreThoseOfItsImportedLibraries()
+    {
+        Assert.Equal(
+            [$"{_serverId:D}/{Films}/Film", $"{_serverId:D}/{Shows}/Serie"],
+            LibraryPlan.TypeFolders(Server(LibraryMode.None, (Films, "Film", "movies"), (Shows, "Serie TV", "tvshows"))));
     }
 }

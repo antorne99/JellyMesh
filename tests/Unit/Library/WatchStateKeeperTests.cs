@@ -613,7 +613,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         await RemoveAsync(a, MaterializerWith(keeper));
         await manager.DeleteRemovedServerLibraries();
 
-        Assert.Equal(2, created.Count);
+        Assert.Single(created);
         Assert.Empty(libraries.Removed);
         Assert.Single(_fixture.Registry.State.Stubs);
 

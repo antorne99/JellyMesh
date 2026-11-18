@@ -30,7 +30,7 @@ internal static class LibraryPlan
                     string.Empty,
                     TypeOf(kind).Name,
                     olderLayout
-                        ? [kind == ServerLibraryKind.Series ? FederatedFolderLayout.ServerSeriesPath(root, server.Id) : FederatedFolderLayout.ServerMoviesPath(root, server.Id)]
+                        ? [ServerFolderOf(kind, root, server.Id)]
                         : [.. imported.Where(library => library.Kind == kind).Select(library => library.Path(root, server.Id))]))];
             case LibraryMode.ByRemoteLibrary when !olderLayout:
                 return [.. imported.Select(library => new PlannedLibrary(library.Id, library.Kind, library.Id, library.Name, [library.Path(root, server.Id)]))];
@@ -44,12 +44,38 @@ internal static class LibraryPlan
     /// </summary>
     /// <param name="server">The server.</param>
     /// <param name="root">The federated folder.</param>
+    /// <param name="olderLayout">Whether its titles are still in the 0.5 layout, where only the folders of the server exist.</param>
     /// <returns>Each folder with the local library type it needs.</returns>
-    public static IReadOnlyList<ManualLibraryPath> ManualPaths(RemoteServerConfig server, string root)
+    public static IReadOnlyList<ManualLibraryPath> ManualPaths(RemoteServerConfig server, string root, bool olderLayout)
     {
         ArgumentNullException.ThrowIfNull(server);
-        return [.. Imported(server).Select(library => new ManualLibraryPath(library.Path(root, server.Id), TypeOf(library.Kind).LibraryType.ToString(), library.Name))];
+        var imported = Imported(server);
+        return olderLayout
+            ? [.. KindsOf(imported).Select(kind => new ManualLibraryPath(ServerFolderOf(kind, root, server.Id), TypeOf(kind).LibraryType.ToString(), string.Empty))]
+            : [.. imported.Select(library => new ManualLibraryPath(library.Path(root, server.Id), TypeOf(library.Kind).LibraryType.ToString(), library.Name))];
     }
+
+    /// <summary>
+    /// Lists the type folders of the imported libraries of a server, relative to the federated folder.
+    /// </summary>
+    /// <param name="server">The server.</param>
+    /// <returns>The folders.</returns>
+    public static IReadOnlyList<string> TypeFolders(RemoteServerConfig server)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+        return [.. Imported(server).Select(library => FederatedPaths.TypeFolderOf(server.Id, library.Id, TypeOf(library.Kind)))];
+    }
+
+    /// <summary>
+    /// Gets the 0.5 folder of a server for a kind, which held its titles before the remote library layout.
+    /// </summary>
+    /// <param name="kind">The kind.</param>
+    /// <param name="root">The federated folder.</param>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The absolute folder.</returns>
+    public static string ServerFolderOf(ServerLibraryKind kind, string root, Guid serverId) => kind == ServerLibraryKind.Series
+        ? FederatedFolderLayout.ServerSeriesPath(root, serverId)
+        : FederatedFolderLayout.ServerMoviesPath(root, serverId);
 
     /// <summary>
     /// Gets the type folder of a kind of plugin library.

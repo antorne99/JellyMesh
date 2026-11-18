@@ -141,7 +141,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         try
         {
-            WriteServerFolders(root, _servers.GetServers(), _registry.State);
+            var servers = _servers.GetServers();
+            WriteServerFolders(root, servers, _registry.State, ConfiguredTypeFolders(servers));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -149,9 +150,16 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty. In
-    // the remote library layout they stay as the first path of its libraries, next to the type folders that hold stubs.
-    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers, StubState state)
+    // The type folders of the remote libraries each server imports, known from its last read of them.
+    private List<string> ConfiguredTypeFolders(IReadOnlyList<RemoteServerInfo> servers)
+    {
+        var ids = servers.Select(server => server.Id).ToHashSet();
+        return _store.Read(config => config.Servers.Where(server => ids.Contains(server.Id)).SelectMany(LibraryPlan.TypeFolders).ToList());
+    }
+
+    // The folders of a server and of its remote libraries exist before any library points at them, and a folder that holds
+    // nothing is never empty. The 0.5 server folders stay for the libraries that still hold them.
+    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers, StubState state, IReadOnlyList<string> configured)
     {
         WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
         WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
@@ -166,7 +174,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             return;
         }
 
-        foreach (var folder in servers.SelectMany(server => TypeFolder.Written.SelectMany(type => StubLayout.TypeFoldersOf(state, server.Id, type))))
+        foreach (var folder in servers.SelectMany(server => TypeFolder.Written.SelectMany(type => StubLayout.TypeFoldersOf(state, server.Id, type))).Concat(configured))
         {
             WriteHiddenFile(root, folder);
         }
@@ -257,7 +265,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             KeepsOlderLayout = !StubLayout.IsLegacy(state) && StubLayout.HasOlderStubFiles(root)
         });
 
-        WriteServerFolders(root, servers, plan.State);
+        WriteServerFolders(root, servers, plan.State, ConfiguredTypeFolders(servers));
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 

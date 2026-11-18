@@ -18,5 +18,8 @@ public enum AutomaticLibrariesOutcome
     ConfirmationRequired,
 
     /// <summary>A creation or a deletion is already running for the server.</summary>
-    Busy
+    Busy,
+
+    /// <summary>The server has libraries in another mode, which only the Edit form changes, or the mode asked is none.</summary>
+    ModeChangeNotAllowed
 }

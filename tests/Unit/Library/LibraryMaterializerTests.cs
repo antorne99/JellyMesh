@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -444,6 +445,7 @@ public sealed class LibraryMaterializerTests : IDisposable
                 StubFixture.InServer(a, "Serie", ".jellymesh"),
                 StubFixture.InServer(b, "Film", ".jellymesh"),
                 StubFixture.InServer(b, "Serie", ".jellymesh"),
+                Path.Combine(FederatedPaths.TypeFolderOf(b.Id, TestLibraries.Films, TypeFolder.Movies), ".jellymesh"),
                 Path.Combine("Film", ".jellymesh"),
                 Path.Combine("Serie", ".jellymesh")
             }.Order(StringComparer.Ordinal),
@@ -466,6 +468,21 @@ public sealed class LibraryMaterializerTests : IDisposable
                 Path.Combine("Serie", ".jellymesh")
             }.Order(StringComparer.Ordinal),
             _fixture.Files);
+    }
+
+    [Fact]
+    public async Task TheTypeFoldersOfTheImportedRemoteLibrariesAreWrittenBeforeTheirTitles()
+    {
+        var a = await _fixture.Sync.AddServerAsync("A");
+        var server = _fixture.Sync.Store.Configuration.Servers.Single(candidate => candidate.Id == a.Id);
+        server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Films, Name = "Film", CollectionType = "movies" });
+        server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Shows, Name = "Serie", CollectionType = "tvshows" });
+        server.ImportedLibraryIds.Add(TestLibraries.Films);
+
+        _fixture.Materializer.PrepareServerFolders();
+
+        Assert.Contains(Path.Combine(FederatedPaths.TypeFolderOf(a.Id, TestLibraries.Films, TypeFolder.Movies), ".jellymesh"), _fixture.Files);
+        Assert.DoesNotContain(_fixture.Files, file => file.Contains(TestLibraries.Shows, StringComparison.Ordinal));
     }
 
     [Fact]
