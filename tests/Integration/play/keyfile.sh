@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Decision 42: the credential key moves from JELLYMESH_SECRET_KEY to a file. A consumer on 0.3.0.0 with the variable is
-# upgraded to the current build with the variable still set, restarted without it, then loses its key file.
+# upgraded to the current build with the variable still set, restarted without it, then loses its key file. The upgrade
+# also moves the settings into the plugin database first, with the password as it was (§10 row 426).
 # usage: MEDIA=<main checkout>/tests/Integration/media keyfile.sh   (leaves the containers up; lib.sh has down)
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -24,16 +25,17 @@ NUGET_VOLUME=jellymesh-nuget bash "$OLD/tests/Integration/scripts/install-plugin
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+old_settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
 import_all local "$id"
 sync_now local
 scan local
 stubs_before=$(docker exec "$PREFIX-local" sh -c 'find /federata/Film -name "*.strm" | sort')
 check "0.3.0.0 made stubs" true "$([ -n "$stubs_before" ] && echo true || echo false)"
-# blob: the saved password as the plugin XML holds it. The API never shows it.
-blob() { docker exec "$PREFIX-local" sh -c 'grep -o "<EncryptedCredentials>[^<]*" /config/plugins/configurations/Jellyfin.Plugin.JellyMesh.xml'; }
-blob_before=$(blob)
+# The saved password as the old XML holds it, and as the database holds it after the upgrade. The API never shows it.
+xml_blob() { docker exec "$PREFIX-local" sh -c "grep -o '<EncryptedCredentials>[^<]*' '$1' | sed 's/<EncryptedCredentials>//'"; }
+blob() { db_query local "select encrypted_credentials from servers;"; }
+blob_before=$(xml_blob "$OLD_XML")
 
 # relaunch [env...]: the same volumes in a new container, so its environment can change.
 relaunch() {
@@ -54,7 +56,11 @@ sleep 3
 wait_ready local
 login local
 check "after the upgrade the key works and the old variable is reported" "Ok suspended=false legacy=true needs=false" "$(status_line)"
-check "the saved password was encrypted again" true "$([ "$(blob)" != "$blob_before" ] && echo true || echo false)"
+check "the old XML left the configurations folder" gone "$(docker exec "$PREFIX-local" sh -c "test -e '$OLD_XML' && echo there || echo gone")"
+check "it is kept in migrated-0.5 as it was" "$blob_before" "$(xml_blob "$DATA/migrated-0.5/Jellyfin.Plugin.JellyMesh.xml")"
+check "migrated-0.5 is its owner's only" "drwx------" "$(docker exec "$PREFIX-local" sh -c "ls -ld '$DATA/migrated-0.5' | cut -c1-10")"
+check "the database holds one server" 1 "$(blob | grep -c . || true)"
+check "the saved password was encrypted again, in the database" true "$([ -n "$(blob)" ] && [ "$(blob)" != "$blob_before" ] && echo true || echo false)"
 check "the key file exists, readable by its owner only" "-rw-------" "$(docker exec "$PREFIX-local" sh -c "ls -l \"$(key_file)\" | cut -c1-10")"
 check "the key is in no log" 0 "$(docker exec "$PREFIX-local" sh -c "grep -rlF \"\$(cat \"$(key_file)\")\" /config/log | wc -l" | tr -d ' ')"
 check "a sync runs" 202 "$(post local /JellyMesh/Admin/Sync >/dev/null; status)"

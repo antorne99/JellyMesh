@@ -10,6 +10,7 @@ MEDIA=${MEDIA:-$WT/tests/Integration/media}
 WORK=${WORK:-${TMPDIR:-/tmp}/jm-dedup-work}
 IMAGE=$(awk '/image:/ {print $2; exit}' "$WT/tests/Integration/docker-compose.yml")
 NETWORK=jm-dedup-net
+PLUGIN=28c43ea1-fb5a-4b3a-8e6e-30aa3245c653
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshDedup", Device="dedup", DeviceId="jm-dedup-admin", Version="0.1"'
 DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'
@@ -125,6 +126,12 @@ install_plugin() {
   sleep 3
   wait_ready "$1"
   login "$1"
+}
+
+configure_old() { # configure_old <server> <metadata protection>: the same on a build before 0.6, through the stock plugin XML
+  local cfg
+  cfg=$(get "$1" "/Plugins/$PLUGIN/Configuration" | jq --argjson p "$2" '.FederatedFolderPath = "/federata" | .MetadataProtection = $p')
+  post "$1" "/Plugins/$PLUGIN/Configuration" "$cfg" >/dev/null
 }
 
 configure() { # configure <server> <metadata protection>
