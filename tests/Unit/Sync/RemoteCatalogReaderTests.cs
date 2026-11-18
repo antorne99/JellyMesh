@@ -494,7 +494,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
-    public async Task AnItemInTwoChosenLibrariesKeepsBothWithTheFirstReadFirst()
+    public async Task AnItemInTwoChosenLibrariesKeepsBothInIdOrder()
     {
         _fixture.Client.Libraries.Add(new("films4k", "Film 4K", "movies"));
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
@@ -520,7 +520,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
 
         var result = await _fixture.Reader.ReadFeedAsync(server, "start", new System.Collections.Generic.HashSet<string>(), SyncFixture.Start, CancellationToken.None);
 
-        Assert.Equal(["films4k", "films"], Assert.Single(result.Value!.Items).LibraryIds);
+        Assert.Equal(["films", "films4k"], Assert.Single(result.Value!.Items).LibraryIds);
     }
 
     [Fact]

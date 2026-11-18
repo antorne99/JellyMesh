@@ -286,23 +286,21 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
     }
 
-    // An entry already read from another imported library keeps that library first and gains this one.
+    // An entry already read from another imported library gains this one, kept in id order as the feed does.
     private static void Add(Dictionary<string, IndexedItem> entries, IEnumerable<RemoteItem> items, RemoteItemType type, string libraryId, DateTimeOffset seenUtc)
     {
         foreach (var item in items)
         {
-            if (entries.TryGetValue(item.Id, out var known) && !string.Equals(known.LibraryId, libraryId, StringComparison.Ordinal))
-            {
-                if (!known.OtherLibraryIds.Contains(libraryId, StringComparer.Ordinal))
-                {
-                    entries[item.Id] = known with { OtherLibraryIds = [.. known.OtherLibraryIds, libraryId] };
-                }
-
-                continue;
-            }
-
-            entries[item.Id] = RemoteItemMapper.ToIndexedItem(item, type, libraryId, seenUtc) with { OtherLibraryIds = known?.OtherLibraryIds ?? [] };
+            var entry = RemoteItemMapper.ToIndexedItem(item, type, libraryId, seenUtc);
+            entries[item.Id] = entries.TryGetValue(item.Id, out var known) ? WithLibraries(entry, [.. known.LibraryIds, libraryId]) : entry;
         }
+    }
+
+    // Sets the libraries of an entry in ordinal id order, so that both reads give the same first library.
+    private static IndexedItem WithLibraries(IndexedItem entry, IEnumerable<string> libraryIds)
+    {
+        var ordered = libraryIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        return entry with { LibraryId = ordered[0], OtherLibraryIds = ordered[1..] };
     }
 
     private static bool ViaProvider(RemoteServerInfo server) => server.Mode == RemoteMode.JellyMesh;
@@ -328,7 +326,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         var wanted = changes
             .Select(change => (change.Id, Libraries: change.LibraryIds.Where(server.ImportedLibraryIds.Contains).Distinct(StringComparer.Ordinal).ToList(), Known: Enum.TryParse<RemoteItemType>(change.Type, out var type), Type: type))
             .Where(change => change.Libraries.Count > 0 && change.Known)
-            .Select(change => (change.Id, Library: change.Libraries[0], Others: change.Libraries.Skip(1).ToList(), change.Type))
+            .Select(change => (change.Id, Library: change.Libraries.Min(StringComparer.Ordinal)!, Libraries: change.Libraries, change.Type))
             .ToList();
 
         foreach (var group in wanted.GroupBy(change => (change.Library, change.Type)))
@@ -354,11 +352,11 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
             }
         }
 
-        foreach (var change in wanted.Where(change => change.Others.Count > 0))
+        foreach (var change in wanted.Where(change => change.Libraries.Count > 1))
         {
             if (entries.TryGetValue(change.Id, out var entry))
             {
-                entries[change.Id] = entry with { OtherLibraryIds = change.Others };
+                entries[change.Id] = WithLibraries(entry, change.Libraries);
             }
         }
 
