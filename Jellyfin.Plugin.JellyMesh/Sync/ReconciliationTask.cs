@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Sync;
 
 /// <summary>
 /// Reads every remote in full at the configured time, which is what catches deletions (plan §3.1), then copies the plugin
-/// database (row 427) and deletes the damaged files past their 30 days (D35).
+/// database (row 427), empties its log and deletes the damaged files past their 30 days (D35).
 /// </summary>
 public sealed class ReconciliationTask : SyncTask
 {
@@ -66,6 +66,7 @@ public sealed class ReconciliationTask : SyncTask
             if (!cancellationToken.IsCancellationRequested)
             {
                 await BackUpAsync(cancellationToken).ConfigureAwait(false);
+                await EmptyLogAsync(cancellationToken).ConfigureAwait(false);
                 await DeleteExpiredDamagedAsync(cancellationToken).ConfigureAwait(false);
             }
         }
@@ -85,6 +86,26 @@ public sealed class ReconciliationTask : SyncTask
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogWarning("The nightly copy of the JellyMesh database failed: {Error}", exception.Message);
+        }
+    }
+
+    // Empties the database log at least once a night, so no replaced credential outlives a busy log; never fails the reconciliation.
+    private async Task EmptyLogAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!await _database.TruncateWalAsync(cancellationToken).ConfigureAwait(false))
+            {
+                _logger.LogDebug("The JellyMesh database log was busy after the nightly copy; it is emptied at the next chance");
+            }
+        }
+        catch (StoreSuspendedException)
+        {
+            _logger.LogWarning("The JellyMesh database log was not emptied: the database is suspended");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("The JellyMesh database log could not be emptied: {Error}", exception.Message);
         }
     }
 

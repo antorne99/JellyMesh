@@ -357,6 +357,24 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return reader.Read() && reader.GetInt64(0) == 0;
     }
 
+    // Empties a log a crash left behind, which may hold replaced credentials; a busy or failed checkpoint never stops the open.
+    private void EmptyLogAtOpen(SqliteConnection writer)
+    {
+        try
+        {
+            using var command = Command(writer, "PRAGMA wal_checkpoint(TRUNCATE);");
+            using var reader = command.ExecuteReader();
+            if (reader.Read() && reader.GetInt64(0) != 0)
+            {
+                _logger.LogDebug("The JellyMesh database log was busy at open; it is emptied at the next credential change or nightly copy");
+            }
+        }
+        catch (SqliteException exception)
+        {
+            _logger.LogWarning("The JellyMesh database log could not be emptied at open: {Error}", exception.Message);
+        }
+    }
+
     // VACUUM INTO makes its file 0644 and refuses one that is not empty (F23), so it fills an empty private file, under a
     // name a recovery never takes until it is complete. It runs outside any transaction, on the writer with the gate held.
     private StoreBackup BackUp()
@@ -555,6 +573,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             }
 
             Migrate(writer, version);
+            EmptyLogAtOpen(writer);
 
             // A read in WAL mode makes the log files when nothing was written. SQLite gives them the mode of the database on
             // Unix and the folder's access list on Windows, so they are narrowed here, before the store is healthy.
