@@ -23,7 +23,13 @@ public static class SchemaMigrations
             Library.StubTables.Create(connection, transaction);
         }),
         new(SmallStateSchema.Version, SmallStateSchema.Apply),
-        new(4, ConfigurationTables.Create)
+        new(4, ConfigurationTables.Create),
+
+        // Reserved for the data migration of F32, which takes step 5; the steps are renumbered when the phases merge.
+        new(5, static (_, _) => { }),
+
+        // The library modes (F39).
+        new(6, ConfigurationTables.AddLibraryModes)
     ];
 
     /// <summary>

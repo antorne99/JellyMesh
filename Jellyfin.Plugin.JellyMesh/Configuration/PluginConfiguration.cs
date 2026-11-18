@@ -101,6 +101,11 @@ public class PluginConfiguration
     public int PolicyCacheMinutes { get; set; } = (int)PlaybackTimeouts.PolicyRetention.TotalMinutes;
 
     /// <summary>
+    /// Gets or sets the library mode a server added from now on starts with, preselected in the add form (§10 row 437).
+    /// </summary>
+    public LibraryMode NewServerLibraryMode { get; set; } = LibraryMode.ByType;
+
+    /// <summary>
     /// Gets the configured remote servers.
     /// </summary>
     public Collection<RemoteServerConfig> Servers { get; } = [];
@@ -218,6 +223,11 @@ public class PluginConfiguration
         if (!TimeOnly.TryParseExact(ReconciliationTime, ReconciliationTimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
         {
             throw new ArgumentException("The reconciliation time must use the HH:mm format.", nameof(ReconciliationTime));
+        }
+
+        if (!Enum.IsDefined(NewServerLibraryMode))
+        {
+            throw new ArgumentException("The library mode of new servers must be ByType, ByRemoteLibrary or None.", nameof(NewServerLibraryMode));
         }
 
         if (FederatedFolderPath.Length > 0 && !IsUsableFolder(FederatedFolderPath))

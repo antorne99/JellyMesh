@@ -19,6 +19,7 @@ internal sealed class ConfigurationRows
     private const string FollowedLibrary = "followed_library";
     private const string ReleasedLibrary = "released_library";
     private const string HiddenReleasedLibrary = "hidden_released_library";
+    private const string CreatedLibrary = "created_library";
 
     private static readonly Setting[] _settings =
     [
@@ -32,7 +33,11 @@ internal sealed class ConfigurationRows
         Number(nameof(PluginConfiguration.StreamOpenTimeoutSeconds), config => config.StreamOpenTimeoutSeconds, (config, value) => config.StreamOpenTimeoutSeconds = value),
         Number(nameof(PluginConfiguration.PlaybackIdleSeconds), config => config.PlaybackIdleSeconds, (config, value) => config.PlaybackIdleSeconds = value),
         Number(nameof(PluginConfiguration.SessionRetentionHours), config => config.SessionRetentionHours, (config, value) => config.SessionRetentionHours = value),
-        Number(nameof(PluginConfiguration.PolicyCacheMinutes), config => config.PolicyCacheMinutes, (config, value) => config.PolicyCacheMinutes = value)
+        Number(nameof(PluginConfiguration.PolicyCacheMinutes), config => config.PolicyCacheMinutes, (config, value) => config.PolicyCacheMinutes = value),
+        Text(
+            nameof(PluginConfiguration.NewServerLibraryMode),
+            config => config.NewServerLibraryMode.ToString(),
+            (config, value) => config.NewServerLibraryMode = Enum.TryParse<LibraryMode>(value, out var mode) && Enum.IsDefined(mode) ? mode : config.NewServerLibraryMode)
     ];
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<object[]>> _tables;
@@ -64,15 +69,18 @@ internal sealed class ConfigurationRows
         var servers = new List<object[]>();
         var serverValues = new List<object[]>();
         var automatic = new List<object[]>();
+        var remoteLibraries = new List<object[]>();
         foreach (var (server, position) in config.Servers.DistinctBy(server => server.Id).Select((server, position) => (server, position)))
         {
             var id = Id(server.Id);
-            servers.Add(Row(id, position, server.JellyfinServerId, server.Name, server.Url, server.EncryptedCredentials, server.Mode.ToString(), server.ProtocolVersion, server.AutomaticLibraries, server.FollowSkipped, server.RenameUnfinished));
+            servers.Add(Row(id, position, server.JellyfinServerId, server.Name, server.Url, server.EncryptedCredentials, server.Mode.ToString(), server.ProtocolVersion, server.AutomaticLibraries, server.FollowSkipped, server.RenameUnfinished, server.LibraryMode.ToString()));
             serverValues.AddRange(Values(id, ImportedLibrary, server.ImportedLibraryIds));
             serverValues.AddRange(Values(id, PreexistingLibrary, server.PreexistingLibraryIds));
             serverValues.AddRange(Values(id, FollowedLibrary, server.FollowedLibraryIds));
             serverValues.AddRange(Values(id, ReleasedLibrary, server.ReleasedAutomaticLibraries));
+            serverValues.AddRange(Values(id, CreatedLibrary, server.CreatedLibraryKeys));
             automatic.AddRange(Libraries(id, server.AutomaticLibraryRegistry));
+            remoteLibraries.AddRange(server.RemoteLibraries.Select((library, position) => Row(id, position, library.Id, library.Name, library.CollectionType)));
         }
 
         var removed = new List<object[]>();
@@ -97,6 +105,7 @@ internal sealed class ConfigurationRows
             [ConfigurationTables.Servers] = servers,
             [ConfigurationTables.ServerValues] = serverValues,
             [ConfigurationTables.ServerAutomaticLibraries] = automatic,
+            [ConfigurationTables.ServerRemoteLibraries] = remoteLibraries,
             [ConfigurationTables.RemovedServers] = removed,
             [ConfigurationTables.RemovedServerValues] = removedValues,
             [ConfigurationTables.RemovedServerLibraries] = removedLibraries,
@@ -166,6 +175,7 @@ internal sealed class ConfigurationRows
 
         var serverValues = Lists(ConfigurationTables.ServerValues);
         var automatic = LibrariesOf(ConfigurationTables.ServerAutomaticLibraries);
+        var remote = LibrariesOf(ConfigurationTables.ServerRemoteLibraries);
         foreach (var row in Rows(ConfigurationTables.Servers).OrderBy(row => (long)row[1]))
         {
             var id = (string)row[0];
@@ -178,7 +188,9 @@ internal sealed class ConfigurationRows
                 EncryptedCredentials = (string)row[5],
                 Mode = Enum.TryParse<RemoteMode>((string)row[6], out var mode) ? mode : RemoteMode.Unknown,
                 ProtocolVersion = (int)(long)row[7],
-                AutomaticLibraries = (long)row[8] != 0,
+                LibraryMode = Enum.TryParse<LibraryMode>((string)row[11], out var libraryMode) && Enum.IsDefined(libraryMode)
+                    ? libraryMode
+                    : (long)row[8] != 0 ? LibraryMode.ByType : LibraryMode.None,
                 FollowSkipped = (long)row[9] != 0,
                 RenameUnfinished = (long)row[10] != 0
             };
@@ -186,7 +198,13 @@ internal sealed class ConfigurationRows
             Fill(server.PreexistingLibraryIds, serverValues, id, PreexistingLibrary);
             Fill(server.FollowedLibraryIds, serverValues, id, FollowedLibrary);
             Fill(server.ReleasedAutomaticLibraries, serverValues, id, ReleasedLibrary);
+            Fill(server.CreatedLibraryKeys, serverValues, id, CreatedLibrary);
             Fill(server.AutomaticLibraryRegistry, automatic, id);
+            foreach (var library in remote[id].OrderBy(library => (long)library[1]))
+            {
+                server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = (string)library[2], Name = (string)library[3], CollectionType = (string)library[4] });
+            }
+
             config.Servers.Add(server);
         }
 
@@ -248,7 +266,7 @@ internal sealed class ConfigurationRows
         => values.Select((value, position) => Row(owner, list, position, value));
 
     private static IEnumerable<object[]> Libraries(string owner, IEnumerable<AutomaticLibraryConfig> libraries)
-        => libraries.Select((library, position) => Row(owner, position, library.Kind.ToString(), library.Name, library.ItemId));
+        => libraries.Select((library, position) => Row(owner, position, library.Kind.ToString(), library.Name, library.ItemId, library.RemoteLibraryId));
 
     private static void Fill(Collection<string> target, ILookup<(string Owner, string List), object[]> lists, string owner, string list)
     {
@@ -266,7 +284,8 @@ internal sealed class ConfigurationRows
             {
                 Kind = Enum.TryParse<ServerLibraryKind>((string)row[2], out var kind) ? kind : default,
                 Name = (string)row[3],
-                ItemId = (string)row[4]
+                ItemId = (string)row[4],
+                RemoteLibraryId = (string)row[5]
             });
         }
     }

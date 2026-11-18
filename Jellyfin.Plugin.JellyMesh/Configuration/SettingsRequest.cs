@@ -40,6 +40,9 @@ public sealed class SettingsRequest
     /// <summary>Gets or sets <see cref="PluginConfiguration.PolicyCacheMinutes"/>.</summary>
     public int? PolicyCacheMinutes { get; set; }
 
+    /// <summary>Gets or sets <see cref="PluginConfiguration.NewServerLibraryMode"/>.</summary>
+    public LibraryMode? NewServerLibraryMode { get; set; }
+
     /// <summary>
     /// Takes every setting of a configuration, so that applying it puts them back.
     /// </summary>
@@ -60,7 +63,8 @@ public sealed class SettingsRequest
             StreamOpenTimeoutSeconds = config.StreamOpenTimeoutSeconds,
             PlaybackIdleSeconds = config.PlaybackIdleSeconds,
             SessionRetentionHours = config.SessionRetentionHours,
-            PolicyCacheMinutes = config.PolicyCacheMinutes
+            PolicyCacheMinutes = config.PolicyCacheMinutes,
+            NewServerLibraryMode = config.NewServerLibraryMode
         };
     }
 
@@ -82,5 +86,6 @@ public sealed class SettingsRequest
         config.PlaybackIdleSeconds = PlaybackIdleSeconds ?? config.PlaybackIdleSeconds;
         config.SessionRetentionHours = SessionRetentionHours ?? config.SessionRetentionHours;
         config.PolicyCacheMinutes = PolicyCacheMinutes ?? config.PolicyCacheMinutes;
+        config.NewServerLibraryMode = NewServerLibraryMode ?? config.NewServerLibraryMode;
     }
 }
