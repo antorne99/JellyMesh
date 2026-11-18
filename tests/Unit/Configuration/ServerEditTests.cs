@@ -296,4 +296,145 @@ public sealed class ServerEditTests : IDisposable
 
         Assert.Equal(StatusCodes.Status404NotFound, Refusal(result).Status);
     }
+
+    [Fact]
+    public async Task A_save_writes_every_field_in_one_save()
+    {
+        var id = await AddAsync("1");
+        var saves = _fixture.Store.Saves;
+
+        var result = await Controller().SaveServerEdit(id, Edit(name: " Casa ", url: OtherUrl, user: "someone", password: "new-pass", libraries: ["2"]), CancellationToken.None);
+
+        var status = Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal("Casa", status.Name);
+        Assert.Equal(saves + 1, _fixture.Store.Saves);
+        var server = _fixture.Store.Configuration.Servers.Single();
+        Assert.Equal(("Casa", OtherUrl, FirstId), (server.Name, server.Url, server.JellyfinServerId));
+        Assert.Equal(["2"], server.ImportedLibraryIds);
+        var credentials = _fixture.Vault.Unprotect(id, server.EncryptedCredentials);
+        Assert.Equal(("someone", "new-pass"), (credentials!.Username, credentials.Password));
+    }
+
+    [Fact]
+    public async Task A_failed_save_puts_every_field_back_and_ends_the_new_login()
+    {
+        var id = await AddAsync("1");
+        var before = Snapshot();
+        _fixture.Store.SaveFailure = new InvalidOperationException("disk full");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Controller().SaveServerEdit(id, Edit(name: "Casa", url: OtherUrl, user: "someone", password: "new-pass", libraries: ["2"]), CancellationToken.None));
+
+        Assert.Equal(before, Snapshot());
+        var login = Requests.Last(request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+        Assert.Contains(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout" && DeviceOf(request) == DeviceOf(login));
+    }
+
+    [Fact]
+    public async Task A_failed_save_of_the_server_id_takes_it_back_out()
+    {
+        var id = await AddAsync("1");
+        _fixture.Store.Configuration.Servers.Single().JellyfinServerId = string.Empty;
+        _fixture.Store.SaveFailure = new InvalidOperationException("disk full");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Controller().SaveServerEdit(id, Edit(url: OtherUrl), CancellationToken.None));
+
+        Assert.Empty(_fixture.Store.Configuration.Servers.Single().JellyfinServerId);
+    }
+
+    [Fact]
+    public async Task A_server_saved_without_its_id_takes_the_one_read()
+    {
+        var id = await AddAsync("1");
+        _fixture.Store.Configuration.Servers.Single().JellyfinServerId = string.Empty;
+
+        var result = await Controller().SaveServerEdit(id, Edit(url: OtherUrl), CancellationToken.None);
+
+        Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal(FirstId, _fixture.Store.Configuration.Servers.Single().JellyfinServerId);
+    }
+
+    [Fact]
+    public async Task A_save_refuses_another_server_and_saves_nothing()
+    {
+        var id = await AddAsync("1");
+        var before = Snapshot();
+        var saves = _fixture.Store.Saves;
+        _serverId = OtherId;
+
+        var result = await Controller().SaveServerEdit(id, Edit(name: "Casa", url: OtherUrl, password: "new-pass"), CancellationToken.None);
+
+        var (status, failure) = Refusal(result);
+        Assert.Equal(StatusCodes.Status409Conflict, status);
+        Assert.Equal(RemoteFailure.OtherServer, failure.Failure);
+        Assert.Equal("Stranger box", failure.ServerName);
+        Assert.Equal(saves, _fixture.Store.Saves);
+        Assert.Equal(before, Snapshot());
+        Assert.Contains(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+    }
+
+    [Fact]
+    public async Task A_new_name_alone_is_saved_with_no_remote()
+    {
+        var id = await AddAsync("1");
+        _login = HttpStatusCode.ServiceUnavailable;
+
+        var result = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
+        Assert.Empty(Requests);
+    }
+
+    [Fact]
+    public async Task An_unreachable_remote_blocks_a_new_address()
+    {
+        var id = await AddAsync("1");
+        var before = Snapshot();
+        _login = HttpStatusCode.ServiceUnavailable;
+
+        var result = await Controller().SaveServerEdit(id, Edit(name: "Casa", url: OtherUrl), CancellationToken.None);
+
+        Assert.Equal(RemoteEditField.Url, Refusal(result).Failure.Field);
+        Assert.Equal(before, Snapshot());
+    }
+
+    [Fact]
+    public async Task A_new_address_keeps_the_kept_login()
+    {
+        var id = await AddAsync("1");
+        await _fixture.Registry.RunWithSessionAsync(id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
+        _fixture.Handler.Requests.Clear();
+
+        await Controller().SaveServerEdit(id, Edit(url: OtherUrl), CancellationToken.None);
+
+        Assert.All(Requests.Where(request => request.Uri.AbsolutePath is "/Users/AuthenticateByName" or "/Sessions/Logout"), request => Assert.Equal($"jellymesh-{id:N}-check", DeviceOf(request)));
+        _fixture.Handler.Requests.Clear();
+        await _fixture.Registry.RunWithSessionAsync(id, (endpoint, _, _) => Task.FromResult(RemoteResult.Success(endpoint.BaseUrl.Host)), CancellationToken.None);
+        Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+    }
+
+    [Fact]
+    public async Task A_new_password_logs_in_on_the_kept_device_and_keeps_that_login()
+    {
+        var id = await AddAsync("1");
+
+        await Controller().SaveServerEdit(id, Edit(password: "new-pass"), CancellationToken.None);
+
+        var login = Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+        Assert.Equal($"jellymesh-{id:N}", DeviceOf(login));
+        Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        _fixture.Handler.Requests.Clear();
+        await _fixture.Registry.RunWithSessionAsync(id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
+        Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+    }
+
+    [Fact]
+    public async Task Libraries_the_user_no_longer_sees_leave_the_imported_ones()
+    {
+        var id = await AddAsync("1", "2", "9");
+
+        await Controller().SaveServerEdit(id, Edit(libraries: ["1", "9"]), CancellationToken.None);
+
+        Assert.Equal(["1"], _fixture.Store.Configuration.Servers.Single().ImportedLibraryIds);
+    }
 }

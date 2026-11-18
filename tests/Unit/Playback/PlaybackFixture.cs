@@ -94,6 +94,9 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
     public Task<RemoteResult<RemoteEditReport>> CheckEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 
+    public Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
     private static readonly RemoteEndpoint _endpoint = new(new Uri("http://remote.invalid:8096/"), PlaybackValues.RemoteDevice);
     private static readonly RemoteSession _session = new(PlaybackValues.RemoteToken, "remote-user");
 

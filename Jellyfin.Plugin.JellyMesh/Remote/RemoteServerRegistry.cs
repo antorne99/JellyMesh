@@ -360,6 +360,35 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+
+        var (plan, refusal) = PlanEdit(serverId, edit);
+        if (plan is null)
+        {
+            return refusal;
+        }
+
+        // Only a new name needs no remote (D28).
+        const RemoteEditChanges remote = RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Password | RemoteEditChanges.Libraries;
+        if ((plan.Changes & remote) == RemoteEditChanges.None)
+        {
+            if (!StoreEdit(plan, null, null, null))
+            {
+                return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal;
+            }
+
+            _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
+            return RemoteResult.Success(new RemoteEditReport(RemoteEditField.None) { Changes = plan.Changes, LibraryIds = plan.Saved.LibraryIds });
+        }
+
+        return (plan.Changes & (RemoteEditChanges.User | RemoteEditChanges.Password)) == RemoteEditChanges.None
+            ? await SaveEditWithCheckLoginAsync(plan, cancellationToken).ConfigureAwait(false)
+            : await SaveEditWithNewLoginAsync(plan, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<bool> RemoveAsync(Guid serverId)
     {
         RemoteServerConfig? removed = null;
@@ -662,6 +691,211 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var credentials = new RemoteCredentials { Username = edit.Username, Password = keepsPassword ? stored!.Password : edit.Password! };
         return (new EditPlan(serverId, name, url, credentials, changes, saved, requested), RemoteResult.Fail<RemoteEditReport>(RemoteFailure.None));
+    }
+
+    // Saves an edit whose user and password stay with a login on the check device, so the kept login goes on (419).
+    private async Task<RemoteResult<RemoteEditReport>> SaveEditWithCheckLoginAsync(EditPlan plan, CancellationToken cancellationToken)
+    {
+        var endpoint = CheckEndpointOf(plan.ServerId, plan.Url);
+        var login = await _client.AuthenticateAsync(endpoint, plan.Credentials, cancellationToken).ConfigureAwait(false);
+        if (login.Value is not { } session)
+        {
+            _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
+            return RemoteResult.Fail(login.Failure, new RemoteEditReport(FieldOf(login.Failure)));
+        }
+
+        try
+        {
+            var read = await ReadEditedAsync(plan, endpoint, session, cancellationToken).ConfigureAwait(false);
+            if (!read.IsSuccess)
+            {
+                return RemoteResult.Fail(read.Failure, read.Value!.Report);
+            }
+
+            if (!StoreEdit(plan, null, read.Value!, session.ServerId))
+            {
+                return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal;
+            }
+
+            Record(RuntimeOf(plan.ServerId), plan.Name, RemoteFailure.None, countsForActivity: true);
+            _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
+            return RemoteResult.Success(read.Value!.Report);
+        }
+        finally
+        {
+            await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: true).ConfigureAwait(false);
+        }
+    }
+
+    // Saves an edit with a new user or password: logs in on the kept device under the login gate, as for new credentials,
+    // and keeps that login only once the edit is saved; a refused or unsaved edit ends it (413, 419).
+    private async Task<RemoteResult<RemoteEditReport>> SaveEditWithNewLoginAsync(EditPlan plan, CancellationToken cancellationToken)
+    {
+        var serverId = plan.ServerId;
+        var endpoint = EndpointOf(serverId, plan.Url);
+        var runtime = RuntimeOf(serverId);
+        try
+        {
+            await runtime.LoginGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            DropIfRemoved(serverId, runtime);
+            throw;
+        }
+
+        var kept = false;
+        RemoteEditReport report;
+        try
+        {
+            var login = await _client.AuthenticateAsync(endpoint, plan.Credentials, cancellationToken).ConfigureAwait(false);
+            if (login.Value is not { } session)
+            {
+                _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
+                return RemoteResult.Fail(login.Failure, new RemoteEditReport(FieldOf(login.Failure)));
+            }
+
+            RemoteResult<EditRead> read;
+            try
+            {
+                read = await ReadEditedAsync(plan, endpoint, session, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
+                throw;
+            }
+
+            if (!read.IsSuccess)
+            {
+                await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
+                return RemoteResult.Fail(read.Failure, read.Value!.Report);
+            }
+
+            // Credentials that cannot be encrypted are not saved, so their login ends (419).
+            var encrypted = _vault.Protect(serverId, plan.Credentials);
+            if (encrypted is null)
+            {
+                await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
+                return Refuse(RemoteFailure.Suspended, RemoteEditField.None).Refusal;
+            }
+
+            bool found;
+            try
+            {
+                found = StoreEdit(plan, encrypted, read.Value!, session.ServerId);
+            }
+            catch
+            {
+                await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
+                throw;
+            }
+
+            // As in GetSessionAsync: a removal that ended meanwhile must not leave this login behind (413).
+            if (!found || !runtime.TryKeep(session) || !IsConfigured(serverId))
+            {
+                await EndLoginOfRemovedAsync(serverId, runtime, endpoint, session, plan.Name).ConfigureAwait(false);
+                return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal;
+            }
+
+            kept = true;
+            report = read.Value!.Report;
+        }
+        finally
+        {
+            if (!kept)
+            {
+                DropIfRemoved(serverId, runtime);
+            }
+
+            runtime.LoginGate.Release();
+        }
+
+        Record(runtime, plan.Name, RemoteFailure.None, countsForActivity: true);
+        _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
+        return RemoteResult.Success(report);
+    }
+
+    // Writes an edit in one save; a failed save puts every field back under the same lock (row 432). False if the server is gone.
+    private bool StoreEdit(EditPlan plan, string? encrypted, EditRead? read, string? remoteServerId)
+    {
+        var found = false;
+        var heldElsewhere = false;
+        RemoteServerConfig? before = null;
+        string? savedId = null;
+        _store.Update(
+            config =>
+            {
+                if (config.Servers.FirstOrDefault(server => server.Id == plan.ServerId) is not { } server)
+                {
+                    return;
+                }
+
+                found = true;
+                before = new RemoteServerConfig
+                {
+                    Name = server.Name,
+                    Url = server.Url,
+                    EncryptedCredentials = server.EncryptedCredentials,
+                    Mode = server.Mode,
+                    ProtocolVersion = server.ProtocolVersion
+                };
+                foreach (var id in server.ImportedLibraryIds)
+                {
+                    before.ImportedLibraryIds.Add(id);
+                }
+
+                server.Name = plan.Name;
+                server.Url = plan.Url;
+                server.EncryptedCredentials = encrypted ?? server.EncryptedCredentials;
+                if (read is not null)
+                {
+                    server.ImportedLibraryIds.Clear();
+                    foreach (var id in read.Report.LibraryIds)
+                    {
+                        server.ImportedLibraryIds.Add(id);
+                    }
+
+                    server.Mode = read.Capabilities!.Mode;
+                    server.ProtocolVersion = read.Capabilities.ProtocolVersion;
+                }
+
+                if (server.JellyfinServerId.Length == 0 && remoteServerId is not null)
+                {
+                    heldElsewhere = !TryStoreServerId(config, server, remoteServerId);
+                    savedId = heldElsewhere ? null : remoteServerId;
+                }
+            },
+            config =>
+            {
+                if (before is null || config.Servers.FirstOrDefault(server => server.Id == plan.ServerId) is not { } server)
+                {
+                    return;
+                }
+
+                server.Name = before.Name;
+                server.Url = before.Url;
+                server.EncryptedCredentials = before.EncryptedCredentials;
+                server.Mode = before.Mode;
+                server.ProtocolVersion = before.ProtocolVersion;
+                server.ImportedLibraryIds.Clear();
+                foreach (var id in before.ImportedLibraryIds)
+                {
+                    server.ImportedLibraryIds.Add(id);
+                }
+
+                if (savedId is not null && server.JellyfinServerId == savedId)
+                {
+                    server.JellyfinServerId = string.Empty;
+                }
+            });
+
+        if (heldElsewhere)
+        {
+            WarnServerIdHeldElsewhere(plan.Name, remoteServerId!);
+        }
+
+        return found;
     }
 
     private static bool SameLibraries(IReadOnlyCollection<string> first, IReadOnlyCollection<string> second)

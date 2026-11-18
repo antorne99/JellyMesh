@@ -328,6 +328,34 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
+    /// Saves an edit of a server all or nothing, after the same checks as its check (row 432). What follows the save on the
+    /// libraries, the streams and the old user is not done here yet.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The edit form.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The saved server, or the refusal with the field it is about.</returns>
+    [HttpPut("Servers/{serverId:guid}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<ServerStatus>> SaveServerEdit([FromRoute] Guid serverId, [FromBody] ServerEditRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
+        if (!result.IsSuccess)
+        {
+            return EditFailed(result);
+        }
+
+        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
+        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server);
+    }
+
+    /// <summary>
     /// Tests the connection to a server and refreshes its capabilities.
     /// </summary>
     /// <param name="serverId">The server.</param>
