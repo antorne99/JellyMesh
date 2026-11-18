@@ -112,6 +112,27 @@ public sealed class VanishedLibrarySyncTests : IDisposable
         Assert.Empty(ConfigOf(server).VanishedLibraries);
     }
 
+    [Theory]
+    [InlineData("list")]
+    [InlineData("test")]
+    public async Task A_library_listed_by_any_read_between_two_syncs_starts_counting_from_zero(string read)
+    {
+        var server = await TwoLibrariesSyncedAsync();
+        var library = _fixture.Client.Libraries.Single(library => library.Id == TestLibraries.FilmsB);
+        RemoveOnRemote(TestLibraries.FilmsB);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        _fixture.Client.Libraries.Add(library);
+        Assert.True(read == "list"
+            ? (await _fixture.Registry.GetLibrariesAsync(server.Id, CancellationToken.None)).IsSuccess
+            : (await _fixture.Registry.TestAsync(server.Id, CancellationToken.None)).IsSuccess);
+        RemoveOnRemote(TestLibraries.FilmsB);
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Contains(TestLibraries.FilmsB, ConfigOf(server).ImportedLibraryIds);
+        Assert.Equal([TestLibraries.FilmsB], ConfigOf(server).AbsentLibraryIds);
+    }
+
     [Fact]
     public async Task A_failed_library_list_neither_counts_nor_resets_the_absence()
     {
