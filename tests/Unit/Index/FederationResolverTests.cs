@@ -25,8 +25,8 @@ public sealed class FederationResolverTests : IDisposable
     [Fact]
     public async Task ALocalCopyWins()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m", tmdb: "1"));
-        await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m", tmdb: "1"));
+        await _fixture.AddServerAsync("A", TestLibraries.Films);
         await SyncAsync();
         _local.Items.Add(new CatalogItem
         {
@@ -47,8 +47,8 @@ public sealed class FederationResolverTests : IDisposable
     [Fact]
     public async Task TheSourceKnowsItsServerStateAndWhenItWasSeen()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("Friend", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         await SyncAsync();
         _fixture.Clock.Now = SyncFixture.Start.AddHours(1);
         _fixture.Client.OnPage = (_, _) => RemoteFailure.Unreachable;
@@ -67,9 +67,9 @@ public sealed class FederationResolverTests : IDisposable
     public async Task IdentitiesAreWorkedOutAcrossServersAndLosersAreBackups()
     {
         var movie = TestItems.Movie("m", tmdb: "1");
-        _fixture.Client.Add("films", RemoteItemType.Movie, movie);
-        await _fixture.AddServerAsync("A", "films");
-        await _fixture.AddServerAsync("B", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, movie);
+        await _fixture.AddServerAsync("A", TestLibraries.Films);
+        await _fixture.AddServerAsync("B", TestLibraries.Films);
         await SyncAsync();
 
         var content = Assert.Single(Resolver().Resolve().Contents);
@@ -82,10 +82,10 @@ public sealed class FederationResolverTests : IDisposable
     [Fact]
     public async Task EpisodesOfOneSeriesOnTwoServersMeetByTheSeries()
     {
-        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
-        await _fixture.AddServerAsync("A", "shows");
-        await _fixture.AddServerAsync("B", "shows");
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
+        await _fixture.AddServerAsync("A", TestLibraries.Shows);
+        await _fixture.AddServerAsync("B", TestLibraries.Shows);
         await SyncAsync();
 
         var content = Assert.Single(Resolver().Resolve().Contents);
@@ -100,10 +100,10 @@ public sealed class FederationResolverTests : IDisposable
     [Fact]
     public async Task ASeriesCopyToMergeCountsItsEpisodesAndSeasons()
     {
-        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e2", "s", 1, 2));
-        await _fixture.AddServerAsync("A", "shows");
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e2", "s", 1, 2));
+        await _fixture.AddServerAsync("A", TestLibraries.Shows);
         await SyncAsync();
         _local.Items.AddRange(new[] { (1, 1), (1, 2), (2, 1) }.Select(episode => new CatalogItem
         {
@@ -129,8 +129,8 @@ public sealed class FederationResolverTests : IDisposable
     [Fact]
     public async Task AFilmCopyToMergeHasNoEpisodeCount()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m", tmdb: "1"));
-        await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m", tmdb: "1"));
+        await _fixture.AddServerAsync("A", TestLibraries.Films);
         await SyncAsync();
         _local.Items.Add(new CatalogItem { ServerId = "local", ItemId = "x", Kind = ContentKind.Movie, Title = "Film", Year = 2020, Ids = new ContentIds("2") });
 
@@ -143,8 +143,8 @@ public sealed class FederationResolverTests : IDisposable
     [Fact]
     public async Task ARemovedServerNoLongerGivesSources()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await SyncAsync();
 
         await _fixture.Registry.RemoveAsync(server.Id);

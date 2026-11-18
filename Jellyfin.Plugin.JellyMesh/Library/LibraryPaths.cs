@@ -104,7 +104,7 @@ public sealed class LibraryPaths : ILibraryPaths
         }
     }
 
-    // The flat Film and Serie, and the Film and Serie of a server folder: nothing else of the admin's libraries.
+    // The flat Film and Serie, those of a server folder and the type folders of its remote libraries: nothing else.
     private static bool IsLayoutFolder(string? root, string? path)
     {
         if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(path))
@@ -118,9 +118,16 @@ public sealed class LibraryPaths : ILibraryPaths
         }
 
         var parts = (FederatedPaths.RelativeTo(root, Path.TrimEndingDirectorySeparator(path)) ?? string.Empty).Split(Path.DirectorySeparatorChar);
-        return parts.Length == 2
-            && Guid.TryParseExact(parts[0], "D", out var server)
-            && (Same(path, FederatedFolderLayout.ServerMoviesPath(root, server)) || Same(path, FederatedFolderLayout.ServerSeriesPath(root, server)));
+        return parts switch
+        {
+            [var server, _] => Guid.TryParseExact(server, "D", out var id)
+                && (Same(path, FederatedFolderLayout.ServerMoviesPath(root, id)) || Same(path, FederatedFolderLayout.ServerSeriesPath(root, id))),
+            [var server, var library, var type] => Guid.TryParseExact(server, "D", out var id)
+                && FederatedPaths.IsLibraryId(library)
+                && TypeFolder.All.FirstOrDefault(folder => string.Equals(folder.Name, type, StringComparison.Ordinal)) is { } known
+                && Same(path, FederatedFolderLayout.TypeFolderPath(root, id, library, known)),
+            _ => false
+        };
     }
 
     private static bool Same(string location, string path) => FederatedFolderLinkChecker.IsSamePath(location, path);

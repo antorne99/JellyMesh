@@ -86,6 +86,15 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         return state.Stubs.Any(stub => stub.ServerId == serverId) || state.Series.Any(series => series.ServerId == serverId);
     }
 
+    /// <inheritdoc />
+    public IReadOnlyList<string>? TypeFoldersOf(Guid serverId, TypeFolder type)
+    {
+        var lookup = _lookup;
+        return !lookup.TitlesKnown || !_loaded || _database.Generation != Interlocked.Read(ref _readGeneration)
+            ? null
+            : StubLayout.TypeFoldersOf(lookup.State, serverId, type);
+    }
+
     /// <summary>
     /// Finds the episode stubs of a remote series on one server, through the series stubs it is a source of (decision 51).
     /// </summary>

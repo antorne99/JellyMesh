@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -130,7 +131,63 @@ public static partial class FederatedPaths
     /// <param name="label">The label of the server, from <see cref="Labels"/>.</param>
     /// <returns>The relative path of the <c>.strm</c>.</returns>
     public static string MovieStub(Guid serverId, string folderName, string label)
-        => Path.Combine(MovieFolder(serverId, folderName), folderName + " - " + label + ".strm");
+        => MovieStubIn(Path.Combine(ServerFolder(serverId), MoviesFolder), folderName, label);
+
+    /// <summary>Tells whether a remote library id can name a folder: only a Jellyfin id, 32 lowercase hexadecimal digits.</summary>
+    /// <param name="libraryId">The id the remote gave.</param>
+    /// <returns>True for an id that is safe as a folder name.</returns>
+    public static bool IsLibraryId([NotNullWhen(true)] string? libraryId)
+        => Guid.TryParseExact(libraryId, "N", out var parsed) && string.Equals(parsed.ToString("N"), libraryId, StringComparison.Ordinal);
+
+    /// <summary>Builds the relative folder of a remote library in the folder of its server.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraryId">The id of the library on the remote, checked with <see cref="IsLibraryId"/>.</param>
+    /// <returns>The relative path.</returns>
+    /// <exception cref="ArgumentException">The id is not a Jellyfin id.</exception>
+    public static string LibraryFolder(Guid serverId, string libraryId)
+    {
+        if (!IsLibraryId(libraryId))
+        {
+            throw new ArgumentException("A remote library id is not a Jellyfin id.", nameof(libraryId));
+        }
+
+        return Path.Combine(ServerFolder(serverId), libraryId);
+    }
+
+    /// <summary>Builds the relative type folder of a remote library.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraryId">The id of the library on the remote.</param>
+    /// <param name="type">The type folder.</param>
+    /// <returns>The relative path.</returns>
+    public static string TypeFolderOf(Guid serverId, string libraryId, TypeFolder type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return Path.Combine(LibraryFolder(serverId, libraryId), type.Name);
+    }
+
+    /// <summary>Gives the remote library of a relative path in the remote library layout, or null for the older layouts.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The library id, or null.</returns>
+    public static string? RemoteLibraryOf(string relativePath)
+    {
+        ArgumentNullException.ThrowIfNull(relativePath);
+        var parts = relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 4);
+        return parts.Length >= 3
+            && Guid.TryParseExact(parts[0], "D", out var server)
+            && string.Equals(parts[0], ServerFolder(server), StringComparison.Ordinal)
+            && IsLibraryId(parts[1])
+            && TypeFolder.All.Any(type => string.Equals(type.Name, parts[2], StringComparison.Ordinal))
+            ? parts[1]
+            : null;
+    }
+
+    /// <summary>Builds the relative path of a film stub in a type folder, named <c>{folder} - {label}</c>.</summary>
+    /// <param name="typeFolder">The relative type folder.</param>
+    /// <param name="folderName">The folder name of the film.</param>
+    /// <param name="label">The label of the server, from <see cref="Labels"/>.</param>
+    /// <returns>The relative path of the <c>.strm</c>.</returns>
+    public static string MovieStubIn(string typeFolder, string folderName, string label)
+        => Path.Combine(typeFolder, folderName, folderName + " - " + label + ".strm");
 
     /// <summary>Builds the relative path of an episode stub, with the label of its server after the numbers if it has one.</summary>
     /// <param name="seriesFolder">The relative folder of the series.</param>

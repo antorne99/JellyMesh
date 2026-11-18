@@ -329,13 +329,13 @@ public sealed class FeedSyncTests : IDisposable
     private async Task<RemoteServerInfo> AddPeerAsync()
     {
         _fixture.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("old", "Old"));
-        return await _fixture.AddServerAsync("peer", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("old", "Old"));
+        return await _fixture.AddServerAsync("peer", TestLibraries.Films);
     }
 
     private static RemoteResult<RemoteChangePage> Page(string cursor, params string[] ids)
     {
-        return RemoteResult.Success(new RemoteChangePage(false, cursor, false, ids.Select(id => new RemoteChange(id, "Movie", ["films"])).ToList()));
+        return RemoteResult.Success(new RemoteChangePage(false, cursor, false, ids.Select(id => new RemoteChange(id, "Movie", [TestLibraries.Films])).ToList()));
     }
 
     private void FeedGives(params string[] ids)
@@ -437,8 +437,8 @@ public sealed class FeedSyncTests : IDisposable
         _fixture.Client.ItemsById.Add(TestItems.Movie("b", "B", tmdb: "3"));
         _fixture.Client.Feed = cursor => cursor switch
         {
-            "cursor-0" => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", true, [new RemoteChange("a", "Movie", ["films"])])),
-            _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-2", false, [new RemoteChange("b", "Movie", ["films"])]))
+            "cursor-0" => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", true, [new RemoteChange("a", "Movie", [TestLibraries.Films])])),
+            _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-2", false, [new RemoteChange("b", "Movie", [TestLibraries.Films])]))
         };
 
         await _fixture.Sync.RunIncrementalAsync(CancellationToken.None);
@@ -465,7 +465,7 @@ public sealed class FeedSyncTests : IDisposable
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.Queries.Clear();
         _fixture.Client.ItemsById.Add(TestItems.Movie("new", "New", tmdb: "2"));
-        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", false, [new RemoteChange("new", "Movie", ["shows"])]));
+        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", false, [new RemoteChange("new", "Movie", [TestLibraries.Shows])]));
 
         await _fixture.Sync.RunIncrementalAsync(CancellationToken.None);
 
@@ -479,7 +479,7 @@ public sealed class FeedSyncTests : IDisposable
         await AddPeerAsync();
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.Queries.Clear();
-        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", false, [new RemoteChange("x", "Trailer", ["films"])]));
+        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", false, [new RemoteChange("x", "Trailer", [TestLibraries.Films])]));
 
         await _fixture.Sync.RunIncrementalAsync(CancellationToken.None);
 
@@ -496,7 +496,7 @@ public sealed class FeedSyncTests : IDisposable
 
         await _fixture.Sync.RunIncrementalAsync(CancellationToken.None);
 
-        Assert.Contains(_fixture.Client.Queries, query => query.LibraryId == "films" && query.Ids is null);
+        Assert.Contains(_fixture.Client.Queries, query => query.LibraryId == TestLibraries.Films && query.Ids is null);
         await _fixture.Sync.RunIncrementalAsync(CancellationToken.None);
         Assert.Contains("cursor-new", _fixture.Client.FeedReads);
     }
@@ -511,7 +511,7 @@ public sealed class FeedSyncTests : IDisposable
 
         await restarted.RunIncrementalAsync(CancellationToken.None);
 
-        Assert.Contains(_fixture.Client.Queries, query => query.LibraryId == "films" && query.Ids is null);
+        Assert.Contains(_fixture.Client.Queries, query => query.LibraryId == TestLibraries.Films && query.Ids is null);
         restarted.Dispose();
     }
 
@@ -558,8 +558,8 @@ public sealed class FeedSyncTests : IDisposable
     [Fact]
     public async Task A_stock_remote_keeps_being_polled()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("old", "Old"));
-        await _fixture.AddServerAsync("stock", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("old", "Old"));
+        await _fixture.AddServerAsync("stock", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.Queries.Clear();
 
@@ -576,8 +576,8 @@ public sealed class FeedSyncTests : IDisposable
     [Fact]
     public async Task A_server_connected_after_it_was_added_moves_to_the_provider_api_at_the_next_sync()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("old", "Old"));
-        var server = await _fixture.AddServerAsync("later", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("old", "Old"));
+        var server = await _fixture.AddServerAsync("later", TestLibraries.Films);
         Assert.Equal(RemoteMode.Standard, server.Mode);
         _fixture.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
 
@@ -627,11 +627,11 @@ public sealed class FeedSyncTests : IDisposable
     public async Task The_libraries_offered_by_a_peer_are_what_it_shares()
     {
         var server = await AddPeerAsync();
-        _fixture.Client.SharedLibraries = [new RemoteLibrary("films", "Film", "movies")];
+        _fixture.Client.SharedLibraries = [new RemoteLibrary(TestLibraries.Films, "Film", "movies")];
 
         var libraries = await _fixture.Registry.GetLibrariesAsync(server.Id, CancellationToken.None);
 
-        Assert.Equal("films", Assert.Single(libraries.Value!).Id);
+        Assert.Equal(TestLibraries.Films, Assert.Single(libraries.Value!).Id);
     }
 
     [Fact]
@@ -652,7 +652,7 @@ public sealed class FeedSyncTests : IDisposable
     public async Task Testing_a_peer_reads_what_it_shares()
     {
         var server = await AddPeerAsync();
-        _fixture.Client.SharedLibraries = [new RemoteLibrary("films", "Film", "movies")];
+        _fixture.Client.SharedLibraries = [new RemoteLibrary(TestLibraries.Films, "Film", "movies")];
 
         var report = await _fixture.Registry.TestAsync(server.Id, CancellationToken.None);
 

@@ -18,7 +18,7 @@ public class PasswordActivityTests
     public async Task A_password_that_stops_decrypting_is_written_once_until_it_is_fixed()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
         var activity = new RecordingActivityWriter();
         using var sync = NewSync(fixture, activity);
 
@@ -42,7 +42,7 @@ public class PasswordActivityTests
     public async Task A_missing_key_is_not_reported_as_passwords_that_no_longer_decrypt()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
         var activity = new RecordingActivityWriter();
         using var sync = NewSync(fixture, activity);
 
@@ -56,7 +56,7 @@ public class PasswordActivityTests
     public async Task The_entry_names_the_server_and_nothing_secret()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
         var activity = new RecordingActivityWriter();
         using var sync = NewSync(fixture, activity);
 

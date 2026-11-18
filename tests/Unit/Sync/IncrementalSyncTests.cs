@@ -28,8 +28,8 @@ public sealed class IncrementalSyncTests : IDisposable
     /// <summary>A server with two films, read in full, with the clocks moved on 15 minutes.</summary>
     private async Task<RemoteServerInfo> SyncedServerAsync()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await RunFull();
         Tick();
         return server;
@@ -58,14 +58,14 @@ public sealed class IncrementalSyncTests : IDisposable
         var mark = CatalogOf(server).Mark!;
 
         Assert.Equal(SyncFixture.Start, mark.ReadStartedUtc);
-        Assert.Equal(["films"], mark.LibraryIds);
+        Assert.Equal([TestLibraries.Films], mark.LibraryIds);
     }
 
     [Fact]
     public async Task ANewItemIsCaught()
     {
         var server = await SyncedServerAsync();
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
         SaveOnRemote("c");
 
         var run = await _fixture.Sync.RunIncrementalAsync(CancellationToken.None);
@@ -80,7 +80,7 @@ public sealed class IncrementalSyncTests : IDisposable
     {
         var server = await SyncedServerAsync();
         var untouched = CatalogOf(server).Items.Single(item => item.ItemId == "b");
-        var list = Remote.Items[("films", RemoteItemType.Movie)];
+        var list = Remote.Items[(TestLibraries.Films, RemoteItemType.Movie)];
         list[0] = TestItems.Movie("a", "Alfa renamed");
         SaveOnRemote("a");
 
@@ -96,7 +96,7 @@ public sealed class IncrementalSyncTests : IDisposable
     public async Task AChangeJustBeforeTheLastReadBeganIsStillCaught()
     {
         var server = await SyncedServerAsync();
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("late"));
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("late"));
         Remote.SavedUtc["late"] = SyncFixture.Start - CatalogSyncService.ChangeOverlap + TimeSpan.FromSeconds(1);
 
         await RunIncremental();
@@ -133,8 +133,8 @@ public sealed class IncrementalSyncTests : IDisposable
     public async Task WithoutADateHeaderTheLocalClockIsUsed()
     {
         Remote.ServerTime = null;
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         await RunFull();
 
@@ -159,7 +159,7 @@ public sealed class IncrementalSyncTests : IDisposable
     public async Task AnItemGoneFromTheRemoteStaysUntilACompleteRead()
     {
         var server = await SyncedServerAsync();
-        Remote.Items[("films", RemoteItemType.Movie)].RemoveAll(item => item.Id == "a");
+        Remote.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAll(item => item.Id == "a");
 
         await RunIncremental();
         Assert.Equal(["a", "b"], IdsOf(server));
@@ -171,11 +171,11 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task AnItemGoneFromTheRemoteStaysIfTheReconciliationFailsHalfway()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 2));
-        var server = await _fixture.AddServerAsync("A", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 2));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await RunFull();
         var before = CatalogOf(server).Items;
-        Remote.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        Remote.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
         Remote.OnPage = (query, _) => query.StartIndex > 0 ? RemoteFailure.Unreachable : RemoteFailure.None;
 
         await RunFull();
@@ -187,8 +187,8 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task AServerNeverReadGetsAFullRead()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         await RunIncremental();
 
@@ -213,8 +213,8 @@ public sealed class IncrementalSyncTests : IDisposable
     public async Task ANewlyChosenLibraryGetsAFullRead()
     {
         var server = await SyncedServerAsync();
-        Remote.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Registry.SetImportedLibraries(server.Id, ["films", "shows"]);
+        Remote.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Registry.SetImportedLibraries(server.Id, [TestLibraries.Films, TestLibraries.Shows]);
 
         await RunIncremental();
 
@@ -225,11 +225,11 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task ALibraryNoLongerChosenLeavesWithAFullRead()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        Remote.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        var server = await _fixture.AddServerAsync("A", "films", "shows");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        Remote.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
         await RunFull();
-        _fixture.Registry.SetImportedLibraries(server.Id, ["films"]);
+        _fixture.Registry.SetImportedLibraries(server.Id, [TestLibraries.Films]);
 
         await RunIncremental();
 
@@ -239,11 +239,11 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task TheSameLibrariesInAnotherOrderAreNotAChange()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films", "shows");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
         await RunFull();
         Tick();
-        _fixture.Registry.SetImportedLibraries(server.Id, ["shows", "films"]);
+        _fixture.Registry.SetImportedLibraries(server.Id, [TestLibraries.Shows, TestLibraries.Films]);
 
         await RunIncremental();
 
@@ -253,11 +253,11 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task ANewEpisodeOfAKnownSeriesDoesNotLookTheSeriesUp()
     {
-        Remote.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        var server = await _fixture.AddServerAsync("A", "shows");
+        Remote.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Shows);
         await RunFull();
         Tick();
-        Remote.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 1));
+        Remote.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 1));
         SaveOnRemote("e");
 
         await RunIncremental();
@@ -269,11 +269,11 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task AnEpisodeOfAnUnknownSeriesLooksItUp()
     {
-        Remote.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        var server = await _fixture.AddServerAsync("A", "shows");
+        Remote.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Shows);
         await RunFull();
         Tick();
-        Remote.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "hidden-row", 1, 1));
+        Remote.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "hidden-row", 1, 1));
         Remote.ItemsById.Add(TestItems.Series("hidden-row"));
         SaveOnRemote("e");
 
@@ -305,7 +305,7 @@ public sealed class IncrementalSyncTests : IDisposable
     {
         var server = await SyncedServerAsync();
         var before = CatalogOf(server).Items;
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c"));
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("c"));
         SaveOnRemote("c");
         Remote.OnPage = (_, _) => RemoteFailure.Timeout;
 
@@ -343,8 +343,8 @@ public sealed class IncrementalSyncTests : IDisposable
 
         // Changed while it was offline: a deletion only a full read can see, and a new item.
         Remote.ClockFailure = RemoteFailure.None;
-        Remote.Items[("films", RemoteItemType.Movie)].RemoveAll(item => item.Id == "a");
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c"));
+        Remote.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAll(item => item.Id == "a");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("c"));
         await RunIncremental();
 
         Assert.All(Remote.Queries, query => Assert.Null(query.ChangedSinceUtc));
@@ -374,7 +374,7 @@ public sealed class IncrementalSyncTests : IDisposable
     {
         var bad = await _fixture.AddServerAsync("Bad", "deleted");
         var good = await SyncedServerAsync();
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c"));
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("c"));
         SaveOnRemote("c");
 
         await RunIncremental();
@@ -386,8 +386,8 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task AnIncrementalSyncIsRefusedWhileAnotherSyncRuns()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        await _fixture.AddServerAsync("A", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        await _fixture.AddServerAsync("A", TestLibraries.Films);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Remote.OnPage = (_, _) =>
@@ -408,7 +408,7 @@ public sealed class IncrementalSyncTests : IDisposable
     public async Task AnIncrementalThatCannotBeSavedIsReported()
     {
         var server = await SyncedServerAsync();
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
         SaveOnRemote("c");
         _fixture.Database.InterruptNextWrite();
 

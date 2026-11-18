@@ -141,7 +141,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         try
         {
-            WriteServerFolders(root, _servers.GetServers());
+            WriteServerFolders(root, _servers.GetServers(), _registry.State);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -149,8 +149,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty.
-    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers)
+    // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty. In
+    // the remote library layout they stay as the first path of its libraries, next to the type folders that hold stubs.
+    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers, StubState state)
     {
         WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
         WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
@@ -158,6 +159,16 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             WriteHiddenFile(root, FederatedPaths.MovieFolder(server.Id, string.Empty));
             WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(server.Id, string.Empty));
+        }
+
+        if (StubLayout.IsLegacy(state))
+        {
+            return;
+        }
+
+        foreach (var folder in servers.SelectMany(server => TypeFolder.Written.SelectMany(type => StubLayout.TypeFoldersOf(state, server.Id, type))))
+        {
+            WriteHiddenFile(root, folder);
         }
     }
 
@@ -239,9 +250,14 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
         _refresher?.Request(view.LocalItemsAwaitingRefresh);
-        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null) { WritesCollections = writesCollections });
+        var state = _registry.State;
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, isProtected, _urls.Build, _ => null)
+        {
+            WritesCollections = writesCollections,
+            KeepsOlderLayout = !StubLayout.IsLegacy(state) && StubLayout.HasOlderStubFiles(root)
+        });
 
-        WriteServerFolders(root, servers);
+        WriteServerFolders(root, servers, plan.State);
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 

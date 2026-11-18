@@ -1827,7 +1827,7 @@ public sealed partial class ServerLibraryManagerTests
         public ServerLibraryManager NewManager()
         {
             Renamer.Libraries = Libraries;
-            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, Logger, Clock);
+            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, new LibraryPaths(Libraries.Object, new CapturingLogger<LibraryPaths>()), Logger, Clock);
         }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.
@@ -1894,6 +1894,13 @@ public sealed partial class ServerLibraryManagerTests
                     Folders.Remove(Find(name));
                     return Task.CompletedTask;
                 });
+            _mock.Setup(manager => manager.AddMediaPath(It.IsAny<string>(), It.IsAny<MediaPathInfo>()))
+                .Callback<string, MediaPathInfo>((name, path) =>
+                {
+                    var folder = Find(name);
+                    folder.Locations = [.. folder.Locations, path.Path];
+                    AddedPaths.Add((name, path.Path));
+                });
             _mock.Setup(manager => manager.ValidateTopLibraryFolders(It.IsAny<CancellationToken>(), true))
                 .Returns(() =>
                 {
@@ -1909,6 +1916,8 @@ public sealed partial class ServerLibraryManagerTests
         public List<CreateCall> Created { get; } = [];
 
         public List<RemoveCall> Removed { get; } = [];
+
+        public List<(string Name, string Path)> AddedPaths { get; } = [];
 
         // The library names each validation of the top folders saw.
         public List<List<string>> Validations { get; } = [];
