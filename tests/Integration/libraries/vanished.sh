@@ -47,7 +47,19 @@ wait_own() {
   echo "the libraries job did not end" >&2
   return 1
 }
-remove_remote() { req remote DELETE "/Library/VirtualFolders?name=$(jq -rn --arg v "$1" '$v | @uri')&refreshLibrary=false" >/dev/null; }
+# Removes a remote library as the Dashboard does: with refreshLibrary=false Jellyfin 12.4 keeps it in the user views,
+# with no items, even after a scan or a restart.
+remove_remote() {
+  local i u
+  req remote DELETE "/Library/VirtualFolders?name=$(jq -rn --arg v "$1" '$v | @uri')&refreshLibrary=true" >/dev/null
+  u=$(user_id remote jellymesh)
+  for i in $(seq 1 120); do
+    get remote "/UserViews?userId=$u" | jq -e --arg n "$1" 'all(.Items[]; .Name != $n)' >/dev/null && return 0
+    sleep 1
+  done
+  echo "the remote still lists $1" >&2
+  return 1
+}
 make() { # make <name> <type> <json array of paths>: an admin library with those paths.
   # shellcheck disable=SC2046
   library local "$1" "$2" $(echo "$3" | jq -r 'map(@uri) | .[]')
@@ -75,6 +87,10 @@ settings local '.FederatedFolderPath = "/federata"' >/dev/null
 SERVER=$(post local /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$((PORT + 1))" '{Name:"Casa",Url:$u,Username:"jellymesh",Password:"jellymesh-test",LibraryMode:"None"}')" | jq -r .Id)
 FOLDER=$(server_folder "$SERVER")
 import_all local "$SERVER"
+# An empty library not imported keeps the list of the remote non-empty once Film and Serie are gone.
+docker exec "$PREFIX-remote" mkdir -p /cache/altro
+library remote Altro movies /cache/altro
+scan remote
 sync_now local
 FILM_PATHS=$(own | jq -c '[.ManualPaths[] | select(.LibraryType == "movies") | .Path] | sort')
 make "Film miei" movies "$FILM_PATHS"
