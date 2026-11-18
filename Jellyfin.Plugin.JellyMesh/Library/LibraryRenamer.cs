@@ -179,6 +179,39 @@ public sealed class LibraryRenamer : ILibraryRenamer
         }
     }
 
+    /// <inheritdoc />
+    public async Task CarryAccessAsync(IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+        foreach (var user in _users.GetUsers().ToList())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (user.HasPermission(PermissionKind.EnableAllFolders))
+            {
+                continue;
+            }
+
+            var enabled = user.GetPreference(PreferenceKind.EnabledFolders);
+            var held = enabled.Select(value => Guid.TryParse(value, out var id) ? id : Guid.Empty).ToHashSet();
+            var missing = access.Where(pair => held.Contains(pair.Key)).SelectMany(pair => pair.Value).Where(id => !held.Contains(id)).Distinct().ToList();
+            if (missing.Count == 0)
+            {
+                continue;
+            }
+
+            user.SetPreference(PreferenceKind.EnabledFolders, [.. enabled, .. missing.Select(id => id.ToString("N", CultureInfo.InvariantCulture))]);
+            try
+            {
+                await _users.UpdateUserAsync(user).ConfigureAwait(false);
+            }
+            catch
+            {
+                user.SetPreference(PreferenceKind.EnabledFolders, enabled);
+                throw;
+            }
+        }
+    }
+
     // The path of a child of the libraries folder, or null for a name that would leave it.
     private static string? ChildOf(string root, string name)
     {

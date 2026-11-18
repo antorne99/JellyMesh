@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -150,6 +151,51 @@ public sealed class LibraryRenamerTests : IDisposable
         await RenameAsync();
 
         _changes.Verify(changes => changes.Renamed(OldId, NewId, "Mare - Film"), Times.Once);
+    }
+
+    [Fact]
+    public async Task Users_with_access_to_an_old_library_get_the_new_ones_and_users_with_all_libraries_stay()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N"), first.ToString("D")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+        _other.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, false);
+
+        await _renamer.CarryAccessAsync(new Dictionary<Guid, IReadOnlyList<Guid>> { [OldId] = [first, second] }, CancellationToken.None);
+
+        Assert.Equal([OldId.ToString("N"), first.ToString("D"), second.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([OldId.ToString("N")], _other.GetPreference(PreferenceKind.EnabledFolders));
+        _users.Verify(users => users.UpdateUserAsync(_limited), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+        _users.Verify(users => users.UpdateUserAsync(_blocked), Times.Never);
+    }
+
+    [Fact]
+    public async Task Access_already_carried_is_not_written_again()
+    {
+        var first = Guid.NewGuid();
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N"), first.ToString("N")]);
+
+        await _renamer.CarryAccessAsync(new Dictionary<Guid, IReadOnlyList<Guid>> { [OldId] = [first] }, CancellationToken.None);
+
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_user_that_cannot_be_saved_keeps_the_list_it_had_and_the_carry_fails()
+    {
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.CarryAccessAsync(new Dictionary<Guid, IReadOnlyList<Guid>> { [OldId] = [NewId] }, CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
     }
 
     [Fact]

@@ -2021,6 +2021,24 @@ public sealed partial class ServerLibraryManagerTests
         // Runs when a rename starts, before it moves the library.
         public Action? OnRename { get; set; }
 
+        public List<IReadOnlyDictionary<Guid, IReadOnlyList<Guid>>> Carried { get; } = [];
+
+        public Exception? CarryFailure { get; set; }
+
+        public Action? OnCarry { get; set; }
+
+        public Task CarryAccessAsync(IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access, CancellationToken cancellationToken)
+        {
+            OnCarry?.Invoke();
+            if (CarryFailure is not null)
+            {
+                throw CarryFailure;
+            }
+
+            Carried.Add(access);
+            return Task.CompletedTask;
+        }
+
         public Task ResumeAsync(CancellationToken cancellationToken)
         {
             Resumes++;

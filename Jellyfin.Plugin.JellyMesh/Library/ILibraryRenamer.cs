@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -28,6 +29,15 @@ public interface ILibraryRenamer
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The new library id, or null when the library is not there, the new name is taken or is the same.</returns>
     Task<Guid?> RenameAsync(string name, Guid? itemId, CollectionType? type, string newName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gives each user with access to a library by id, not to all of them, access to the libraries that take its titles.
+    /// Only the per-id access lists change, as on a rename (§10 row 438).
+    /// </summary>
+    /// <param name="access">For each old library id, the ids of the libraries that take its titles.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that fails when a user cannot be saved.</returns>
+    Task CarryAccessAsync(IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access, CancellationToken cancellationToken);
 
     /// <summary>
     /// Finishes the recorded renames: the second move of a change of case, then the users left with an old id.
