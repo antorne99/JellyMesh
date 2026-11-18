@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,11 +23,19 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
     private int _writes;
     private int _interruptAfter = -1;
     private long _reopened;
+    private readonly bool _ownsFolder;
 
     public TestDatabase(string folder)
     {
         Folder = folder;
         _inner = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1);
+    }
+
+    // Under the temp folder, not the bind mount: WAL needs shared memory a host mount may not give.
+    public TestDatabase()
+        : this(Path.Combine(Path.GetTempPath(), "jellymesh-db-" + Guid.NewGuid().ToString("N")))
+    {
+        _ownsFolder = true;
     }
 
     public string Folder { get; }
@@ -155,7 +164,42 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => _inner.DeleteExpiredDamagedAsync(cancellationToken);
 
-    public void Dispose() => _inner.Dispose();
+    /// <summary>Runs a statement in a write of its own, as a restored copy whose rows differ from those read before.</summary>
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "A statement of the test.")]
+    public Task ExecuteAsync(string sql) => _inner.WriteAsync(
+        (connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+        },
+        CancellationToken.None);
+
+    /// <summary>Counts the rows of a table, with an optional condition after its name.</summary>
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "A table name of the test.")]
+    public long Count(string table) => _inner.ReadAsync(
+        (connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT count(*) FROM " + table + ";";
+            return (long)command.ExecuteScalar()!;
+        },
+        CancellationToken.None).GetAwaiter().GetResult();
+
+    public void Dispose()
+    {
+        _inner.Dispose();
+        if (_ownsFolder)
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(Folder))
+            {
+                Directory.Delete(Folder, true);
+            }
+        }
+    }
 
     private void ThrowIfSuspended()
     {

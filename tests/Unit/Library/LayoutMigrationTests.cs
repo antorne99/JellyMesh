@@ -69,7 +69,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
         _database = new TestDatabase(Path.Combine(_data, "registry"));
         _registry = NewRegistry();
         SetUpLibraryPaths();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>()))
@@ -117,8 +117,8 @@ public sealed partial class LayoutMigrationTests : IDisposable
         _migration?.Dispose();
         _manager?.Dispose();
         _registry.Dispose();
-        _database.Dispose();
         _log.Dispose();
+        _database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);

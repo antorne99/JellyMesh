@@ -51,7 +51,7 @@ public sealed class MergeWatchStateCarryTests : IDisposable
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
         _database = new TestDatabase(Path.Combine(_data, "registry"));
         _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>())).Returns((Guid id, User _) => _items.GetValueOrDefault(id));
@@ -80,8 +80,8 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     public void Dispose()
     {
         _registry.Dispose();
-        _database.Dispose();
         _log.Dispose();
+        _database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);

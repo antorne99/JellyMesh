@@ -7,7 +7,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Moq;
 using Xunit;
 
@@ -241,12 +243,14 @@ public sealed class SyncHistoryRecordingTests : IDisposable
         await _fixture.AddServerAsync("Friend", "films");
         await _fixture.AddServerAsync("Other", "films");
         Remote.BeforeClock = (read, _) => read == 2 ? throw new HttpRequestException(TestValues.Url) : Task.CompletedTask;
-        using var store = new SyncHistoryStore(_fixture.Folder, new CapturingLogger<SyncHistoryStore>());
+        using var database = new TestDatabase();
+        using var store = new SyncHistoryStore(database, new CapturingLogger<SyncHistoryStore>());
         using var sync = NewSync(store);
 
         await sync.RunAsync(CancellationToken.None);
 
-        var content = await File.ReadAllTextAsync(Path.Combine(_fixture.Folder, SyncHistoryStore.FileName));
+        var file = Path.Combine(database.Folder, PluginDatabase.FileName);
+        var content = await File.ReadAllTextAsync(file) + await File.ReadAllTextAsync(file + "-wal");
         Assert.Contains("InvalidResponse", content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Host, content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Token, content, StringComparison.Ordinal);

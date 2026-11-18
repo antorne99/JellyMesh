@@ -1,73 +1,65 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
-/// <see cref="ILastServedSourceStore"/> over a file in the plugin data folder. It holds the user, the stub and the server
-/// GUID, never an address or a token. A change is written <see cref="SaveDelay"/> after it, and what is pending when the
-/// server stops (Q76). A write replaces the file in one step; a file that cannot be read is set aside.
+/// <see cref="ILastServedSourceStore"/> over the table <c>last_served_sources</c> of the plugin database. It holds the
+/// user, the stub and the server GUID, never an address or a token. A change is known at once and written right after,
+/// off the request, in a short transaction of its own; a change that cannot be written is tried again with the next one.
 /// </summary>
 public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedService, IDisposable
 {
     /// <summary>
-    /// The file name.
+    /// The file of 0.5, which the data migration reads once.
     /// </summary>
     public const string FileName = "last-served.json";
 
-    /// <summary>
-    /// How long after a change the file is written. Changes in between go in the same write, and more changes do not put
-    /// it off.
-    /// </summary>
-    public static readonly TimeSpan SaveDelay = TimeSpan.FromSeconds(30);
+    private const string SelectAll = "SELECT user_id, stub_id, server_id FROM last_served_sources;";
 
-    private const int CurrentVersion = 1;
+    private const string Upsert = """
+        INSERT INTO last_served_sources (user_id, stub_id, server_id) VALUES ($user, $stub, $server)
+        ON CONFLICT (user_id, stub_id) DO UPDATE SET server_id = excluded.server_id;
+        """;
 
-    private static readonly JsonSerializerOptions _options = new()
-    {
-        RespectNullableAnnotations = true,
-        RespectRequiredConstructorParameters = true,
-        WriteIndented = true
-    };
+    private const string Delete = "DELETE FROM last_served_sources WHERE user_id = $user AND stub_id = $stub;";
 
-    private readonly string _path;
+    private readonly IPluginDatabase _database;
     private readonly ILogger<LastServedSourceStore> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), Guid> _servers = new();
-    private readonly ITimer _timer;
-    private volatile bool _unsaved;
+    private readonly ConcurrentDictionary<(Guid UserId, string StubId), byte> _unsaved = new();
+    private readonly Lock _loadLock = new();
+    private volatile bool _loaded;
+
+    // The database generation the records were read in; another one means they may be stale.
+    private long _loadedGeneration;
     private volatile bool _disposed;
-    private int _scheduled;
+    private int _reported;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LastServedSourceStore"/> class.
     /// </summary>
-    /// <param name="folder">The folder of the file.</param>
+    /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    /// <param name="timeProvider">The clock of the deferred write.</param>
-    public LastServedSourceStore(string folder, ILogger<LastServedSourceStore> logger, TimeProvider? timeProvider = null)
+    public LastServedSourceStore(IPluginDatabase database, ILogger<LastServedSourceStore> logger)
     {
-        _path = Path.Combine(folder, FileName);
+        _database = database;
         _logger = logger;
-        foreach (var entry in Load())
-        {
-            _servers[(entry.UserId, entry.StubId)] = entry.ServerId;
-        }
-
-        _timer = (timeProvider ?? TimeProvider.System).CreateTimer(_ => _ = SaveLaterAsync(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     /// <inheritdoc />
     public Guid? Find(Guid userId, string stubId)
     {
+        Load();
         return _servers.TryGetValue((userId, stubId), out var serverId) ? serverId : null;
     }
 
@@ -76,11 +68,12 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
     {
         ArgumentNullException.ThrowIfNull(stubId);
 
+        Load();
         var key = (userId, stubId);
-        if (_unsaved || !_servers.TryGetValue(key, out var known) || known != serverId)
+        if (!_servers.TryGetValue(key, out var known) || known != serverId)
         {
             _servers[key] = serverId;
-            Changed();
+            Changed(key);
         }
 
         return Task.CompletedTask;
@@ -92,25 +85,22 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         ArgumentNullException.ThrowIfNull(stubExists);
         ArgumentNullException.ThrowIfNull(removedServers);
 
+        Load();
         var dropped = 0;
         foreach (var (key, serverId) in _servers)
         {
             if ((removedServers.Contains(serverId) || !stubExists(key.StubId)) && _servers.TryRemove(new KeyValuePair<(Guid, string), Guid>(key, serverId)))
             {
                 dropped++;
+                Changed(key);
             }
-        }
-
-        if (dropped > 0)
-        {
-            Changed();
         }
 
         return dropped;
     }
 
     /// <summary>
-    /// Writes the file now if something changed since the last write.
+    /// Writes now the changes not written yet, once the writes started before it end.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
@@ -119,24 +109,35 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!_unsaved)
+            if (_unsaved.IsEmpty || !Load())
             {
                 return;
             }
 
-            // Cleared first: a change during the write is written by the next one.
-            _unsaved = false;
-            await SaveAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            _unsaved = true;
-            _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
-        }
-        catch
-        {
-            _unsaved = true;
-            throw;
+            // Taken first: a change during the write is written by the next one.
+            var keys = _unsaved.Keys.ToList();
+            foreach (var key in keys)
+            {
+                _unsaved.TryRemove(key, out _);
+            }
+
+            try
+            {
+                await _database.WriteAsync((connection, transaction) => Save(connection, transaction, keys), cancellationToken).ConfigureAwait(false);
+                Volatile.Write(ref _reported, 0);
+            }
+            catch (Exception exception) when (exception is StoreSuspendedException or SqliteException or OperationCanceledException)
+            {
+                foreach (var key in keys)
+                {
+                    _unsaved.TryAdd(key, 0);
+                }
+
+                if (exception is not OperationCanceledException && Interlocked.Exchange(ref _reported, 1) == 0)
+                {
+                    _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
+                }
+            }
         }
         finally
         {
@@ -158,30 +159,53 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
             return;
         }
 
-        _timer.Dispose();
         FlushAsync(CancellationToken.None).GetAwaiter().GetResult();
         _disposed = true;
         _gate.Dispose();
     }
 
-    // Starts the deferred write unless one is waiting already.
-    private void Changed()
+    private static List<KeyValuePair<(Guid UserId, string StubId), Guid>> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
     {
-        _unsaved = true;
-        if (!_disposed && Interlocked.Exchange(ref _scheduled, 1) == 0)
+        var rows = new List<KeyValuePair<(Guid, string), Guid>>();
+        using var command = StoreSql.Command(connection, transaction, SelectAll);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
         {
-            _timer.Change(SaveDelay, Timeout.InfiniteTimeSpan);
+            rows.Add(new((Guid.ParseExact(reader.GetString(0), "N"), reader.GetString(1)), Guid.ParseExact(reader.GetString(2), "N")));
+        }
+
+        return rows;
+    }
+
+    // Writes the current server of each key, or drops its row when it has none.
+    private void Save(SqliteConnection connection, SqliteTransaction transaction, List<(Guid UserId, string StubId)> keys)
+    {
+        foreach (var key in keys)
+        {
+            var user = StoreSql.Text(key.UserId);
+            if (_servers.TryGetValue(key, out var serverId))
+            {
+                StoreSql.Execute(connection, transaction, Upsert, ("$user", user), ("$stub", key.StubId), ("$server", StoreSql.Text(serverId)));
+            }
+            else
+            {
+                StoreSql.Execute(connection, transaction, Delete, ("$user", user), ("$stub", key.StubId));
+            }
         }
     }
 
-    private async Task SaveLaterAsync()
+    // Marks a change and starts its write off the caller.
+    private void Changed((Guid UserId, string StubId) key)
     {
-        Interlocked.Exchange(ref _scheduled, 0);
-        if (_disposed)
+        _unsaved[key] = 0;
+        if (!_disposed)
         {
-            return;
+            _ = Task.Run(WriteLaterAsync);
         }
+    }
 
+    private async Task WriteLaterAsync()
+    {
         try
         {
             await FlushAsync(CancellationToken.None).ConfigureAwait(false);
@@ -190,80 +214,54 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         {
             // Closed meanwhile: the close wrote it.
         }
-        catch (Exception exception) when (exception is not ObjectDisposedException)
-        {
-            _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
-        }
     }
 
-    private async Task SaveAsync(CancellationToken cancellationToken)
+    // Reads the saved records once the database can be read, and again after it is opened again; the changes not written
+    // yet stay.
+    private bool Load()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-
-        var entries = _servers
-            .Select(pair => new Entry(pair.Key.UserId, pair.Key.StubId, pair.Value))
-            .OrderBy(entry => entry.UserId)
-            .ThenBy(entry => entry.StubId, StringComparer.Ordinal)
-            .ToList();
-        var temporary = _path + ".tmp";
-        try
+        if (IsCurrent())
         {
-            var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-            await using (stream.ConfigureAwait(false))
+            return true;
+        }
+
+        lock (_loadLock)
+        {
+            if (IsCurrent())
             {
-                await JsonSerializer.SerializeAsync(stream, new LastServedFile(CurrentVersion, entries), _options, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                RandomAccess.FlushToDisk(stream.SafeFileHandle);
+                return true;
             }
 
-            File.Move(temporary, _path, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporary);
-        }
-    }
-
-    private IReadOnlyList<Entry> Load()
-    {
-        if (!File.Exists(_path))
-        {
-            return [];
-        }
-
-        try
-        {
-            using var stream = File.OpenRead(_path);
-            var file = JsonSerializer.Deserialize<LastServedFile>(stream, _options);
-            if (file?.Version == CurrentVersion && file.Entries.All(entry => entry is not null))
+            try
             {
-                return file.Entries;
+                var (rows, generation) = _database.ReadAsync(
+                    (connection, transaction) => (ReadAll(connection, transaction), _database.Generation),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                foreach (var key in _servers.Keys.Where(key => !_unsaved.ContainsKey(key)))
+                {
+                    _servers.TryRemove(key, out _);
+                }
+
+                foreach (var (key, serverId) in rows.Where(row => !_unsaved.ContainsKey(row.Key)))
+                {
+                    _servers.TryAdd(key, serverId);
+                }
+
+                Interlocked.Exchange(ref _loadedGeneration, generation);
+                _loaded = true;
+                return true;
             }
+            catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
+            {
+                if (Interlocked.Exchange(ref _reported, 1) == 0)
+                {
+                    _logger.LogWarning("Cannot read the last servers that served each title for now: {Error}", exception.GetType().Name);
+                }
 
-            _logger.LogError("The file of the last servers that served each title has an unsupported format. It is set aside");
-        }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            _logger.LogError("Cannot read the file of the last servers that served each title: {Error}. It is set aside", exception.GetType().Name);
-        }
-
-        KeepDamagedCopy();
-        return [];
-    }
-
-    private void KeepDamagedCopy()
-    {
-        try
-        {
-            File.Copy(_path, _path + ".damaged", overwrite: true);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogError("Cannot keep a copy of the damaged file of the last servers: {Error}", exception.GetType().Name);
+                return false;
+            }
         }
     }
 
-    private sealed record Entry(Guid UserId, string StubId, Guid ServerId);
-
-    private sealed record LastServedFile(int Version, IReadOnlyList<Entry> Entries);
+    private bool IsCurrent() => _loaded && Interlocked.Read(ref _loadedGeneration) == _database.Generation;
 }

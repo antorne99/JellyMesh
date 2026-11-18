@@ -11,7 +11,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public interface IWatchStateCarryLog
 {
     /// <summary>
-    /// Reads the file if it could not be read before. Until it is read nothing is found, recorded or saved (decision 176).
+    /// Reads the carries done if they could not be read before. Until they are read nothing is found, recorded or saved
+    /// (decision 176).
     /// </summary>
     /// <returns>Whether the carries done are known.</returns>
     bool EnsureLoaded();
@@ -26,7 +27,7 @@ public interface IWatchStateCarryLog
     bool TryFind(Guid userId, Guid fromItemId, out DateTime? lastPlayedDate);
 
     /// <summary>
-    /// Records in memory a carry just done; <see cref="SaveAsync"/> keeps it.
+    /// Records a carry just done and writes it at once; <see cref="SaveAsync"/> writes it when that fails.
     /// </summary>
     /// <param name="userId">The local user.</param>
     /// <param name="fromItemId">The old item.</param>
@@ -34,16 +35,17 @@ public interface IWatchStateCarryLog
     void Record(Guid userId, Guid fromItemId, DateTime? lastPlayedDate);
 
     /// <summary>
-    /// Forgets in memory the carries that match; <see cref="SaveAsync"/> keeps that (decisions 165, 179).
+    /// Forgets the carries that match and writes that at once; <see cref="SaveAsync"/> writes it when that fails (decisions
+    /// 165, 179).
     /// </summary>
     /// <param name="match">Tells, from the user and the old item, whether a carry goes.</param>
     /// <returns>The number of carries forgotten.</returns>
     int Forget(Func<Guid, Guid, bool> match);
 
     /// <summary>
-    /// Saves the carries recorded since the last save. A failure is logged, not thrown.
+    /// Saves the carries recorded or forgotten that could not be written yet. A failure is logged, not thrown.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>Whether every recorded carry is on disk; false while the file is not read.</returns>
+    /// <returns>Whether every recorded carry is in the database; false while it is not read.</returns>
     Task<bool> SaveAsync(CancellationToken cancellationToken);
 }

@@ -20,7 +20,8 @@ public static class SchemaMigrations
         {
             Index.IndexTables.Create(connection, transaction);
             Library.StubTables.Create(connection, transaction);
-        })
+        }),
+        new(SmallStateSchema.Version, SmallStateSchema.Apply)
     ];
 
     /// <summary>
