@@ -16,6 +16,17 @@ public interface IPluginDatabase
     StoreHealth Health { get; }
 
     /// <summary>
+    /// Gets the last time a damaged database was set aside and replaced, which the page shows with the copy date until the
+    /// admin dismisses it; <c>null</c> when there is none. It opens the database on the first read.
+    /// </summary>
+    StoreRecovery? Recovery { get; }
+
+    /// <summary>
+    /// Forgets the last recovery once the admin has checked the server list.
+    /// </summary>
+    void DismissRecovery();
+
+    /// <summary>
     /// Opens the database again when it is not healthy, as the page's "Retry" asks.
     /// </summary>
     /// <returns>The state after the attempt.</returns>

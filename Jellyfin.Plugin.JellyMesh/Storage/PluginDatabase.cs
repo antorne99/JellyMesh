@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Security;
@@ -29,6 +30,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     private static readonly string[] _walFiles = ["-wal", "-shm"];
 
+    // What goes aside with a damaged file: its logs belong to it, and SQLite would read them into the file taking its place.
+    private static readonly string[] _logFiles = ["-wal", "-journal"];
+
     private readonly string _folder;
     private readonly string _path;
     private readonly string _connectionString;
@@ -40,6 +44,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private SqliteConnection? _writer;
     private StoreHealth? _health;
+    private StoreRecovery? _recovery;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PluginDatabase"/> class.
@@ -102,6 +107,18 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     /// <inheritdoc />
     public StoreHealth Health => Volatile.Read(ref _health) ?? OpenFirst();
 
+    /// <inheritdoc />
+    public StoreRecovery? Recovery
+    {
+        get
+        {
+            _ = Health;
+            return Volatile.Read(ref _recovery);
+        }
+    }
+
+    private string RecoveryPath => Path.Combine(_folder, StoreBackups.RecoveryFileName);
+
     private int Latest => _migrations.Count;
 
     /// <inheritdoc />
@@ -116,6 +133,21 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             }
 
             return SetHealth(Open());
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public void DismissRecovery()
+    {
+        _gate.Wait();
+        try
+        {
+            File.Delete(RecoveryPath);
+            Volatile.Write(ref _recovery, null);
         }
         finally
         {
@@ -315,8 +347,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Permissions, then version and integrity read-only, then WAL and the schema steps on the writer; called with the gate
-    // held. The file is opened for writes only once its version is known and it passes the check.
+    // Permissions, then the file, which is set aside and replaced when damaged; called with the gate held.
     private StoreHealth Open()
     {
         _writer?.Dispose();
@@ -331,6 +362,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return Unavailable("The database files cannot be kept private", exception);
         }
 
+        Volatile.Write(ref _recovery, ReadRecovery());
+        var health = OpenFile();
+        return health.State == StoreState.Damaged ? Recover(health) : health;
+    }
+
+    // Version and integrity read-only, then WAL and the schema steps on the writer. The file is opened for writes only once
+    // its version is known and it passes the check. Every connection is closed when it returns.
+    private StoreHealth OpenFile()
+    {
         SqliteConnection? writer = null;
         try
         {
@@ -385,6 +425,124 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         finally
         {
             writer?.Dispose();
+        }
+    }
+
+    // Sets the damaged file aside with its logs, then restarts from the newest copy that opens, or empty (row 427). A copy
+    // that is damaged too is passed over. When the file cannot be set aside nothing new is made and the store stays damaged.
+    private StoreHealth Recover(StoreHealth damage)
+    {
+        var now = _time.GetUtcNow();
+        string damaged;
+        try
+        {
+            damaged = SetAside(now);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "The damaged JellyMesh database cannot be set aside. Sync and remote playback stay suspended");
+            return damage with { Reason = damage.Reason + " It cannot be set aside: " + exception.Message };
+        }
+
+        try
+        {
+            foreach (var copy in StoreBackups.List(_folder))
+            {
+                Restore(copy.FilePath);
+                var health = OpenFile();
+                if (health.State == StoreState.Damaged)
+                {
+                    _logger.LogWarning("The JellyMesh database copy {Copy} is damaged too", Path.GetFileName(copy.FilePath));
+                    DeleteDatabaseFiles();
+                    continue;
+                }
+
+                _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the server list", Path.GetFileName(damaged), copy.CreatedAt);
+                Remember(new StoreRecovery(now, Path.GetFileName(damaged), copy.CreatedAt));
+                return health;
+            }
+
+            _guard.CreatePrivate(_path).Dispose();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            DeleteDatabaseFiles();
+            return Unavailable("The damaged database was set aside, and no copy or empty database can take its place", exception);
+        }
+
+        _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty", Path.GetFileName(damaged));
+        Remember(new StoreRecovery(now, Path.GetFileName(damaged), null));
+        return OpenFile();
+    }
+
+    // Moves the file and its logs to a free .damaged-<date> name; the shared-memory index is rebuilt by SQLite, so it goes.
+    private string SetAside(DateTimeOffset now)
+    {
+        var target = StoreBackups.DamagedPath(_folder, now);
+        File.Move(_path, target);
+        foreach (var suffix in _logFiles)
+        {
+            if (File.Exists(_path + suffix))
+            {
+                File.Move(_path + suffix, target + suffix);
+            }
+        }
+
+        File.Delete(_path + "-shm");
+        return target;
+    }
+
+    // Copies a nightly copy into a new private database file, never moving the copy itself.
+    private void Restore(string copy)
+    {
+        using var source = new FileStream(copy, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var target = _guard.CreatePrivate(_path);
+        source.CopyTo(target);
+        target.Flush(true);
+    }
+
+    private void DeleteDatabaseFiles()
+    {
+        File.Delete(_path);
+        foreach (var suffix in _walFiles)
+        {
+            File.Delete(_path + suffix);
+        }
+    }
+
+    // Keeps the recovery for the page, in a private file so it outlives a restart; when the file cannot be written the
+    // page still has it until the next restart.
+    private void Remember(StoreRecovery recovery)
+    {
+        Volatile.Write(ref _recovery, recovery);
+        try
+        {
+            File.Delete(RecoveryPath);
+            using var stream = _guard.CreatePrivate(RecoveryPath);
+            JsonSerializer.Serialize(stream, recovery);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "The JellyMesh database recovery cannot be kept for after a restart");
+        }
+    }
+
+    private StoreRecovery? ReadRecovery()
+    {
+        try
+        {
+            if (!File.Exists(RecoveryPath))
+            {
+                return null;
+            }
+
+            using var stream = new FileStream(RecoveryPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return JsonSerializer.Deserialize<StoreRecovery>(stream);
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be read and is ignored");
+            return null;
         }
     }
 

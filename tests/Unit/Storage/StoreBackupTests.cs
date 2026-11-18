@@ -194,6 +194,170 @@ public sealed class StoreBackupTests : IDisposable
         Assert.Empty(Copies());
     }
 
+    private static async Task<byte[]> SpoilAsync(string path)
+    {
+        var garbage = new byte[8192];
+        Array.Fill(garbage, (byte)'x');
+        await File.WriteAllBytesAsync(path, garbage);
+        return garbage;
+    }
+
+    // Three nights of items, a copy after the first two, and the database left damaged on the third.
+    private async Task<byte[]> DamageAfterTwoCopiesAsync()
+    {
+        var database = Open();
+        await AddItemAsync(database, "first");
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromDays(1);
+        await AddItemAsync(database, "second");
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromDays(1);
+        await AddItemAsync(database, "lost");
+        database.Dispose();
+        _opened.Remove(database);
+        return await SpoilAsync(DatabasePath);
+    }
+
+    private async Task<List<string>> ItemsAsync(PluginDatabase database) => await database.ReadAsync(
+        (connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT value FROM items ORDER BY rowid;";
+            using var reader = command.ExecuteReader();
+            var values = new List<string>();
+            while (reader.Read())
+            {
+                values.Add(reader.GetString(0));
+            }
+
+            return values;
+        },
+        CancellationToken.None);
+
+    [Fact]
+    public async Task ADamagedFileIsSetAsideAndTheStoreRestartsFromTheLatestCopy()
+    {
+        var damaged = await DamageAfterTwoCopiesAsync();
+
+        var database = Open();
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(["first", "second"], await ItemsAsync(database));
+        Assert.Equal(damaged, await File.ReadAllBytesAsync(Path.Combine(Folder, "jellymesh.db.damaged-20261120030000")));
+        Assert.Equal(
+            new StoreRecovery(_clock.Now, "jellymesh.db.damaged-20261120030000", new DateTimeOffset(2026, 11, 19, 3, 0, 0, TimeSpan.Zero)),
+            database.Recovery);
+        Assert.Equal(["jellymesh.db.backup-20261118030000", "jellymesh.db.backup-20261119030000"], Copies());
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal(OwnerOnly, File.GetUnixFileMode(DatabasePath));
+        }
+    }
+
+    [Fact]
+    public async Task AFileThatFailsTheIntegrityCheckIsSetAsideToo()
+    {
+        var database = Open();
+        await database.WriteAsync(
+            (connection, transaction) =>
+            {
+                Scalar(connection, "CREATE TABLE later (value TEXT); CREATE INDEX later_value ON later (value);", transaction);
+                for (var row = 0; row < 200; row++)
+                {
+                    Scalar(connection, $"INSERT INTO later VALUES ('{new string('v', 200)}{row}');", transaction);
+                }
+            },
+            CancellationToken.None);
+        await database.BackUpAsync(CancellationToken.None);
+        database.Dispose();
+        _opened.Remove(database);
+
+        // Overwrites the middle of the file, past the header and the schema page.
+        var bytes = await File.ReadAllBytesAsync(DatabasePath);
+        Array.Fill(bytes, (byte)0x5A, bytes.Length / 2, 4096);
+        await File.WriteAllBytesAsync(DatabasePath, bytes);
+
+        var recovered = Open();
+
+        Assert.Equal(StoreState.Healthy, recovered.Health.State);
+        Assert.Equal(_clock.Now, recovered.Recovery?.CopyDate);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(Folder, "jellymesh.db.damaged-20261118030000")));
+    }
+
+    [Fact]
+    public async Task WithoutACopyTheStoreRestartsEmptyWithTheWarning()
+    {
+        var damaged = await SpoilAsync(DatabasePath);
+
+        var database = Open();
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(new StoreRecovery(_clock.Now, "jellymesh.db.damaged-20261118030000", null), database.Recovery);
+        Assert.Equal(damaged, await File.ReadAllBytesAsync(Path.Combine(Folder, "jellymesh.db.damaged-20261118030000")));
+        var version = await database.ReadAsync((connection, transaction) => Scalar(connection, "PRAGMA user_version;", transaction), CancellationToken.None);
+        Assert.Equal((long)SchemaMigrations.Latest, version);
+        Assert.Equal(0L, await database.ReadAsync((connection, transaction) => Scalar(connection, "SELECT count(*) FROM sqlite_master WHERE name = 'items';", transaction), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ADamagedCopyIsPassedOverForTheOneBefore()
+    {
+        await DamageAfterTwoCopiesAsync();
+        await SpoilAsync(Path.Combine(Folder, "jellymesh.db.backup-20261119030000"));
+
+        var database = Open();
+
+        Assert.Equal(["first"], await ItemsAsync(database));
+        Assert.Equal(new DateTimeOffset(2026, 11, 18, 3, 0, 0, TimeSpan.Zero), database.Recovery?.CopyDate);
+    }
+
+    // A log of the damaged file must not be read into the copy that takes its place.
+    [Fact]
+    public async Task ThePendingLogGoesAsideWithTheDamagedFile()
+    {
+        await DamageAfterTwoCopiesAsync();
+        var log = RandomNumberGenerator.GetBytes(4096);
+        await File.WriteAllBytesAsync(DatabasePath + "-wal", log);
+        await File.WriteAllBytesAsync(DatabasePath + "-shm", new byte[32768]);
+
+        var database = Open();
+
+        Assert.Equal(["first", "second"], await ItemsAsync(database));
+        Assert.Equal(log, await File.ReadAllBytesAsync(Path.Combine(Folder, "jellymesh.db.damaged-20261120030000-wal")));
+    }
+
+    [Fact]
+    public async Task TheRecoveryOutlivesARestartUntilItIsDismissed()
+    {
+        await DamageAfterTwoCopiesAsync();
+        var first = Open();
+        var recovery = first.Recovery;
+        Assert.NotNull(recovery);
+        first.Dispose();
+        _opened.Remove(first);
+
+        var restarted = Open();
+        Assert.Equal(recovery, restarted.Recovery);
+
+        restarted.DismissRecovery();
+        Assert.Null(restarted.Recovery);
+        restarted.Dispose();
+        _opened.Remove(restarted);
+
+        Assert.Null(Open().Recovery);
+    }
+
+    [Fact]
+    public void AHealthyOpenHasNoRecovery()
+    {
+        var database = Open();
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Null(database.Recovery);
+        Assert.Empty(Directory.GetFiles(Folder, "*damaged*"));
+    }
+
     // Fills each new file once spoiled, which VACUUM INTO refuses (F23).
     private sealed class SpoilingGuard : IKeyFileGuard
     {

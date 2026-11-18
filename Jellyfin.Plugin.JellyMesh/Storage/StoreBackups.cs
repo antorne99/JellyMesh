@@ -7,7 +7,7 @@ using System.Linq;
 namespace Jellyfin.Plugin.JellyMesh.Storage;
 
 /// <summary>
-/// Names, lists and prunes the nightly copies. Every name starts with the database's, so
+/// Names, lists and prunes the nightly copies, and names the damaged files set aside. Every name starts with the database's, so
 /// the narrowing at open covers them.
 /// </summary>
 internal static class StoreBackups
@@ -16,7 +16,11 @@ internal static class StoreBackups
     public const int Kept = 2;
 
     private const string BackupMark = ".backup-";
+    private const string DamagedMark = ".damaged-";
     private const string TimeFormat = "yyyyMMddHHmmss";
+
+    /// <summary>The file that keeps the last recovery for the page until the admin dismisses it.</summary>
+    public const string RecoveryFileName = PluginDatabase.FileName + ".recovery";
 
     /// <summary>
     /// Gets the path of the copy made at a time.
@@ -26,6 +30,24 @@ internal static class StoreBackups
     /// <returns>The path.</returns>
     public static string BackupPath(string folder, DateTimeOffset time) =>
         Path.Combine(folder, PluginDatabase.FileName + BackupMark + Stamp(time));
+
+    /// <summary>
+    /// Gets a free path to set the damaged database aside at a time, as <c>jellymesh.db.damaged-&lt;date&gt;</c>.
+    /// </summary>
+    /// <param name="folder">The plugin data folder.</param>
+    /// <param name="time">When the file is set aside.</param>
+    /// <returns>A path no file has yet.</returns>
+    public static string DamagedPath(string folder, DateTimeOffset time)
+    {
+        var path = Path.Combine(folder, PluginDatabase.FileName + DamagedMark + Stamp(time));
+        var candidate = path;
+        for (var number = 2; File.Exists(candidate); number++)
+        {
+            candidate = path + "-" + number.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return candidate;
+    }
 
     /// <summary>
     /// Lists the copies in the folder, the newest first.
