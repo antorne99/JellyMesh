@@ -618,7 +618,7 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public void A_confirmed_rename_starts_in_the_background_and_shows_the_state()
+    public async Task A_confirmed_rename_starts_in_the_background_and_shows_the_state()
     {
         using var fixture = new RegistryFixture();
         var renamer = new Mock<IServerRenamer>();
@@ -627,14 +627,14 @@ public class FederationAdminControllerTests
         renamer.Setup(r => r.Rename(id, "Mare", true)).Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
         renamer.Setup(r => r.GetState(id)).Returns(state);
 
-        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true });
+        var result = await ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true }, CancellationToken.None);
 
         var accepted = Assert.IsType<AcceptedResult>(result.Result);
         Assert.Same(state, accepted.Value);
     }
 
     [Fact]
-    public void A_rename_without_a_confirmation_answers_with_the_libraries_it_renames()
+    public async Task A_rename_without_a_confirmation_answers_with_the_libraries_it_renames()
     {
         using var fixture = new RegistryFixture();
         var renamer = new Mock<IServerRenamer>();
@@ -642,7 +642,7 @@ public class FederationAdminControllerTests
         renamer.Setup(r => r.Rename(id, "Mare", false))
             .Returns(new ServerRenameRequest(ServerRenameOutcome.ConfirmationRequired, Task.CompletedTask, ["Casa - Film"]));
 
-        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare" });
+        var result = await ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare" }, CancellationToken.None);
 
         var conflict = Assert.IsType<ObjectResult>(result.Result);
         Assert.Equal(409, conflict.StatusCode);
@@ -655,13 +655,13 @@ public class FederationAdminControllerTests
     [InlineData(ServerRenameOutcome.InvalidName, 400)]
     [InlineData(ServerRenameOutcome.UnknownServer, 404)]
     [InlineData(ServerRenameOutcome.Busy, 409)]
-    public void A_refused_rename_answers_with_its_reason(ServerRenameOutcome outcome, int status)
+    public async Task A_refused_rename_answers_with_its_reason(ServerRenameOutcome outcome, int status)
     {
         using var fixture = new RegistryFixture();
         var renamer = new Mock<IServerRenamer>();
         renamer.Setup(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>())).Returns(ServerRenameRequest.Refused(outcome));
 
-        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(Guid.NewGuid(), new RenameServerRequest { Name = " " });
+        var result = await ControllerFor(fixture, renamer: renamer.Object).RenameServer(Guid.NewGuid(), new RenameServerRequest { Name = " " }, CancellationToken.None);
 
         var refused = Assert.IsType<ObjectResult>(result.Result);
         Assert.Equal(status, refused.StatusCode);
@@ -941,7 +941,7 @@ public class FederationAdminControllerTests
         var controller = ControllerFor(fixture);
         var server = await fixture.AddServerAsync();
 
-        Assert.IsType<NoContentResult>(controller.SetLibraries(server.Id, new SetLibrariesRequest(["2"])));
+        Assert.IsType<NoContentResult>(await controller.SetLibraries(server.Id, new SetLibrariesRequest(["2"]), CancellationToken.None));
         var libraries = await controller.GetLibraries(server.Id, CancellationToken.None);
 
         Assert.Equal([false, true], libraries.Value!.Select(library => library.Selected));

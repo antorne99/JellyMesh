@@ -12,6 +12,7 @@ using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Moq;
 using Xunit;
 
@@ -71,6 +72,55 @@ public sealed partial class ServerEditTests
         }
 
         Assert.Equal("Friend", _fixture.Store.Configuration.Servers.Single().Name);
+        held!.Dispose();
+        await removal;
+    }
+
+    // Until F35 drops them, the old per-field endpoints take the same lock as the edit form.
+    [Fact]
+    public async Task The_old_endpoints_wait_for_the_edit_in_progress()
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(id);
+        var held = await _fixture.Registry.EnterEditAsync(id, CancellationToken.None);
+
+        var libraries = Controller().SetLibraries(id, new SetLibrariesRequest(["2"]), CancellationToken.None);
+        var credentials = Controller().UpdateCredentials(id, new CredentialsRequest { Username = "dedicated", Password = "pass" }, CancellationToken.None);
+        var rename = Controller(renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true }, CancellationToken.None);
+        await Task.Delay(100);
+
+        Assert.False(libraries.IsCompleted || credentials.IsCompleted || rename.IsCompleted);
+        Assert.Empty(Requests);
+        renamer.Verify(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+        held!.Dispose();
+        Assert.IsType<NoContentResult>(await libraries);
+        Assert.IsType<ServerStatus>((await credentials).Value);
+        Assert.Equal(StatusCodes.Status202Accepted, Assert.IsType<AcceptedResult>((await rename).Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_old_endpoints_are_refused_while_the_server_is_being_removed()
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(id);
+        var held = await _fixture.Registry.EnterEditAsync(id, CancellationToken.None);
+        var removal = Controller().RemoveServer(id, CancellationToken.None);
+        await Task.Delay(100);
+        var before = Snapshot(id);
+
+        var libraries = Assert.IsType<ObjectResult>(await Controller().SetLibraries(id, new SetLibrariesRequest(["2"]), CancellationToken.None));
+        var credentials = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = "dedicated", Password = "pass" }, CancellationToken.None);
+        var rename = await Controller(renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true }, CancellationToken.None);
+
+        var refusals = new[] { (libraries.StatusCode!.Value, Assert.IsType<FailureResponse>(libraries.Value)), Refusal(credentials), Refusal(rename) };
+        Assert.All(refusals, refusal =>
+        {
+            Assert.Equal(StatusCodes.Status409Conflict, refusal.Item1);
+            Assert.Equal(RemoteFailure.BeingRemoved, refusal.Item2.Failure);
+        });
+        Assert.Equal(before, Snapshot(id));
+        Assert.Empty(Requests);
+        renamer.Verify(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
         held!.Dispose();
         await removal;
     }
@@ -522,6 +572,14 @@ public sealed partial class ServerEditTests
         renamer.Setup(service => service.GetState(It.IsAny<Guid>())).Returns(state);
         renamer.Setup(service => service.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()))
             .Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
+        return renamer;
+    }
+
+    private static Mock<IServerRenamer> Renamer(Guid id)
+    {
+        var renamer = new Mock<IServerRenamer>();
+        renamer.Setup(r => r.Rename(id, "Mare", true)).Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
+        renamer.Setup(r => r.GetState(id)).Returns(new ServerRenameState(true, false, false));
         return renamer;
     }
 }

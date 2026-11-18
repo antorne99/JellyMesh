@@ -302,6 +302,12 @@ public class FederationAdminController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
+
         var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
         var result = await _registry.UpdateCredentialsAsync(serverId, credentials, cancellationToken).ConfigureAwait(false);
         return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
@@ -428,13 +434,21 @@ public class FederationAdminController : ControllerBase
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The libraries.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Nothing.</returns>
     [HttpPost("Servers/{serverId:guid}/Libraries")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult SetLibraries([FromRoute] Guid serverId, [FromBody] SetLibrariesRequest request)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult> SetLibraries([FromRoute] Guid serverId, [FromBody] SetLibrariesRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
 
         return _registry.SetImportedLibraries(serverId, request.LibraryIds) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
@@ -469,18 +483,25 @@ public class FederationAdminController : ControllerBase
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The new name and the confirmation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state, while the work runs in the background.</returns>
     [HttpPost("Servers/{serverId:guid}/Rename")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public ActionResult<ServerRenameState> RenameServer([FromRoute] Guid serverId, [FromBody] RenameServerRequest request)
+    public async Task<ActionResult<ServerRenameState>> RenameServer([FromRoute] Guid serverId, [FromBody] RenameServerRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (_renamer is null)
         {
             return NotFound();
+        }
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
         }
 
         var answer = _renamer.Rename(serverId, request.Name, request.Confirmed);
