@@ -23,8 +23,8 @@ internal static class TestValues
     public const string Username = "dedicated-user";
     public const string Password = "pa55-w0rd-sentinel";
     public const string Token = "tok3n0123456789sentinel";
-    public const string Host = "friend.tailnet.ts.net";
-    public const string Url = "http://friend.tailnet.ts.net:8096";
+    public const string Host = "remote.invalid";
+    public const string Url = "http://remote.invalid:8096";
 
     public static readonly RemoteCredentials Credentials = new() { Username = Username, Password = Password };
 

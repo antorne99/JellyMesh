@@ -99,7 +99,7 @@ public class PlaybackResponseTests
     public void An_absolute_delivery_url_refuses_the_source()
     {
         var remote = PlaybackValues.HlsAnswer("ms");
-        remote.MediaStreams[0].DeliveryUrl = "http://friend.tailnet.ts.net:8096/Stream.vtt";
+        remote.MediaStreams[0].DeliveryUrl = "http://remote.invalid:8096/Stream.vtt";
 
         Assert.Null(PlaybackResponseBuilder.Build(remote, PlaybackValues.Session(), PlaybackValues.LocalToken));
     }

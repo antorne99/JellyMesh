@@ -34,7 +34,7 @@ public class TrailerMappingTests
     [InlineData("https://www.youtube.com/embed/dQw4w9WgXcQ")]
     [InlineData("ftp://www.youtube.com/watch?v=dQw4w9WgXcQ")]
     [InlineData("file:///etc/passwd")]
-    [InlineData("http://100.64.0.1:8096/Videos/x/stream?api_key=secret")]
+    [InlineData("http://198.51.100.1:8096/Videos/x/stream?api_key=secret")]
     [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXc")]
     [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXcQQ")]
     [InlineData("https://www.youtube.com/watch?v=dQw4w9WgX%3CQ")]

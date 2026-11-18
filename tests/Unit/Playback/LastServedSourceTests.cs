@@ -135,7 +135,7 @@ public sealed class LastServedSourceTests
             Assert.DoesNotContain(PlaybackValues.LocalToken, text, StringComparison.Ordinal);
             Assert.DoesNotContain(PlaybackValues.RemotePlaySession, text, StringComparison.Ordinal);
             Assert.DoesNotContain(PlaybackValues.RemoteDevice, text, StringComparison.Ordinal);
-            Assert.DoesNotContain("tailnet", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("remote.invalid", text, StringComparison.Ordinal);
             Assert.DoesNotContain("remote-item-sentinel", text, StringComparison.Ordinal);
         }
         finally

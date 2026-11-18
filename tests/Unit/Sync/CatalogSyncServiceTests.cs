@@ -297,7 +297,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(2));
         var first = await _fixture.AddServerAsync("A", "films");
         var second = await _fixture.AddServerAsync("B", "films");
-        _fixture.Client.OnPage = (_, call) => call == 1 ? throw new InvalidOperationException("at http://friend.tailnet.ts.net:8096/x") : RemoteFailure.None;
+        _fixture.Client.OnPage = (_, call) => call == 1 ? throw new InvalidOperationException("at http://remote.invalid:8096/x") : RemoteFailure.None;
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 

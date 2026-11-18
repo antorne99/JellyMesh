@@ -292,7 +292,7 @@ public class StubSegmentsTests
     [Fact]
     public async Task An_unexpected_error_keeps_what_the_stub_has_and_reaches_no_log_of_stock()
     {
-        _client.Answer = _ => throw new System.Net.Http.HttpRequestException("http://friend.tailnet.ts.net:8096 refused");
+        _client.Answer = _ => throw new System.Net.Http.HttpRequestException("http://remote.invalid:8096 refused");
         var existing = Existing(MediaSegmentType.Intro, 0, 900);
 
         var result = await Segments().GetAsync(Request(existing), CancellationToken.None);
