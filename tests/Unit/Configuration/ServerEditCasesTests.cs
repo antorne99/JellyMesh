@@ -284,6 +284,67 @@ public sealed partial class ServerEditTests
         Assert.Equal(1, _playback.Coordinator.CountServerSessions(id));
     }
 
+    [Fact]
+    public async Task A_check_of_a_new_name_with_the_remote_down_succeeds_and_says_the_remote_is_offline()
+    {
+        var id = await AddAsync("1");
+        _offline = true;
+
+        var result = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        var check = Assert.IsType<ServerEditCheck>(result.Value);
+        Assert.True(check.RemoteOffline);
+        Assert.Empty(check.Libraries);
+        Assert.Empty(check.Consequences.RemovedLibraries);
+        Assert.Equal("Casa", check.Consequences.Rename!.NewName);
+    }
+
+    [Fact]
+    public async Task A_save_of_a_new_name_with_the_remote_down_is_saved()
+    {
+        var id = await AddAsync("1");
+        _offline = true;
+
+        var result = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
+        Assert.Equal(["1"], _fixture.Store.Configuration.Servers.Single().ImportedLibraryIds);
+    }
+
+    [Fact]
+    public async Task A_check_with_the_remote_up_says_it_is_not_offline()
+    {
+        var id = await AddAsync("1");
+
+        var result = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        Assert.False(Assert.IsType<ServerEditCheck>(result.Value).RemoteOffline);
+    }
+
+    [Theory]
+    [InlineData(null, null, "new-pass", null)]
+    [InlineData(null, "someone", "new-pass", null)]
+    [InlineData(OtherUrl, null, null, null)]
+    [InlineData(null, null, null, "2")]
+    public async Task With_the_remote_down_a_new_address_user_password_or_library_is_refused(string? url, string? user, string? password, string? library)
+    {
+        var id = await AddAsync("1");
+        var before = Snapshot();
+        _offline = true;
+        var edit = Edit(name: "Casa", url: url ?? TestValues.Url, user: user ?? TestValues.Username, password: password, libraries: library is null ? null : [library]);
+
+        var check = await Controller().CheckServerEdit(id, edit, CancellationToken.None);
+        var save = await Controller().SaveServerEdit(id, edit, CancellationToken.None);
+
+        foreach (var (status, failure) in new[] { Refusal(check), Refusal(save) })
+        {
+            Assert.Equal(StatusCodes.Status502BadGateway, status);
+            Assert.Equal(RemoteFailure.Unreachable, failure.Failure);
+        }
+
+        Assert.Equal(before, Snapshot());
+    }
+
     // Makes the registry keep a login, as a call would, with the token of the saved user.
     private async Task KeepLoginAsync(Guid id)
     {

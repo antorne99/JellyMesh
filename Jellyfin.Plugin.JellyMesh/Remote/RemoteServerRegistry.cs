@@ -352,13 +352,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         if (login.Value is not { } session)
         {
             _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
-            return RemoteResult.Fail(login.Failure, new RemoteEditReport(FieldOf(login.Failure)));
+            return OfflineOr(plan, login.Failure, new RemoteEditReport(FieldOf(login.Failure)));
         }
 
         try
         {
             var read = await ReadEditedAsync(plan, endpoint, session, cancellationToken).ConfigureAwait(false);
-            return read.IsSuccess ? RemoteResult.Success(read.Value!.Report) : RemoteResult.Fail(read.Failure, read.Value!.Report);
+            return read.IsSuccess ? RemoteResult.Success(read.Value!.Report) : OfflineOr(plan, read.Failure, read.Value!.Report);
         }
         finally
         {
@@ -727,6 +727,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     private static (EditPlan? Plan, RemoteResult<RemoteEditReport> Refusal) Refuse(RemoteFailure failure, RemoteEditField field)
         => (null, RemoteResult.Fail(failure, new RemoteEditReport(field)));
+
+    // A remote that does not answer blocks only an edit that needs it; otherwise the check succeeds without a read (D28).
+    private static RemoteResult<RemoteEditReport> OfflineOr(EditPlan plan, RemoteFailure failure, RemoteEditReport refusal)
+    {
+        const RemoteEditChanges remote = RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Password | RemoteEditChanges.Libraries;
+        return failure is RemoteFailure.Unreachable or RemoteFailure.Timeout && (plan.Changes & remote) == RemoteEditChanges.None
+            ? RemoteResult.Success(new RemoteEditReport(RemoteEditField.None) { Changes = plan.Changes, LibraryIds = plan.Saved.LibraryIds, RemoteOffline = true })
+            : RemoteResult.Fail(failure, refusal);
+    }
 
     // Checks the fields of an edit against the saved server and finds what it changes, or why it is refused (row 432).
     private (EditPlan? Plan, RemoteResult<RemoteEditReport> Refusal) PlanEdit(Guid serverId, RemoteServerEdit edit)

@@ -27,4 +27,9 @@ public sealed record RemoteEditReport(RemoteEditField Field)
     /// Gets the libraries imported with the edit: those chosen that the user sees, or the saved ones without a read.
     /// </summary>
     public IReadOnlyList<string> LibraryIds { get; init; } = [];
+
+    /// <summary>
+    /// Gets a value indicating whether the remote did not answer a check that needs it for nothing (D28).
+    /// </summary>
+    public bool RemoteOffline { get; init; }
 }

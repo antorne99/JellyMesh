@@ -812,7 +812,10 @@ public class FederationAdminController : ControllerBase
         return new ServerEditCheck(
             report.ServerName ?? string.Empty,
             visible.Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, kept.Contains(library.Id))).ToList(),
-            new ServerEditConsequences(rename, removed, streams));
+            new ServerEditConsequences(rename, removed, streams))
+        {
+            RemoteOffline = report.RemoteOffline
+        };
     }
 
     // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure

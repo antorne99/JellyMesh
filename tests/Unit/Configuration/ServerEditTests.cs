@@ -38,6 +38,7 @@ public sealed partial class ServerEditTests : IDisposable
     private string? _publicOverride;
     private string _token = TestValues.Token;
     private HttpStatusCode _logout = HttpStatusCode.NoContent;
+    private bool _offline;
 
     private string? PublicId => _publicSet ? _publicOverride : _serverId;
 
@@ -58,7 +59,7 @@ public sealed partial class ServerEditTests : IDisposable
 
     private StubHandler.RecordedRequest[] Requests => _fixture.Handler.Requests.ToArray();
 
-    private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => request.RequestUri!.AbsolutePath switch
+    private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => _offline ? throw new System.Net.Http.HttpRequestException("offline") : request.RequestUri!.AbsolutePath switch
     {
         "/Users/AuthenticateByName" => _login == HttpStatusCode.OK ? StubHandler.Json(LoginAnswer) : StubHandler.Status(_login),
         "/UserViews" => StubHandler.Json(_views),
