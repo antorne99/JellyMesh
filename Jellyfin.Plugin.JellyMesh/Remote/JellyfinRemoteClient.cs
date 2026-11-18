@@ -156,8 +156,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        // /Library/VirtualFolders answers 403 to a non-admin user.
-        return await ReadLibrariesAsync(endpoint, session, "/UserViews", cancellationToken).ConfigureAwait(false);
+        // /Library/VirtualFolders answers 403 to a non-admin user. A library the user hid from My Media is still one it sees.
+        return await ReadLibrariesAsync(endpoint, session, "/UserViews?includeHidden=true", cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

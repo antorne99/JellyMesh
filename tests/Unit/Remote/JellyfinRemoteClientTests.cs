@@ -324,14 +324,14 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
-    public async Task LibrariesComeFromUserViewsAndKeepOnlyFilmsAndSeries()
+    public async Task LibrariesComeFromUserViewsWithTheHiddenOnesAndKeepOnlyFilmsAndSeries()
     {
         var handler = StubHandler.StockServer();
 
         var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
 
         Assert.Equal(["Film", "Serie"], result.Value!.Select(library => library.Name));
-        Assert.Equal(TestValues.Url + "/UserViews", Assert.Single(handler.Requests).Uri.ToString());
+        Assert.Equal(TestValues.Url + "/UserViews?includeHidden=true", Assert.Single(handler.Requests).Uri.ToString());
     }
 
     [Fact]
