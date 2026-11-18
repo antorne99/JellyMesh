@@ -385,8 +385,19 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     // Keeps the name and type of each imported library, which its local libraries follow; a read that finds them unchanged writes nothing.
     // Counts the imported libraries a correct answer did not list: the second absence in a row drops them from the imported
     // ones and records them as vanished (§10 row 436). Returns the ids dropped now.
-    private IReadOnlyList<string> TrackAbsence(RemoteServerInfo server, IReadOnlyList<string> missing)
+    private IReadOnlyList<string> TrackAbsence(RemoteServerInfo server, IReadOnlyList<string> missing, IReadOnlyList<RemoteLibrary> answer)
     {
+        // A view of the same type that is no library of its own nor one known may be the library grouped with others.
+        static bool MayBeGrouped(RemoteServerConfig kept, string id, IReadOnlyList<RemoteLibrary> answer)
+        {
+            var type = kept.RemoteLibraries.FirstOrDefault(library => library.Id == id)?.CollectionType;
+            return answer.Any(view => view.MayCombine
+                && !kept.ImportedLibraryIds.Contains(view.Id)
+                && !kept.RemoteLibraries.Any(library => library.Id == view.Id)
+                && !kept.VanishedLibraries.Any(library => library.Id == view.Id)
+                && (type is null || string.Equals(view.CollectionType, type, StringComparison.OrdinalIgnoreCase)));
+        }
+
         static bool Unchanged(RemoteServerConfig kept, IReadOnlyList<string> missing)
             => missing.Count == 0 && kept.AbsentLibraryIds.Count == 0 && !kept.VanishedLibraries.Any(library => kept.ImportedLibraryIds.Contains(library.Id));
 
@@ -404,14 +415,15 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 return;
             }
 
-            var imported = missing.Where(kept.ImportedLibraryIds.Contains).ToList();
+            var uncertain = missing.Where(id => kept.ImportedLibraryIds.Contains(id) && MayBeGrouped(kept, id, answer)).ToList();
+            var imported = missing.Where(id => kept.ImportedLibraryIds.Contains(id) && !uncertain.Contains(id)).ToList();
             vanished.AddRange(imported.Where(kept.AbsentLibraryIds.Contains).Select(id => new VanishedLibraryConfig
             {
                 Id = id,
                 Name = kept.RemoteLibraries.FirstOrDefault(library => library.Id == id)?.Name ?? string.Empty
             }));
             Replace(kept.ImportedLibraryIds, kept.ImportedLibraryIds.Where(id => !vanished.Any(gone => gone.Id == id)).ToList());
-            Replace(kept.AbsentLibraryIds, imported.Where(kept.ImportedLibraryIds.Contains).ToList());
+            Replace(kept.AbsentLibraryIds, imported.Where(kept.ImportedLibraryIds.Contains).Concat(uncertain.Where(kept.AbsentLibraryIds.Contains)).ToList());
             var records = kept.VanishedLibraries.Where(library => !kept.ImportedLibraryIds.Contains(library.Id) && !vanished.Any(gone => gone.Id == library.Id)).Concat(vanished).ToList();
             Replace(kept.VanishedLibraries, records);
         });
@@ -494,7 +506,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).DistinctBy(library => library.Id).ToList();
         var missing = server.ImportedLibraryIds.Distinct().Where(id => !chosen.Any(library => library.Id == id)).ToList();
         // An answer with no views at all is no correct answer, so it never counts as an absence; views of other types make it one.
-        if (RemoteLibraryList.ViewCountOf(libraries.Value!) == 0 || TrackAbsence(server, missing).Count < missing.Count)
+        if (RemoteLibraryList.ViewCountOf(libraries.Value!) == 0 || TrackAbsence(server, missing, libraries.Value!).Count < missing.Count)
         {
             return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(RemoteFailure.LibraryUnavailable);
         }

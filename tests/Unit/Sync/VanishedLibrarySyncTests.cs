@@ -161,6 +161,34 @@ public sealed class VanishedLibrarySyncTests : IDisposable
     }
 
     [Fact]
+    public async Task A_library_missing_beside_an_unknown_view_of_its_type_that_may_combine_libraries_is_no_absence()
+    {
+        var server = await TwoLibrariesSyncedAsync();
+        RemoveOnRemote(TestLibraries.FilmsB);
+        _fixture.Client.Libraries.Add(new RemoteLibrary("grouped", "Film", "movies") { MayCombine = true });
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Contains(TestLibraries.FilmsB, ConfigOf(server).ImportedLibraryIds);
+        Assert.Empty(ConfigOf(server).AbsentLibraryIds);
+        Assert.Equal(["b", "m"], CatalogOf(server).Items.Select(item => item.ItemId).Order());
+    }
+
+    [Fact]
+    public async Task A_library_missing_beside_another_library_of_its_type_is_an_absence()
+    {
+        var server = await TwoLibrariesSyncedAsync();
+        RemoveOnRemote(TestLibraries.FilmsB);
+        _fixture.Client.Libraries.Add(new RemoteLibrary("other", "Altri film", "movies"));
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal([TestLibraries.Films], ConfigOf(server).ImportedLibraryIds);
+    }
+
+    [Fact]
     public async Task A_page_that_fails_after_a_second_absence_keeps_the_entries_of_the_other_libraries()
     {
         var server = await TwoLibrariesSyncedAsync();
