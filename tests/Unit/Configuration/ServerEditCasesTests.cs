@@ -380,6 +380,19 @@ public sealed partial class ServerEditTests
     }
 
     [Fact]
+    public async Task A_new_user_who_no_longer_sees_a_library_drops_it_then_writes_the_server_folders()
+    {
+        var id = await AddAsync("1", "2");
+        _views = "{\"Items\":[{\"Id\":\"1\",\"Name\":\"Film\",\"CollectionType\":\"movies\"}],\"TotalRecordCount\":1}";
+
+        await Controller().SaveServerEdit(id, Edit(user: "someone", password: "new-pass"), CancellationToken.None);
+
+        Assert.Equal(["1"], _fixture.Registry.GetServers().Single().ImportedLibraryIds);
+        _sync.Verify(service => service.PrepareServerFolders(), Times.Once);
+        _sync.Verify(service => service.StartServerSync(id), Times.Once);
+    }
+
+    [Fact]
     public async Task A_new_name_or_password_alone_starts_no_sync_and_writes_no_folder()
     {
         var id = await AddAsync("1");
