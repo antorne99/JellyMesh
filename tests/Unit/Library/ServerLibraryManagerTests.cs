@@ -195,6 +195,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task Switching_off_after_the_confirmation_deletes_the_registry_libraries_only()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         fixture.Libraries.Add("Mine on the folder", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
@@ -269,6 +272,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task A_library_already_there_at_switch_on_is_never_taken_for_a_renamed_one()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
@@ -284,6 +290,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task A_library_already_there_at_switch_on_is_never_taken_by_the_name_of_one_in_the_registry()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
@@ -552,6 +561,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task Removing_the_server_deletes_the_libraries_of_its_registry_with_no_confirmation()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         await fixture.Manager.Enable(_serverId).Job;
@@ -586,6 +598,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task A_library_there_at_switch_on_is_not_deleted_with_the_removed_server()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
@@ -1978,7 +1993,8 @@ public sealed partial class ServerLibraryManagerTests
             Name = folder.Name,
             CollectionType = folder.CollectionType,
             Locations = folder.Locations.ToArray(),
-            ItemId = folder.ItemId
+            ItemId = folder.ItemId,
+            LibraryOptions = folder.LibraryOptions
         };
     }
 

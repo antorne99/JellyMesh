@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 public sealed partial class ServerLibraryManagerTests
 {
     [Fact]
-    public async Task An_admin_library_with_the_name_and_folder_the_plugin_would_give_is_never_taken_as_its_own()
+    public async Task An_admin_library_with_the_name_and_folder_the_plugin_would_give_is_adopted_not_taken_as_made()
     {
         var fixture = OnTypeFolders();
         fixture.Server.ImportedLibraryIds.Remove(TestLibraries.Shows);
@@ -23,8 +23,8 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         var series = Assert.Single(fixture.Server.AutomaticLibraryRegistry, record => record.Kind == ServerLibraryKind.Series);
-        Assert.NotEqual("Casa - Serie", series.Name);
-        Assert.Contains(fixture.Libraries.Folders, folder => folder.Name == "Casa - Serie");
+        Assert.Equal(("Casa - Serie", true), (series.Name, series.Adopted));
+        Assert.Single(fixture.Libraries.Created);
         Assert.Empty(fixture.Server.PendingLibraries);
     }
 
