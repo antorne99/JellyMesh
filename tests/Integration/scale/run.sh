@@ -22,7 +22,7 @@ REMOTES=${SCALE_REMOTES:-1}
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshScale", Device="scale", DeviceId="jm-scale-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
-PLUGIN=/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration
+SETTINGS=/JellyMesh/Admin/Settings
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
@@ -148,8 +148,7 @@ login
 JPID=$(in_box 'for p in /proc/[0-9]*; do tr "\0" " " <$p/cmdline 2>/dev/null | grep -q "jellyfin.dll\|/jellyfin/jellyfin" && { echo ${p#/proc/}; break; }; done')
 echo "Jellyfin process: $JPID"
 # No scheduled sync during the measurement: every sync here is started by hand.
-cfg=$(get "$PLUGIN" | jq '.FederatedFolderPath = "/federata" | .SyncIntervalSeconds = 86400')
-post "$PLUGIN" "$cfg" >/dev/null
+req PUT "$SETTINGS" '{"FederatedFolderPath":"/federata","SyncIntervalSeconds":86400}' >/dev/null
 [ "$(get /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Status')" = Active ] || { echo "plugin not active" >&2; exit 1; }
 INCREMENTAL_TASK=$(get /ScheduledTasks | jq -r '.[] | select(.Key == "JellyMeshIncrementalSync") | .Id')
 NIGHTLY_TASK=$(get /ScheduledTasks | jq -r '.[] | select(.Key == "JellyMeshReconciliation") | .Id')

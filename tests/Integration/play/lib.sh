@@ -11,7 +11,6 @@ PORT=${PORT:-18430}
 WORK=${WORK:-${TMPDIR:-/tmp}/$PREFIX-run}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 PW_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-noble
-PLUGIN=28c43ea1-fb5a-4b3a-8e6e-30aa3245c653
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH="MediaBrowser Client=\"JellyMeshPlay\", Device=\"play\", DeviceId=\"$PREFIX-admin\", Version=\"0.1\""
 PROFILE_HLS='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
@@ -108,10 +107,10 @@ sync_now() {
   return 1
 }
 
-settings() { # settings <server> <jq filter>: changes the plugin settings
+settings() { # settings <server> <jq filter>: changes the plugin settings, as the page saves them
   local c
-  c=$(get "$1" "/Plugins/$PLUGIN/Configuration" | jq -c "$2")
-  post "$1" "/Plugins/$PLUGIN/Configuration" "$c" >/dev/null
+  c=$(get "$1" /JellyMesh/Admin/Settings | jq -c "($2) | del(.FixedByEnvironment)")
+  req "$1" PUT /JellyMesh/Admin/Settings "$c" >/dev/null
   status
 }
 

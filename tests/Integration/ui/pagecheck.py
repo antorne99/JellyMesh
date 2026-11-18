@@ -820,7 +820,7 @@ def sections(s, width):
         "sync": "**/JellyMesh/Admin/Sync",
         "peers": "**/JellyMesh/Admin/Peers",
         "merges": "**/JellyMesh/Admin/Merges",
-        "settings": u.PLUGIN_CONFIG,
+        "settings": u.SETTINGS_ROUTE,
     }
 
     def filled(page):
@@ -993,18 +993,18 @@ def settings_refused(page, name):
 
 def settings_failed(page, name):
     """Failures the page cannot foresee: the server refuses, breaks, or does not answer."""
-    config = u.PLUGIN_CONFIG
+    config = u.SETTINGS_ROUTE
 
     folder = page.locator(u.FEDERATED_FOLDER).input_value()
     page.locator(u.FEDERATED_FOLDER).fill("C:\\films")
     page.locator(u.SAVE_SETTINGS).click()
-    outcome(page, name + " a save the server refuses", "Error", "server refused")
-    check(name + " the field errors have gone", page.locator(u.FIELD_ERROR).count() == 0)
+    outcome(page, name + " a save the server refuses", "Error", "Federated folder was refused")
+    check(name + " the refused field is marked", page.locator(u.FIELD_ERROR).count() == 1)
     page.locator(u.FEDERATED_FOLDER).fill(folder)
     interval = u.change_settings(page)
 
     def post(answer):
-        page.route(config, lambda route: answer(route) if route.request.method == "POST" else route.continue_())
+        page.route(config, lambda route: answer(route) if route.request.method == "PUT" else route.continue_())
 
     post(lambda route: route.fulfill(status=500, body=""))
     page.locator(u.SAVE_SETTINGS).click()
@@ -1135,7 +1135,7 @@ def readable(page, name, selector):
 
 def broken_reads(context):
     """Refuses every read of the page, so that each part shows its failure."""
-    for pattern in ["**/JellyMesh/Admin/Status", "**/JellyMesh/Admin/Sync", "**/JellyMesh/Admin/Peers", "**/JellyMesh/Admin/Merges", u.PLUGIN_CONFIG]:
+    for pattern in ["**/JellyMesh/Admin/Status", "**/JellyMesh/Admin/Sync", "**/JellyMesh/Admin/Peers", "**/JellyMesh/Admin/Merges", u.SETTINGS_ROUTE]:
         context.route(pattern, lambda route: route.fulfill(status=500, json={}))
 
 
@@ -2720,7 +2720,7 @@ def overview_failed(s, width):
         u.close(page)
 
     name = width + " overview settings failing"
-    page = s.open("fresh", width, route=lambda context: context.route(u.PLUGIN_CONFIG, lambda route: route.fulfill(status=500, json={})), wait=False)
+    page = s.open("fresh", width, route=lambda context: context.route(u.SETTINGS_ROUTE, lambda route: route.fulfill(status=500, json={})), wait=False)
     page.wait_for_selector(u.PAGE, state="attached", timeout=30000)
     check(name + " is reported", until(page, lambda: "settings" in " ".join(alarms(page)), 20), alarms(page))
     u.close(page)

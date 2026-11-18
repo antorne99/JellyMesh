@@ -19,8 +19,7 @@ trap cleanup EXIT
 
 start a remoto-standard
 install_plugin a
-cfg=$(get a "/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration" | jq '.FederatedFolderPath = "/federata"')
-post a "/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration" "$cfg" >/dev/null
+req a PUT /JellyMesh/Admin/Settings '{"FederatedFolderPath":"/federata"}' >/dev/null
 get a /Plugins | jq -c '.[] | select(.Name == "JellyMesh") | {Name, Version, Status}'
 share a 2 Film
 

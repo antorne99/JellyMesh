@@ -8,7 +8,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Storage;
 
 public class PluginDatabaseRegistrationTests
 {
-    // One instance for both names; nothing resolves it yet, so no file appears before a later phase uses it.
+    // One instance for both names, shared by the configuration store and every other user of the database.
     [Fact]
     public void ThePluginRegistersOneDatabase()
     {

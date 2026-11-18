@@ -19,7 +19,7 @@ FAKE_URL=http://host.docker.internal:$FAKE
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshHard", Device="hard", DeviceId="jm-hard-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
-PLUGIN=/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration
+SETTINGS=/JellyMesh/Admin/Settings
 PROFILE_DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mp4,mkv","VideoCodec":"h264","AudioCodec":"aac"}],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 FAILED=0
 mkdir -p "$WORK"
@@ -134,8 +134,7 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready
 login
-cfg=$(get "$PLUGIN" | jq '.FederatedFolderPath = "/federata" | .PlaybackIdleSeconds = 30')
-post "$PLUGIN" "$cfg" >/dev/null
+req PUT "$SETTINGS" '{"FederatedFolderPath":"/federata","PlaybackIdleSeconds":30}' >/dev/null
 check "plugin loaded" JellyMesh "$(get /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Name')"
 
 echo "--- a remote that behaves, first"

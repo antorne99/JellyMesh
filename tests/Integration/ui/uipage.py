@@ -10,8 +10,7 @@ from playwright.sync_api import Locator, sync_playwright
 WEB = "/w"
 SHOTS = os.path.join(WEB, "shots")
 VIEWPORTS = {"1280": {"width": 1280, "height": 900}, "390": {"width": 390, "height": 844}}
-PLUGIN = "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-PLUGIN_CONFIG = "**/Plugins/" + PLUGIN + "/Configuration"
+SETTINGS_ROUTE = "**/JellyMesh/Admin/Settings"
 
 PAGE = "#JellyMeshConfigPage"
 TAB = "[role=tab][data-tab-index]"
@@ -241,15 +240,16 @@ def api(server, method, path, body=None):
 
 
 def config(server):
-    """Returns the plugin configuration of a server."""
-    return api(server, "GET", "/Plugins/%s/Configuration" % PLUGIN)[1]
+    """Returns the plugin settings of a server."""
+    return api(server, "GET", "/JellyMesh/Admin/Settings")[1]
 
 
 def settings(server, change):
-    """Saves the plugin configuration after a change, and returns the status."""
+    """Saves the plugin settings after a change, and returns the status."""
     current = config(server)
+    current.pop("FixedByEnvironment", None)
     change(current)
-    return api(server, "POST", "/Plugins/%s/Configuration" % PLUGIN, current)[0]
+    return api(server, "PUT", "/JellyMesh/Admin/Settings", current)[0]
 
 
 def set_theme(server, theme):

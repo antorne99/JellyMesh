@@ -896,7 +896,7 @@ check "free again" 0 "$(wait_free 15)"
 
 # close_at_expiry <true|false>: the setting of a, saved as the page does, with the server running.
 close_at_expiry() {
-  post a "/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration" "$(get a /Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration | jq --argjson on "$1" '.CloseTranscodeAtSlotExpiry = $on')" >/dev/null
+  req a PUT /JellyMesh/Admin/Settings "$(jq -nc --argjson on "$1" '{CloseTranscodeAtSlotExpiry: $on}')" >/dev/null
 }
 
 echo "--- the close at the expiry turned off: the slot goes, and a real drop still closes"

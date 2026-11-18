@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# Decisions 15 and 17: the minimum interval and the playback times, through the real stock save, a restart and the real
+# Decisions 15 and 17: the minimum interval and the playback times, through the settings API, a restart and the real
 # configuration page. Run after fallback.sh and before localcopy.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-XML=/config/plugins/configurations/Jellyfin.Plugin.JellyMesh.xml
+DB=/config/plugins/Jellyfin.Plugin.JellyMesh/jellymesh.db
 login local
+
+# saved_setting <name> [value]: prints a setting as the plugin database holds it, after writing the value if given.
+saved_setting() {
+  docker run --rm -v "$PREFIX-local-config:/config" "$PW_IMAGE" python3 -c 'import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+if len(sys.argv) > 3:
+    db.execute("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", sys.argv[2:4])
+    db.commit()
+row = db.execute("SELECT value FROM settings WHERE name = ?", sys.argv[2:3]).fetchone()
+print(row[0] if row else "")' "$DB" "$@"
+}
 
 interval_ticks() {
   get local /ScheduledTasks | jq -r '.[] | select(.Name == "JellyMesh incremental sync") | .Triggers[0].IntervalTicks'
@@ -13,13 +24,12 @@ interval_ticks() {
 
 echo "--- a value below the minimum already saved"
 docker stop "$PREFIX-local" >/dev/null
-docker run --rm --entrypoint sed -v "$PREFIX-local-config:/config" "$IMAGE" -i 's|<SyncIntervalSeconds>[0-9]*</SyncIntervalSeconds>|<SyncIntervalSeconds>60</SyncIntervalSeconds>|' "$XML"
-check "the file holds 60" 1 "$(docker run --rm --entrypoint grep -v "$PREFIX-local-config:/config" "$IMAGE" -c '<SyncIntervalSeconds>60<' "$XML")"
+check "the database holds 60" 60 "$(saved_setting SyncIntervalSeconds 60)"
 docker start "$PREFIX-local" >/dev/null
 sleep 3
 wait_ready local
 login local
-check "it runs as 300" 300 "$(get local "/Plugins/$PLUGIN/Configuration" | jq -r .SyncIntervalSeconds)"
+check "it runs as 300" 300 "$(get local /JellyMesh/Admin/Settings | jq -r .SyncIntervalSeconds)"
 for i in $(seq 1 20); do [ "$(interval_ticks)" = 3000000000 ] && break; sleep 1; done
 check "the scheduled task runs every 300 seconds" 3000000000 "$(interval_ticks)"
 check "the log has a warning" 1 "$(docker logs "$PREFIX-local" 2>&1 | grep -c 'SyncIntervalSeconds.*60.*300')"
@@ -30,12 +40,12 @@ check "and it succeeded" 0 "$(get local /JellyMesh/Admin/Sync | jq '[.Servers[]?
 
 echo "--- new saves"
 check "a save below 300 is refused" 400 "$(settings local '.SyncIntervalSeconds = 299')"
-check "and leaves the value" 300 "$(get local "/Plugins/$PLUGIN/Configuration" | jq -r .SyncIntervalSeconds)"
-check "a save of 300 goes through" 204 "$(settings local '.SyncIntervalSeconds = 300')"
-check "the file now holds 300" 1 "$(docker exec "$PREFIX-local" grep -c '<SyncIntervalSeconds>300<' "$XML")"
+check "and leaves the value" 300 "$(get local /JellyMesh/Admin/Settings | jq -r .SyncIntervalSeconds)"
+check "a save of 300 goes through" 200 "$(settings local '.SyncIntervalSeconds = 300')"
+check "the database now holds 300" 300 "$(saved_setting SyncIntervalSeconds)"
 check "an idle time at the slot expiry is refused" 400 "$(settings local '.PlaybackIdleSeconds = 120')"
 check "the first refused value" 400 "$(settings local '.PlaybackIdleSeconds = 110')"
-check "the last accepted value" 204 "$(settings local '.PlaybackIdleSeconds = 109')"
+check "the last accepted value" 200 "$(settings local '.PlaybackIdleSeconds = 109')"
 check "a remote wait out of range" 400 "$(settings local '.RemotePlaybackInfoTimeoutSeconds = 2')"
 check "an opening wait out of range" 400 "$(settings local '.StreamOpenTimeoutSeconds = 61')"
 check "a retention out of range" 400 "$(settings local '.SessionRetentionHours = 0')"
@@ -57,8 +67,8 @@ check "the browser stops a low interval" false "$(grep '^INVALID' "$WORK/web/con
 shown=$(grep '^FOLDER' "$WORK/web/config.out" | cut -d' ' -f2-)
 check "the page shows the folders of the server" 2 "$(echo "$shown" | jq -r '.servers[0]' | grep -cxE "$(server_folder "$(cat "$WORK/id-remote")")/(Film|Serie)")"
 check "and no flat path" 0 "$(echo "$shown" | grep -cE '/federata/(Film|Serie)' || true)"
-check "the page saved a new time" 95 "$(get local "/Plugins/$PLUGIN/Configuration" | jq -r .PlaybackIdleSeconds)"
-check "and kept the interval" 300 "$(get local "/Plugins/$PLUGIN/Configuration" | jq -r .SyncIntervalSeconds)"
+check "the page saved a new time" 95 "$(get local /JellyMesh/Admin/Settings | jq -r .PlaybackIdleSeconds)"
+check "and kept the interval" 300 "$(get local /JellyMesh/Admin/Settings | jq -r .SyncIntervalSeconds)"
 settings local '.PlaybackIdleSeconds = 90' >/dev/null
 
 echo "--- the wait on a remote that stopped answering"

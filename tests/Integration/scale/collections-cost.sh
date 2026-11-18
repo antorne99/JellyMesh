@@ -23,7 +23,7 @@ ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshColCost", Device="colcost", DeviceId="jm-colcost-admin", Version="0.1"'
 PEER_AUTH='MediaBrowser Client="JellyMeshColCost", Device="peer", DeviceId="jm-colcost-peer", Version="0.1"'
 U=http://127.0.0.1:$PORT
-PLUGIN=/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration
+SETTINGS=/JellyMesh/Admin/Settings
 OUT=$WORK/results-collections.txt
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -210,8 +210,7 @@ wait_ready
 login
 [ "$(get /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Status')" = Active ] || { echo "plugin not active" >&2; exit 1; }
 # A provider that is also a consumer has a federated folder, so the scope of every page is worked out as in real use.
-cfg=$(get "$PLUGIN" | jq '.FederatedFolderPath = "/federata" | .SyncIntervalSeconds = 86400')
-post "$PLUGIN" "$cfg" >/dev/null
+req PUT "$SETTINGS" '{"FederatedFolderPath":"/federata","SyncIntervalSeconds":86400}' >/dev/null
 
 echo "--- library and scan"
 # No image fetcher, no metadata fetcher: only the probe of each file, which the catalog DTO carries.
