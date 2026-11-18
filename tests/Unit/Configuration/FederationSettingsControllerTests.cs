@@ -192,6 +192,18 @@ public sealed class FederationSettingsControllerTests
         Assert.Equal(FederationSettingsController.StoreSuspended, Assert.IsType<FailureResponse>(result.Value).Message);
     }
 
+    // Defaults saved back after a Retry would replace the real settings.
+    [Fact]
+    public void SettingsThatCannotBeReadAreUnavailableInsteadOfTheDefaults()
+    {
+        _store.Unavailable = true;
+
+        var result = Assert.IsType<ObjectResult>(Controller().GetSettings().Result);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
+        Assert.Equal(StoreUnavailableFilter.Message, Assert.IsType<FailureResponse>(result.Value).Message);
+    }
+
     [Fact]
     public void AFailedSaveLeavesEverySettingAsItWas()
     {

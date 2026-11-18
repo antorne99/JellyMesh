@@ -82,6 +82,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHostedService<LibraryRenameResumeService>();
         serviceCollection.AddSingleton<RetiredLibraryFilter>();
         serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<RetiredLibraryFilter>());
+        serviceCollection.Configure<MvcOptions>(options => options.Filters.Add<StoreUnavailableFilter>());
         serviceCollection.AddSingleton<IVersionLinker, VersionLinker>();
         serviceCollection.AddSingleton<ILocalTitleLinker, LocalTitleLinker>();
         serviceCollection.AddHostedService<LocalRefreshWatcher>();

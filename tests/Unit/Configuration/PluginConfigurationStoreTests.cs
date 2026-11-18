@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using Microsoft.Data.Sqlite;
 using Xunit;
 
@@ -346,16 +347,54 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal("Casa", Assert.Single(Store().Read(config => config.Servers.ToList())).Name);
     }
 
+    // Defaults would show no peers, servers or folder, so a peer would pass as a local user and Forget would drop every server.
     [Fact]
-    public void ASuspendedDatabaseGivesTheDefaultsAndRefusesChanges()
+    public void ASuspendedDatabaseGivesNoConfigurationAndRefusesChanges()
     {
         Store().Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa" }));
         var database = new SpyDatabase(Open()) { Suspended = true };
         var store = Store(database);
 
-        Assert.Empty(store.Read(config => config.Servers.ToList()));
+        Assert.Throws<StoreSuspendedException>(() => store.Read(config => config.Servers.ToList()));
         Assert.Throws<StoreSuspendedException>(() => store.Update(config => config.SyncIntervalSeconds = 600));
         Assert.Equal(0, database.Writes);
+    }
+
+    [Fact]
+    public void AFailedReadIsSuspendedAndTriedAgainAfterAPause()
+    {
+        Store().Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa" }));
+        var database = new SpyDatabase(Open()) { ReadFailure = new InvalidOperationException("database is locked") };
+        var clock = new FixedClock(DateTimeOffset.UnixEpoch);
+        var logger = new CapturingLogger<PluginConfigurationStore>();
+        var store = Store(database, logger: logger, clock: clock);
+
+        var failure = Assert.Throws<StoreSuspendedException>(() => store.Read(config => config.Servers.ToList()));
+        Assert.IsType<InvalidOperationException>(failure.InnerException);
+        database.ReadFailure = null;
+        Assert.Throws<StoreSuspendedException>(() => store.Read(config => config.Servers.ToList()));
+        Assert.Throws<StoreSuspendedException>(() => store.Update(config => config.SyncIntervalSeconds = 600));
+        Assert.Equal((1, 0), (database.Reads, database.Writes));
+        Assert.Single(logger.Lines);
+
+        clock.Now += TimeSpan.FromSeconds(5);
+
+        Assert.Equal("Casa", Assert.Single(store.Read(config => config.Servers.ToList())).Name);
+    }
+
+    [Fact]
+    public void ASuspensionAfterTheLoadKeepsTheLoadedConfiguration()
+    {
+        Store().Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa" }));
+        var database = new SpyDatabase(Open());
+        var store = Store(database);
+        store.Read(config => config.Servers.Count);
+
+        database.Suspended = true;
+
+        Assert.Equal("Casa", Assert.Single(store.Read(config => config.Servers.ToList())).Name);
+        Assert.Throws<StoreSuspendedException>(() => store.Update(config => config.SyncIntervalSeconds = 600));
+        Assert.Equal("Casa", Assert.Single(store.Read(config => config.Servers.ToList())).Name);
     }
 
     [Fact]
@@ -364,7 +403,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Store().Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa", EncryptedCredentials = Ciphertext }));
         var database = new SpyDatabase(Open()) { Suspended = true };
         var store = Store(database);
-        Assert.Empty(store.Read(config => config.Servers.ToList()));
+        Assert.Throws<StoreSuspendedException>(() => store.Read(config => config.Servers.ToList()));
 
         database.Suspended = false;
         store.Update(config => config.SyncIntervalSeconds = 600);
@@ -380,8 +419,8 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         return database;
     }
 
-    private PluginConfigurationStore Store(IPluginDatabase? database = null, string? root = null, CapturingLogger<PluginConfigurationStore>? logger = null)
-        => new(database ?? Open(), new FixedFederatedRootSource(root), logger ?? new CapturingLogger<PluginConfigurationStore>());
+    private PluginConfigurationStore Store(IPluginDatabase? database = null, string? root = null, CapturingLogger<PluginConfigurationStore>? logger = null, TimeProvider? clock = null)
+        => new(database ?? Open(), new FixedFederatedRootSource(root), logger ?? new CapturingLogger<PluginConfigurationStore>(), clock ?? TimeProvider.System);
 
     // The real database, counting writes, failing them, or suspended on demand.
     private sealed class SpyDatabase(IPluginDatabase inner) : IPluginDatabase
@@ -392,12 +431,24 @@ public sealed class PluginConfigurationStoreTests : IDisposable
 
         public bool Suspended { get; set; }
 
+        public Exception? ReadFailure { get; set; }
+
+        public int Reads { get; private set; }
+
         public StoreHealth Health => Suspended ? new StoreHealth(StoreState.Unavailable, "test") : inner.Health;
 
         public StoreHealth Retry() => Health;
 
         public Task<T> ReadAsync<T>(Func<SqliteConnection, SqliteTransaction, T> read, CancellationToken cancellationToken)
-            => Suspended ? throw new StoreSuspendedException("test") : inner.ReadAsync(read, cancellationToken);
+        {
+            if (Suspended)
+            {
+                throw new StoreSuspendedException("test");
+            }
+
+            Reads++;
+            return ReadFailure is { } failure ? Task.FromException<T>(failure) : inner.ReadAsync(read, cancellationToken);
+        }
 
         public Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
         {

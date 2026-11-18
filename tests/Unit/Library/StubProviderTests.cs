@@ -110,6 +110,23 @@ public sealed class StubProviderTests : IDisposable
         Assert.Equal(1_234_567_890, item.RunTimeTicks);
     }
 
+    // The probe would open the signed URL of the .strm, so while the folder is not known every .strm goes without it.
+    [Fact]
+    public async Task WhileTheSettingsCannotBeReadNoStrmIsProbed()
+    {
+        var path = await FilmStubAsync();
+        _fixture.Sync.Store.Unavailable = true;
+        var stub = Options();
+        var local = Options();
+
+        await Before().FetchAsync(new Movie { Id = Guid.NewGuid(), Path = path }, stub, CancellationToken.None);
+        await Before().FetchAsync(new Movie { Id = Guid.NewGuid(), Path = "/media/film/A.mkv" }, local, CancellationToken.None);
+        await After().FetchAsync(new Movie { Id = Guid.NewGuid(), Path = path }, Options(), CancellationToken.None);
+
+        Assert.False(stub.EnableRemoteContentProbe);
+        Assert.True(local.EnableRemoteContentProbe);
+    }
+
     [Fact]
     public async Task ALockedItemIsHandledTheSame()
     {

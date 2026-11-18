@@ -8,6 +8,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -434,6 +435,17 @@ public class ProviderControllerTests
         Assert.Equal(403, ((StatusCodeResult)(await _controller.GetChanges(null)).Result!).StatusCode);
         Assert.Equal(403, ((StatusCodeResult)await _controller.ReleaseStream("play")).StatusCode);
         Assert.Equal(403, ((StatusCodeResult)await _controller.RenewStream("play")).StatusCode);
+    }
+
+    // The store filter turns this into a 503: without the peer list no caller is known, and none is refused as a stranger.
+    [Fact]
+    public async Task While_the_peers_cannot_be_read_no_route_answers()
+    {
+        _fixture.Store.Unavailable = true;
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => _controller.GetLibraries());
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => _controller.GetChanges(null));
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => _capabilities.GetCapabilities());
     }
 
     [Fact]
@@ -1057,6 +1069,19 @@ public class ChangeFeedRecorderTests
         RaiseAdded(new Folder { Id = Guid.NewGuid(), Path = "/media" });
 
         Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    // A peer reads an item through the catalog, which leaves federated items out, so recording one more is safe.
+    [Fact]
+    public async Task While_the_settings_cannot_be_read_a_change_is_still_recorded()
+    {
+        var cursor = await StartAsync();
+        _fixture.Store.Unavailable = true;
+        var movie = new Movie { Id = Guid.NewGuid(), Path = "/media/a.mkv" };
+
+        RaiseAdded(movie);
+
+        Assert.Equal([movie.Id], _journal.Read(cursor, "share", 10).ItemIds);
     }
 
     [Fact]

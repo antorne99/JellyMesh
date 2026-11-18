@@ -15,11 +15,18 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 /// </remarks>
 public sealed class PluginConfigurationStore : IPluginConfigurationStore
 {
+    private static readonly TimeSpan RetryPause = TimeSpan.FromSeconds(5);
+
     private readonly Lock _lock = new();
     private readonly IPluginDatabase _database;
     private readonly IFederatedRootSource _rootSource;
     private readonly ILogger<PluginConfigurationStore> _logger;
+    private readonly TimeProvider _timeProvider;
     private PluginConfiguration _config = new();
+
+    // After a failed read, no new attempt before this time, so that a locked database is not waited on by every request.
+    private DateTimeOffset _retryAfter = DateTimeOffset.MinValue;
+    private Exception? _loadFailure;
 
     // The rows in the database; null until the configuration was read from it.
     private ConfigurationRows? _saved;
@@ -30,24 +37,26 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
     /// <param name="database">The plugin database.</param>
     /// <param name="rootSource">The federated folder set by the environment, which wins over the saved one.</param>
     /// <param name="logger">The logger.</param>
-    public PluginConfigurationStore(IPluginDatabase database, IFederatedRootSource rootSource, ILogger<PluginConfigurationStore> logger)
+    /// <param name="timeProvider">The clock of the pause between two failed reads.</param>
+    public PluginConfigurationStore(IPluginDatabase database, IFederatedRootSource rootSource, ILogger<PluginConfigurationStore> logger, TimeProvider timeProvider)
     {
         _database = database;
         _rootSource = rootSource;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     /// <inheritdoc />
     public event EventHandler? SettingsChanged;
 
     /// <inheritdoc />
-    /// <remarks>While the database is suspended this reads the defaults, with no servers.</remarks>
+    /// <exception cref="StoreSuspendedException">The configuration was never read from the database, so none is known.</exception>
     public T Read<T>(Func<PluginConfiguration, T> read)
     {
         ArgumentNullException.ThrowIfNull(read);
         lock (_lock)
         {
-            TryLoad();
+            EnsureLoaded();
             return read(_config);
         }
     }
@@ -66,10 +75,7 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
         bool settingsChanged;
         lock (_lock)
         {
-            if (_saved is null)
-            {
-                Load();
-            }
+            EnsureLoaded();
 
             // Compared with the settings in force, not the saved rows: a database with no settings saved runs the defaults.
             var before = ConfigurationRows.From(_config);
@@ -93,21 +99,39 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
         }
     }
 
-    // A read never fails: with the database suspended or unreadable it keeps the defaults and tries again next time.
-    private void TryLoad()
+    // Reads the configuration once. Until that works nothing is handed out, not even the defaults; once read it is kept.
+    private void EnsureLoaded()
     {
-        if (_saved is not null || _database.Health.Suspended)
+        if (_saved is not null)
         {
             return;
+        }
+
+        if (_database.Health.Suspended)
+        {
+            throw new StoreSuspendedException("The JellyMesh database is suspended, so its settings are not known.");
+        }
+
+        if (_timeProvider.GetUtcNow() < _retryAfter)
+        {
+            throw new StoreSuspendedException("The JellyMesh settings could not be read from the database.", _loadFailure!);
         }
 
         try
         {
             Load();
+            _loadFailure = null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning(exception, "The JellyMesh settings could not be read from the database");
+            if (_loadFailure is null)
+            {
+                _logger.LogWarning(exception, "The JellyMesh settings could not be read from the database; JellyMesh waits until they can");
+            }
+
+            _loadFailure = exception;
+            _retryAfter = _timeProvider.GetUtcNow() + RetryPause;
+            throw new StoreSuspendedException("The JellyMesh settings could not be read from the database.", exception);
         }
     }
 

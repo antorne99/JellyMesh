@@ -47,7 +47,15 @@ public class FederationSettingsController : ControllerBase
         FixedSetting[] fixedByEnvironment = EnvironmentRoot() is null
             ? []
             : [new FixedSetting(nameof(PluginSettings.FederatedFolderPath), EnvironmentFederatedRootSource.VariableName)];
-        return _store.Read(config => PluginSettings.From(config, fixedByEnvironment));
+        try
+        {
+            return _store.Read(config => PluginSettings.From(config, fixedByEnvironment));
+        }
+        catch (StoreSuspendedException)
+        {
+            // Defaults saved back from the page would replace the real settings.
+            return StoreUnavailableFilter.Unavailable();
+        }
     }
 
     /// <summary>

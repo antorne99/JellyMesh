@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -79,10 +80,19 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 
     public void RaiseSettingsChanged() => SettingsChanged?.Invoke(this, EventArgs.Empty);
 
-    public T Read<T>(Func<PluginConfiguration, T> read) => read(Configuration);
+    // Like a store whose database was never read: nothing is handed out and nothing is changed.
+    public bool Unavailable { get; set; }
+
+    public T Read<T>(Func<PluginConfiguration, T> read)
+        => Unavailable ? throw new StoreSuspendedException("The configuration was never read.") : read(Configuration);
 
     public void Update(Action<PluginConfiguration> update)
     {
+        if (Unavailable)
+        {
+            throw new StoreSuspendedException("The configuration was never read.");
+        }
+
         // Like the plugin, the change is made in memory before the save that may fail.
         update(Configuration);
         if (SaveFailure is not null)

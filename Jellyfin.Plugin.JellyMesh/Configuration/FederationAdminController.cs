@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -264,6 +265,10 @@ public class FederationAdminController : ControllerBase
         try
         {
             forgotten = await _sync.ForgetMissingServersAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (StoreSuspendedException)
+        {
+            return StoreUnavailableFilter.Unavailable();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

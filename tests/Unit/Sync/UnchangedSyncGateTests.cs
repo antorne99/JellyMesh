@@ -110,6 +110,19 @@ public sealed class UnchangedSyncGateTests : IDisposable
         Assert.False(_gate.IsUnchanged(_gate.Capture()));
     }
 
+    // Missing an edit while the settings cannot be read would let the next sync skip it.
+    [Fact]
+    public void AnUpdateWhileTheSettingsCannotBeReadCountsAsAChange()
+    {
+        _gate.Remember(_gate.Capture());
+        _fixture.Store.Unavailable = true;
+
+        RaiseUpdated(new Movie { Path = Root + "/a/Film/A/A.strm" });
+
+        _fixture.Store.Unavailable = false;
+        Assert.False(_gate.IsUnchanged(_gate.Capture()));
+    }
+
     [Fact]
     public void AStubThePluginOrAScanUpdatesOrAnItemThatIsNoTitleChangesNothing()
     {

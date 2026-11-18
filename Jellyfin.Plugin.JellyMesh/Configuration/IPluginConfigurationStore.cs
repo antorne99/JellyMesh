@@ -19,6 +19,7 @@ public interface IPluginConfigurationStore
     /// <typeparam name="T">The result type.</typeparam>
     /// <param name="read">Projects the configuration to a detached result.</param>
     /// <returns>The result of <paramref name="read"/>.</returns>
+    /// <exception cref="Storage.StoreSuspendedException">The configuration cannot be read yet: callers fail closed, never on defaults.</exception>
     T Read<T>(Func<PluginConfiguration, T> read);
 
     /// <summary>

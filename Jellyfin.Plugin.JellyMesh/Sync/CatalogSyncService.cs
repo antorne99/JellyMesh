@@ -12,6 +12,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Sync;
@@ -278,7 +279,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private SyncStartResult TryClaim()
     {
-        if (_vault.GetKeyState() != KeyState.Ok)
+        if (KeyStateOrUnreadable() != KeyState.Ok)
         {
             MarkLibraryFollowSkipped();
             return SyncStartResult.Suspended;
@@ -801,9 +802,22 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     // A scheduled sync, before it claims the run, writes once each stored password that no longer decrypts (49). A missing
     // key is not that.
+    // A database that cannot be used counts as a wrong key: nothing syncs on settings it cannot read.
+    private KeyState? KeyStateOrUnreadable()
+    {
+        try
+        {
+            return _vault.GetKeyState();
+        }
+        catch (StoreSuspendedException)
+        {
+            return null;
+        }
+    }
+
     private void ReportUnreadablePasswords()
     {
-        if (_activity is null || _vault.GetKeyState() == KeyState.Missing)
+        if (_activity is null || KeyStateOrUnreadable() is null or KeyState.Missing)
         {
             return;
         }
