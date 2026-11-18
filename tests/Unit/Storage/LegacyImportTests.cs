@@ -79,6 +79,8 @@ public sealed class LegacyImportTests : IDisposable
         }
     }
 
+    private string QuickCheckResult { get; set; } = "ok";
+
     private PluginDatabase Open(int busyTimeoutSeconds = 1)
     {
         var database = new PluginDatabase(
@@ -88,7 +90,7 @@ public sealed class LegacyImportTests : IDisposable
             SchemaMigrations.All,
             busyTimeoutSeconds,
             _clock,
-            new LegacyImport(Folder, ConfigurationFile, Logger));
+            new LegacyImport(Folder, ConfigurationFile, Logger, KeyFileGuards.ForThisSystem(), _ => QuickCheckResult));
         _opened.Add(database);
         _ = database.Health;
         return database;
@@ -393,6 +395,45 @@ public sealed class LegacyImportTests : IDisposable
         Assert.True(Directory.Exists(Migrated));
 
         _clock.Now += TimeSpan.FromMinutes(1);
+        Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        Assert.False(Directory.Exists(Migrated));
+    }
+
+    // A database that fails its check may need the old files to start again, so they stay until a night it passes.
+    [Fact]
+    public async Task TheOldFilesStayWhileTheDatabaseFailsItsCheckAndGoTheNextNightItPasses()
+    {
+        CopyFixtures();
+        var database = Open();
+        _clock.Now += TimeSpan.FromDays(31);
+        QuickCheckResult = "*** in database main *** Page 7: btreeInitPage() returns error code 11";
+
+        Assert.False(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        Assert.Equal(4, Directory.EnumerateFiles(Migrated).Count());
+        Assert.Contains(LogLevel.Warning, Logger.Levels);
+
+        QuickCheckResult = "ok";
+        Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        Assert.False(Directory.Exists(Migrated));
+    }
+
+    // A file that cannot be overwritten is not deleted unread: the others go, it stays with a warning, and the next night tries again.
+    [Fact]
+    public async Task AnOldFileThatCannotBeOverwrittenStaysUntilTheNextNightWhileTheOthersGo()
+    {
+        CopyFixtures();
+        var database = Open();
+        _clock.Now += TimeSpan.FromDays(31);
+        var held = Path.Combine(Migrated, "federated-stubs.json");
+
+        using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.False(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        }
+
+        Assert.Equal([held], Directory.EnumerateFiles(Migrated));
+        Assert.Contains(LogLevel.Warning, Logger.Levels);
+
         Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
         Assert.False(Directory.Exists(Migrated));
     }

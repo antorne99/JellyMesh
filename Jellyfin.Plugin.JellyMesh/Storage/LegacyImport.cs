@@ -116,6 +116,7 @@ public sealed class LegacyImport
     private readonly string? _configurationFile;
     private readonly ILogger<LegacyImport> _logger;
     private readonly IKeyFileGuard _guard;
+    private readonly Func<SqliteConnection, string> _quickCheck;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LegacyImport"/> class.
@@ -135,12 +136,14 @@ public sealed class LegacyImport
     /// <param name="configurationFile">The configuration XML, or null.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="guard">Keeps the moved files private.</param>
-    internal LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger, IKeyFileGuard guard)
+    /// <param name="quickCheck">Runs the integrity check of the database; <c>PRAGMA quick_check</c> when null.</param>
+    internal LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger, IKeyFileGuard guard, Func<SqliteConnection, string>? quickCheck = null)
     {
         _folder = folder;
         _configurationFile = configurationFile;
         _logger = logger;
         _guard = guard;
+        _quickCheck = quickCheck ?? QuickCheck;
     }
 
     private string MigratedFolder => Path.Combine(_folder, FolderName);
@@ -218,14 +221,10 @@ public sealed class LegacyImport
             return false;
         }
 
-        using (var check = writer.CreateCommand())
+        if (!string.Equals(_quickCheck(writer), "ok", StringComparison.Ordinal))
         {
-            check.CommandText = "PRAGMA quick_check;";
-            if (!string.Equals(Convert.ToString(check.ExecuteScalar(), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal))
-            {
-                _logger.LogWarning("The JellyMesh database failed its integrity check, so {Folder} is kept", FolderName);
-                return false;
-            }
+            _logger.LogWarning("The JellyMesh database failed its integrity check, so {Folder} is kept", FolderName);
+            return false;
         }
 
         var kept = 0;
@@ -256,6 +255,13 @@ public sealed class LegacyImport
 
         _logger.LogInformation("The old JellyMesh files in {Folder} were overwritten and deleted, 30 days after the migration", FolderName);
         return true;
+    }
+
+    private static string QuickCheck(SqliteConnection writer)
+    {
+        using var check = writer.CreateCommand();
+        check.CommandText = "PRAGMA quick_check;";
+        return Convert.ToString(check.ExecuteScalar(), CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
     private static (DateTimeOffset MigratedUtc, DateTimeOffset? DeletedUtc)? ReadMark(SqliteConnection writer)
