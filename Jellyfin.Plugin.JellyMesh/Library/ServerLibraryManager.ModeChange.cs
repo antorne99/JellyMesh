@@ -28,11 +28,11 @@ public sealed partial class ServerLibraryManager
     {
         var usesOlder = _stubs.UsesOlderLayout();
         var folders = ReadFolders() ?? [];
-        return _store.Read(config =>
+        var (change, carries) = _store.Read<(LibraryModeChange? Change, List<AccessCarry> Carries)>(config =>
         {
             if (Find(config, serverId) is not { } server || server.LibraryMode == mode)
             {
-                return null;
+                return (null, []);
             }
 
             // As the change does: nothing goes while the layout is unknown, and a by-type library takes its type folders.
@@ -40,17 +40,24 @@ public sealed partial class ServerLibraryManager
             var plan = root.Length == 0 || usesOlder is not { } older ? [] : LibraryPlan.For(server, root, older || StubLayout.HasOlderStubFiles(root), mode);
             if (mode != LibraryMode.None && plan.Count == 0)
             {
-                return new LibraryModeChange(server.LibraryMode, mode, [], []);
+                return (new LibraryModeChange(server.LibraryMode, mode, [], []), []);
             }
 
-            var kept = plan.Select(planned => TakeOverMatch(server, mode, WithTypeFolders(planned, root, serverId), folders)).OfType<AutomaticLibraryConfig>().ToList();
+            var matched = plan.Select(planned => WithTypeFolders(planned, root, serverId))
+                .Select(planned => (Planned: planned, Kept: TakeOverMatch(server, mode, planned, folders)))
+                .ToList();
+            var kept = matched.Select(match => match.Kept).OfType<AutomaticLibraryConfig>().ToList();
             var retiring = server.AutomaticLibraryRegistry.Where(record => Retires(mode, record) && !kept.Contains(record)).ToList();
-            return new LibraryModeChange(
+            var made = matched.Where(match => match.Kept is null)
+                .Select(match => (ChooseName(server.Name, serverId, match.Planned.Suffix, folders) ?? match.Planned.Suffix, (Guid?)null, match.Planned.Paths));
+            return (new LibraryModeChange(
                 server.LibraryMode,
                 mode,
                 [.. retiring.Where(record => !record.Adopted).Select(record => record.Name)],
-                [.. retiring.Where(record => record.Adopted).Select(record => record.Name)]);
+                [.. retiring.Where(record => record.Adopted).Select(record => record.Name)]),
+                CarriesFor(made, AccessSources(server, mode, folders, root)));
         });
+        return change is null || carries.Count == 0 ? change : change with { LostAccess = _renamer.LosingAccess(carries) };
     }
 
     // Whether a library of the registry belongs to another mode than the one given: one of a type in "per remote library",
@@ -87,6 +94,7 @@ public sealed partial class ServerLibraryManager
             return;
         }
 
+        _lostAccess.TryRemove(serverId, out _);
         var scanned = false;
         if (mode != LibraryMode.None)
         {
@@ -154,7 +162,7 @@ public sealed partial class ServerLibraryManager
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        if (!none && !await CarryAccessAsync(serverId, cancellationToken).ConfigureAwait(false))
+        if (!none && !await CarryAccessAsync(serverId, root, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -174,49 +182,35 @@ public sealed partial class ServerLibraryManager
         }
     }
 
-    // Gives the users with access to an old plugin library access to the new plugin libraries that share a folder with it.
-    // Adopted libraries take no part. Tells whether the old libraries can go.
-    private async Task<bool> CarryAccessAsync(Guid serverId, CancellationToken cancellationToken)
+    // Gives the users the new plugin libraries as they saw the old ones, and records who loses titles. Tells whether the old
+    // libraries can go: not while a new one cannot be read as the plugin's.
+    private async Task<bool> CarryAccessAsync(Guid serverId, string root, CancellationToken cancellationToken)
     {
         if (ReadFolders() is not { } folders)
         {
             return false;
         }
 
-        var access = _store.Read(config =>
+        var carries = _store.Read(config => Find(config, serverId) is { } server ? AccessCarries(server, root, folders) : []);
+        if (carries is null)
         {
-            var map = new Dictionary<Guid, IReadOnlyList<Guid>>();
-            if (Find(config, serverId) is not { } server)
-            {
-                return map;
-            }
+            _logger.LogInformation("The libraries of the previous library mode stay until the new ones can be given to the users");
+            return false;
+        }
 
-            var live = server.AutomaticLibraryRegistry.Where(record => !record.Adopted)
-                .Select(record => (Record: record, Folder: FindRecorded(record, folders)))
-                .Where(pair => pair.Folder is { ItemId: not null } && Guid.TryParse(pair.Folder.ItemId, out _))
-                .ToList();
-            var added = live.Where(pair => !Retires(server.LibraryMode, pair.Record)).ToList();
-            foreach (var (record, folder) in live.Where(pair => Retires(server.LibraryMode, pair.Record)))
-            {
-                var taking = added.Where(pair => pair.Folder!.Locations.Any(path => folder!.Locations.Any(other => FederatedFolderLinkChecker.IsSamePath(path, other))))
-                    .Select(pair => Guid.Parse(pair.Folder!.ItemId!))
-                    .ToList();
-                if (taking.Count > 0)
-                {
-                    map[Guid.Parse(folder!.ItemId!)] = taking;
-                }
-            }
-
-            return map;
-        });
-        if (access.Count == 0)
+        if (carries.Count == 0)
         {
             return true;
         }
 
         try
         {
-            await _renamer.CarryAccessAsync(access, cancellationToken).ConfigureAwait(false);
+            var lost = await _renamer.CarryAccessAsync(carries, cancellationToken).ConfigureAwait(false);
+            if (lost.Count > 0)
+            {
+                _lostAccess.AddOrUpdate(serverId, lost, (_, before) => MergeLosses(before, lost));
+            }
+
             return true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -225,6 +219,45 @@ public sealed partial class ServerLibraryManager
             return false;
         }
     }
+
+    // The plugin libraries of the new mode, each with the old libraries that held its folders; null while one has no id or
+    // is no longer the plugin's.
+    private static List<AccessCarry>? AccessCarries(RemoteServerConfig server, string root, IReadOnlyList<VirtualFolderInfo> folders)
+    {
+        var made = new List<(string Name, Guid? Id, IReadOnlyList<string> Paths)>();
+        foreach (var record in server.AutomaticLibraryRegistry.Where(record => !record.Adopted && !Retires(server.LibraryMode, record)))
+        {
+            if (FindRecorded(record, folders) is not { ItemId: { } itemId } folder || !Guid.TryParse(itemId, out var id) || !Holds(folder, record, root, server.Id))
+            {
+                return null;
+            }
+
+            made.Add((folder.Name, id, folder.Locations));
+        }
+
+        return CarriesFor(made, AccessSources(server, server.LibraryMode, folders, root));
+    }
+
+    // The old libraries the users' lists name: those of another mode than the one given, and the adopted ones, while the
+    // plugin still holds them.
+    private static List<VirtualFolderInfo> AccessSources(RemoteServerConfig server, LibraryMode mode, IReadOnlyList<VirtualFolderInfo> folders, string root) =>
+        [.. server.AutomaticLibraryRegistry.Where(record => record.Adopted || Retires(mode, record))
+            .Select(record => (Record: record, Folder: FindRecorded(record, folders)))
+            .Where(pair => pair.Folder is { ItemId: { } id } && Guid.TryParse(id, out _) && Holds(pair.Folder, pair.Record, root, server.Id))
+            .Select(pair => pair.Folder!)];
+
+    // For each new library that shares a folder with an old one, the old libraries that held each of its folders.
+    private static List<AccessCarry> CarriesFor(IEnumerable<(string Name, Guid? Id, IReadOnlyList<string> Paths)> made, IReadOnlyList<VirtualFolderInfo> sources) =>
+        [.. made.Select(library => new AccessCarry(
+                library.Name,
+                library.Id,
+                [.. library.Paths.Select(path => (IReadOnlyList<Guid>)[.. sources.Where(source => source.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))).Select(source => Guid.Parse(source.ItemId!))])]))
+            .Where(carry => carry.Folders.Any(held => held.Count > 0))];
+
+    // The users who lose titles, by library, of a change resumed by a later check added to those already recorded.
+    private static IReadOnlyList<AccessLoss> MergeLosses(IReadOnlyList<AccessLoss> before, IReadOnlyList<AccessLoss> lost) =>
+        [.. before.Concat(lost).GroupBy(loss => loss.Library, StringComparer.Ordinal)
+            .Select(group => new AccessLoss(group.Key, [.. group.SelectMany(loss => loss.Users).Distinct(StringComparer.Ordinal)]))];
 
     // The library of another mode than the one given that a planned library of that mode would take over, if any.
     private AutomaticLibraryConfig? TakeOverMatch(RemoteServerConfig server, LibraryMode mode, PlannedLibrary planned, IReadOnlyList<VirtualFolderInfo> folders)

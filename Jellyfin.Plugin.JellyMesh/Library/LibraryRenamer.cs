@@ -180,20 +180,19 @@ public sealed class LibraryRenamer : ILibraryRenamer
     }
 
     /// <inheritdoc />
-    public async Task CarryAccessAsync(IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AccessLoss>> CarryAccessAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(access);
-        foreach (var user in _users.GetUsers().ToList())
+        ArgumentNullException.ThrowIfNull(carries);
+        var users = _users.GetUsers().ToList();
+        var lost = LossesOf(carries, users);
+        foreach (var user in users)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var enabled = user.GetPreference(PreferenceKind.EnabledFolders);
             var blocked = user.GetPreference(PreferenceKind.BlockedMediaFolders);
-            var touched = CarryIds(user, PreferenceKind.BlockedMediaFolders, access);
-            if (!user.HasPermission(PermissionKind.EnableAllFolders))
-            {
-                touched |= CarryIds(user, PreferenceKind.EnabledFolders, access);
-            }
-
+            var given = carries.Where(carry => carry.Id is not null).Select(carry => (Id: carry.Id!.Value, Access: AccessOf(user, carry))).ToList();
+            var touched = AddIds(user, PreferenceKind.BlockedMediaFolders, given.Where(pair => pair.Access.Blocked).Select(pair => pair.Id));
+            touched |= AddIds(user, PreferenceKind.EnabledFolders, given.Where(pair => pair.Access.Enabled).Select(pair => pair.Id));
             if (!touched)
             {
                 continue;
@@ -210,14 +209,55 @@ public sealed class LibraryRenamer : ILibraryRenamer
                 throw;
             }
         }
+
+        return lost;
     }
 
-    // Adds to a list of the user the ids that take the titles of an id it names. Tells whether it changed.
-    private static bool CarryIds(User user, PreferenceKind kind, IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access)
+    /// <inheritdoc />
+    public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
+    {
+        ArgumentNullException.ThrowIfNull(carries);
+        return LossesOf(carries, _users.GetUsers().ToList());
+    }
+
+    // For each new library, the users who saw titles of it through an old library and do not see it after the carry.
+    private static List<AccessLoss> LossesOf(IReadOnlyList<AccessCarry> carries, IReadOnlyList<User> users) =>
+        [.. carries.Select(carry => new AccessLoss(carry.Name, [.. users.Where(user => Loses(user, carry)).Select(user => user.Username)]))
+            .Where(loss => loss.Users.Count > 0)];
+
+    // A new library is blocked for a user who blocked an old one holding any of its folders, and given by id to a user who
+    // had by id old libraries holding each of its folders.
+    private static (bool Enabled, bool Blocked) AccessOf(User user, AccessCarry carry)
+    {
+        var enabled = IdsOf(user, PreferenceKind.EnabledFolders);
+        var blocked = IdsOf(user, PreferenceKind.BlockedMediaFolders);
+        return (
+            !user.HasPermission(PermissionKind.EnableAllFolders) && carry.Folders.Count > 0 && carry.Folders.All(sources => sources.Any(enabled.Contains)),
+            carry.Folders.Any(sources => sources.Any(blocked.Contains)));
+    }
+
+    // Whether the user saw a folder of the new library through an old one and does not see the new library after the carry.
+    private static bool Loses(User user, AccessCarry carry)
+    {
+        var all = user.HasPermission(PermissionKind.EnableAllFolders);
+        var enabled = IdsOf(user, PreferenceKind.EnabledFolders);
+        var blocked = IdsOf(user, PreferenceKind.BlockedMediaFolders);
+        bool Sees(Guid id) => (all || enabled.Contains(id)) && !blocked.Contains(id);
+        var access = AccessOf(user, carry);
+        var seesAfter = !access.Blocked && (all || access.Enabled || (carry.Id is { } id && Sees(id)));
+        return !seesAfter && carry.Folders.Any(sources => sources.Any(Sees));
+    }
+
+    // The library ids a list of the user names, in any form.
+    private static HashSet<Guid> IdsOf(User user, PreferenceKind kind) =>
+        [.. user.GetPreference(kind).Select(value => Guid.TryParse(value, out var id) ? id : Guid.Empty).Where(id => id != Guid.Empty)];
+
+    // Adds to a list of the user the ids it lacks. Tells whether it changed.
+    private static bool AddIds(User user, PreferenceKind kind, IEnumerable<Guid> ids)
     {
         var values = user.GetPreference(kind);
-        var held = values.Select(value => Guid.TryParse(value, out var id) ? id : Guid.Empty).ToHashSet();
-        var missing = access.Where(pair => held.Contains(pair.Key)).SelectMany(pair => pair.Value).Where(id => !held.Contains(id)).Distinct().ToList();
+        var held = IdsOf(user, kind);
+        var missing = ids.Where(id => !held.Contains(id)).Distinct().ToList();
         if (missing.Count == 0)
         {
             return false;

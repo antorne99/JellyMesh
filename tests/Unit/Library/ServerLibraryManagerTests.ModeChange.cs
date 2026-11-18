@@ -326,12 +326,58 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.ApplyMode(_serverId).Job;
 
         var carried = Assert.Single(fixture.Renamer.Carried);
-        var (key, value) = Assert.Single(carried);
-        Assert.Equal(oldFilms, key);
         Assert.Equal(
-            new[] { "Casa - Film 4K", "Casa 1a2b3c4d - Film" }.Select(name => Guid.Parse(fixture.Libraries.Find(name).ItemId)).Order(),
-            value.Order());
+            new[] { "Casa - Film 4K", "Casa 1a2b3c4d - Film" }.Select(name => (name, (Guid?)Guid.Parse(fixture.Libraries.Find(name).ItemId))),
+            carried.Select(carry => (carry.Name, carry.Id)).OrderBy(pair => pair.Name, StringComparer.Ordinal));
+        Assert.All(carried, carry => Assert.Equal([oldFilms], Assert.Single(carry.Folders)));
         Assert.Equal(0, removedAtCarry);
+    }
+
+    [Fact]
+    public async Task A_library_that_merges_two_old_ones_carries_each_folder_with_the_one_that_held_it()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByRemoteLibrary, LibraryMode.ByType);
+        var children = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
+        var adults = Guid.Parse(fixture.Libraries.Find("Casa - Film 4K").ItemId);
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        var carry = Assert.Single(Assert.Single(fixture.Renamer.Carried));
+        Assert.Equal(("Casa 1a2b3c4d - Film", (Guid?)Guid.Parse(fixture.Libraries.Find("Casa 1a2b3c4d - Film").ItemId)), (carry.Name, carry.Id));
+        Assert.Equal(2, carry.Folders.Count);
+        Assert.Equal([children], carry.Folders[0]);
+        Assert.Equal([adults], carry.Folders[1]);
+    }
+
+    [Fact]
+    public async Task The_users_who_lose_titles_stay_on_the_server_state_after_the_change()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByRemoteLibrary, LibraryMode.ByType);
+        fixture.Renamer.Lost = [new AccessLoss("Casa 1a2b3c4d - Film", ["ristretto"])];
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        var lost = Assert.Single(fixture.Manager.GetState(_serverId).LostAccess);
+        Assert.Equal("Casa 1a2b3c4d - Film", lost.Library);
+        Assert.Equal(["ristretto"], lost.Users);
+    }
+
+    [Fact]
+    public async Task The_preview_names_the_merged_library_and_who_would_lose_titles_with_no_user_changed()
+    {
+        var fixture = OnTypeFolders();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+        var children = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
+        var adults = Guid.Parse(fixture.Libraries.Find("Casa - Film 4K").ItemId);
+        fixture.Renamer.Lost = [new AccessLoss("Casa 1a2b3c4d - Film", ["ristretto"])];
+
+        var change = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByType);
+
+        var carry = Assert.Single(Assert.Single(fixture.Renamer.Previewed));
+        Assert.Equal(("Casa 1a2b3c4d - Film", (Guid?)null), (carry.Name, carry.Id));
+        Assert.Equal<IReadOnlyList<Guid>>([[children], [adults]], carry.Folders);
+        Assert.Equal(fixture.Renamer.Lost, change!.LostAccess);
+        Assert.Empty(fixture.Renamer.Carried);
     }
 
     [Fact]
@@ -349,16 +395,56 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task Adopted_libraries_take_no_part_in_the_access_carried()
+    public async Task A_new_library_without_an_id_keeps_the_old_libraries_and_carries_nothing()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Scans.DuringScan = () =>
+        {
+            if (fixture.Libraries.Folders.FirstOrDefault(folder => folder.Name == "Casa - Film 4K") is { } made)
+            {
+                made.ItemId = null;
+            }
+        };
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Renamer.Carried);
+    }
+
+    [Fact]
+    public async Task A_new_library_the_admin_gave_another_path_keeps_the_old_libraries_and_carries_nothing()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Scans.DuringScan = () =>
+        {
+            if (fixture.Libraries.Folders.FirstOrDefault(folder => folder.Name == "Casa - Film 4K") is { } made && made.Locations.Length == 1)
+            {
+                made.Locations = [.. made.Locations, "/media/mie"];
+            }
+        };
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Renamer.Carried);
+    }
+
+    [Fact]
+    public async Task Adopted_libraries_give_their_access_to_the_new_ones_and_are_never_written()
     {
         var fixture = OnTypeFolders();
         fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
         await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        var adopted = Guid.Parse(fixture.Libraries.Find("Film di casa").ItemId);
         fixture.Server.LibraryMode = LibraryMode.ByRemoteLibrary;
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        Assert.Empty(fixture.Renamer.Carried);
+        var carried = Assert.Single(fixture.Renamer.Carried);
+        Assert.Equal(2, carried.Count);
+        Assert.All(carried, carry => Assert.Equal([adopted], Assert.Single(carry.Folders)));
+        Assert.DoesNotContain(carried, carry => carry.Id == adopted);
     }
 
     [Fact]

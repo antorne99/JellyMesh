@@ -1948,6 +1948,7 @@
                     "These series have the same name and year, but nothing confirms they are one series.": "Queste serie hanno lo stesso nome e lo stesso anno, ma nulla conferma che siano una sola serie.",
                     "the sync history": "lo storico delle sincronizzazioni",
                     "These libraries are deleted now: {names}.": "Queste librerie vengono eliminate ora: {names}.",
+                    "In {library} these users lose titles, because they could see only some of the libraries it joins: {names}.": "In {library} questi utenti perdono dei titoli, perché vedevano solo alcune delle librerie che unisce: {names}.",
                     "password needed": "password da inserire",
                     "The stored password no longer decrypts. Enter the login again in the edit form below. {problem}": "La password salvata non si decifra più. Inserisci di nuovo l'accesso nel modulo di modifica qui sotto. {problem}",
                     "Sync and remote playback are suspended until the stored logins can be used. {problem}": "Sincronizzazione e riproduzione remota sono sospese finché gli accessi salvati non si possono usare. {problem}",
@@ -2941,6 +2942,10 @@
                         if (change.Released.length > 0) {
                             paragraphs.push(t('These adopted libraries stay, and JellyMesh no longer manages them: {names}.', { names: escapeHtml(change.Released.join(', ')) }));
                         }
+
+                        (change.LostAccess || []).forEach(function (loss) {
+                            paragraphs.push(t('In {library} these users lose titles, because they could see only some of the libraries it joins: {names}.', { library: escapeHtml(loss.Library), names: escapeHtml(loss.Users.join(', ')) }));
+                        });
                     }
 
                     return paragraphs;

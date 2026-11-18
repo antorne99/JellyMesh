@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -31,13 +32,21 @@ public interface ILibraryRenamer
     Task<Guid?> RenameAsync(string name, Guid? itemId, CollectionType? type, string newName, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Keeps what each user can see when libraries take the titles of an old one: who blocks the old one blocks them, and
-    /// who has access to it by id, not to all libraries, gets them. Only the per-id lists change, as on a rename (§10 row 438).
+    /// Keeps what each user can see when new libraries take the titles of old ones: who blocks an old one blocks the new
+    /// ones that hold any of its folders, and who has by id, not through all libraries, old libraries holding every folder
+    /// of a new one gets it. Only the per-id lists change, as on a rename (§10 row 438).
     /// </summary>
-    /// <param name="access">For each old library id, the ids of the libraries that take its titles.</param>
+    /// <param name="carries">The new libraries, each with the old libraries that held its folders.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task that fails when a user cannot be saved.</returns>
-    Task CarryAccessAsync(IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access, CancellationToken cancellationToken);
+    /// <returns>The users who saw titles of a new library through an old one and do not see the new one.</returns>
+    Task<IReadOnlyList<AccessLoss>> CarryAccessAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Tells, changing nothing, which users would lose titles if the access were carried to the new libraries.
+    /// </summary>
+    /// <param name="carries">The new libraries, each with the old libraries that held its folders.</param>
+    /// <returns>The users who saw titles of a new library through an old one and would not see the new one.</returns>
+    IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries);
 
     /// <summary>
     /// Finishes the recorded renames: the second move of a change of case, then the users left with an old id.

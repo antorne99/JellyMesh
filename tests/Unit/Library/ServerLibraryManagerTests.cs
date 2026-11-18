@@ -2021,13 +2021,18 @@ public sealed partial class ServerLibraryManagerTests
         // Runs when a rename starts, before it moves the library.
         public Action? OnRename { get; set; }
 
-        public List<IReadOnlyDictionary<Guid, IReadOnlyList<Guid>>> Carried { get; } = [];
+        public List<IReadOnlyList<AccessCarry>> Carried { get; } = [];
+
+        public List<IReadOnlyList<AccessCarry>> Previewed { get; } = [];
+
+        // The users a carry or a preview reports as losing titles.
+        public IReadOnlyList<AccessLoss> Lost { get; set; } = [];
 
         public Exception? CarryFailure { get; set; }
 
         public Action? OnCarry { get; set; }
 
-        public Task CarryAccessAsync(IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<AccessLoss>> CarryAccessAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
         {
             OnCarry?.Invoke();
             if (CarryFailure is not null)
@@ -2035,8 +2040,14 @@ public sealed partial class ServerLibraryManagerTests
                 throw CarryFailure;
             }
 
-            Carried.Add(access);
-            return Task.CompletedTask;
+            Carried.Add(carries);
+            return Task.FromResult(Lost);
+        }
+
+        public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
+        {
+            Previewed.Add(carries);
+            return Lost;
         }
 
         public Task ResumeAsync(CancellationToken cancellationToken)
