@@ -43,7 +43,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private readonly IKeyFileGuard _guard;
     private readonly IReadOnlyList<SchemaMigration> _migrations;
     private readonly TimeProvider _time;
+    private static readonly TimeSpan _disposeWait = TimeSpan.FromSeconds(10);
+    private static readonly StoreHealth _closed = new(StoreState.Unavailable, "The database is closed.");
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "A call after Dispose still waits on the gate and is refused as closed; the semaphore never makes a wait handle.")]
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private volatile bool _disposed;
     private SqliteConnection? _writer;
     private StoreHealth? _health;
     private RecoveryNote? _note;
@@ -237,9 +241,34 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
-        _writer?.Dispose();
-        _writer = null;
-        _gate.Dispose();
+        // Waits a bounded time for a write in progress, so its transaction ends before the writer closes.
+        var held = _gate.Wait(_disposeWait);
+        try
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            SetHealth(_closed);
+            if (held)
+            {
+                _writer?.Dispose();
+                _writer = null;
+            }
+            else
+            {
+                _logger.LogWarning("A JellyMesh database write did not end in time, so its connection is left open");
+            }
+        }
+        finally
+        {
+            if (held)
+            {
+                _gate.Release();
+            }
+        }
     }
 
     [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "Every command text is a constant of this class or a pragma with a version number; no outside value goes in.")]
@@ -360,6 +389,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     // Permissions, then the file, which is set aside and replaced when damaged; called with the gate held.
     private StoreHealth Open()
     {
+        if (_disposed)
+        {
+            return _closed;
+        }
+
         _writer?.Dispose();
         _writer = null;
 

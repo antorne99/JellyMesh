@@ -21,8 +21,6 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
     private readonly PluginDatabase _inner;
     private int _writes;
     private int _interruptAfter = -1;
-    private int _inFlight;
-    private volatile bool _disposed;
 
     public TestDatabase(string folder)
     {
@@ -76,29 +74,21 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     public async Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
     {
-        Interlocked.Increment(ref _inFlight);
-        try
+        ThrowIfSuspended();
+        var number = Interlocked.Increment(ref _writes) - 1;
+        if (Interlocked.CompareExchange(ref _interruptAfter, -1, number) != number)
         {
-            ThrowIfSuspended();
-            var number = Interlocked.Increment(ref _writes) - 1;
-            if (Interlocked.CompareExchange(ref _interruptAfter, -1, number) != number)
-            {
-                return await _inner.WriteAsync(write, cancellationToken);
-            }
+            return await _inner.WriteAsync(write, cancellationToken);
+        }
 
-            var interrupt = Interrupt!;
-            return await _inner.WriteAsync<T>(
-                (connection, transaction) =>
-                {
-                    write(connection, transaction);
-                    throw interrupt;
-                },
-                cancellationToken);
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _inFlight);
-        }
+        var interrupt = Interrupt!;
+        return await _inner.WriteAsync<T>(
+            (connection, transaction) =>
+            {
+                write(connection, transaction);
+                throw interrupt;
+            },
+            cancellationToken);
     }
 
     public Task WriteAsync(Action<SqliteConnection, SqliteTransaction> write, CancellationToken cancellationToken)
@@ -157,17 +147,11 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => _inner.BackUpAsync(cancellationToken);
 
-    // A sync left running by a test may still be writing: let it finish, and refuse what comes after.
-    public void Dispose()
-    {
-        _disposed = true;
-        SpinWait.SpinUntil(() => Volatile.Read(ref _inFlight) == 0, TimeSpan.FromSeconds(10));
-        _inner.Dispose();
-    }
+    public void Dispose() => _inner.Dispose();
 
     private void ThrowIfSuspended()
     {
-        if (Suspended || _disposed)
+        if (Suspended)
         {
             throw new StoreSuspendedException("suspended for the test");
         }
