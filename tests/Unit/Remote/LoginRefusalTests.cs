@@ -68,7 +68,7 @@ public class LoginRefusalTests
         var server = await fixture.AddServerAsync();
         _login = AdminLogin;
 
-        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var result = await fixture.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.AdministratorAccount, result.Failure);
         Assert.True(EndsRefusedLogin(fixture));
@@ -87,7 +87,7 @@ public class LoginRefusalTests
         using var restarted = Restarted(fixture);
 
         var call = await PingAsync(restarted, server.Id);
-        var credentials = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var credentials = await fixture.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.OtherServer, call.Failure);
         Assert.Equal(RemoteFailure.OtherServer, credentials.Failure);

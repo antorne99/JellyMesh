@@ -32,16 +32,6 @@ public interface IRemoteServerRegistry
     Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Replaces the dedicated user of a server, once the login with it succeeded. On failure nothing is saved. Works with a
-    /// wrong key too, because entering each password again is how a lost key file is fixed.
-    /// </summary>
-    /// <param name="serverId">The server to update.</param>
-    /// <param name="credentials">The dedicated user.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The server with its new credentials.</returns>
-    Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken);
-
-    /// <summary>
     /// Checks an edit of a server without saving anything (row 432): logs in with the new data on a device of its own, so
     /// the kept login stays, accepts only the saved Server Id (row 433), reads the libraries the user sees, then ends that
     /// login within a short time. A refusal names the field it is about and, for another server, the name it gives itself.
@@ -125,14 +115,6 @@ public interface IRemoteServerRegistry
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The libraries.</returns>
     Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Sets the libraries to import from a server.
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="libraryIds">The remote library identifiers.</param>
-    /// <returns>Whether the server exists.</returns>
-    bool SetImportedLibraries(Guid serverId, IEnumerable<string> libraryIds);
 
     /// <summary>
     /// Runs a call with an authenticated session, logging in again once if the token was refused.

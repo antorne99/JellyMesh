@@ -123,8 +123,6 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
-
     public Action? OnRemove { get; set; }
 
     public Task<bool> RemoveAsync(Guid serverId)
@@ -136,8 +134,6 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
     public Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
-
-    public bool SetImportedLibraries(Guid serverId, IEnumerable<string> libraryIds) => throw new NotSupportedException();
 
     public bool Rename(Guid serverId, string name) => throw new NotSupportedException();
 
