@@ -147,6 +147,20 @@ public sealed class VanishedLibrarySyncTests : IDisposable
     }
 
     [Fact]
+    public async Task An_answer_left_with_only_other_library_types_counts_as_an_absence()
+    {
+        var server = await TwoLibrariesSyncedAsync();
+        _fixture.Client.Libraries.Clear();
+        _fixture.Client.OtherViews = 1;
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Empty(ConfigOf(server).ImportedLibraryIds);
+        Assert.Equal([TestLibraries.Films, TestLibraries.FilmsB], ConfigOf(server).VanishedLibraries.Select(library => library.Id).Order());
+    }
+
+    [Fact]
     public async Task A_page_that_fails_after_a_second_absence_keeps_the_entries_of_the_other_libraries()
     {
         var server = await TwoLibrariesSyncedAsync();

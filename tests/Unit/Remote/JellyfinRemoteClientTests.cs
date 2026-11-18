@@ -335,6 +335,17 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task AnAnswerWithOnlyOtherLibraryTypesGivesNoLibrariesButCountsItsViews()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"m1","Name":"Musica","CollectionType":"music"}]}"""));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Empty(result.Value!);
+        Assert.Equal(1, RemoteLibraryList.ViewCountOf(result.Value!));
+    }
+
+    [Fact]
     public async Task TheTokenIsNeverInAUrl()
     {
         var handler = StubHandler.StockServer();

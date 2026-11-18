@@ -481,8 +481,8 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         // Each library once, so a remote that repeats one in place of another fails the count.
         var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).DistinctBy(library => library.Id).ToList();
         var missing = server.ImportedLibraryIds.Distinct().Where(id => !chosen.Any(library => library.Id == id)).ToList();
-        // An empty list is no correct answer for a server with imported libraries, so it never counts as an absence.
-        if (libraries.Value!.Count == 0 || TrackAbsence(server, missing).Count < missing.Count)
+        // An answer with no views at all is no correct answer, so it never counts as an absence; views of other types make it one.
+        if (RemoteLibraryList.ViewCountOf(libraries.Value!) == 0 || TrackAbsence(server, missing).Count < missing.Count)
         {
             return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(RemoteFailure.LibraryUnavailable);
         }

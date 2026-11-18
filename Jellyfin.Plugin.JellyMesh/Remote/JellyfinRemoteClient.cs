@@ -200,11 +200,11 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             return RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(RemoteFailure.InvalidResponse);
         }
 
-        IReadOnlyList<RemoteLibrary> libraries = views.Items
+        var libraries = views.Items
             .Where(view => !string.IsNullOrEmpty(view.Id) && _importableCollectionTypes.Contains(view.CollectionType, StringComparer.OrdinalIgnoreCase))
             .Select(view => new RemoteLibrary(view.Id!, view.Name ?? string.Empty, view.CollectionType!))
             .ToList();
-        return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(libraries);
+        return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(new RemoteLibraryList(libraries, views.Items.Count(view => !string.IsNullOrEmpty(view.Id))));
     }
 
     /// <inheritdoc />

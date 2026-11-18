@@ -104,9 +104,12 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
     /// <summary>Fails the reads of the library list.</summary>
     public RemoteFailure LibrariesFailure { get; set; }
 
+    /// <summary>Views of types that are not imported, such as music, which the answer counts but does not list.</summary>
+    public int OtherViews { get; set; }
+
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
         => Task.FromResult(LibrariesFailure == RemoteFailure.None
-            ? RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(Libraries.ToList())
+            ? RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(new RemoteLibraryList(Libraries.ToList(), Libraries.Count + OtherViews))
             : RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(LibrariesFailure));
 
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetSharedLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
