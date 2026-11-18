@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Sync;
@@ -15,6 +16,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -729,6 +731,33 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.True(Row(_anna, film).Played);
         Assert.True(Row(_bruno, film).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // D21 through a removal: the copy of the removed server finds the merged title by its own identity, and every copy of it.
+    [Fact]
+    public async Task TheCopyOfARemovedServerFindsEveryCopyOfAMergedTitle()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", "films");
+        var b = await AddAndMaterializeAsync("B", "films-c");
+        var c = await AddAndMaterializeAsync("C", "films-c");
+        await MergeAsync((a, "x", "1"), (c, "y", null));
+        var alfa = FilmItem(a);
+        var sonda = FilmItem(c);
+        Watch(_bruno, FilmItem(b));
+
+        using (var sync = SyncWith(_materializer))
+        {
+            await sync.RemoveServerAsync(b.Id, () => _fixture.Sync.Registry.RemoveAsync(b.Id), CancellationToken.None);
+            await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, b.Id.ToString("N")), CancellationToken.None);
+            await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.True(Row(_bruno, sonda).Played);
+        Assert.True(Row(_bruno, alfa).Played);
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
