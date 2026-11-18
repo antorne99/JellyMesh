@@ -1045,6 +1045,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     private async Task DisableAsync(Guid serverId, CancellationToken cancellationToken)
     {
+        _conflicts.TryRemove(serverId, out _);
         if (!await DeleteAllAsync(config => LiveRegistry(config, serverId), serverId, cancellationToken).ConfigureAwait(false))
         {
             return;
@@ -1127,8 +1128,26 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
     }
 
-    // Deletes the libraries of a registry one at a time, each checked again on a fresh read. False when it had to stop.
+    // Deletes the libraries of a registry one at a time, each checked again on a fresh read, and scans after a release.
+    // False when it had to stop.
     private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, CancellationToken cancellationToken)
+    {
+        var released = false;
+        try
+        {
+            return await DeleteEachAsync(locate, errorKey, () => released = true, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // A released library keeps the titles of the server until a scan drops them.
+            if (released)
+            {
+                await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task<bool> DeleteEachAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Action onRelease, CancellationToken cancellationToken)
     {
         while (_store.Read(config => locate(config)?.Libraries.Count > 0))
         {
@@ -1159,6 +1178,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     SetError(errorKey, AutomaticLibrariesError.RemoveFailed);
                     return false;
                 }
+
+                onRelease();
             }
             else
             {

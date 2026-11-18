@@ -116,6 +116,34 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task Releasing_an_adopted_library_scans_so_the_titles_of_the_server_leave_it()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.Shows);
+        fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.Disable(_serverId, false).Job;
+
+        Assert.Equal("scan", fixture.Scans.Steps.LastOrDefault());
+    }
+
+    [Fact]
+    public async Task Switching_off_clears_what_was_in_the_way()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.Shows);
+        fixture.Libraries.Add("Tutto", CollectionTypeOptions.movies, Root);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        Assert.NotEmpty(fixture.Manager.GetState(_serverId).Conflicts);
+
+        await fixture.Manager.Disable(_serverId, false).Job;
+
+        Assert.Empty(fixture.Manager.GetState(_serverId).Conflicts);
+    }
+
+    [Fact]
     public async Task Removing_the_server_releases_an_adopted_library_once_its_titles_are_gone()
     {
         var fixture = OnTypeFolders();
