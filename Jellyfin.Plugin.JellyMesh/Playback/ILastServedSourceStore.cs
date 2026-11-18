@@ -20,8 +20,8 @@ public interface ILastServedSourceStore
     Guid? Find(Guid userId, string stubId);
 
     /// <summary>
-    /// Records the server that just served a stub to a user. The record is known at once and saved later, off the request
-    /// (Q76); a failed save is logged, not thrown: playback goes on.
+    /// Records the server that just served a stub to a user. The record is known at once and saved right after, off the
+    /// request (Q76); a failed save is logged, not thrown, and tried again: playback goes on.
     /// </summary>
     /// <param name="userId">The local user.</param>
     /// <param name="stubId">The stub.</param>
