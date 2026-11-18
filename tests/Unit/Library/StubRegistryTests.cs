@@ -258,6 +258,60 @@ public sealed class StubRegistryTests : IDisposable
         Assert.False(registry.HasTitlesOf(without));
     }
 
+    // A removed server's libraries wait for its titles (decision 278), so a registry that cannot tell says it has some.
+    [Fact]
+    public async Task ARegistryNotReadOrReopenedCannotTellThatAServerHasNoTitles()
+    {
+        var server = Guid.NewGuid();
+        _database.Suspended = true;
+        using var registry = Create();
+        Assert.True(registry.HasTitlesOf(server));
+
+        _database.Suspended = false;
+        await registry.EnterAsync(CancellationToken.None);
+        registry.Exit();
+        Assert.False(registry.HasTitlesOf(server));
+
+        _database.Reopen();
+        Assert.True(registry.HasTitlesOf(server));
+    }
+
+    [Fact]
+    public async Task AfterRowsThatDoNotReadOnlyAFullMaterializationTellsThatAServerHasNoTitles()
+    {
+        var server = Guid.NewGuid();
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        await _database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE stub_entries SET kind = 'Unknown' WHERE id = 'abc';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+
+        using var damaged = Create();
+        Assert.True(damaged.HasTitlesOf(server));
+
+        await SeedAsync(damaged, damaged.State with { RemovedServers = [server] });
+        Assert.True(damaged.HasTitlesOf(server));
+
+        await damaged.EnterAsync(CancellationToken.None);
+        try
+        {
+            await damaged.SaveMaterializedAsync(damaged.State, CancellationToken.None);
+        }
+        finally
+        {
+            damaged.Exit();
+        }
+
+        Assert.False(damaged.HasTitlesOf(server));
+    }
+
     // The sync tells whether anyone saved the registry since its last run by this number (Q386).
     [Fact]
     public async Task EachSaveRaisesTheGenerationAndAFailedOneDoesNot()

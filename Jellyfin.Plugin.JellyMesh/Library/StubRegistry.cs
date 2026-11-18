@@ -27,7 +27,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     private long _generation;
 
     // False while the database could not be read: memory is then not its copy, and nothing is saved over it.
-    private bool _loaded;
+    private volatile bool _loaded;
 
     // What the tables hold, to write only what changed; null when that is not known, so the next save writes it all.
     private StubState? _stored;
@@ -50,7 +50,8 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         _logger = logger;
 
         // Built once at startup, before any request; the read runs on a pool thread of its own, so the wait cannot deadlock.
-        _lookup = new Lookup(LoadAsync(CancellationToken.None).GetAwaiter().GetResult() ?? StubState.Empty);
+        var state = LoadAsync(CancellationToken.None).GetAwaiter().GetResult();
+        _lookup = new Lookup(state ?? StubState.Empty, titlesKnown: _stored is not null);
     }
 
     /// <summary>
@@ -75,7 +76,13 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <inheritdoc />
     public bool HasTitlesOf(Guid serverId)
     {
-        var state = _lookup.State;
+        var lookup = _lookup;
+        if (!lookup.TitlesKnown || !_loaded || _database.Generation != Interlocked.Read(ref _readGeneration))
+        {
+            return true;
+        }
+
+        var state = lookup.State;
         return state.Stubs.Any(stub => stub.ServerId == serverId) || state.Series.Any(series => series.ServerId == serverId);
     }
 
@@ -143,7 +150,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             throw new IOException("The stub registry cannot be read from the database.");
         }
 
-        _lookup = new Lookup(state);
+        _lookup = new Lookup(state, titlesKnown: _stored is not null);
         Interlocked.Increment(ref _generation);
     }
 
@@ -159,7 +166,19 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     /// <exception cref="IOException">The database could not be read or written. The current state stays.</exception>
-    public async Task SaveAsync(StubState state, CancellationToken cancellationToken)
+    public Task SaveAsync(StubState state, CancellationToken cancellationToken) => SaveAsync(state, false, cancellationToken);
+
+    /// <summary>
+    /// Saves the state a full materialization ended with, which holds every title it wrote, so that the registry can tell
+    /// again that a server has none after rows that did not read. The caller holds the lock.
+    /// </summary>
+    /// <param name="state">The state.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    /// <exception cref="IOException">The database could not be read or written. The current state stays.</exception>
+    public Task SaveMaterializedAsync(StubState state, CancellationToken cancellationToken) => SaveAsync(state, true, cancellationToken);
+
+    private async Task SaveAsync(StubState state, bool materialized, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(state);
 
@@ -200,7 +219,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
 
         _stored = state;
-        _lookup = new Lookup(state);
+        _lookup = new Lookup(state, materialized || _lookup.TitlesKnown);
         Interlocked.Increment(ref _generation);
     }
 
@@ -332,9 +351,10 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
 
     private sealed class Lookup
     {
-        public Lookup(StubState state)
+        public Lookup(StubState state, bool titlesKnown)
         {
             State = state;
+            TitlesKnown = titlesKnown;
             ById = state.Stubs.ToFrozenDictionary(stub => stub.Id, StringComparer.Ordinal);
 
             // The old path of a renamed stub finds it too, until its old item is gone; a current path always wins.
@@ -375,6 +395,9 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
 
         public StubState State { get; }
+
+        // False while the state may lack titles still in the folder: read from rows that did not read, or not read at all.
+        public bool TitlesKnown { get; }
 
         public FrozenDictionary<string, StubEntry> ById { get; }
 

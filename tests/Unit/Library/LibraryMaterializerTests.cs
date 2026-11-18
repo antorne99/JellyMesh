@@ -1114,6 +1114,29 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task AfterRowsThatDoNotReadTheNextRunTellsTheTitlesOfEachServerAgain()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var other = Guid.NewGuid();
+        await _fixture.Sync.Database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE stub_entries SET kind = 'Unknown';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+        _fixture.Sync.Database.Reopen();
+        Assert.True(_fixture.Registry.HasTitlesOf(other));
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.True(_fixture.Registry.HasTitlesOf(server.Id));
+        Assert.False(_fixture.Registry.HasTitlesOf(other));
+    }
+
+    [Fact]
     public async Task ARemovalIsRememberedAcrossARestart()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));

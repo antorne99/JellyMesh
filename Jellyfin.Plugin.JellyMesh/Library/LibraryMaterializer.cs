@@ -272,7 +272,16 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             RemoveServerFolders(run, plan.State.RemovedServers);
         }
 
-        await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
+        // A run over an index that could not be read wrote only part of the titles.
+        if (view.Health == IndexHealth.Corrupt)
+        {
+            await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _registry.SaveMaterializedAsync(run.State, cancellationToken).ConfigureAwait(false);
+        }
+
         if (_keeper is not null)
         {
             await _keeper.RestoreAsync(cancellationToken).ConfigureAwait(false);
