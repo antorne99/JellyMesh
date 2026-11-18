@@ -95,11 +95,11 @@ public sealed class FederatedStubImportTests : IDisposable
     [Fact]
     public void ThePathNeverReachesTheEntry()
     {
-        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), "http://friend.tailnet.ts.net/secret"), RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);
+        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), "http://remote.invalid/secret"), RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);
 
         var json = System.Text.Json.JsonSerializer.Serialize(item);
 
-        Assert.DoesNotContain("friend.tailnet", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("remote.invalid", json, StringComparison.Ordinal);
     }
 
     [Fact]

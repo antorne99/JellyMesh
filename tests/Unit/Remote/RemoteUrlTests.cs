@@ -9,8 +9,8 @@ public class RemoteUrlTests
     [Theory]
     [InlineData("http://server:8096", "http://server:8096")]
     [InlineData("http://server:8096/", "http://server:8096")]
-    [InlineData("  https://server.tailnet.ts.net/jellyfin/ ", "https://server.tailnet.ts.net/jellyfin")]
-    [InlineData("http://100.64.0.1:8096", "http://100.64.0.1:8096")]
+    [InlineData("  https://server.invalid/jellyfin/ ", "https://server.invalid/jellyfin")]
+    [InlineData("http://198.51.100.1:8096", "http://198.51.100.1:8096")]
     public void AcceptsAndNormalizes(string input, string expected)
     {
         Assert.True(RemoteUrl.TryNormalize(input, out var normalized));
@@ -31,12 +31,12 @@ public class RemoteUrlTests
         Assert.False(RemoteUrl.TryNormalize(input, out _));
     }
 
-    private static readonly Uri _base = new("http://friend.tailnet:8096/jf/");
+    private static readonly Uri _base = new("http://remote.invalid:8096/jf/");
 
     [Theory]
-    [InlineData("/videos/a/master.m3u8?x=1", "http://friend.tailnet:8096/jf/videos/a/master.m3u8?x=1")]
-    [InlineData("videos/a/0.ts", "http://friend.tailnet:8096/jf/videos/a/0.ts")]
-    [InlineData("/a?next=http://evil.example/", "http://friend.tailnet:8096/jf/a?next=http://evil.example/")]
+    [InlineData("/videos/a/master.m3u8?x=1", "http://remote.invalid:8096/jf/videos/a/master.m3u8?x=1")]
+    [InlineData("videos/a/0.ts", "http://remote.invalid:8096/jf/videos/a/0.ts")]
+    [InlineData("/a?next=http://evil.example/", "http://remote.invalid:8096/jf/a?next=http://evil.example/")]
     public void A_path_stays_under_the_base_address(string path, string expected)
     {
         Assert.True(RemoteUrl.TryCombine(_base, path, out var url));

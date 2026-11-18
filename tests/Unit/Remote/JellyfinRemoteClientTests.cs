@@ -202,8 +202,8 @@ public class JellyfinRemoteClientTests
     }
 
     [Theory]
-    [InlineData("http://friend.tailnet.ts.net:9999/x")]  // other port
-    [InlineData("https://friend.tailnet.ts.net:8096/x")] // other scheme
+    [InlineData("http://remote.invalid:9999/x")]  // other port
+    [InlineData("https://remote.invalid:8096/x")] // other scheme
     public async Task ARedirectToAnotherOriginOnTheSameHostIsNotFollowed(string location)
     {
         var handler = new StubHandler(_ => StubHandler.Redirect(HttpStatusCode.TemporaryRedirect, location));

@@ -1,7 +1,7 @@
 # Point 6, API side. Sourced by unavailable-title.sh, which provides get, post, raw,
 # login, mode, item_id and scan. Who gets the refusal, and what the bytes contain.
 
-SENTINEL=remoto-segreto.tailnet-sentinel.ts.net
+SENTINEL=remoto-segreto.sentinel.invalid
 BODY=$RUN/body
 
 refusals() { docker logs "$NAME" 2>&1 | grep -c 'JMPROBE refusal' || true; }

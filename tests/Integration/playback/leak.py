@@ -23,7 +23,7 @@ for s in stubs["Stubs"]:
         if src["ItemId"] != "acbe03b163b13bf1cc9cc9b9dd068460":
             items.add(src["ItemId"])
         servers.add(src["ServerId"]); servers.add(src["ServerId"].replace("-", ""))
-fixed = ["18321", "18322", ":8097", ":8098", "remoto-standard", "remoto-jellymesh", "/media/", "tailnet", "remote-error-body-sentinel"]
+fixed = ["18321", "18322", ":8097", ":8098", "remoto-standard", "remoto-jellymesh", "/media/", "sentinel-host.invalid", "remote-error-body-sentinel"]
 print("secrets:", {k: len(v) for k, v in (("tokens", tokens), ("plays", plays), ("devices", devices), ("items", items), ("servers", servers))})
 assert tokens and plays and devices and items
 targets = list(glob.glob(G + "/cap-*.bin")) + list(glob.glob(G + "/cap-*.txt")) + list(glob.glob(G + "/api-*.json"))

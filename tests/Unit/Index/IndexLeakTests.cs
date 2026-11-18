@@ -27,8 +27,8 @@ public sealed class IndexLeakTests : IDisposable
           "Chapters": [{ "Name": "Uno", "StartPositionTicks": 0, "ImagePath": "/secret/path/chapter.jpg" }],
           "MediaSources": [{
             "Id": "source",
-            "Path": "http://friend.tailnet.ts.net:8096/Videos/1/stream?api_key=tok3n0123456789sentinel",
-            "DirectStreamUrl": "http://friend.tailnet.ts.net:8096/stream?api_key=tok3n0123456789sentinel",
+            "Path": "http://remote.invalid:8096/Videos/1/stream?api_key=tok3n0123456789sentinel",
+            "DirectStreamUrl": "http://remote.invalid:8096/stream?api_key=tok3n0123456789sentinel",
             "TranscodingUrl": "/transcode?ApiKey=tok3n0123456789sentinel",
             "RequiredHttpHeaders": { "Authorization": "tok3n0123456789sentinel" },
             "MediaStreams": [

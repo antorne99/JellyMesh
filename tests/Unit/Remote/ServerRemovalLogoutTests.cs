@@ -35,7 +35,7 @@ public class ServerRemovalLogoutTests
         Assert.All(logger.Lines, line =>
         {
             Assert.DoesNotContain(TestValues.Token, line, StringComparison.Ordinal);
-            Assert.DoesNotContain("tailnet", line, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(TestValues.Host, line, StringComparison.OrdinalIgnoreCase);
         });
     }
 

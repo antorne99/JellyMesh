@@ -177,7 +177,7 @@ public sealed class NewStubSegmentsTests : IAsyncLifetime, IDisposable
     {
         var broken = Item("/federated/Films/Broken.strm");
         _manager.Setup(manager => manager.RunSegmentPluginProviders(It.Is<BaseItem>(item => item.Id == broken.Id), _options, false, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("http://friend.tailnet.ts.net:8096"));
+            .ThrowsAsync(new InvalidOperationException("http://remote.invalid:8096"));
 
         Added(broken);
         Updated(broken);
