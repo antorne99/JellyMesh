@@ -17,6 +17,7 @@ internal static class StoreBackups
 
     private const string BackupMark = ".backup-";
     private const string DamagedMark = ".damaged-";
+    private const string PartialMark = ".partial";
     private const string TimeFormat = "yyyyMMddHHmmss";
 
     /// <summary>The file that keeps the last recovery for the page until the admin dismisses it.</summary>
@@ -41,12 +42,31 @@ internal static class StoreBackups
     {
         var path = Path.Combine(folder, PluginDatabase.FileName + DamagedMark + Stamp(time));
         var candidate = path;
-        for (var number = 2; File.Exists(candidate); number++)
+        for (var number = 2; File.Exists(candidate) || File.Exists(candidate + "-wal") || File.Exists(candidate + "-journal"); number++)
         {
             candidate = path + "-" + number.ToString(CultureInfo.InvariantCulture);
         }
 
         return candidate;
+    }
+
+    /// <summary>
+    /// Gets the path a copy is written to until it is complete; listing never takes it for a copy.
+    /// </summary>
+    /// <param name="copyPath">The path of the copy.</param>
+    /// <returns>The path.</returns>
+    public static string PartialPath(string copyPath) => copyPath + PartialMark;
+
+    /// <summary>
+    /// Deletes what copies cut short left, such as by a restart in the middle of one.
+    /// </summary>
+    /// <param name="folder">The plugin data folder.</param>
+    public static void DeletePartials(string folder)
+    {
+        foreach (var path in Directory.EnumerateFiles(folder, PluginDatabase.FileName + BackupMark + "*" + PartialMark))
+        {
+            File.Delete(path);
+        }
     }
 
     /// <summary>

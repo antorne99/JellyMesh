@@ -44,7 +44,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private SqliteConnection? _writer;
     private StoreHealth? _health;
-    private StoreRecovery? _recovery;
+    private RecoveryNote? _note;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PluginDatabase"/> class.
@@ -113,7 +113,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         get
         {
             _ = Health;
-            return Volatile.Read(ref _recovery);
+            return Volatile.Read(ref _note)?.Recovery;
         }
     }
 
@@ -146,8 +146,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _gate.Wait();
         try
         {
+            // A recovery cut short keeps its note, which the next open needs to go on.
+            if (_note is { Restoring: true })
+            {
+                return;
+            }
+
             File.Delete(RecoveryPath);
-            Volatile.Write(ref _recovery, null);
+            Volatile.Write(ref _note, null);
         }
         finally
         {
@@ -295,24 +301,26 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return reader.Read() && reader.GetInt64(0) == 0;
     }
 
-    // VACUUM INTO makes its file 0644 and refuses one that is not empty (F23), so it fills an empty private file. It runs
-    // outside any transaction, on the writer with the gate held; a failed copy is deleted, and only then are old ones pruned.
+    // VACUUM INTO makes its file 0644 and refuses one that is not empty (F23), so it fills an empty private file, under a
+    // name a recovery never takes until it is complete. It runs outside any transaction, on the writer with the gate held.
     private StoreBackup BackUp()
     {
         var writer = Writer();
         var now = _time.GetUtcNow();
         var copy = new StoreBackup(StoreBackups.BackupPath(_folder, now), DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds()));
-        File.Delete(copy.FilePath);
-        _guard.CreatePrivate(copy.FilePath).Dispose();
+        var partial = StoreBackups.PartialPath(copy.FilePath);
+        StoreBackups.DeletePartials(_folder);
+        _guard.CreatePrivate(partial).Dispose();
         try
         {
             using var command = Command(writer, "VACUUM INTO $path;");
-            command.Parameters.AddWithValue("$path", copy.FilePath);
+            command.Parameters.AddWithValue("$path", partial);
             command.ExecuteNonQuery();
+            File.Move(partial, copy.FilePath, overwrite: true);
         }
         catch
         {
-            File.Delete(copy.FilePath);
+            File.Delete(partial);
             throw;
         }
 
@@ -353,16 +361,23 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _writer?.Dispose();
         _writer = null;
 
+        // A recovery cut short after the set-aside goes on, and no empty file takes the place of the copy it was restoring.
+        var note = ReadNote();
+        Volatile.Write(ref _note, note);
         try
         {
-            KeepFilesPrivate();
+            KeepFilesPrivate(createMissing: note is not { Restoring: true });
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             return Unavailable("The database files cannot be kept private", exception);
         }
 
-        Volatile.Write(ref _recovery, ReadRecovery());
+        if (note is { Restoring: true })
+        {
+            return Replace(note.RecoveredAt, note.DamagedFile);
+        }
+
         var health = OpenFile();
         return health.State == StoreState.Damaged ? Recover(health) : health;
     }
@@ -428,15 +443,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Sets the damaged file aside with its logs, then restarts from the newest copy that opens, or empty (row 427). A copy
-    // that is damaged too is passed over. When the file cannot be set aside nothing new is made and the store stays damaged.
+    // Sets the damaged file aside with its logs, then replaces it (row 427). The note is kept from the set-aside on, so a
+    // replacement cut short goes on at the next open. When the file cannot be set aside nothing new is made.
     private StoreHealth Recover(StoreHealth damage)
     {
         var now = _time.GetUtcNow();
         string damaged;
         try
         {
-            damaged = SetAside(now);
+            damaged = Path.GetFileName(SetAside(now));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -444,21 +459,36 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return damage with { Reason = damage.Reason + " It cannot be set aside: " + exception.Message };
         }
 
+        Remember(new RecoveryNote(now, damaged, null, Restoring: true));
+        return Replace(now, damaged);
+    }
+
+    // Restarts from the newest copy that opens, passing over empty and damaged ones, or empty without one.
+    private StoreHealth Replace(DateTimeOffset recoveredAt, string damaged)
+    {
         try
         {
+            // What a replacement cut short may have left.
+            DeleteDatabaseFiles();
             foreach (var copy in StoreBackups.List(_folder))
             {
+                if (new FileInfo(copy.FilePath).Length == 0)
+                {
+                    _logger.LogWarning("The JellyMesh database copy {Copy} is empty and is passed over", Path.GetFileName(copy.FilePath));
+                    continue;
+                }
+
                 Restore(copy.FilePath);
                 var health = OpenFile();
                 if (health.State == StoreState.Damaged)
                 {
-                    _logger.LogWarning("The JellyMesh database copy {Copy} is damaged too", Path.GetFileName(copy.FilePath));
+                    _logger.LogWarning("The JellyMesh database copy {Copy} is damaged too and is passed over", Path.GetFileName(copy.FilePath));
                     DeleteDatabaseFiles();
                     continue;
                 }
 
-                _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the server list", Path.GetFileName(damaged), copy.CreatedAt);
-                Remember(new StoreRecovery(now, Path.GetFileName(damaged), copy.CreatedAt));
+                _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the server list", damaged, copy.CreatedAt);
+                Remember(new RecoveryNote(recoveredAt, damaged, copy.CreatedAt));
                 return health;
             }
 
@@ -466,30 +496,58 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            DeleteDatabaseFiles();
-            return Unavailable("The damaged database was set aside, and no copy or empty database can take its place", exception);
+            TryDeleteDatabaseFiles();
+            return Unavailable("The damaged database was set aside, and no copy or empty database can take its place yet", exception);
         }
 
-        _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty", Path.GetFileName(damaged));
-        Remember(new StoreRecovery(now, Path.GetFileName(damaged), null));
+        _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty", damaged);
+        Remember(new RecoveryNote(recoveredAt, damaged, null));
         return OpenFile();
     }
 
-    // Moves the file and its logs to a free .damaged-<date> name; the shared-memory index is rebuilt by SQLite, so it goes.
+    // Moves the logs, then the file, to a free .damaged-<date> name, so the path never holds a log without its file; the
+    // shared-memory index is rebuilt by SQLite, so it goes. Logs moved for a file that does not move go back.
     private string SetAside(DateTimeOffset now)
     {
         var target = StoreBackups.DamagedPath(_folder, now);
-        File.Move(_path, target);
-        foreach (var suffix in _logFiles)
+        var moved = new List<string>();
+        try
         {
-            if (File.Exists(_path + suffix))
+            foreach (var suffix in _logFiles)
             {
-                File.Move(_path + suffix, target + suffix);
+                if (File.Exists(_path + suffix))
+                {
+                    File.Move(_path + suffix, target + suffix);
+                    moved.Add(suffix);
+                }
             }
+
+            File.Move(_path, target);
+        }
+        catch
+        {
+            foreach (var suffix in moved)
+            {
+                TryMove(target + suffix, _path + suffix);
+            }
+
+            throw;
         }
 
         File.Delete(_path + "-shm");
         return target;
+    }
+
+    private void TryMove(string from, string to)
+    {
+        try
+        {
+            File.Move(from, to);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "A log of the damaged JellyMesh database cannot be put back next to it");
+        }
     }
 
     // Copies a nightly copy into a new private database file, never moving the copy itself.
@@ -510,16 +568,28 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
+    private void TryDeleteDatabaseFiles()
+    {
+        try
+        {
+            DeleteDatabaseFiles();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "A JellyMesh database file left by a recovery cut short cannot be deleted");
+        }
+    }
+
     // Keeps the recovery for the page, in a private file so it outlives a restart; when the file cannot be written the
     // page still has it until the next restart.
-    private void Remember(StoreRecovery recovery)
+    private void Remember(RecoveryNote note)
     {
-        Volatile.Write(ref _recovery, recovery);
+        Volatile.Write(ref _note, note);
         try
         {
             File.Delete(RecoveryPath);
             using var stream = _guard.CreatePrivate(RecoveryPath);
-            JsonSerializer.Serialize(stream, recovery);
+            JsonSerializer.Serialize(stream, note);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -527,7 +597,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    private StoreRecovery? ReadRecovery()
+    private RecoveryNote? ReadNote()
     {
         try
         {
@@ -537,7 +607,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             }
 
             using var stream = new FileStream(RecoveryPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            return JsonSerializer.Deserialize<StoreRecovery>(stream);
+            return JsonSerializer.Deserialize<RecoveryNote>(stream);
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -552,12 +622,12 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return new StoreHealth(StoreState.Unavailable, exception is null ? reason + "." : reason + ": " + exception.Message);
     }
 
-    // A missing database is made empty and private, as SQLite reads an empty file as a new database. An existing one, its
-    // side files and every copy next to it become private (rows 417, 428).
-    private void KeepFilesPrivate()
+    // A missing database is made empty and private, as SQLite reads an empty file as a new database, unless a recovery is
+    // to restore it. An existing one, its side files and every copy next to it become private (rows 417, 428).
+    private void KeepFilesPrivate(bool createMissing)
     {
         Directory.CreateDirectory(_folder);
-        if (!File.Exists(_path))
+        if (createMissing && !File.Exists(_path))
         {
             _guard.CreatePrivate(_path).Dispose();
         }
@@ -585,5 +655,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             transaction.Commit();
             _logger.LogInformation("The JellyMesh database moved to schema version {Version}", migration.Version);
         }
+    }
+
+    // The recovery as kept in its file: Restoring while the damaged file is aside and nothing has taken its place yet.
+    private sealed record RecoveryNote(DateTimeOffset RecoveredAt, string DamagedFile, DateTimeOffset? CopyDate, bool Restoring = false)
+    {
+        public StoreRecovery Recovery => new(RecoveredAt, DamagedFile, CopyDate);
     }
 }

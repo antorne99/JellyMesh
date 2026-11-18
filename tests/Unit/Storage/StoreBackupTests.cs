@@ -348,6 +348,44 @@ public sealed class StoreBackupTests : IDisposable
         Assert.Null(Open().Recovery);
     }
 
+    // A copy cut short, as by a restart in the middle of the night, is never taken for the latest one.
+    [Fact]
+    public async Task AnInterruptedCopyIsPassedOverAndClearedByTheNextOne()
+    {
+        await DamageAfterTwoCopiesAsync();
+        await File.WriteAllBytesAsync(Path.Combine(Folder, "jellymesh.db.backup-20261120030000.partial"), []);
+        await File.WriteAllBytesAsync(Path.Combine(Folder, "jellymesh.db.backup-20261121030000"), []);
+
+        var database = Open();
+
+        Assert.Equal(["first", "second"], await ItemsAsync(database));
+        Assert.Equal(new DateTimeOffset(2026, 11, 19, 3, 0, 0, TimeSpan.Zero), database.Recovery?.CopyDate);
+
+        await database.BackUpAsync(CancellationToken.None);
+        Assert.Empty(Directory.GetFiles(Folder, "*.partial"));
+    }
+
+    // A recovery stopped after the set-aside, for example by a full disk, goes on at the next open and never starts empty.
+    [Fact]
+    public async Task ARecoveryCutShortGoesOnAtTheNextOpen()
+    {
+        await DamageAfterTwoCopiesAsync();
+        var guard = new FailingDatabaseGuard(DatabasePath);
+
+        var failed = Open(guard);
+
+        Assert.Equal(StoreState.Unavailable, failed.Health.State);
+        Assert.False(File.Exists(DatabasePath));
+        failed.Dispose();
+        _opened.Remove(failed);
+
+        var database = Open();
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(["first", "second"], await ItemsAsync(database));
+        Assert.Equal(new StoreRecovery(_clock.Now, "jellymesh.db.damaged-20261120030000", new DateTimeOffset(2026, 11, 19, 3, 0, 0, TimeSpan.Zero)), database.Recovery);
+    }
+
     [Fact]
     public void AHealthyOpenHasNoRecovery()
     {
@@ -376,6 +414,17 @@ public sealed class StoreBackupTests : IDisposable
 
             return stream;
         }
+
+        public void KeepPrivate(string path) => _inner.KeepPrivate(path);
+    }
+
+    // Cannot create the database file, as on a full disk.
+    private sealed class FailingDatabaseGuard(string databasePath) : IKeyFileGuard
+    {
+        private readonly IKeyFileGuard _inner = KeyFileGuards.ForThisSystem();
+
+        public FileStream CreatePrivate(string path) =>
+            path == databasePath ? throw new IOException("No space left on device") : _inner.CreatePrivate(path);
 
         public void KeepPrivate(string path) => _inner.KeepPrivate(path);
     }
