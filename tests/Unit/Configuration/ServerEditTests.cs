@@ -120,8 +120,8 @@ public sealed partial class ServerEditTests : IDisposable
         return server.Id;
     }
 
-    private static ServerEditRequest Edit(string name = "Friend", string url = TestValues.Url, string user = TestValues.Username, string? password = null, IReadOnlyList<string>? libraries = null)
-        => new() { Name = name, Url = url, Username = user, Password = password, LibraryIds = libraries };
+    private static ServerEditRequest Edit(string name = "Friend", string url = TestValues.Url, string user = TestValues.Username, string? password = null, IReadOnlyList<string>? libraries = null, LibraryMode? mode = null)
+        => new() { Name = name, Url = url, Username = user, Password = password, LibraryIds = libraries, LibraryMode = mode };
 
     private static string DeviceOf(StubHandler.RecordedRequest request)
         => request.Authorization!.Split("DeviceId=\"")[1].Split('"')[0];

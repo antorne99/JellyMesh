@@ -16,12 +16,13 @@ internal static class LibraryPlan
     /// <param name="server">The server.</param>
     /// <param name="root">The federated folder.</param>
     /// <param name="olderLayout">Whether its titles are still in the 0.5 layout, where only the folders of the server exist.</param>
+    /// <param name="mode">The mode to plan for, the saved one when null.</param>
     /// <returns>The libraries, none in "none" mode.</returns>
-    public static IReadOnlyList<PlannedLibrary> For(RemoteServerConfig server, string root, bool olderLayout)
+    public static IReadOnlyList<PlannedLibrary> For(RemoteServerConfig server, string root, bool olderLayout, LibraryMode? mode = null)
     {
         ArgumentNullException.ThrowIfNull(server);
         var imported = Imported(server);
-        switch (server.LibraryMode)
+        switch (mode ?? server.LibraryMode)
         {
             case LibraryMode.ByType:
                 return [.. KindsOf(imported).Select(kind => new PlannedLibrary(

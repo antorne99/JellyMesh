@@ -369,7 +369,7 @@ public class FederationAdminController : ControllerBase
         }
 
         var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToCheck(serverId, request.Name!.Trim(), result.Value!) : EditFailed(result);
+        return result.IsSuccess ? ToCheck(serverId, request.Name!.Trim(), request.LibraryMode, result.Value!) : EditFailed(result);
     }
 
     /// <summary>
@@ -680,6 +680,7 @@ public class FederationAdminController : ControllerBase
             (RemoteFailure.InvalidServer, RemoteEditField.Url) => "Enter an http or https URL with no credentials, query or fragment.",
             (RemoteFailure.InvalidServer, RemoteEditField.Username) => "Enter the dedicated user.",
             (RemoteFailure.InvalidServer, RemoteEditField.Password) => "Enter the password of the dedicated user: the saved one can no longer be read.",
+            (RemoteFailure.InvalidServer, RemoteEditField.LibraryMode) => "Choose a library mode.",
             _ => FailureMessage(failure)
         };
     }
@@ -880,7 +881,18 @@ public class FederationAdminController : ControllerBase
             RunStep("libraries", _sync.PrepareServerFolders);
         }
 
-        // The library mode joins the edit in F40, with its own safeguards; it comes here, before the sync.
+        if (changes.HasFlag(RemoteEditChanges.LibraryMode))
+        {
+            RunStep("mode", () =>
+            {
+                var answer = _libraries.ApplyMode(serverId);
+                if (answer.Outcome != AutomaticLibrariesOutcome.Started)
+                {
+                    _logger.LogWarning("The change of library mode after an edit of a server did not start: {Outcome}", answer.Outcome);
+                }
+            });
+        }
+
         if ((changes & (RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Libraries)) != RemoteEditChanges.None)
         {
             RunStep("sync", () => _sync.StartServerSync(serverId));
@@ -901,7 +913,7 @@ public class FederationAdminController : ControllerBase
     }
 
     // The libraries and the consequences of an edit the remote accepted (row 432).
-    private ServerEditCheck ToCheck(Guid serverId, string name, RemoteEditReport report)
+    private ServerEditCheck ToCheck(Guid serverId, string name, LibraryMode? mode, RemoteEditReport report)
     {
         var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
         var visible = report.Libraries ?? [];
@@ -919,7 +931,10 @@ public class FederationAdminController : ControllerBase
         return new ServerEditCheck(
             report.ServerName ?? string.Empty,
             visible.Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, kept.Contains(library.Id))).ToList(),
-            new ServerEditConsequences(rename, removed, streams))
+            new ServerEditConsequences(rename, removed, streams)
+            {
+                ModeChange = report.Changes.HasFlag(RemoteEditChanges.LibraryMode) && mode is { } newMode ? _libraries.PreviewModeChange(serverId, newMode) : null
+            })
         {
             RemoteOffline = report.RemoteOffline,
             RemoteWarning = report.RemoteWarning

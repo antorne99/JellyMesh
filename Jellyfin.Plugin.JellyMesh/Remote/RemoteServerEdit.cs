@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 
 namespace Jellyfin.Plugin.JellyMesh.Remote;
 
@@ -32,4 +33,9 @@ public sealed class RemoteServerEdit
     /// Gets the remote libraries to import. Null keeps the saved ones.
     /// </summary>
     public IReadOnlyList<string>? LibraryIds { get; init; }
+
+    /// <summary>
+    /// Gets the library mode. Null keeps the saved one.
+    /// </summary>
+    public LibraryMode? LibraryMode { get; init; }
 }

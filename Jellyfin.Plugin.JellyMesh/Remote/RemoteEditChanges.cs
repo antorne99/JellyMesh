@@ -24,5 +24,8 @@ public enum RemoteEditChanges
     Password = 8,
 
     /// <summary>The libraries to import, including those the user no longer sees.</summary>
-    Libraries = 16
+    Libraries = 16,
+
+    /// <summary>The library mode, which needs no remote (row 438).</summary>
+    LibraryMode = 32
 }

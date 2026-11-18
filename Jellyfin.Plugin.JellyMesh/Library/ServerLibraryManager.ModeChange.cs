@@ -23,6 +23,35 @@ public sealed partial class ServerLibraryManager
             : Start(serverId, (id, token) => ApplyModeAsync(id, owner, token));
     }
 
+    /// <inheritdoc />
+    public LibraryModeChange? PreviewModeChange(Guid serverId, LibraryMode mode)
+    {
+        var olderLayout = _stubs.UsesOlderLayout() ?? false;
+        var folders = ReadFolders() ?? [];
+        return _store.Read(config =>
+        {
+            if (Find(config, serverId) is not { } server || server.LibraryMode == mode)
+            {
+                return null;
+            }
+
+            var root = config.FederatedFolderPath;
+            var plan = root.Length == 0 ? [] : LibraryPlan.For(server, root, olderLayout || StubLayout.HasOlderStubFiles(root), mode);
+            if (mode != LibraryMode.None && plan.Count == 0)
+            {
+                return new LibraryModeChange(server.LibraryMode, mode, [], []);
+            }
+
+            var kept = plan.Select(planned => TakeOverMatch(server, mode, planned, folders)).OfType<AutomaticLibraryConfig>().ToList();
+            var retiring = server.AutomaticLibraryRegistry.Where(record => Retires(mode, record) && !kept.Contains(record)).ToList();
+            return new LibraryModeChange(
+                server.LibraryMode,
+                mode,
+                [.. retiring.Where(record => !record.Adopted).Select(record => record.Name)],
+                [.. retiring.Where(record => record.Adopted).Select(record => record.Name)]);
+        });
+    }
+
     // Whether a library of the registry belongs to another mode than the one given: one of a type in "per remote library",
     // one of a remote library in "per type", any in "none".
     private static bool Retires(LibraryMode mode, AutomaticLibraryConfig record) => mode switch
@@ -103,18 +132,20 @@ public sealed partial class ServerLibraryManager
             cancellationToken).ConfigureAwait(false);
     }
 
+    // The library of another mode than the one given that a planned library of that mode would take over, if any.
+    private AutomaticLibraryConfig? TakeOverMatch(RemoteServerConfig server, LibraryMode mode, PlannedLibrary planned, IReadOnlyList<VirtualFolderInfo> folders)
+        => server.AutomaticLibraryRegistry.FirstOrDefault(record => Retires(mode, record)
+            && FindRecorded(record, folders) is { } folder
+            && folder.CollectionType == TypeOf(planned.Kind)
+            && folder.Locations.Length == planned.Paths.Count
+            && planned.Paths.All(path => folder.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path)))
+            && (record.Adopted || NamesFor(server.Name, server.Id, planned.Suffix).Contains(folder.Name, StringComparer.Ordinal)));
+
     // A library of the old mode with exactly the paths and type a new one wants takes its place, keeping its id and its
     // permissions: an adopted one always, one the plugin made when it already has the name the new one would take.
     private bool TakeOver(RemoteServerConfig owner, PlannedLibrary planned, List<VirtualFolderInfo> folders)
     {
-        var found = _store.Read(config => Owned(config, owner) is { } server
-            ? server.AutomaticLibraryRegistry.FirstOrDefault(record => Retires(server.LibraryMode, record)
-                && FindRecorded(record, folders) is { } folder
-                && folder.CollectionType == TypeOf(planned.Kind)
-                && folder.Locations.Length == planned.Paths.Count
-                && planned.Paths.All(path => folder.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path)))
-                && (record.Adopted || NamesFor(server.Name, server.Id, planned.Suffix).Contains(folder.Name, StringComparer.Ordinal)))
-            : null);
+        var found = _store.Read(config => Owned(config, owner) is { } server ? TakeOverMatch(server, server.LibraryMode, planned, folders) : null);
         if (found is null)
         {
             return false;

@@ -213,4 +213,24 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(fixture.Libraries.Removed);
         Assert.Equal(2, fixture.Libraries.Created.Count);
     }
+
+    [Fact]
+    public async Task The_preview_lists_the_libraries_deleted_and_released_but_not_those_kept_and_changes_nothing()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+
+        var toRemote = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByRemoteLibrary);
+        var toNone = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.None);
+
+        Assert.Equal((LibraryMode.ByType, LibraryMode.ByRemoteLibrary), (toRemote!.From, toRemote.To));
+        Assert.Empty(toRemote.DeletedLibraries);
+        Assert.Equal(["Film di casa"], toRemote.ReleasedLibraries);
+        Assert.Equal(["Casa - Serie"], toNone!.DeletedLibraries);
+        Assert.Equal(["Film di casa"], toNone.ReleasedLibraries);
+        Assert.Null(fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByType));
+        Assert.Equal(LibraryMode.ByType, fixture.Server.LibraryMode);
+        Assert.Empty(fixture.Libraries.Removed);
+    }
 }

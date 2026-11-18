@@ -798,8 +798,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Username);
         }
 
+        if (edit.LibraryMode is { } mode && !Enum.IsDefined(mode))
+        {
+            return Refuse(RemoteFailure.InvalidServer, RemoteEditField.LibraryMode);
+        }
+
         var row = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
-            ? (Saved: new SavedServer(server.Name, server.Url, server.JellyfinServerId, server.ImportedLibraryIds.ToList()), Encrypted: server.EncryptedCredentials)
+            ? (Saved: new SavedServer(server.Name, server.Url, server.JellyfinServerId, server.ImportedLibraryIds.ToList(), server.LibraryMode), Encrypted: server.EncryptedCredentials)
             : default);
         if (row.Saved is not { } saved)
         {
@@ -822,9 +827,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         changes |= keepsPassword || stored?.Password == edit.Password ? RemoteEditChanges.None : RemoteEditChanges.Password;
         var requested = edit.LibraryIds?.Distinct(StringComparer.Ordinal).ToList();
         changes |= requested is null || SameLibraries(requested, saved.LibraryIds) ? RemoteEditChanges.None : RemoteEditChanges.Libraries;
+        var libraryMode = edit.LibraryMode ?? saved.LibraryMode;
+        changes |= libraryMode == saved.LibraryMode ? RemoteEditChanges.None : RemoteEditChanges.LibraryMode;
 
         var credentials = new RemoteCredentials { Username = edit.Username, Password = keepsPassword ? stored!.Password : edit.Password! };
-        return (new EditPlan(serverId, name, url, credentials, changes, saved, requested) { Stored = stored }, RemoteResult.Fail<RemoteEditReport>(RemoteFailure.None));
+        return (new EditPlan(serverId, name, url, credentials, changes, saved, requested) { Stored = stored, LibraryMode = libraryMode }, RemoteResult.Fail<RemoteEditReport>(RemoteFailure.None));
     }
 
     // Saves an edit whose user and password stay with a login on the check device, so the kept login goes on (419).
@@ -1064,7 +1071,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                     Url = server.Url,
                     EncryptedCredentials = server.EncryptedCredentials,
                     Mode = server.Mode,
-                    ProtocolVersion = server.ProtocolVersion
+                    ProtocolVersion = server.ProtocolVersion,
+                    LibraryMode = server.LibraryMode
                 };
                 foreach (var id in server.ImportedLibraryIds)
                 {
@@ -1074,6 +1082,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 server.Name = plan.Name;
                 server.Url = plan.Url;
                 server.EncryptedCredentials = encrypted ?? server.EncryptedCredentials;
+                server.LibraryMode = plan.LibraryMode;
                 if (read is not null)
                 {
                     server.ImportedLibraryIds.Clear();
@@ -1104,6 +1113,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 server.EncryptedCredentials = before.EncryptedCredentials;
                 server.Mode = before.Mode;
                 server.ProtocolVersion = before.ProtocolVersion;
+                server.LibraryMode = before.LibraryMode;
                 server.ImportedLibraryIds.Clear();
                 foreach (var id in before.ImportedLibraryIds)
                 {
@@ -1621,13 +1631,16 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private sealed record SessionAttempt<T>(RemoteResult<T> Attempt, RemoteSession? Session);
 
     // The saved fields an edit compares with.
-    private sealed record SavedServer(string Name, string Url, string JellyfinServerId, IReadOnlyList<string> LibraryIds);
+    private sealed record SavedServer(string Name, string Url, string JellyfinServerId, IReadOnlyList<string> LibraryIds, LibraryMode LibraryMode);
 
     // An edit whose fields are valid, with the credentials it logs in with. The password is in no generated text.
     private sealed record EditPlan(Guid ServerId, string Name, string Url, RemoteCredentials Credentials, RemoteEditChanges Changes, SavedServer Saved, IReadOnlyList<string>? RequestedLibraryIds)
     {
         // The saved credentials, or null when they do not decrypt.
         public RemoteCredentials? Stored { get; init; }
+
+        // The library mode the edit saves.
+        public LibraryMode LibraryMode { get; init; }
     }
 
     // What the remote offers with the edited data, and its capabilities for the save.

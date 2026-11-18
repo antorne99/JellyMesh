@@ -36,6 +36,11 @@ public sealed class ServerEditRequest
     public IReadOnlyList<string>? LibraryIds { get; init; }
 
     /// <summary>
+    /// Gets the library mode. Null keeps the saved one.
+    /// </summary>
+    public LibraryMode? LibraryMode { get; init; }
+
+    /// <summary>
     /// Builds the edit the registry checks or saves.
     /// </summary>
     /// <returns>The edit.</returns>
@@ -45,6 +50,7 @@ public sealed class ServerEditRequest
         Url = Url ?? string.Empty,
         Username = Username ?? string.Empty,
         Password = Password,
-        LibraryIds = LibraryIds
+        LibraryIds = LibraryIds,
+        LibraryMode = LibraryMode
     };
 }
