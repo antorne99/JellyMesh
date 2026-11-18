@@ -250,6 +250,26 @@ public sealed partial class ServerEditTests
         renamer.Verify(service => service.Rename(id, "Friend", true), Times.Once);
     }
 
+    // "Recreate missing libraries" sends no name or address, so it renames nothing and runs no failed rename again.
+    [Fact]
+    public async Task A_form_with_no_name_or_address_keeps_them_and_runs_no_failed_rename()
+    {
+        var id = await AddAsync("1");
+        SavedMode(id, LibraryMode.ByType, TwoLibraries);
+        Starts();
+        var renamer = Renamer(new ServerRenameState(false, false, true));
+        var form = new ServerEditRequest { Username = string.Empty, Password = string.Empty, LibraryMode = LibraryMode.ByType };
+
+        var check = await Controller(renamer.Object).CheckServerEdit(id, form, CancellationToken.None);
+        var save = await Controller(renamer.Object).SaveServerEdit(id, form, CancellationToken.None);
+
+        Assert.False(Assert.IsType<ServerEditCheck>(check.Value).Consequences.Any);
+        var saved = Assert.IsType<ServerStatus>(save.Value);
+        Assert.Equal(("Friend", TestValues.Url), (saved.Name, saved.Url));
+        renamer.Verify(service => service.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+        _libraries.Verify(manager => manager.Enable(id, LibraryMode.ByType), Times.Once);
+    }
+
     [Fact]
     public async Task A_save_of_the_same_name_starts_no_rename_when_none_failed()
     {

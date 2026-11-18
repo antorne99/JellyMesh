@@ -39,7 +39,7 @@ else
   run controls control-themes
   run merge-details
   run cards cards-in-place cards-themes
-  run edit-form edit-locks adopted
+  run edit-form edit-locks adopted recreate
 
   block_key first
   run first-nokey overview-first-nokey

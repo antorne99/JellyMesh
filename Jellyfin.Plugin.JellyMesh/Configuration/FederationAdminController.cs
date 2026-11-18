@@ -323,13 +323,15 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.BeingRemoved);
         }
 
+        var retryRename = request.Name is not null && RenameFailed(serverId);
+        request = WithSavedFields(serverId, request);
         if ((RefuseName(serverId, request.Name) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
         {
             return refused;
         }
 
         var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToCheck(serverId, request, result.Value!) : EditFailed(result);
+        return result.IsSuccess ? ToCheck(serverId, request, result.Value!, retryRename) : EditFailed(result);
     }
 
     /// <summary>
@@ -692,6 +694,26 @@ public class FederationAdminController : ControllerBase
             : StatusCode(StatusCodes.Status409Conflict, new FailureResponse(RemoteFailure.None, RefusalMessage(outcome)) { Field = RemoteEditField.LibraryMode });
     }
 
+    // Fills a name or an address the form left out with the saved one, so that a form of the mode alone changes neither.
+    private ServerEditRequest WithSavedFields(Guid serverId, ServerEditRequest request)
+    {
+        if ((request.Name is not null && request.Url is not null)
+            || _registry.GetServers().FirstOrDefault(server => server.Id == serverId) is not { } saved)
+        {
+            return request;
+        }
+
+        return new ServerEditRequest
+        {
+            Name = request.Name ?? saved.Name,
+            Url = request.Url ?? saved.Url,
+            Username = request.Username,
+            Password = request.Password,
+            LibraryIds = request.LibraryIds,
+            LibraryMode = request.LibraryMode
+        };
+    }
+
     // Closes the playback of a server whose user changed, then lets it play again with the new user (row 434).
     private async Task StopStreamsAsync(Guid serverId)
     {
@@ -708,13 +730,16 @@ public class FederationAdminController : ControllerBase
     // Saves an edit after refusing a taken name, then sets off its effects (row 434). The caller holds the edit lock.
     private async Task<ActionResult<ServerStatus>> SaveEditCoreAsync(Guid serverId, ServerEditRequest request, CancellationToken cancellationToken)
     {
+        // A form with no name runs no failed rename again: only a save of the name does (row 290).
+        var retryRename = request.Name is not null && RenameFailed(serverId);
+        request = WithSavedFields(serverId, request);
+
         // A first check, before any remote; the registry checks the name again in the change that stores it.
         if ((RefuseName(serverId, request.Name) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
         {
             return refused;
         }
 
-        var retryRename = RenameFailed(serverId);
         var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), () => StopStreamsAsync(serverId), cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
@@ -815,7 +840,7 @@ public class FederationAdminController : ControllerBase
     }
 
     // The libraries and the consequences of an edit the remote accepted (row 432).
-    private ServerEditCheck ToCheck(Guid serverId, ServerEditRequest request, RemoteEditReport report)
+    private ServerEditCheck ToCheck(Guid serverId, ServerEditRequest request, RemoteEditReport report, bool retryRename)
     {
         var name = request.Name!.Trim();
         var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
@@ -827,7 +852,7 @@ public class FederationAdminController : ControllerBase
                 ? new ImportedLibraryRemoval(id, library.Name, false)
                 : new ImportedLibraryRemoval(id, null, true))
             .ToList();
-        var rename = server is not null && (report.Changes.HasFlag(RemoteEditChanges.Name) || RenameFailed(serverId))
+        var rename = server is not null && (report.Changes.HasFlag(RemoteEditChanges.Name) || retryRename)
             ? new ServerRenameConsequence(server.Name, name, _libraries.GetState(serverId).Libraries.Where(library => !library.Adopted).Select(library => library.Name).ToList())
             : null;
         var streams = report.Changes.HasFlag(RemoteEditChanges.User) ? _playback.CountServerSessions(serverId) : 0;

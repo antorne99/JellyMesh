@@ -3309,6 +3309,42 @@ def edit_locks(s, width):
     u.close(page)
 
 
+def recreate(s, width):
+    """Recreate missing libraries sends the mode saved at the click alone: no name or URL, so no failed rename runs again."""
+    name = width + " recreate"
+    mode = ["ByType"]
+    sent = []
+
+    def missing(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(
+            Rename={"Busy": False, "Pending": False, "Failed": True, "Stuck": False},
+            AutomaticLibraries={"Enabled": True, "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "ManualPaths": [],
+                                "Libraries": [], "Conflicts": []}))
+
+        def save(route):
+            if route.request.method != "PUT":
+                route.continue_()
+                return
+            sent.append(route.request.post_data_json)
+            route.fulfill(status=200, json={})
+
+        context.route("**/JellyMesh/Admin/Servers/*", save)
+
+    page = s.open("fresh", width, tab="servers", route=missing)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    recreate_button = stock.get_by_role("button", name="Recreate missing libraries", exact=True)
+    check(name + " offers to recreate", until(page, lambda: recreate_button.is_visible()))
+    mode[0] = "ByRemoteLibrary"
+    recreate_button.click()
+    check(name + " sends one save", until(page, lambda: len(sent) == 1), sent)
+    body = sent[0] if sent else {}
+    check(name + " sends the mode read at the click", body.get("LibraryMode") == "ByRemoteLibrary", body)
+    check(name + " sends no name or URL", "Name" not in body and "Url" not in body, body)
+    healthy(page, name)
+    u.close(page)
+
+
 def adopted(s, width):
     """A library JellyMesh adopted is marked, and a library of the admin in the way says what to do, as text."""
     name = width + " adopted"
@@ -3380,6 +3416,7 @@ SCENARIOS = {
     "edit-form": (edit_form, WIDTHS),
     "edit-locks": (edit_locks, WIDTHS),
     "adopted": (adopted, WIDTHS),
+    "recreate": (recreate, ["1280"]),
 }
 
 with u.Session() as session:

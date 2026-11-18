@@ -3290,10 +3290,19 @@
                         var ownError = ownErrors[ownCurrent.Error] || '';
                         setText(own, ownCurrent.Busy ? t('Being updated') : ((ownNames || t('None')) + (ownError ? ' ' + ownError : '')));
                         renderOwnNotes(ownNotes, ownCurrent, function () {
-                            // The saved mode sent again makes the missing libraries again.
-                            act(api('PUT', 'Servers/' + server.Id, { Name: server.Name, Url: server.Url, Username: '', Password: '', LibraryMode: ownCurrent.Mode }).then(function () {
-                                showMessage(t('Creating the libraries of {server}. JellyMesh then scans them.', { server: server.Name }));
-                                return loadStatus();
+                            // The saved mode, read again, sent alone makes the missing libraries again; with no name it
+                            // renames nothing and runs no unfinished rename.
+                            act(statusSection.request().then(function (data) {
+                                adopt(statusSection, data);
+                                var saved = ownState(server).Mode;
+                                if (!row.isConnected || !saved || saved === 'None') {
+                                    return null;
+                                }
+
+                                return api('PUT', 'Servers/' + server.Id, { Username: '', Password: '', LibraryMode: saved }).then(function () {
+                                    showMessage(t('Creating the libraries of {server}. JellyMesh then scans them.', { server: server.Name }));
+                                    return loadStatus();
+                                });
                             }));
                         });
                         var renameCurrent = renameState(server);
@@ -3424,7 +3433,7 @@
                 function renderOwnNotes(container, own, recreate) {
                     var missing = own.Enabled && !own.Busy && own.Libraries.length < 2;
                     var conflicts = own.Conflicts || [];
-                    var key = JSON.stringify([own.Enabled, own.Released, missing, conflicts]);
+                    var key = JSON.stringify([own.Enabled, own.Mode, own.Released, missing, conflicts]);
                     if (container.jmKey === key) {
                         return;
                     }
