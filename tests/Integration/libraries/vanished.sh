@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Integration 10 of the 0.6 spec (F38): a remote library absent from two consecutive correct answers leaves the imported
 # ones, its folder empties and the library the plugin made for it is deleted after the stubs; an adopted library only loses
-# its paths [D22]; with the remote off nothing is removed (§10 row 436). A stock remote with a film and a series library.
+# its paths [D22]; with the remote off nothing is removed (§10 row 436). A stock remote with a film, a series and an empty library.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f38] [PORT=19010] [KEEP=1] vanished.sh
 set -euo pipefail
 PREFIX=${PREFIX:-jellymesh-probe-f38}
