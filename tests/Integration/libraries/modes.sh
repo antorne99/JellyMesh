@@ -2,8 +2,9 @@
 # Integration 6 of the 0.6 spec (F40): a change of library mode from the Edit form. The libraries of the new mode are
 # made and scanned before the plugin's old ones go, item ids and watch state stay (F23), "none" deletes only the plugin's
 # libraries and lists the manual paths, and the mode changes with the remote down (§10 row 438, D28). A user with access
-# to the film library only and a user who blocks the series library see the same titles after each change.
-# A stock remote with a film and a series library, and a consumer with the plugin.
+# to the film library only and a user who blocks the series library see the same titles after each change. When two film
+# libraries merge into one, only a user who saw both gets it; who saw one loses it and is named, before and after.
+# A stock remote with two film libraries and a series library, and a consumer with the plugin.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f40] [PORT=18970] [KEEP=1] modes.sh
 set -euo pipefail
 PREFIX=${PREFIX:-jellymesh-probe-f40}
@@ -82,8 +83,9 @@ echo "--- setup: $PREFIX-local on $PORT, $PREFIX-remote on $((PORT + 1))"
 down
 mkdir -p "$WORK"
 docker volume create "$PREFIX-media" >/dev/null
-start remote "$MEDIA/remoto-standard:/media:ro"
+START_ENV="-v $MEDIA/remoto-jellymesh/film:/bambini:ro" start remote "$MEDIA/remoto-standard:/media:ro"
 library remote "Film HD" movies /media/film
+library remote "Film Bambini" movies /bambini
 library remote Telefilm tvshows /media/serie
 user remote jellymesh >/dev/null
 scan remote
@@ -128,13 +130,29 @@ echo "--- per type to per remote library: new libraries made and scanned, then t
 save_edit '{"LibraryMode":"ByRemoteLibrary"}' >/dev/null
 check "the save answers 200" 200 "$(status)"
 wait_own
-check "the libraries of the remote libraries replace those per type" '[["Casa - Film HD",false],["Casa - Telefilm",false]]' "$(registry)"
+check "the libraries of the remote libraries replace those per type" '[["Casa - Film Bambini",false],["Casa - Film HD",false],["Casa - Telefilm",false]]' "$(registry)"
 check "the old libraries are gone" "no no" "$(exists 'Casa - Film') $(exists 'Casa - Serie')"
-check "the film library has the film folder" "$(own | jq -c '[.ManualPaths[] | select(.LibraryType == "movies") | .Path] | sort')" "$(locations 'Casa - Film HD')"
+check "the film libraries have the film folders" "$(own | jq -c '[.ManualPaths[] | select(.LibraryType == "movies") | .Path] | sort')" \
+  "$(jq -nc --argjson a "$(locations 'Casa - Film HD')" --argjson b "$(locations 'Casa - Film Bambini')" '$a + $b | sort')"
 check "the items keep their ids" "$BEFORE" "$(ids)"
 check "the film keeps its id" "$TEARS" "$(film "Tears of Steel")"
 check "the watch state stays" "true true 600000000" "$(watched)"
 check "the restricted and the blocking user see what they saw" "$SEEN" "$(seen)"
+
+echo "--- two film libraries merge: only a user who saw both gets the merged one, the others are named [row 438]"
+CHILDREN=$(user local bambini)
+BOTH=$(user local entrambi)
+NO_HD=$(user local noadulti)
+policy "$CHILDREN" ".EnableAllFolders = false | .EnabledFolders = [\"$(folder 'Casa - Film Bambini' | jq -r .ItemId)\"]"
+policy "$BOTH" ".EnableAllFolders = false | .EnabledFolders = [\"$(folder 'Casa - Film Bambini' | jq -r .ItemId)\", \"$(folder 'Casa - Film HD' | jq -r .ItemId)\"]"
+block "$NO_HD" "$(folder 'Casa - Film HD' | jq -r .ItemId)"
+check "the user with the children films sees films" '["Movie"]' "$(kinds "$CHILDREN")"
+check "the user with both film libraries sees films" '["Movie"]' "$(kinds "$BOTH")"
+check "the user blocking the HD films sees children films and episodes" '["Episode","Movie"]' "$(kinds "$NO_HD")"
+BOTH_SAW=$(sees "$BOTH")
+LOST='[{"Library":"Casa - Film","Users":["bambini","noadulti"]}]'
+answer=$(check_edit '{"LibraryMode":"ByType"}')
+check "the check names who loses titles in the merged library" "$LOST" "$(echo "$answer" | jq -c '[.Consequences.ModeChange.LostAccess[] | .Users |= sort]')"
 
 echo "--- with the remote down the mode still changes [D28]"
 docker stop "$PREFIX-remote" >/dev/null
@@ -145,6 +163,10 @@ check "the per type libraries are back" '[["Casa - Film",false],["Casa - Serie",
 check "the items keep their ids" "$BEFORE" "$(ids)"
 check "the watch state stays" "true true 600000000" "$(watched)"
 check "the restricted and the blocking user see what they saw" "$SEEN" "$(seen)"
+check "the state names who lost titles" "$LOST" "$(own | jq -c '[.LostAccess[] | .Users |= sort]')"
+check "the user with only the children films sees no film" '[]' "$(sees "$CHILDREN")"
+check "the user with both film libraries keeps the films" "$BOTH_SAW" "$(sees "$BOTH")"
+check "the user blocking the HD films sees only episodes" '["Episode"]' "$(kinds "$NO_HD")"
 docker start "$PREFIX-remote" >/dev/null
 wait_ready remote
 
@@ -155,7 +177,7 @@ check "the save answers 200" 200 "$(status)"
 wait_own
 check "the registry is empty" '[]' "$(registry)"
 check "the plugin's libraries are deleted, the admin's stays" '["Mie"]' "$(lib_names)"
-check "the state lists a film and a series path" '["movies","tvshows"]' "$(own | jq -c '[.ManualPaths[].LibraryType] | sort')"
+check "the state lists the two film paths and a series path" '["movies","movies","tvshows"]' "$(own | jq -c '[.ManualPaths[].LibraryType] | sort')"
 check "the mode is none" None "$(own | jq -r .Mode)"
 check "with the plugin's libraries gone neither user sees a federated title" "[] []" "$(seen)"
 
