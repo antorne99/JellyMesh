@@ -10,6 +10,7 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -160,6 +161,11 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             {
                 _logger.LogInformation("Put back the kept watch state of {Count} titles", done.Select(row => row.TitleId).Distinct().Count());
             }
+        }
+        catch (StoreSuspendedException)
+        {
+            // The database reports its own state; the records wait until it reads again.
+            _logger.LogDebug("The kept watch state waits for the plugin database");
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

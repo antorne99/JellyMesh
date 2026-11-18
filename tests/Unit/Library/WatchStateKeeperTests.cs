@@ -761,6 +761,20 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // A suspended database holds the records without an error on every run.
+    [Fact]
+    public async Task WhileTheDatabaseIsSuspendedTheRecordsWaitWithoutAnError()
+    {
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna)], CancellationToken.None);
+        _fixture.Database.Suspended = true;
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(LogLevel.Error, _logger.Levels);
+        _fixture.Database.Suspended = false;
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
     private async Task MergeAsync(params (RemoteServerInfo Server, string ItemId, string? Tmdb)[] copies)
     {
         var merge = new ManualMerge
