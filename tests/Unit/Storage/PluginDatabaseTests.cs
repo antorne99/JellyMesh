@@ -589,6 +589,18 @@ public sealed class PluginDatabaseTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task AReadCannotWrite()
+    {
+        var database = await WithItemsAsync(Open());
+
+        await Assert.ThrowsAsync<SqliteException>(() => database.ReadAsync(
+            (connection, transaction) => Scalar(connection, "INSERT INTO items VALUES ('read');", transaction),
+            CancellationToken.None));
+
+        Assert.Equal(0L, await CountAsync(database));
+    }
+
     private sealed class RecordingGuard : IKeyFileGuard
     {
         private readonly IKeyFileGuard _inner = KeyFileGuards.ForThisSystem();

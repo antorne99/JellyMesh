@@ -128,7 +128,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             () =>
             {
                 ThrowIfSuspended(Health);
-                using var connection = Connect(_connectionString);
+                using var connection = Connect(_connectionString, queryOnly: true);
                 using var transaction = connection.BeginTransaction(deferred: true);
                 return read(connection, transaction);
             },
@@ -255,13 +255,13 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // A connection with the settings of row 428; secure_delete is per connection, so it is set on each (F23).
-    private static SqliteConnection Connect(string connectionString)
+    private static SqliteConnection Connect(string connectionString, bool queryOnly = false)
     {
         var connection = new SqliteConnection(connectionString);
         try
         {
             connection.Open();
-            using var pragmas = Command(connection, "PRAGMA secure_delete = ON;");
+            using var pragmas = Command(connection, queryOnly ? "PRAGMA secure_delete = ON; PRAGMA query_only = ON;" : "PRAGMA secure_delete = ON;");
             pragmas.ExecuteNonQuery();
             return connection;
         }
