@@ -105,7 +105,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     private static RemoteItem FilmWithoutIds(string id = "nf", long runtime = NinetyMinutes) =>
         TestItems.Movie(id, "Sonda Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>(), RunTimeTicks = runtime };
 
-    private WatchStateKeeper Keeper(IKeptWatchStateStore store) => new(
+    private WatchStateKeeper Keeper(IKeptWatchStateStore store, IManualMergeStore? merges = null) => new(
         _fixture.Registry,
         _fixture.Sync.Index,
         _fixture.Sync.Registry,
@@ -114,7 +114,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         _users.Object,
         _userData.Object,
         store,
-        _fixture.Merges,
+        merges ?? _fixture.Merges,
         _fixture.Sync.Clock,
         _logger);
 
@@ -772,6 +772,25 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.DoesNotContain(LogLevel.Error, _logger.Levels);
         _fixture.Database.Suspended = false;
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // Merges that cannot be read could leave out a copy: the records wait for a run that reads them.
+    [Fact]
+    public async Task WhileTheMergesCannotBeReadTheRecordsWait()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        var a = await AddAndMaterializeAsync("A", "films");
+        var alfa = FilmItem(a);
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna)], CancellationToken.None);
+        var damaged = new Mock<IManualMergeStore>();
+        damaged.Setup(merges => merges.IsDamaged).Returns(true);
+        damaged.Setup(merges => merges.Merges).Returns([]);
+        using var keeper = Keeper(_kept, damaged.Object);
+
+        await keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.False(Row(_anna, alfa).Played);
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
     }
 

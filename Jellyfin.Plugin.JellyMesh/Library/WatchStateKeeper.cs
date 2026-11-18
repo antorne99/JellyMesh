@@ -140,6 +140,13 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                 return;
             }
 
+            // Without the merges a merged copy would be missed and its record forgotten; the records wait for the next run.
+            if (_merges.IsDamaged)
+            {
+                _logger.LogWarning("The manual merges cannot be read for now, so the kept watch state waits");
+                return;
+            }
+
             var users = _users.GetUsers().ToList();
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var pruned = await _kept.PruneAsync(now - _keptFor, users.Select(user => user.Id).ToHashSet(), cancellationToken).ConfigureAwait(false);
