@@ -507,13 +507,16 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Empty(suspended.State.Stubs);
         Assert.Null(suspended.Find("abc"));
         Assert.Contains(_logger.Lines, line => line.Contains("stub registry", StringComparison.Ordinal));
-        await Assert.ThrowsAsync<IOException>(() => SeedAsync(suspended, new StubState()));
+        await Assert.ThrowsAsync<IOException>(() => suspended.SaveAsync(new StubState(), CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => suspended.EnterAsync(CancellationToken.None));
+        var generation = suspended.Generation;
 
         _database.Suspended = false;
         await suspended.EnterAsync(CancellationToken.None);
         suspended.Exit();
 
         Assert.Equal(Json(FullState()), Json(suspended.State));
+        Assert.Equal(generation + 1, suspended.Generation);
         await SeedAsync(suspended, suspended.State with { Renames = [] });
         using var restarted = Create();
         Assert.Equal("abc", restarted.Find("abc")?.Id);

@@ -114,6 +114,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
+    /// <exception cref="IOException">The registry still cannot be read; the lock is not taken, so no one acts on an empty state.</exception>
     public async Task EnterAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -122,18 +123,25 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             return;
         }
 
+        StubState? state;
         try
         {
-            if (await LoadAsync(cancellationToken).ConfigureAwait(false) is { } state)
-            {
-                _lookup = new Lookup(state);
-            }
+            state = await LoadAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
             _gate.Release();
             throw;
         }
+
+        if (state is null)
+        {
+            _gate.Release();
+            throw new IOException("The stub registry cannot be read from the database.");
+        }
+
+        _lookup = new Lookup(state);
+        Interlocked.Increment(ref _generation);
     }
 
     /// <summary>
@@ -166,12 +174,17 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             }
             catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
             {
+                // A store that comes back may not hold what it held, so it is read again at the next lock.
+                if (exception is StoreSuspendedException)
+                {
+                    (_loaded, _stored) = (false, null);
+                }
+
                 throw new IOException("The stub registry could not be saved: " + exception.GetType().Name, exception);
             }
-
-            _stored = state;
         }
 
+        _stored = state;
         _lookup = new Lookup(state);
         Interlocked.Increment(ref _generation);
     }
