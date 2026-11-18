@@ -479,14 +479,21 @@ public class FederationAdminController : ControllerBase
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The switch and the confirmation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state, while the work runs in the background.</returns>
     [HttpPost("Servers/{serverId:guid}/AutomaticLibraries")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public ActionResult<AutomaticLibrariesState> SetAutomaticLibraries([FromRoute] Guid serverId, [FromBody] SetAutomaticLibrariesRequest request)
+    public async Task<ActionResult<AutomaticLibrariesState>> SetAutomaticLibraries([FromRoute] Guid serverId, [FromBody] SetAutomaticLibrariesRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
 
         var answer = request.Enabled ? _libraries.Enable(serverId) : _libraries.Disable(serverId, request.Confirmed);
         if (answer.Outcome == AutomaticLibrariesOutcome.Started)
@@ -543,17 +550,24 @@ public class FederationAdminController : ControllerBase
     /// Drops the stub moves of a server that wait for a scan, and deletes their old files (§10 row 288).
     /// </summary>
     /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state of the rename.</returns>
     [HttpPost("Servers/{serverId:guid}/Rename/Cancel")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId)
+    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
         if (_renamer is null)
         {
             return NotFound();
+        }
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
         }
 
         var outcome = await _renamer.CancelPendingAsync(serverId).ConfigureAwait(false);
