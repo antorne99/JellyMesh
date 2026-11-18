@@ -33,6 +33,16 @@ public sealed class ServerEditTests : IDisposable
     private string _serverId = FirstId;
     private string _views = TestValues.ViewsJson;
     private HttpStatusCode _login = HttpStatusCode.OK;
+    private bool _admin;
+    private bool _publicSet;
+    private string? _publicOverride;
+
+    private string? PublicId => _publicSet ? _publicOverride : _serverId;
+
+    private string PublicInfo => "{\"ServerName\":\"" + (PublicId == FirstId ? "Friend box" : "Stranger box") + "\""
+        + (PublicId is null ? string.Empty : ",\"Id\":\"" + PublicId + "\"") + "}";
+
+    private string LoginAnswer => "{\"ServerId\":\"" + _serverId + "\"," + (_admin ? TestValues.LoginJson[1..].Replace("false", "true", StringComparison.Ordinal) : TestValues.LoginJson[1..]);
 
     public ServerEditTests()
     {
@@ -47,11 +57,9 @@ public sealed class ServerEditTests : IDisposable
 
     private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => request.RequestUri!.AbsolutePath switch
     {
-        "/Users/AuthenticateByName" => _login == HttpStatusCode.OK
-            ? StubHandler.Json("{\"ServerId\":\"" + _serverId + "\"," + TestValues.LoginJson[1..])
-            : StubHandler.Status(_login),
+        "/Users/AuthenticateByName" => _login == HttpStatusCode.OK ? StubHandler.Json(LoginAnswer) : StubHandler.Status(_login),
         "/UserViews" => StubHandler.Json(_views),
-        "/System/Info/Public" => StubHandler.Json("{\"ServerName\":\"" + (_serverId == FirstId ? "Friend box" : "Stranger box") + "\",\"Id\":\"" + _serverId + "\"}"),
+        "/System/Info/Public" => StubHandler.Json(PublicInfo),
         "/Sessions/Logout" => StubHandler.Status(HttpStatusCode.NoContent),
         _ => StubHandler.Status(HttpStatusCode.NotFound)
     };
@@ -136,7 +144,7 @@ public sealed class ServerEditTests : IDisposable
     }
 
     [Fact]
-    public async Task A_check_refuses_another_server_with_its_name_on_the_url()
+    public async Task A_check_refuses_another_server_at_a_new_address_before_sending_the_password()
     {
         var id = await AddAsync("1");
         _serverId = OtherId;
@@ -148,9 +156,74 @@ public sealed class ServerEditTests : IDisposable
         Assert.Equal(RemoteFailure.OtherServer, failure.Failure);
         Assert.Equal(RemoteEditField.Url, failure.Field);
         Assert.Equal("Stranger box", failure.ServerName);
-        Assert.Equal("Another server answers at this address (“Stranger box”). To use it, remove this one and add it as a new server.", failure.Message);
+        Assert.Equal("Another server answers at this address. To use it, remove this one and add it as a new server.", failure.Message);
+        var request = Assert.Single(Requests);
+        Assert.Equal("/System/Info/Public", request.Uri.AbsolutePath);
+        Assert.Null(request.Body);
+        Assert.DoesNotContain("Token=", request.Authorization ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_new_address_with_no_usable_id_is_refused_before_sending_the_password()
+    {
+        var id = await AddAsync("1");
+        _publicSet = true;
+        _publicOverride = null;
+
+        var result = await Controller().CheckServerEdit(id, Edit(url: OtherUrl), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.OtherServer, Refusal(result).Failure.Failure);
+        Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+    }
+
+    [Fact]
+    public async Task Another_server_seen_only_at_login_is_still_refused_and_its_login_ended()
+    {
+        var id = await AddAsync("1");
+        _publicSet = true;
+        _publicOverride = FirstId;
+        _serverId = OtherId;
+
+        var result = await Controller().CheckServerEdit(id, Edit(url: OtherUrl), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.OtherServer, Refusal(result).Failure.Failure);
         Assert.Contains(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
         Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/UserViews");
+    }
+
+    [Fact]
+    public async Task The_same_address_is_not_read_before_the_login()
+    {
+        var id = await AddAsync("1");
+
+        await Controller().CheckServerEdit(id, Edit(password: "new-pass"), CancellationToken.None);
+
+        Assert.Equal("/Users/AuthenticateByName", Requests[0].Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task An_administrator_login_of_a_check_is_ended()
+    {
+        var id = await AddAsync("1");
+        _admin = true;
+
+        var result = await Controller().CheckServerEdit(id, Edit(user: "admin"), CancellationToken.None);
+
+        Assert.Equal(RemoteEditField.Username, Refusal(result).Failure.Field);
+        var logout = Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        Assert.Equal($"jellymesh-{id:N}-check", DeviceOf(logout));
+    }
+
+    [Fact]
+    public async Task An_administrator_login_of_a_save_is_ended()
+    {
+        var id = await AddAsync("1");
+        _admin = true;
+
+        var result = await Controller().SaveServerEdit(id, Edit(user: "admin"), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.AdministratorAccount, Refusal(result).Failure.Failure);
+        Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
     }
 
     [Fact]
@@ -399,7 +472,7 @@ public sealed class ServerEditTests : IDisposable
         Assert.Equal("Stranger box", failure.ServerName);
         Assert.Equal(saves, _fixture.Store.Saves);
         Assert.Equal(before, Snapshot());
-        Assert.Contains(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
     }
 
     [Fact]

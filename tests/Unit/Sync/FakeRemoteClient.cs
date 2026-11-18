@@ -235,6 +235,6 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
             : RemoteResult.Fail<RemoteItemPage>(CollectionFailure));
     }
 
-    public Task<RemoteResult<string>> GetServerNameAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
-        => Task.FromResult(RemoteResult.Success("Remote"));
+    public Task<RemoteResult<RemotePublicInfo>> GetPublicInfoAsync(RemoteEndpoint endpoint, RemoteSession? session, CancellationToken cancellationToken)
+        => Task.FromResult(RemoteResult.Success(new RemotePublicInfo("Remote", null)));
 }

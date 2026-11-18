@@ -86,7 +86,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var serverId = Guid.NewGuid();
         var endpoint = EndpointOf(serverId, normalizedUrl);
 
-        var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
+        var login = await LogInAsync(endpoint, credentials, name, cancellationToken).ConfigureAwait(false);
         if (!login.IsSuccess)
         {
             _logger.LogWarning("Login on new remote server {ServerName} failed: {Failure}", LogText.Clean(name), login.Failure);
@@ -227,7 +227,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var kept = false;
         try
         {
-            var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
+            var login = await LogInAsync(endpoint, credentials, stored.Name, cancellationToken).ConfigureAwait(false);
             if (!login.IsSuccess)
             {
                 _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}", LogText.Clean(stored.Name), login.Failure);
@@ -339,8 +339,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return refusal;
         }
 
+        if (await RefuseNewAddressAsync(plan, cancellationToken).ConfigureAwait(false) is { } refused)
+        {
+            return refused;
+        }
+
         var endpoint = CheckEndpointOf(serverId, plan.Url);
-        var login = await _client.AuthenticateAsync(endpoint, plan.Credentials, cancellationToken).ConfigureAwait(false);
+        var login = await LogInAsync(endpoint, plan.Credentials, plan.Name, cancellationToken).ConfigureAwait(false);
         if (login.Value is not { } session)
         {
             _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
@@ -381,6 +386,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
             _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
             return RemoteResult.Success(new RemoteEditReport(RemoteEditField.None) { Changes = plan.Changes, LibraryIds = plan.Saved.LibraryIds });
+        }
+
+        if (await RefuseNewAddressAsync(plan, cancellationToken).ConfigureAwait(false) is { } refused)
+        {
+            return refused;
         }
 
         return (plan.Changes & (RemoteEditChanges.User | RemoteEditChanges.Password)) == RemoteEditChanges.None
@@ -697,7 +707,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private async Task<RemoteResult<RemoteEditReport>> SaveEditWithCheckLoginAsync(EditPlan plan, CancellationToken cancellationToken)
     {
         var endpoint = CheckEndpointOf(plan.ServerId, plan.Url);
-        var login = await _client.AuthenticateAsync(endpoint, plan.Credentials, cancellationToken).ConfigureAwait(false);
+        var login = await LogInAsync(endpoint, plan.Credentials, plan.Name, cancellationToken).ConfigureAwait(false);
         if (login.Value is not { } session)
         {
             _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
@@ -748,7 +758,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         RemoteEditReport report;
         try
         {
-            var login = await _client.AuthenticateAsync(endpoint, plan.Credentials, cancellationToken).ConfigureAwait(false);
+            var login = await LogInAsync(endpoint, plan.Credentials, plan.Name, cancellationToken).ConfigureAwait(false);
             if (login.Value is not { } session)
             {
                 _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
@@ -898,6 +908,43 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         return found;
     }
 
+    // Reads, with no credentials, the Server Id at a new address, so that the password goes only to the saved server (row 433).
+    private async Task<RemoteResult<RemoteEditReport>?> RefuseNewAddressAsync(EditPlan plan, CancellationToken cancellationToken)
+    {
+        var savedId = plan.Saved.JellyfinServerId;
+        if ((plan.Changes & RemoteEditChanges.Url) == RemoteEditChanges.None || savedId.Length == 0)
+        {
+            return null;
+        }
+
+        var info = await _client.GetPublicInfoAsync(CheckEndpointOf(plan.ServerId, plan.Url), null, cancellationToken).ConfigureAwait(false);
+        if (info.Value is not { } answered)
+        {
+            return RemoteResult.Fail(info.Failure, new RemoteEditReport(RemoteEditField.Url));
+        }
+
+        if (answered.ServerId == savedId)
+        {
+            return null;
+        }
+
+        WarnOtherServer(plan.Saved.Name, answered.ServerId, savedId);
+        return RemoteResult.Fail(RemoteFailure.OtherServer, new RemoteEditReport(RemoteEditField.Url) { ServerName = answered.ServerName });
+    }
+
+    // Logs in, and ends at once a login the remote opened but that is refused (419).
+    private async Task<RemoteResult<RemoteSession>> LogInAsync(RemoteEndpoint endpoint, RemoteCredentials credentials, string serverName, CancellationToken cancellationToken)
+    {
+        var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
+        if (login.IsSuccess || login.Value is not { } refused)
+        {
+            return login;
+        }
+
+        await EndUnusedLoginAsync(endpoint, refused, serverName, refusedIsEnded: true).ConfigureAwait(false);
+        return RemoteResult.Fail<RemoteSession>(login.Failure);
+    }
+
     private static bool SameLibraries(IReadOnlyCollection<string> first, IReadOnlyCollection<string> second)
         => first.Count == second.Count && first.All(second.Contains);
 
@@ -905,11 +952,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private async Task<RemoteResult<EditRead>> ReadEditedAsync(EditPlan plan, RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         var savedId = plan.Saved.JellyfinServerId;
-        if (savedId.Length > 0 && session.ServerId is { } remoteId && remoteId != savedId)
+        if (savedId.Length > 0 && session.ServerId != savedId)
         {
-            WarnOtherServer(plan.Saved.Name, remoteId, savedId);
-            var answered = await _client.GetServerNameAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
-            return RemoteResult.Fail(RemoteFailure.OtherServer, new EditRead(new RemoteEditReport(RemoteEditField.Url) { ServerName = answered.Value }, null));
+            WarnOtherServer(plan.Saved.Name, session.ServerId, savedId);
+            var answered = await _client.GetPublicInfoAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
+            return RemoteResult.Fail(RemoteFailure.OtherServer, new EditRead(new RemoteEditReport(RemoteEditField.Url) { ServerName = answered.Value?.ServerName }, null));
         }
 
         // As for an add (120): another configured server already stands for this remote.
@@ -929,8 +976,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         // Libraries the user no longer sees leave the imported ones (row 434).
         var ids = (plan.RequestedLibraryIds ?? plan.Saved.LibraryIds).Where(id => visible.Any(library => library.Id == id)).ToList();
         var changes = SameLibraries(ids, plan.Saved.LibraryIds) ? plan.Changes : plan.Changes | RemoteEditChanges.Libraries;
-        var name = await _client.GetServerNameAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
-        var report = new RemoteEditReport(RemoteEditField.None) { Changes = changes, ServerName = name.Value, Libraries = visible, LibraryIds = ids };
+        var info = await _client.GetPublicInfoAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
+        var report = new RemoteEditReport(RemoteEditField.None) { Changes = changes, ServerName = info.Value?.ServerName, Libraries = visible, LibraryIds = ids };
         return RemoteResult.Success(new EditRead(report, capabilities));
     }
 
@@ -990,7 +1037,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Fail<RemoteSession>(RemoteFailure.Suspended);
             }
 
-            var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
+            var login = await LogInAsync(endpoint, credentials, server.Name, cancellationToken).ConfigureAwait(false);
             if (login.Value is not { } fresh)
             {
                 runtime.Session = null;
@@ -1289,11 +1336,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // The saved Server Id of a server when the remote gave another one, null when the login is accepted (row 433).
     private string? RefusedServerId(Guid serverId, string? remoteId)
     {
-        if (remoteId is null)
-        {
-            return null;
-        }
-
         var stored = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.JellyfinServerId);
         return string.IsNullOrEmpty(stored) || stored == remoteId ? null : stored;
     }

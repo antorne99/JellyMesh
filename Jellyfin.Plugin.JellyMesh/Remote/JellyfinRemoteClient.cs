@@ -105,14 +105,19 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
 
         var result = Parse<AuthenticateResponse>(response.Body);
-        if (!RemoteAnswers.CanGoInAHeader(result?.AccessToken) || string.IsNullOrEmpty(result?.User?.Id) || result.User.Policy is null)
+        if (!RemoteAnswers.CanGoInAHeader(result?.AccessToken))
         {
             return RemoteResult.Fail<RemoteSession>(RemoteFailure.InvalidResponse);
         }
 
-        return result.User.Policy.IsAdministrator
-            ? RemoteResult.Fail<RemoteSession>(RemoteFailure.AdministratorAccount)
-            : RemoteResult.Success<RemoteSession>(new RemoteSession(result.AccessToken!, result.User.Id) { ServerId = ServerIdOf(result.ServerId) });
+        // A refused login is handed back with its failure: the remote opened it, so it must be ended (419).
+        var opened = new RemoteSession(result!.AccessToken!, result.User?.Id ?? string.Empty) { ServerId = ServerIdOf(result.ServerId) };
+        if (string.IsNullOrEmpty(result.User?.Id) || result.User.Policy is null)
+        {
+            return RemoteResult.Fail(RemoteFailure.InvalidResponse, opened);
+        }
+
+        return result.User.Policy.IsAdministrator ? RemoteResult.Fail(RemoteFailure.AdministratorAccount, opened) : RemoteResult.Success(opened);
     }
 
     /// <inheritdoc />
@@ -265,20 +270,18 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<string>> GetServerNameAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    public async Task<RemoteResult<RemotePublicInfo>> GetPublicInfoAsync(RemoteEndpoint endpoint, RemoteSession? session, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(session);
-
         var response = await ReadAsync(endpoint, "/System/Info/Public", session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<string>(response.Failure);
+            return RemoteResult.Fail<RemotePublicInfo>(response.Failure);
         }
 
         var info = Parse<PublicInfoResponse>(response.Body);
         return info is null
-            ? RemoteResult.Fail<string>(RemoteFailure.InvalidResponse)
-            : RemoteResult.Success(LogText.Clean(info.ServerName) ?? string.Empty);
+            ? RemoteResult.Fail<RemotePublicInfo>(RemoteFailure.InvalidResponse)
+            : RemoteResult.Success(new RemotePublicInfo(LogText.Clean(info.ServerName) ?? string.Empty, ServerIdOf(info.Id)));
     }
 
     /// <inheritdoc />
@@ -477,7 +480,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     // Sends a GET of the sync, and tries it again after a transient failure (decision 47).
-    private async Task<RawResponse> ReadAsync(RemoteEndpoint endpoint, string path, RemoteSession session, CancellationToken cancellationToken)
+    private async Task<RawResponse> ReadAsync(RemoteEndpoint endpoint, string path, RemoteSession? session, CancellationToken cancellationToken)
     {
         var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken).ConfigureAwait(false);
         foreach (var wait in _retryWaits)
@@ -576,7 +579,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     private sealed record CapabilitiesResponse(int ProtocolVersion);
 
-    private sealed record PublicInfoResponse(string? ServerName);
+    private sealed record PublicInfoResponse(string? ServerName, string? Id);
 
     private sealed record UserViewsResponse(IReadOnlyList<UserView>? Items);
 

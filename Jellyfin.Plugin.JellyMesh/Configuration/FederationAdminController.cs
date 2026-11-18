@@ -597,8 +597,6 @@ public class FederationAdminController : ControllerBase
     {
         return (failure, field) switch
         {
-            (RemoteFailure.OtherServer, _) when !string.IsNullOrEmpty(serverName)
-                => $"Another server answers at this address (“{serverName}”). To use it, remove this one and add it as a new server.",
             (RemoteFailure.AlreadyConfigured, _) when !string.IsNullOrEmpty(serverName) => $"This server is already configured as “{serverName}”.",
             (RemoteFailure.InvalidServer, RemoteEditField.Name) => "Enter a name.",
             (RemoteFailure.InvalidServer, RemoteEditField.Url) => "Enter an http or https URL with no credentials, query or fragment.",
