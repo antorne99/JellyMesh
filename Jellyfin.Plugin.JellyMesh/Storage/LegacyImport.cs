@@ -216,6 +216,11 @@ public sealed class LegacyImport
             return true;
         }
 
+        if (IsLinkedFolder())
+        {
+            return false;
+        }
+
         if (ReadMark(writer) is not { } mark || now - mark.MigratedUtc < MigratedKept)
         {
             return false;
@@ -228,11 +233,16 @@ public sealed class LegacyImport
         }
 
         var kept = 0;
-        foreach (var file in Directory.EnumerateFiles(MigratedFolder, "*", SearchOption.AllDirectories).ToList())
+        // Only the top level holds old files; a link there is removed without following it.
+        foreach (var entry in new DirectoryInfo(MigratedFolder).EnumerateFileSystemInfos().ToList())
         {
+            var file = entry.FullName;
             try
             {
-                StoreBackups.Erase(file);
+                if (entry is FileInfo || entry.LinkTarget is not null)
+                {
+                    StoreBackups.Erase(file);
+                }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -254,6 +264,18 @@ public sealed class LegacyImport
         }
 
         _logger.LogInformation("The old JellyMesh files in {Folder} were overwritten and deleted, 30 days after the migration", FolderName);
+        return true;
+    }
+
+    // A folder for the old files that is a link is never written, made private or erased through.
+    private bool IsLinkedFolder()
+    {
+        if (new DirectoryInfo(MigratedFolder).LinkTarget is null)
+        {
+            return false;
+        }
+
+        _logger.LogWarning("{Folder} is a link, so the old JellyMesh files are neither moved into it nor erased from it", FolderName);
         return true;
     }
 
@@ -353,12 +375,17 @@ public sealed class LegacyImport
         return files;
     }
 
-    // Moves each file over any copy a move cut short left, then keeps it and its folder private (row 428).
+    // Moves each file over any copy a move cut short left, then keeps it and the folder private (row 428), never through a link.
     private void Move(List<string> files)
     {
         try
         {
             var target = MigratedFolder;
+            if (Directory.Exists(target) && IsLinkedFolder())
+            {
+                return;
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 Directory.CreateDirectory(target);
@@ -373,7 +400,10 @@ public sealed class LegacyImport
             {
                 var moved = Path.Combine(target, Path.GetFileName(file));
                 File.Move(file, moved, overwrite: true);
-                _guard.KeepPrivate(moved);
+                if (new FileInfo(moved).LinkTarget is null)
+                {
+                    _guard.KeepPrivate(moved);
+                }
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

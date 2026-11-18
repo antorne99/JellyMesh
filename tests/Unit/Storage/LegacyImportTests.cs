@@ -398,6 +398,62 @@ public sealed class LegacyImportTests : IDisposable
         Assert.True(File.Exists(Path.Combine(Migrated, "federated-stubs.json")));
     }
 
+    // A folder for the old files that is a link is never filled, made private or erased, so nothing outside it changes.
+    [Fact]
+    public async Task AFolderForTheOldFilesThatIsALinkIsNeitherFilledNorErased()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var outside = Path.Combine(Root, "outside");
+        Directory.CreateDirectory(outside);
+        File.SetUnixFileMode(outside, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
+        await File.WriteAllTextAsync(Path.Combine(outside, "federated-stubs.json"), "outside");
+        Directory.CreateSymbolicLink(Migrated, outside);
+        CopyFixtures();
+
+        var database = Open();
+        _clock.Now += TimeSpan.FromDays(31);
+        Assert.False(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal([Path.Combine(outside, "federated-stubs.json")], Directory.EnumerateFiles(outside));
+        Assert.Equal("outside", await File.ReadAllTextAsync(Path.Combine(outside, "federated-stubs.json")));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute, File.GetUnixFileMode(outside));
+        Assert.True(File.Exists(Path.Combine(Folder, "federated-stubs.json")));
+        Assert.True(File.Exists(ConfigurationFile));
+        Assert.Contains(LogLevel.Warning, Logger.Levels);
+    }
+
+    // The erasure never follows a link inside the folder: the link goes, what it points to stays as it was.
+    [Fact]
+    public async Task TheErasureRemovesLinksInTheFolderWithoutTouchingWhatTheyPointTo()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        CopyFixtures();
+        var database = Open();
+        var outside = Path.Combine(Root, "outside");
+        Directory.CreateDirectory(outside);
+        var outsideFile = Path.Combine(Root, "outside.txt");
+        await File.WriteAllTextAsync(outsideFile, "outside");
+        await File.WriteAllTextAsync(Path.Combine(outside, "inner.txt"), "inner");
+        File.CreateSymbolicLink(Path.Combine(Migrated, "linked-file"), outsideFile);
+        Directory.CreateSymbolicLink(Path.Combine(Migrated, "linked-folder"), outside);
+        _clock.Now += TimeSpan.FromDays(31);
+
+        Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+
+        Assert.False(Directory.Exists(Migrated));
+        Assert.Equal("outside", await File.ReadAllTextAsync(outsideFile));
+        Assert.Equal("inner", await File.ReadAllTextAsync(Path.Combine(outside, "inner.txt")));
+    }
+
     [Fact]
     public void ANewInstallHasNothingToMoveAndNoFolderForIt()
     {
