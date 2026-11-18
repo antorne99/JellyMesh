@@ -976,6 +976,15 @@
                 margin-top: 0.5em;
             }
 
+            #JellyMeshConfigPage .jmServerForm .emby-input[readonly],
+            #JellyMeshConfigPage .jmServerForm .emby-input:disabled {
+                border-style: dashed;
+                border-color: var(--jm-muted);
+                background: transparent;
+                color: var(--jm-muted);
+                cursor: not-allowed;
+            }
+
             #jmPeerNew {
                 margin-top: 1.25em;
             }
@@ -1169,6 +1178,12 @@
             }
 
             .jmRenameCancel[hidden] {
+                display: none;
+            }
+
+            /* The open edit form says where the rename stands and offers to cancel it, so the card does not repeat it. */
+            .jmServer:has(.jmServerForm) .jmRenameNote,
+            .jmServer:has(.jmServerForm) .jmRenameCancel {
                 display: none;
             }
 
@@ -3225,7 +3240,7 @@
                     ownNotes.className = 'jmOwnNotes';
                     body.appendChild(ownNotes);
                     var renameNote = create('p');
-                    renameNote.className = 'jmLibrariesNote';
+                    renameNote.className = 'jmLibrariesNote jmRenameNote';
                     body.appendChild(renameNote);
                     var renameCancel = button(t('Cancel the pending rename'), function () {
                         cancelRename(server);
