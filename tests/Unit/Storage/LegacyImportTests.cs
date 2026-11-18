@@ -293,6 +293,22 @@ public sealed class LegacyImportTests : IDisposable
         Assert.False(Directory.Exists(Migrated));
     }
 
+    // D25: the old files stay 30 days, then are overwritten and deleted if the database passes its check.
+    [Fact]
+    public async Task TheOldFilesAreErasedOnlyThirtyDaysAfterTheMigration()
+    {
+        CopyFixtures();
+        var database = Open();
+
+        _clock.Now += TimeSpan.FromDays(30) - TimeSpan.FromMinutes(1);
+        Assert.False(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        Assert.True(Directory.Exists(Migrated));
+
+        _clock.Now += TimeSpan.FromMinutes(1);
+        Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        Assert.False(Directory.Exists(Migrated));
+    }
+
     // The key move of JELLYMESH_SECRET_KEY reads the imported servers, so it runs on the database after the import.
     [Fact]
     public void CredentialsOfAnOlderVariableMoveToTheKeyFileAfterTheImport()

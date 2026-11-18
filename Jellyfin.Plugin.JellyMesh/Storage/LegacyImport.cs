@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -41,6 +42,9 @@ public sealed class LegacyImport
     /// <summary>The schema version of the mark of the migration.</summary>
     public const int SchemaVersion = 7;
 
+    /// <summary>How long <see cref="FolderName"/> is kept after the migration (D25).</summary>
+    public static readonly TimeSpan MigratedKept = TimeSpan.FromDays(30);
+
     private const int CurrentVersion = 1;
 
     // SQLITE_CORRUPT and SQLITE_NOTADB: watch-state.db is not a database SQLite can read.
@@ -50,6 +54,8 @@ public sealed class LegacyImport
     private const string SelectMark = "SELECT migrated_utc, deleted_utc FROM legacy_import WHERE id = 1;";
 
     private const string InsertMark = "INSERT INTO legacy_import (id, migrated_utc, damaged_files) VALUES (1, $migrated, $damaged);";
+
+    private const string MarkDeleted = "UPDATE legacy_import SET deleted_utc = $deleted WHERE id = 1;";
 
     private static readonly string[] _dataFiles =
     [
@@ -191,6 +197,65 @@ public sealed class LegacyImport
         {
             Move(files);
         }
+    }
+
+    /// <summary>
+    /// Overwrites and deletes <see cref="FolderName"/> once 30 days have passed since the migration and a fresh integrity
+    /// check passes (D25). Called with the database gate held, on the writer.
+    /// </summary>
+    /// <param name="writer">The writer connection of the database.</param>
+    /// <param name="now">The current time.</param>
+    /// <returns>Whether the folder is gone.</returns>
+    internal bool DeleteExpired(SqliteConnection writer, DateTimeOffset now)
+    {
+        if (!Directory.Exists(MigratedFolder))
+        {
+            return true;
+        }
+
+        if (ReadMark(writer) is not { } mark || now - mark.MigratedUtc < MigratedKept)
+        {
+            return false;
+        }
+
+        using (var check = writer.CreateCommand())
+        {
+            check.CommandText = "PRAGMA quick_check;";
+            if (!string.Equals(Convert.ToString(check.ExecuteScalar(), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal))
+            {
+                _logger.LogWarning("The JellyMesh database failed its integrity check, so {Folder} is kept", FolderName);
+                return false;
+            }
+        }
+
+        var kept = 0;
+        foreach (var file in Directory.EnumerateFiles(MigratedFolder, "*", SearchOption.AllDirectories).ToList())
+        {
+            try
+            {
+                StoreBackups.Erase(file);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                kept++;
+                _logger.LogWarning("The old JellyMesh file {File} cannot be overwritten and deleted yet: {Error}", Path.GetFileName(file), exception.Message);
+            }
+        }
+
+        if (kept > 0)
+        {
+            return false;
+        }
+
+        Directory.Delete(MigratedFolder, recursive: true);
+        using (var transaction = writer.BeginTransaction(deferred: false))
+        {
+            StoreSql.Execute(writer, transaction, MarkDeleted, ("$deleted", now.UtcTicks));
+            transaction.Commit();
+        }
+
+        _logger.LogInformation("The old JellyMesh files in {Folder} were overwritten and deleted, 30 days after the migration", FolderName);
+        return true;
     }
 
     private static (DateTimeOffset MigratedUtc, DateTimeOffset? DeletedUtc)? ReadMark(SqliteConnection writer)

@@ -262,6 +262,21 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var writer = Writer();
+            return _legacy?.DeleteExpired(writer, _time.GetUtcNow()) ?? true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         // Waits a bounded time for a write in progress, so its transaction ends before the writer closes.
