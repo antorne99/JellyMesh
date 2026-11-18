@@ -28,7 +28,7 @@ Upgrading from 0.4? Read [Upgrading from 0.4](#upgrading-from-04) first: 0.5 mov
 - It does not handle anything but films and series.
 - It writes files only inside the federated folder. It never renames or deletes a library it did not create, and it changes the folders of your libraries only when you ask it to: the [automatic libraries](#automatic-libraries) of a server, the [automatic migration](#upgrading-from-04) from 0.4, and **Add them automatically** for servers you connect later. Each of these adds or removes only JellyMesh's own folders and leaves other folders and settings alone.
 - It does not sync watch state to other servers.
-- It does not set up Tailscale, and it cannot tell whether a URL is on your tailnet. Using only tailnet URLs is up to you.
+- It does not set up the connection between your servers. A remote's URL is whatever you enter, and the plugin assumes nothing about the network in between.
 - It does not use API keys, and it refuses an administrator account on a remote.
 - It does not import items that are themselves federated on a remote, so servers can't loop.
 
@@ -43,7 +43,7 @@ Both roles are active on every server with the plugin.
 ## Requirements
 
 - Jellyfin 12.1 or a later 12.x. The plugin is compiled against the 12.1 packages and the manifest allows any server from 12.1. It has been tested on 12.4; on 12.1 and 12.3 it has only been checked to start and open its watch state database.
-- A tailnet between your servers. Tailscale is managed outside the plugin.
+- Each remote reachable from your server at the URL you enter.
 - `EnableAutomaticSeriesGrouping` on in every series library that holds a server's `Serie` folder, so that a local series, its remote episodes and the same series from other servers merge. In the Dashboard it is called "Automatically merge series that are spread across multiple folders". The plugin page warns if it is off and does not change it for you. The automatic libraries are created with it on.
 - A dedicated non-admin user on each remote.
 
@@ -109,7 +109,7 @@ All of this is on the plugin page, under Dashboard > Plugins > JellyMesh, unless
 1. On the remote, create a dedicated non-admin user that can see the libraries you want. Leave its transcoding permission on, so that the remote can transcode for you. If you want the remote's collections, let it see the remote's Collections library too: without it JellyMesh reads no collections, and reports no error. Use it for one server only.
 2. On your server, make the federated folder writable by Jellyfin. In the Compose example above that is `/federata`.
 3. Under **Settings**, enter the path in **Federated folder** and save. It must be an absolute path, and not the filesystem root. If `JELLYMESH_FEDERATED_ROOT` is set, skip this step: at every start the plugin uses that path, and the field is read-only. A value that isn't usable is ignored with a warning in the log. If you remove the variable, the last path stays and the field can be edited again.
-4. Under **Add a server**, enter a name, the tailnet URL of the remote, and the dedicated user and password, then choose **Connect and choose libraries**. The remote must be online, and an administrator account is refused. A remote that is already configured is refused too, and the message names it. The name shows in the version list, so pick one your users will recognize.
+4. Under **Add a server**, enter a name, the URL of the remote, and the dedicated user and password, then choose **Connect and choose libraries**. The remote must be online, and an administrator account is refused. A remote that is already configured is refused too, and the message names it. The name shows in the version list, so pick one your users will recognize.
 5. The server's card opens with the libraries read from it. Tick what to import and choose **Save libraries**. Nothing is imported until you do. To change the choice later, choose **Libraries** on the card.
 6. JellyMesh creates the server's folders: `<federated folder>/<id>/Film` and `<federated folder>/<id>/Serie`, where `<id>` is the server's ID in JellyMesh. The server's card shows the exact paths.
 7. Link them, in one of two ways:
@@ -276,7 +276,7 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Same folder, other path:** JellyMesh recognizes the federated folder through symbolic links and Unicode forms of its path, but not through a bind mount, which it cannot see. Federated series and seasons reached through a second mount can be offered to other JellyMesh servers, so always add the folders with the same path. A symbolic link from an ordinary library into the federated folder lets nothing out, but a connected server may get a shorter page of titles.
 - **Changes by hand:** files you change in the federated folder are put right only by the nightly reconciliation.
 - **Going back:** a server that has run 0.5 can't go back to 0.4.
-- **Bandwidth:** every stream passes through your server, and over Tailscale it may pass through a relay.
+- **Bandwidth:** every stream passes through your server, which reads it from the remote and sends it to the client.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.
 - **Seasons from two servers:** when two servers give different names or plots for a season of the same series, which one Jellyfin shows is effectively random, and stays the same on a given install. Each episode keeps the season name of its own server.
 - **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 and 12.3 only starting the plugin and opening its watch state database have been checked.
