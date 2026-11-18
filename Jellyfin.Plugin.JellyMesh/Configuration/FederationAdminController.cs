@@ -214,6 +214,8 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.UnknownServer);
         }
 
+        // Edits wait for the removal and are refused, and the removal waits for the edit in progress (row 434).
+        using var removal = await _registry.BeginRemovalAsync(serverId, cancellationToken).ConfigureAwait(false);
         bool removed;
         var stopping = false;
         try
@@ -323,6 +325,12 @@ public class FederationAdminController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
+
         var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
         return result.IsSuccess ? ToCheck(serverId, request.Name!.Trim(), result.Value!) : EditFailed(result);
     }
@@ -344,6 +352,12 @@ public class FederationAdminController : ControllerBase
     public async Task<ActionResult<ServerStatus>> SaveServerEdit([FromRoute] Guid serverId, [FromBody] ServerEditRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
 
         var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
@@ -630,6 +644,9 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
             RemoteFailure.AlreadyConfigured => "This server is already configured.",
             RemoteFailure.OtherServer => "Another server answers at this address. To use it, remove this one and add it as a new server.",
+            RemoteFailure.BeingRemoved => "This server is being removed.",
+            RemoteFailure.NameTaken => "Another server already has this name.",
+            RemoteFailure.RenameUnfinished => "A rename of this server has not finished. Wait for it, or save the edit without changing the name.",
             _ => "The operation failed."
         };
     }
@@ -679,7 +696,8 @@ public class FederationAdminController : ControllerBase
     {
         return failure switch
         {
-            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer => StatusCodes.Status409Conflict,
+            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer or RemoteFailure.BeingRemoved
+                or RemoteFailure.NameTaken or RemoteFailure.RenameUnfinished => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,

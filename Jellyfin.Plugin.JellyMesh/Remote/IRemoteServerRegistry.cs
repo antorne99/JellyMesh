@@ -64,6 +64,23 @@ public interface IRemoteServerRegistry
     Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Enters the edit of a server, so that its checks and saves run one at a time and the last save wins (row 434).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>What leaves the edit when disposed, or null while the server is being removed.</returns>
+    Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Marks a server as being removed, so that edits entered from now on are refused, then waits for the edit in progress
+    /// to end (row 434).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>What takes the mark away when disposed, once the removal ended.</returns>
+    Task<IDisposable> BeginRemovalAsync(Guid serverId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Removes a server. Possible in any key state: it uses no credential, and it is how to
     /// recover from a lost key. Then ends the live login on the remote, if there is one, within a short time (413): if that
     /// fails, its device stays listed there and the removal stands.

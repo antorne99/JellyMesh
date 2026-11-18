@@ -29,6 +29,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private readonly ILogger<RemoteServerRegistry> _logger;
     private readonly IActivityWriter? _activity;
     private readonly ConcurrentDictionary<Guid, ServerRuntime> _runtimes = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _editGates = new();
+    private readonly Lock _removingLock = new();
+    private readonly Dictionary<Guid, int> _removing = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RemoteServerRegistry"/> class.
@@ -399,6 +402,66 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        if (IsRemoving(serverId))
+        {
+            return null;
+        }
+
+        var gate = _editGates.GetOrAdd(serverId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (IsRemoving(serverId))
+        {
+            gate.Release();
+            return null;
+        }
+
+        return new Release(() => gate.Release());
+    }
+
+    /// <inheritdoc />
+    public async Task<IDisposable> BeginRemovalAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        lock (_removingLock)
+        {
+            _removing[serverId] = _removing.GetValueOrDefault(serverId) + 1;
+        }
+
+        var unmark = new Release(() =>
+        {
+            lock (_removingLock)
+            {
+                if (_removing.GetValueOrDefault(serverId) <= 1)
+                {
+                    _removing.Remove(serverId);
+                }
+                else
+                {
+                    _removing[serverId]--;
+                }
+            }
+        });
+
+        var gate = _editGates.GetOrAdd(serverId, _ => new SemaphoreSlim(1, 1));
+        try
+        {
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            unmark.Dispose();
+            throw;
+        }
+
+        return new Release(() =>
+        {
+            gate.Release();
+            unmark.Dispose();
+        });
+    }
+
+    /// <inheritdoc />
     public async Task<bool> RemoveAsync(Guid serverId)
     {
         RemoteServerConfig? removed = null;
@@ -616,6 +679,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         foreach (var runtime in _runtimes.Values)
         {
             runtime.Dispose();
+        }
+
+        foreach (var gate in _editGates.Values)
+        {
+            gate.Dispose();
         }
     }
 
@@ -1279,6 +1347,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
+    private bool IsRemoving(Guid serverId)
+    {
+        lock (_removingLock)
+        {
+            return _removing.ContainsKey(serverId);
+        }
+    }
+
     private bool IsConfigured(Guid serverId) => _store.Read(config => config.Servers.Any(server => server.Id == serverId));
 
     // Stores the Server Id of a server configured before it was read, at its first login (decision 121).
@@ -1401,6 +1477,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // What the remote offers with the edited data, and its capabilities for the save.
     private sealed record EditRead(RemoteEditReport Report, RemoteCapabilities? Capabilities);
 
+    // Runs its action once, at the first dispose.
+    private sealed class Release(Action action) : IDisposable
+    {
+        private Action? _action = action;
+
+        public void Dispose() => Interlocked.Exchange(ref _action, null)?.Invoke();
+    }
+
     private sealed class ServerRuntime : IDisposable
     {
         private readonly Lock _gate = new();
@@ -1506,7 +1590,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             RemoteFailure.Unreachable or RemoteFailure.Timeout => false,
             RemoteFailure.Suspended or RemoteFailure.UnknownServer or RemoteFailure.InvalidServer or RemoteFailure.Busy
                 or RemoteFailure.ServerError or RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped
-                or RemoteFailure.ForgetFailed or RemoteFailure.OtherServer => null,
+                or RemoteFailure.ForgetFailed or RemoteFailure.OtherServer or RemoteFailure.BeingRemoved or RemoteFailure.NameTaken
+                or RemoteFailure.RenameUnfinished => null,
             _ => true
         };
     }

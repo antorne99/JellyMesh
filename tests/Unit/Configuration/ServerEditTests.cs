@@ -21,7 +21,7 @@ using Xunit;
 namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
 
 // Rows 432-434: the edit form of a server, its check and its save.
-public sealed class ServerEditTests : IDisposable
+public sealed partial class ServerEditTests : IDisposable
 {
     private const string FirstId = "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b";
     private const string OtherId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9";
