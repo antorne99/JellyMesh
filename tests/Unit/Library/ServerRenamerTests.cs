@@ -135,6 +135,21 @@ public sealed class ServerRenamerTests : IDisposable
         Assert.Equal(new ServerRenameState(false, false, false), _renamer.GetState(_server));
     }
 
+    // Row 434: an edit saves the name first, then renames; the stubs and libraries still move.
+    [Fact]
+    public async Task AfterAnEditSavedTheName_TheStubsAndLibrariesStillMove()
+    {
+        _store.Configuration.Servers[0].Name = "Mare";
+        _registry.Setup(registry => registry.GetServers()).Returns([new RemoteServerInfo(_server, "Mare", "http://casa", RemoteMode.Standard, 0, [], null, null)]);
+
+        var answer = _renamer.Rename(_server, "Mare", true);
+        await answer.Job;
+
+        Assert.Equal(ServerRenameOutcome.Started, answer.Outcome);
+        Assert.Equal(["name Mare", "stubs Mare", "libraries", "scan", "finish", "link"], _steps);
+        Assert.False(_renamer.GetState(_server).Failed);
+    }
+
     [Fact]
     public async Task WhileTheOldItemsAreStillThere_ASecondScanRemovesThem_AndNoThirdRuns()
     {
