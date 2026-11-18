@@ -12,12 +12,13 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 public interface IJellyfinRemoteClient
 {
     /// <summary>
-    /// Logs in with <c>AuthenticateByName</c>. Administrator accounts are refused.
+    /// Logs in with <c>AuthenticateByName</c>. Administrator accounts are refused. A refused login the remote opened comes
+    /// back with the failure, so that the caller ends it.
     /// </summary>
     /// <param name="endpoint">The remote.</param>
     /// <param name="credentials">The dedicated user.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The session.</returns>
+    /// <returns>The session, or the failure with the refused login if the remote opened one.</returns>
     Task<RemoteResult<RemoteSession>> AuthenticateAsync(RemoteEndpoint endpoint, RemoteCredentials credentials, CancellationToken cancellationToken);
 
     /// <summary>
@@ -133,4 +134,13 @@ public interface IJellyfinRemoteClient
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The time on the remote, null if it answered without a <c>Date</c> header.</returns>
     Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the name and the Server Id the remote gives itself, with or without a login (row 433).
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session, or null to ask with no credentials.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The name and the Server Id.</returns>
+    Task<RemoteResult<RemotePublicInfo>> GetPublicInfoAsync(RemoteEndpoint endpoint, RemoteSession? session, CancellationToken cancellationToken);
 }

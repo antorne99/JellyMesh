@@ -132,6 +132,27 @@ public class JellyfinRemoteClientTests
         var result = await LoginAsync(handler);
 
         Assert.Equal(RemoteFailure.AdministratorAccount, result.Failure);
+        Assert.Equal("t", result.Value?.AccessToken);
+    }
+
+    // The refused login is handed back, so that it can be ended: the remote opened it.
+    [Fact]
+    public async Task AnUnexpectedLoginAnswerWithATokenHandsTheLoginBack()
+    {
+        var result = await LoginAsync(new StubHandler(_ => StubHandler.Json("{\"AccessToken\":\"t\",\"User\":{\"Id\":\"u\"}}")));
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+        Assert.Equal("t", result.Value?.AccessToken);
+    }
+
+    [Theory]
+    [InlineData("{\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":false}}}")]
+    [InlineData("{\"AccessToken\":\"t\\r\\nX-Injected: 1\",\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":true}}}")]
+    public async Task ALoginAnswerWithNoUsableTokenHandsNothingBack(string body)
+    {
+        var result = await LoginAsync(new StubHandler(_ => StubHandler.Json(body)));
+
+        Assert.False(result.IsSuccess);
         Assert.Null(result.Value);
     }
 
