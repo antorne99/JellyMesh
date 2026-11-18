@@ -1,5 +1,7 @@
 using System;
+using System.Diagnostics;
 using System.Net;
+using System.Net.Http;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -438,6 +440,35 @@ public sealed partial class ServerEditTests
         Assert.NotNull(_fixture.Vault.Unprotect(healthy, _fixture.Store.Configuration.Servers.First().EncryptedCredentials));
     }
 
+    [Fact]
+    public async Task A_new_user_stops_the_streams_and_ends_the_old_login_together_within_the_limit()
+    {
+        var id = await AddAsync("1");
+        using var handler = new HeldLogoutHandler(Respond);
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = new RemoteServerRegistry(_fixture.Store, _fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromMilliseconds(300) };
+        var stopped = false;
+        var watch = Stopwatch.StartNew();
+
+        // The streams stop only once the logout has started, which a stop before the logout would never see.
+        var result = await registry.SaveEditAsync(
+            id,
+            new RemoteServerEdit { Name = "Friend", Url = TestValues.Url, Username = "someone", Password = "new-pass" },
+            async () =>
+            {
+                await handler.LogoutStarted.WaitAsync(TimeSpan.FromSeconds(5));
+                stopped = true;
+            },
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(stopped);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), watch.Elapsed.ToString());
+        Assert.Equal("someone", _fixture.Vault.Unprotect(id, _fixture.Store.Configuration.Servers.Single().EncryptedCredentials)!.Username);
+        Assert.Contains(logger.Lines, line => line.Contains("old user", StringComparison.Ordinal) && line.Contains(nameof(RemoteFailure.Timeout), StringComparison.Ordinal));
+    }
+
     // Makes the registry keep a login, as a call would, with the token of the saved user.
     private async Task KeepLoginAsync(Guid id)
     {
@@ -452,5 +483,24 @@ public sealed partial class ServerEditTests
         renamer.Setup(service => service.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()))
             .Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
         return renamer;
+    }
+
+    // Answers as the remote of the form, except a logout, which never answers.
+    private sealed class HeldLogoutHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _logout = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task LogoutStarted => _logout.Task;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath == "/Sessions/Logout")
+            {
+                _logout.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            return respond(request);
+        }
     }
 }

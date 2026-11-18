@@ -919,20 +919,33 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // limit, the live one or, without it, one made with the old credentials on the same device (row 434, 413).
     private async Task EndOldUserAsync(EditPlan plan, RemoteSession? replaced, Func<Task>? stopStreams)
     {
+        // Together, so that both end within one limit (row 434).
         var name = LogText.Clean(plan.Name);
-        if (stopStreams is not null)
+        await Task.WhenAll(StopStreamsAsync(name, stopStreams), LogOutOldUserAsync(plan, name, replaced)).ConfigureAwait(false);
+    }
+
+    // Never throws: the edit is saved, so it must not fail now.
+    private async Task StopStreamsAsync(string? name, Func<Task>? stopStreams)
+    {
+        if (stopStreams is null)
         {
-            try
-            {
-                await stopStreams().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                // The type only: a message could hold an address. The edit is saved, so it must not fail now.
-                _logger.LogWarning("Could not stop the streams of remote server {ServerName} after its user changed: {Error}", name, exception.GetType().Name);
-            }
+            return;
         }
 
+        try
+        {
+            await stopStreams().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // The type only: a message could hold an address.
+            _logger.LogWarning("Could not stop the streams of remote server {ServerName} after its user changed: {Error}", name, exception.GetType().Name);
+        }
+    }
+
+    // Ends the live login of the old user, or logs it in and out on the kept device; never throws.
+    private async Task LogOutOldUserAsync(EditPlan plan, string? name, RemoteSession? replaced)
+    {
         var endpoint = EndpointOf(plan.ServerId, plan.Url);
         using var limit = new CancellationTokenSource(LogoutLimit);
         RemoteFailure failure;
