@@ -143,7 +143,7 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     private static IEnumerable<string> Locations(VirtualFolderInfo library) => (library.Locations ?? []).Where(IsPath);
 
     // A location that is no path, such as one with a null character, holds no folder and must not stop the check.
-    private static bool IsPath(string location)
+    internal static bool IsPath(string location)
     {
         if (string.IsNullOrWhiteSpace(location))
         {

@@ -162,6 +162,34 @@ public sealed class PluginConfigurationStoreTests : IDisposable
     }
 
     [Fact]
+    public void AnAdoptedLibraryStaysAdoptedAfterARestartForAServerAndARemovedOne()
+    {
+        var serverId = Guid.NewGuid();
+        var removedId = Guid.NewGuid();
+        Store().Update(config =>
+        {
+            var server = new RemoteServerConfig { Id = serverId, Name = "Casa", Url = TestValues.Url };
+            server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film" });
+            server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Serie di casa", Adopted = true });
+            config.Servers.Add(server);
+            config.HoldAutomaticLibraries(
+                removedId,
+                [
+                    new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Film di via", Adopted = true },
+                    new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Via - Film" }
+                ],
+                [],
+                [],
+                false);
+        });
+
+        var loaded = Store().Read(config => config);
+
+        Assert.Equal([("Casa - Film", false), ("Serie di casa", true)], loaded.Servers[0].AutomaticLibraryRegistry.Select(library => (library.Name, library.Adopted)));
+        Assert.Equal([("Film di via", true), ("Via - Film", false)], loaded.RemovedServerLibraries[0].Libraries.Select(library => (library.Name, library.Adopted)));
+    }
+
+    [Fact]
     public async Task AServerKeptBeforeTheLibraryModesHasThemPerTypeWhereItsLibrariesWereOnAndNoneElsewhere()
     {
         var on = Guid.NewGuid();

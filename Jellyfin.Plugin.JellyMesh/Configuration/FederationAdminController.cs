@@ -740,7 +740,7 @@ public class FederationAdminController : ControllerBase
                 : new ImportedLibraryRemoval(id, null, true))
             .ToList();
         var rename = server is not null && report.Changes.HasFlag(RemoteEditChanges.Name)
-            ? new ServerRenameConsequence(server.Name, name, _libraries.GetState(serverId).Libraries.Select(library => library.Name).ToList())
+            ? new ServerRenameConsequence(server.Name, name, _libraries.GetState(serverId).Libraries.Where(library => !library.Adopted).Select(library => library.Name).ToList())
             : null;
         var streams = report.Changes.HasFlag(RemoteEditChanges.User) ? _playback.CountServerSessions(serverId) : 0;
         return new ServerEditCheck(
