@@ -56,6 +56,16 @@ public class RemoteServerConfig
     public Collection<RemoteLibraryConfig> RemoteLibraries { get; } = [];
 
     /// <summary>
+    /// Gets the imported libraries one correct answer of the remote did not list: a second one in a row drops them (§10 row 436).
+    /// </summary>
+    public Collection<string> AbsentLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets the libraries that left the imported ones because the remote no longer listed them, until imported again.
+    /// </summary>
+    public Collection<VanishedLibraryConfig> VanishedLibraries { get; } = [];
+
+    /// <summary>
     /// Gets or sets which local libraries hold the type folders of this server. None for a server kept from before the
     /// modes; one added later takes <see cref="PluginConfiguration.NewServerLibraryMode"/>.
     /// </summary>

@@ -1,11 +1,14 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Tests.Storage;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Sync;
@@ -64,6 +67,61 @@ public sealed class SyncHistoryStoreTests : IDisposable
         Assert.Equal(first.Servers, reloaded.Runs[1].Servers);
         Assert.Equal(first.DurationMilliseconds, reloaded.Runs[1].DurationMilliseconds);
         Assert.Equal(3, reloaded.Runs[1].Created);
+    }
+
+    [Fact]
+    public async Task TheWarningOfAServerSurvivesARestart()
+    {
+        var run = Run(0) with
+        {
+            Servers = [new SyncRunServer(Guid.NewGuid(), "Casa", 4, 0, 0, 0, 0) { Warning = new SyncRunWarning(["Film 4K", "Serie"]) }]
+        };
+        using (var store = Store())
+        {
+            await store.AddAsync(run, CancellationToken.None);
+        }
+
+        using var reloaded = Store();
+
+        var server = Assert.Single(Assert.Single(reloaded.Runs).Servers);
+        Assert.Equal(["Film 4K", "Serie"], server.Warning!.VanishedLibraries);
+        Assert.Null(server.Failure);
+    }
+
+    [Fact]
+    public async Task ARunSavedBeforeTheWarningsReadsBackWithNone()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "jellymesh-db-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var before = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All.Take(6).ToList(), 1);
+            await before.WriteAsync(
+                (connection, transaction) =>
+                {
+                    using var command = connection.CreateCommand();
+                    command.Transaction = transaction;
+                    command.CommandText = $"""
+                        INSERT INTO sync_runs VALUES (1, {Start.UtcTicks}, 0, 1500, 'Incremental', 'Succeeded', 0, 0, 0, 0, 0, 0);
+                        INSERT INTO sync_run_servers VALUES (1, 0, '{Guid.NewGuid():N}', 'Casa', 7, 0, 0, 0, 0, NULL);
+                        """;
+                    command.ExecuteNonQuery();
+                },
+                CancellationToken.None);
+            before.Dispose();
+            SqliteConnection.ClearAllPools();
+
+            using var database = new TestDatabase(folder);
+            using var store = new SyncHistoryStore(database, new CapturingLogger<SyncHistoryStore>());
+
+            var server = Assert.Single(Assert.Single(store.Runs).Servers);
+            Assert.Equal(7, server.Read);
+            Assert.Null(server.Warning);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(folder, true);
+        }
     }
 
     [Fact]

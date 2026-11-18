@@ -501,7 +501,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             {
                 var counts = report?.ByServer.GetValueOrDefault(server.Id) ?? new StubCounts(0, 0, 0, 0);
                 RemoteFailure? failure = _runFailures.TryGetValue(server.Id, out var failed) ? failed.Value : null;
-                return new SyncRunServer(server.Id, server.Name, _runReads.GetValueOrDefault(server.Id), counts.Created, counts.Updated, counts.Removed, counts.Failed, failure);
+                var vanished = _reader.TakeVanishedLibraries(server.Id);
+                return new SyncRunServer(server.Id, server.Name, _runReads.GetValueOrDefault(server.Id), counts.Created, counts.Updated, counts.Removed, counts.Failed, failure)
+                {
+                    Warning = vanished.Count > 0 ? new SyncRunWarning(vanished) : null
+                };
             }).ToList();
             var run = new SyncRun(started, (long)(_timeProvider.GetUtcNow() - started).TotalMilliseconds, kind, stopped ?? OutcomeOf(rows, report, materialized.Failed), rows)
             {

@@ -575,7 +575,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 // Capabilities first: they decide where the libraries are read from.
                 var name = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.Name) ?? string.Empty;
                 var capabilities = await DetectCapabilitiesAsync(endpoint, session, name, token).ConfigureAwait(false);
-                var libraries = await ReadLibrariesAsync(capabilities.Mode, endpoint, session, token).ConfigureAwait(false);
+                var libraries = await ReadLibrariesAsync(serverId, capabilities.Mode, endpoint, session, token).ConfigureAwait(false);
                 return libraries.IsSuccess
                     ? RemoteResult.Success<ConnectionReport>(new ConnectionReport(capabilities, libraries.Value!.Count))
                     : RemoteResult.Fail<ConnectionReport>(libraries.Failure);
@@ -603,7 +603,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken)
     {
         var mode = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.Mode) ?? RemoteMode.Unknown;
-        return RunWithSessionAsync(serverId, (endpoint, session, token) => ReadLibrariesAsync(mode, endpoint, session, token), cancellationToken);
+        return RunWithSessionAsync(serverId, (endpoint, session, token) => ReadLibrariesAsync(serverId, mode, endpoint, session, token), cancellationToken);
     }
 
     /// <inheritdoc />
@@ -1183,7 +1183,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         var capabilities = await DetectCapabilitiesAsync(endpoint, session, plan.Name, cancellationToken).ConfigureAwait(false);
-        var libraries = await ReadLibrariesAsync(capabilities.Mode, endpoint, session, cancellationToken).ConfigureAwait(false);
+        var libraries = await ReadLibrariesAsync(plan.ServerId, capabilities.Mode, endpoint, session, cancellationToken).ConfigureAwait(false);
         if (libraries.Value is not { } visible)
         {
             return RemoteResult.Fail(libraries.Failure, new EditRead(new RemoteEditReport(RemoteEditField.LibraryIds), null));
@@ -1197,11 +1197,26 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         return RemoteResult.Success(new EditRead(report, capabilities));
     }
 
-    private Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteMode mode, RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    // A library any read lists is no longer absent, so two absences are always two answers in a row (row 436).
+    private async Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(Guid serverId, RemoteMode mode, RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
-        return mode == RemoteMode.JellyMesh
+        var libraries = await (mode == RemoteMode.JellyMesh
             ? _client.GetSharedLibrariesAsync(endpoint, session, cancellationToken)
-            : _client.GetLibrariesAsync(endpoint, session, cancellationToken);
+            : _client.GetLibrariesAsync(endpoint, session, cancellationToken)).ConfigureAwait(false);
+        if (libraries.Value is { } listed
+            && _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.AbsentLibraryIds.Any(id => listed.Any(library => library.Id == id)) == true))
+        {
+            _store.Update(config =>
+            {
+                var server = config.Servers.FirstOrDefault(server => server.Id == serverId);
+                foreach (var id in server?.AbsentLibraryIds.Where(id => listed.Any(library => library.Id == id)).ToList() ?? [])
+                {
+                    server!.AbsentLibraryIds.Remove(id);
+                }
+            });
+        }
+
+        return libraries;
     }
 
     private async Task<SessionAttempt<T>> CallOnceAsync<T>(

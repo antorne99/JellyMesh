@@ -201,6 +201,27 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     }
 
     [Fact]
+    public async Task ALibraryThatVanishesIsAWarningOfItsServerInThatRunOnly()
+    {
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
+        Remote.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("b", "Beta", 2021, "2"));
+        Remote.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film 4K", "movies"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films, TestLibraries.FilmsB);
+        using var sync = NewSync();
+        await sync.RunAsync(CancellationToken.None);
+        Remote.Libraries.RemoveAll(library => library.Id == TestLibraries.FilmsB);
+
+        await sync.RunAsync(CancellationToken.None);
+        Assert.Null(Assert.Single(_history.Runs[0].Servers).Warning);
+        await sync.RunAsync(CancellationToken.None);
+        await sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(["Film 4K"], Assert.Single(_history.Runs[1].Servers).Warning!.VanishedLibraries);
+        Assert.Null(Assert.Single(_history.Runs[1].Servers).Failure);
+        Assert.Null(Assert.Single(_history.Runs[0].Servers).Warning);
+    }
+
+    [Fact]
     public async Task TheRunIsInTheHistoryBeforeTheSyncShowsFinished()
     {
         await _fixture.AddServerAsync("Friend", TestLibraries.Films);

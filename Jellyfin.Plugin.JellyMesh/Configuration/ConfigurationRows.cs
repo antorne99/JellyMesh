@@ -22,6 +22,11 @@ internal sealed class ConfigurationRows
     private const string HiddenReleasedLibrary = "hidden_released_library";
     private const string CreatedLibrary = "created_library";
 
+    // Imported libraries absent from one answer, and those gone from two, by id and name at the same positions (§10 row 436).
+    private const string AbsentLibrary = "absent_library";
+    private const string VanishedLibrary = "vanished_library";
+    private const string VanishedLibraryName = "vanished_library_name";
+
     // The positions of the adopted libraries in the list of a server, so no schema step is needed (§10 row 441).
     private const string AdoptedLibrary = "adopted_library";
 
@@ -86,6 +91,9 @@ internal sealed class ConfigurationRows
             serverValues.AddRange(Values(id, CreatedLibrary, server.CreatedLibraryKeys));
             automatic.AddRange(Libraries(id, server.AutomaticLibraryRegistry));
             serverValues.AddRange(Values(id, AdoptedLibrary, AdoptedPositions(server.AutomaticLibraryRegistry)));
+            serverValues.AddRange(Values(id, AbsentLibrary, server.AbsentLibraryIds));
+            serverValues.AddRange(Values(id, VanishedLibrary, server.VanishedLibraries.Select(library => library.Id)));
+            serverValues.AddRange(Values(id, VanishedLibraryName, server.VanishedLibraries.Select(library => library.Name)));
             remoteLibraries.AddRange(server.RemoteLibraries.Select((library, position) => Row(id, position, library.Id, library.Name, library.CollectionType)));
             pendingLibraries.AddRange(server.PendingLibraries.Select((library, position)
                 => Row(id, position, library.Kind.ToString(), library.Name, library.RemoteLibraryId, JsonSerializer.Serialize(library.Paths))));
@@ -212,6 +220,8 @@ internal sealed class ConfigurationRows
             Fill(server.CreatedLibraryKeys, serverValues, id, CreatedLibrary);
             Fill(server.AutomaticLibraryRegistry, automatic, id);
             MarkAdopted(server.AutomaticLibraryRegistry, serverValues, id);
+            Fill(server.AbsentLibraryIds, serverValues, id, AbsentLibrary);
+            FillVanished(server.VanishedLibraries, serverValues, id);
 
             // A library kept by an older version, or by its imported files, counts as made, so one deleted is never made again.
             foreach (var key in server.AutomaticLibraryRegistry.Select(record => record.KeyOf()).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
@@ -325,6 +335,16 @@ internal sealed class ConfigurationRows
         foreach (var row in lists[(owner, list)].OrderBy(row => (long)row[2]))
         {
             target.Add((string)row[3]);
+        }
+    }
+
+    // Pairs each vanished id with the name at its position; one with no name keeps an empty one.
+    private static void FillVanished(Collection<VanishedLibraryConfig> target, ILookup<(string Owner, string List), object[]> lists, string owner)
+    {
+        var names = lists[(owner, VanishedLibraryName)].ToDictionary(row => (long)row[2], row => (string)row[3]);
+        foreach (var row in lists[(owner, VanishedLibrary)].OrderBy(row => (long)row[2]))
+        {
+            target.Add(new VanishedLibraryConfig { Id = (string)row[3], Name = names.GetValueOrDefault((long)row[2], string.Empty) });
         }
     }
 
