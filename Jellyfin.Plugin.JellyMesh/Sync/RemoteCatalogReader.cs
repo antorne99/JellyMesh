@@ -286,12 +286,21 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
     }
 
+    // An entry already read from another imported library gains this one, kept in id order as the feed does.
     private static void Add(Dictionary<string, IndexedItem> entries, IEnumerable<RemoteItem> items, RemoteItemType type, string libraryId, DateTimeOffset seenUtc)
     {
         foreach (var item in items)
         {
-            entries[item.Id] = RemoteItemMapper.ToIndexedItem(item, type, libraryId, seenUtc);
+            var entry = RemoteItemMapper.ToIndexedItem(item, type, libraryId, seenUtc);
+            entries[item.Id] = entries.TryGetValue(item.Id, out var known) ? WithLibraries(entry, [.. known.LibraryIds, libraryId]) : entry;
         }
+    }
+
+    // Sets the libraries of an entry in ordinal id order, so that both reads give the same first library.
+    private static IndexedItem WithLibraries(IndexedItem entry, IEnumerable<string> libraryIds)
+    {
+        var ordered = libraryIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        return entry with { LibraryId = ordered[0], OtherLibraryIds = ordered[1..] };
     }
 
     private static bool ViaProvider(RemoteServerInfo server) => server.Mode == RemoteMode.JellyMesh;
@@ -315,8 +324,9 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         CancellationToken cancellationToken)
     {
         var wanted = changes
-            .Select(change => (change.Id, Library: change.LibraryIds.FirstOrDefault(server.ImportedLibraryIds.Contains), Known: Enum.TryParse<RemoteItemType>(change.Type, out var type), Type: type))
-            .Where(change => change.Library is not null && change.Known)
+            .Select(change => (change.Id, Libraries: change.LibraryIds.Where(server.ImportedLibraryIds.Contains).Distinct(StringComparer.Ordinal).ToList(), Known: Enum.TryParse<RemoteItemType>(change.Type, out var type), Type: type))
+            .Where(change => change.Libraries.Count > 0 && change.Known)
+            .Select(change => (change.Id, Library: change.Libraries.Min(StringComparer.Ordinal)!, Libraries: change.Libraries, change.Type))
             .ToList();
 
         foreach (var group in wanted.GroupBy(change => (change.Library, change.Type)))
@@ -338,11 +348,19 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                     return RemoteFailure.ResponseTooLarge;
                 }
 
-                Add(entries, page.Value.Items, group.Key.Type, group.Key.Library!, seenUtc);
+                Add(entries, page.Value.Items, group.Key.Type, group.Key.Library, seenUtc);
             }
         }
 
-        foreach (var library in wanted.Select(change => change.Library!).Distinct(StringComparer.Ordinal))
+        foreach (var change in wanted.Where(change => change.Libraries.Count > 1))
+        {
+            if (entries.TryGetValue(change.Id, out var entry))
+            {
+                entries[change.Id] = WithLibraries(entry, change.Libraries);
+            }
+        }
+
+        foreach (var library in wanted.Select(change => change.Library).Distinct(StringComparer.Ordinal))
         {
             var failure = await AddMissingSeriesAsync(server, library, knownItemIds, entries, budget, seenUtc, cancellationToken).ConfigureAwait(false);
             if (failure != RemoteFailure.None)

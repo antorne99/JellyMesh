@@ -42,6 +42,28 @@ public interface IRemoteServerRegistry
     Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Checks an edit of a server without saving anything (row 432): logs in with the new data on a device of its own, so
+    /// the kept login stays, accepts only the saved Server Id (row 433), reads the libraries the user sees, then ends that
+    /// login within a short time. A refusal names the field it is about and, for another server, the name it gives itself.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="edit">The fields of the form.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>What the edit changes and what the remote offers, or why it is refused.</returns>
+    Task<RemoteResult<RemoteEditReport>> CheckEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Saves an edit of a server all or nothing (row 432): checks it as <see cref="CheckEditAsync"/> does, then saves name,
+    /// address, credentials, imported libraries and capabilities in one write. A new user or password logs in on the kept
+    /// device and keeps that login; otherwise the kept login stays. Only a new name needs no remote.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="edit">The fields of the form.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>What the edit changed, or why it is refused.</returns>
+    Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Removes a server. Possible in any key state: it uses no credential, and it is how to
     /// recover from a lost key. Then ends the live login on the remote, if there is one, within a short time (413): if that
     /// fails, its device stays listed there and the removal stands.

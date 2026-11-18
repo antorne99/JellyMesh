@@ -417,6 +417,13 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
+    /// Counts the playback sessions open on a server, for the consequences of an edit (row 432).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>How many sessions play from it.</returns>
+    public int CountServerSessions(Guid serverId) => _sessions.All.Count(session => session.Source.ServerId == serverId);
+
+    /// <summary>
     /// Lets a server play again after its removal failed: it stays.
     /// </summary>
     /// <param name="serverId">The server.</param>

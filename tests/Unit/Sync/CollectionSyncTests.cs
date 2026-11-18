@@ -23,9 +23,9 @@ public sealed class CollectionSyncTests : IDisposable
     private async Task<RemoteServerInfo> ServerWithSagaAsync()
     {
         _fixture.Store.Configuration.FederateCollections = true;
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta", tmdb: "2"));
-        Remote.AddCollection("films", "box", "Saga", "a");
-        return await _fixture.AddServerAsync("A", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta", tmdb: "2"));
+        Remote.AddCollection(TestLibraries.Films, "box", "Saga", "a");
+        return await _fixture.AddServerAsync("A", TestLibraries.Films);
     }
 
     private void Tick()
@@ -62,13 +62,13 @@ public sealed class CollectionSyncTests : IDisposable
     {
         var server = await ServerWithSagaAsync();
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
-        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+        Remote.SharedCollections.Add((TestLibraries.Films, new RemoteCollectionEntry("b", "Peer saga", "7")));
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
         Assert.Equal(new IndexedBoxSet("Peer saga", "7"), CollectionOf(server, "b"));
         Assert.Null(CollectionOf(server, "a"));
-        Assert.Equal(["peer:films@0"], Remote.CollectionReads);
+        Assert.Equal([$"peer:{TestLibraries.Films}@0"], Remote.CollectionReads);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class CollectionSyncTests : IDisposable
     {
         var server = await ServerWithSagaAsync();
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion - 1);
-        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+        Remote.SharedCollections.Add((TestLibraries.Films, new RemoteCollectionEntry("b", "Peer saga", "7")));
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -91,13 +91,13 @@ public sealed class CollectionSyncTests : IDisposable
     {
         var server = await ServerWithSagaAsync();
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion - 1);
-        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+        Remote.SharedCollections.Add((TestLibraries.Films, new RemoteCollectionEntry("b", "Peer saga", "7")));
         await _fixture.Sync.RunAsync(CancellationToken.None);
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
-        Assert.Equal(["peer:films@0"], Remote.CollectionReads);
+        Assert.Equal([$"peer:{TestLibraries.Films}@0"], Remote.CollectionReads);
         Assert.Equal(new IndexedBoxSet("Peer saga", "7"), CollectionOf(server, "b"));
     }
 
@@ -106,7 +106,7 @@ public sealed class CollectionSyncTests : IDisposable
     {
         var server = await ServerWithSagaAsync();
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
-        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", "7")));
+        Remote.SharedCollections.Add((TestLibraries.Films, new RemoteCollectionEntry("b", "Peer saga", "7")));
         await _fixture.Sync.RunAsync(CancellationToken.None);
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion - 1);
         Remote.CollectionReads.Clear();
@@ -122,7 +122,7 @@ public sealed class CollectionSyncTests : IDisposable
     {
         var server = await ServerWithSagaAsync();
         Remote.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, ProviderProtocol.CollectionsVersion);
-        Remote.SharedCollections.Add(("films", new RemoteCollectionEntry("b", "Peer saga", null)));
+        Remote.SharedCollections.Add((TestLibraries.Films, new RemoteCollectionEntry("b", "Peer saga", null)));
         await _fixture.Sync.RunAsync(CancellationToken.None);
         Remote.CollectionFailure = RemoteFailure.ServerError;
 
@@ -139,7 +139,7 @@ public sealed class CollectionSyncTests : IDisposable
         var server = await ServerWithSagaAsync();
         await _fixture.Sync.RunAsync(CancellationToken.None);
         Remote.Collections.Clear();
-        Remote.AddCollection("films", "box", "Saga renamed", "a");
+        Remote.AddCollection(TestLibraries.Films, "box", "Saga renamed", "a");
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -152,7 +152,7 @@ public sealed class CollectionSyncTests : IDisposable
         var server = await ServerWithSagaAsync();
         await _fixture.Sync.RunAsync(CancellationToken.None);
         Remote.CollectionFailure = RemoteFailure.Timeout;
-        Remote.Items[("films", RemoteItemType.Movie)][0] = TestItems.Movie("a", "Alfa renamed");
+        Remote.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = TestItems.Movie("a", "Alfa renamed");
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -168,7 +168,7 @@ public sealed class CollectionSyncTests : IDisposable
         var server = await ServerWithSagaAsync();
         await _fixture.Sync.RunAsync(CancellationToken.None);
         Tick();
-        Remote.Items[("films", RemoteItemType.Movie)][0] = TestItems.Movie("a", "Alfa renamed");
+        Remote.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = TestItems.Movie("a", "Alfa renamed");
         Remote.SavedUtc["a"] = Remote.ServerTime!.Value;
         Remote.CollectionReads.Clear();
 

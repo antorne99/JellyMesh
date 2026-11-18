@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -43,4 +44,10 @@ public interface IStubRegistry
     /// <param name="serverId">The server.</param>
     /// <returns>Whether the server may still have titles in the federated folder.</returns>
     bool HasTitlesOf(Guid serverId);
+
+    /// <summary>Gives the relative type folders of a server that hold its titles of one type, in the remote library layout.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="type">The type folder.</param>
+    /// <returns>The folders, or null while the registry cannot tell, as for <see cref="HasTitlesOf"/>.</returns>
+    IReadOnlyList<string>? TypeFoldersOf(Guid serverId, TypeFolder type);
 }

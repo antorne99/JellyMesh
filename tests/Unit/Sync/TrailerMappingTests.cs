@@ -12,7 +12,7 @@ public class TrailerMappingTests
     private static string[] IdsOf(params string?[] urls)
     {
         var film = TestItems.Movie("m") with { RemoteTrailers = urls.Select(url => url is null ? null : new RemoteMediaUrl(url)).ToList() };
-        return RemoteItemMapper.ToIndexedItem(film, RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch).TrailerIds.ToArray();
+        return RemoteItemMapper.ToIndexedItem(film, RemoteItemType.Movie, TestLibraries.Films, DateTimeOffset.UnixEpoch).TrailerIds.ToArray();
     }
 
     [Theory]
@@ -76,6 +76,6 @@ public class TrailerMappingTests
     [Fact]
     public void AFilmWithoutTrailersHasNone()
     {
-        Assert.Empty(RemoteItemMapper.ToIndexedItem(TestItems.Movie("m"), RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch).TrailerIds);
+        Assert.Empty(RemoteItemMapper.ToIndexedItem(TestItems.Movie("m"), RemoteItemType.Movie, TestLibraries.Films, DateTimeOffset.UnixEpoch).TrailerIds);
     }
 }

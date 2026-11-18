@@ -13,8 +13,8 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
 {
     public List<RemoteLibrary> Libraries { get; } =
     [
-        new("films", "Film", "movies"),
-        new("shows", "Serie", "tvshows")
+        new(TestLibraries.Films, "Film", "movies"),
+        new(TestLibraries.Shows, "Serie", "tvshows")
     ];
 
     /// <summary>The items by library and type.</summary>
@@ -234,4 +234,7 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
             ? RemoteResult.Success(new RemoteItemPage(films.Skip(startIndex).Take(limit).ToList(), films.Count))
             : RemoteResult.Fail<RemoteItemPage>(CollectionFailure));
     }
+
+    public Task<RemoteResult<RemotePublicInfo>> GetPublicInfoAsync(RemoteEndpoint endpoint, RemoteSession? session, CancellationToken cancellationToken)
+        => Task.FromResult(RemoteResult.Success(new RemotePublicInfo("Remote", null)));
 }

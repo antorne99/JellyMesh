@@ -22,8 +22,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ASyncFillsTheIndex()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(3));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(3));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var run = await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -39,9 +39,9 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ASyncDropsTheCatalogOfARemovedServer()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
-        var removed = await _fixture.AddServerAsync("A", "films");
-        var kept = await _fixture.AddServerAsync("B", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
+        var removed = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        var kept = await _fixture.AddServerAsync("B", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         await _fixture.Sync.RemoveServerAsync(removed.Id, () => _fixture.Registry.RemoveAsync(removed.Id), CancellationToken.None);
 
@@ -54,8 +54,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ASyncKeepsTheCatalogOfAServerMissingFromTheConfiguration()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
-        var missing = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
+        var missing = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         await _fixture.Registry.RemoveAsync(missing.Id);
 
@@ -67,9 +67,9 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ForgettingDropsTheCatalogOfAServerMissingFromTheConfiguration()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
-        var missing = await _fixture.AddServerAsync("A", "films");
-        var kept = await _fixture.AddServerAsync("B", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
+        var missing = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        var kept = await _fixture.AddServerAsync("B", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         await _fixture.Registry.RemoveAsync(missing.Id);
 
@@ -83,8 +83,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ForgettingWithEveryServerConfiguredMarksNothing()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
         Assert.Equal(0, await _fixture.Sync.ForgetMissingServersAsync(CancellationToken.None));
@@ -96,8 +96,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task AMarkOnAServerStillConfiguredKeepsItsCatalog()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RemoveServerAsync(server.Id, () => Task.FromResult(true), CancellationToken.None);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
@@ -108,16 +108,16 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task AServerFailingInTheMiddleKeepsItsEntriesAndIsMarked()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         var before = CatalogOf(server).Items;
         _fixture.Client.Queries.Clear();
         _fixture.Clock.Now = SyncFixture.Start.AddHours(1);
 
         // The first page answers and the second does not, so nothing of the first may land.
-        _fixture.Client.Items[("films", RemoteItemType.Movie)].Clear();
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1, "new"));
+        _fixture.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].Clear();
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1, "new"));
         _fixture.Client.OnPage = (query, _) => query.StartIndex > 0 ? RemoteFailure.Unreachable : RemoteFailure.None;
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -134,8 +134,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     public async Task OneServerFailingDoesNotStopTheNext()
     {
         var bad = await _fixture.AddServerAsync("Bad", "deleted");
-        var good = await _fixture.AddServerAsync("Good", "films");
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        var good = await _fixture.AddServerAsync("Good", TestLibraries.Films);
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -149,8 +149,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ACompleteSyncAfterAFailureClearsTheMark()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         _fixture.Client.OnPage = (_, _) => RemoteFailure.Timeout;
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.OnPage = (_, _) => RemoteFailure.None;
@@ -164,12 +164,12 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ACompleteReadReplacesTheEntriesOfTheServer()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("old"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("old"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
-        _fixture.Client.Items[("films", RemoteItemType.Movie)].Clear();
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("new"));
+        _fixture.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].Clear();
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("new"));
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
         Assert.Equal("new", Assert.Single(CatalogOf(server).Items).ItemId);
@@ -178,8 +178,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task WhileSuspendedNothingStartsAndNothingChanges()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         var before = _fixture.Index.Snapshot;
         _fixture.Client.Queries.Clear();
@@ -217,8 +217,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task WhileTheDatabaseIsSuspendedNothingStartsAndNothingChanges()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         var before = _fixture.Index.Snapshot;
         _fixture.Client.Queries.Clear();
@@ -236,8 +236,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ASecondSyncIsRefusedWhileOneRuns()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.AddServerAsync("A", TestLibraries.Films);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _fixture.Client.OnPage = (_, _) =>
@@ -270,8 +270,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ACancelledSyncChangesNothingAndCanRunAgain()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         using var cancellation = new CancellationTokenSource();
         await cancellation.CancelAsync();
 
@@ -284,8 +284,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task AnIndexThatCannotBeSavedIsReported()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         _fixture.Database.InterruptNextWrite();
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
@@ -297,11 +297,11 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task TheStatusCountsByKindAndHoldsNoAddress()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Client.Add("shows", RemoteItemType.Season, TestItems.Season("s1", "s", 1));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1), TestItems.Episode("e2", "s", 1, 2));
-        await _fixture.AddServerAsync("Friend", "films", "shows");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("s1", "s", 1));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1), TestItems.Episode("e2", "s", 1, 2));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films, TestLibraries.Shows);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
@@ -314,8 +314,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task TheLogsHoldNoSecretAndNoAddress()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        await _fixture.AddServerAsync("Friend", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.OnPage = (_, _) => RemoteFailure.Unreachable;
         await _fixture.Sync.RunAsync(CancellationToken.None);
@@ -334,9 +334,9 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task AServerThatBreaksTheReadStopsOnlyItself()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(2));
-        var first = await _fixture.AddServerAsync("A", "films");
-        var second = await _fixture.AddServerAsync("B", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(2));
+        var first = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        var second = await _fixture.AddServerAsync("B", TestLibraries.Films);
         _fixture.Client.OnPage = (_, call) => call == 1 ? throw new InvalidOperationException("at http://remote.invalid:8096/x") : RemoteFailure.None;
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
@@ -350,9 +350,9 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task AServerThatTakesForeverStopsAtItsLimitAndTheNextIsRead()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(2));
-        var first = await _fixture.AddServerAsync("A", "films");
-        var second = await _fixture.AddServerAsync("B", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(2));
+        var first = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        var second = await _fixture.AddServerAsync("B", TestLibraries.Films);
         _fixture.Client.BeforeClock = (read, token) => read == 1 ? Task.Delay(Timeout.Infinite, token) : Task.CompletedTask;
         _fixture.Sync.ServerReadLimit = TimeSpan.FromMilliseconds(200);
 
@@ -365,8 +365,8 @@ public sealed class CatalogSyncServiceTests : IDisposable
     [Fact]
     public async Task ASyncCancelledFromOutsideIsNotCountedAsATimeout()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         using var cancelled = new CancellationTokenSource();
         _fixture.Client.BeforeClock = async (_, token) =>
         {

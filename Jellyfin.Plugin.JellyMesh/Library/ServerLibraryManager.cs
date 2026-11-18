@@ -36,6 +36,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     private readonly ILibraryMaterializer _materializer;
     private readonly ILibraryRenamer _renamer;
     private readonly IStubRegistry _stubs;
+    private readonly ILibraryPaths _paths;
     private readonly ILogger<ServerLibraryManager> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -56,7 +57,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <param name="scans">The library scans.</param>
     /// <param name="materializer">The materializer, which writes the server folders.</param>
     /// <param name="renamer">The renamer of libraries.</param>
-    /// <param name="stubs">The stub registry, which tells whether a removed server still has titles.</param>
+    /// <param name="stubs">The stub registry, which tells whether a removed server still has titles and where they are.</param>
+    /// <param name="paths">The paths of the libraries, which take the type folders of the remote libraries.</param>
     /// <param name="logger">The logger.</param>
     public ServerLibraryManager(
         IPluginConfigurationStore store,
@@ -66,6 +68,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         ILibraryMaterializer materializer,
         ILibraryRenamer renamer,
         IStubRegistry stubs,
+        ILibraryPaths paths,
         ILogger<ServerLibraryManager> logger)
     {
         _store = store;
@@ -75,6 +78,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         _materializer = materializer;
         _renamer = renamer;
         _stubs = stubs;
+        _paths = paths;
         _logger = logger;
     }
 
@@ -86,9 +90,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         ILibraryMaterializer materializer,
         ILibraryRenamer renamer,
         IStubRegistry stubs,
+        ILibraryPaths paths,
         ILogger<ServerLibraryManager> logger,
         TimeProvider time)
-        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, logger)
+        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, paths, logger)
     {
         _scanLimit = new(time);
     }
@@ -180,7 +185,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         {
             try
             {
-                FollowAll();
+                if (FollowAll() is { } folders)
+                {
+                    await AddTypeFoldersAsync(folders, cancellationToken).ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -372,22 +380,33 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     private static CollectionTypeOptions TypeOf(ServerLibraryKind kind) => kind == ServerLibraryKind.Movies ? CollectionTypeOptions.movies : CollectionTypeOptions.tvshows;
 
-    // The plugin acts on a library only while its one path is the server folder and its type is the expected one.
+    private static TypeFolder TypeFolderOf(ServerLibraryKind kind) => kind == ServerLibraryKind.Movies ? TypeFolder.Movies : TypeFolder.Series;
+
+    // The plugin acts on a library only while it holds the server folder, its other paths are type folders of the remote
+    // libraries of that server, and its type is the expected one.
     private static bool Passes(VirtualFolderInfo folder, ServerLibraryKind kind, string root, Guid serverId) =>
         folder.CollectionType == TypeOf(kind)
-        && folder.Locations is [var location]
-        && FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId));
+        && folder.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)))
+        && folder.Locations.All(location => FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)) || IsTypeFolderOf(location, kind, root, serverId));
+
+    // A type folder of the given kind in a remote library folder of the server.
+    private static bool IsTypeFolderOf(string location, ServerLibraryKind kind, string root, Guid serverId) =>
+        FederatedPaths.RelativeTo(root, Path.TrimEndingDirectorySeparator(location))?.Split(Path.DirectorySeparatorChar) is [var server, var library, _]
+        && Guid.TryParseExact(server, "D", out var id)
+        && id == serverId
+        && FederatedPaths.IsLibraryId(library)
+        && FederatedFolderLinkChecker.IsSamePath(location, FederatedFolderLayout.TypeFolderPath(root, serverId, library, TypeFolderOf(kind)));
 
     // A library left only because the federated folder changed: it still holds the server folder under another root.
     private static bool PassesUnderOtherRoot(VirtualFolderInfo folder, ServerLibraryKind kind, Guid serverId) =>
-        folder.Locations is [var location]
-        && Path.GetDirectoryName(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(location))) is { Length: > 0 } other
-        && Passes(folder, kind, other, serverId);
+        folder.Locations
+            .Select(location => Path.GetDirectoryName(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(location))))
+            .Any(other => other is { Length: > 0 } && Passes(folder, kind, other, serverId));
 
     // Films go into collections only when the plugin federates them (decision 196); libraries already there keep theirs.
-    private static LibraryOptions OptionsFor(string path, bool addsToCollections) => new()
+    private static LibraryOptions OptionsFor(IEnumerable<string> paths, bool addsToCollections) => new()
     {
-        PathInfos = [new MediaPathInfo(path)],
+        PathInfos = paths.Select(path => new MediaPathInfo(path)).ToArray(),
         MetadataSavers = [],
         SaveLocalMetadata = false,
         EnableRealtimeMonitor = false,
@@ -537,10 +556,9 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             _store.Update(config => Owned(config, owner)?.ReleasedAutomaticLibraries.Remove(name));
         }
 
-        var path = PathOf(kind, root, serverId);
         try
         {
-            await _libraries.AddVirtualFolder(name, TypeOf(kind), OptionsFor(path, addsToCollections), false).ConfigureAwait(false);
+            await _libraries.AddVirtualFolder(name, TypeOf(kind), OptionsFor([PathOf(kind, root, serverId), .. TypeFolderPaths(kind, root, serverId) ?? []], addsToCollections), false).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -878,19 +896,20 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
     }
 
-    private void FollowAll()
+    // Gives the libraries the check saw, null when it did not run.
+    private List<VirtualFolderInfo>? FollowAll()
     {
         var (serverIds, root) = _store.Read(config => (FollowedServers(config), config.FederatedFolderPath));
         if (serverIds.Count == 0)
         {
-            return;
+            return null;
         }
 
         var folders = root.Length == 0 ? null : ReadFolders();
         if (folders is null)
         {
             MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)));
-            return;
+            return null;
         }
 
         // A library with no id yet may be a renamed one, so the check waits for the next sync (decision 213).
@@ -899,12 +918,50 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         {
             _logger.LogWarning("{Count} libraries have no id yet, so their check is skipped", unready);
             MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)));
-            return;
+            return null;
         }
 
         foreach (var serverId in serverIds)
         {
             Follow(serverId, folders);
+        }
+
+        return folders;
+    }
+
+    // The absolute type folders of the remote libraries of a server that hold titles of a kind, null while unknown.
+    private List<string>? TypeFolderPaths(ServerLibraryKind kind, string root, Guid serverId)
+        => _stubs.TypeFoldersOf(serverId, TypeFolderOf(kind))?.Select(folder => FederatedPaths.Resolve(root, folder)).ToList();
+
+    // Adds to the libraries of the registries the type folders that came to hold titles. Removing one is left to the admin.
+    private async Task AddTypeFoldersAsync(List<VirtualFolderInfo> folders, CancellationToken cancellationToken)
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        var libraries = _store.Read(config => config.Servers
+            .SelectMany(server => server.AutomaticLibraryRegistry.Select(record => (ServerId: server.Id, record.Kind, Folder: FindRecorded(record, folders))))
+            .ToList());
+        var added = false;
+        foreach (var (serverId, kind, folder) in libraries)
+        {
+            if (root.Length == 0 || folder is null || !Passes(folder, kind, root, serverId) || TypeFolderPaths(kind, root, serverId) is not { } wanted)
+            {
+                continue;
+            }
+
+            foreach (var path in wanted.Where(path => !folder.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))))
+            {
+                var outcome = _paths.Add(root, folder.Name, path);
+                added |= outcome == LibraryPathOutcome.Done;
+                if (outcome is not (LibraryPathOutcome.Done or LibraryPathOutcome.Unchanged))
+                {
+                    _logger.LogWarning("Cannot add a remote library folder to the library {Library}: {Outcome}", LogText.Clean(folder.Name), outcome);
+                }
+            }
+        }
+
+        if (added)
+        {
+            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

@@ -127,6 +127,31 @@ public sealed class LibraryPathsTests
     }
 
     [Fact]
+    public void AddsATypeFolderOfARemoteLibrary()
+    {
+        _folders.Add(Folder("Film", ServerMovies));
+        var path = FederatedFolderLayout.TypeFolderPath(_root, _server, TestLibraries.Films, TypeFolder.Movies);
+
+        Assert.Equal(LibraryPathOutcome.Done, Paths().Add(_root, "Film", path));
+        Assert.Equal([("Film", path)], _added);
+    }
+
+    [Theory]
+    [InlineData("f11e0000000000000000000000000001/Musica/Extra")]
+    [InlineData("not-a-library/Film")]
+    [InlineData("f11e0000000000000000000000000001/Other")]
+    [InlineData("f11e0000000000000000000000000001")]
+    public void OnlyTheTypeFoldersOfARemoteLibraryAreTaken(string relative)
+    {
+        var path = Path.Combine(FederatedFolderLayout.ServerMoviesPath(_root, _server), "..", relative);
+        path = Path.GetFullPath(path);
+        _folders.Add(Folder("Film", ServerMovies));
+
+        Assert.Equal(LibraryPathOutcome.Refused, Paths().Add(_root, "Film", path));
+        Assert.Empty(_added);
+    }
+
+    [Fact]
     public void ARemovalUsesThePathAsTheLibraryStoresIt()
     {
         var stored = OldMovies + Path.DirectorySeparatorChar;

@@ -760,7 +760,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         var films = entries.Where(item => item.Kind == IndexedItemKind.Movie).ToList();
-        var libraries = films.Select(item => item.LibraryId).Distinct(StringComparer.Ordinal).ToList();
+        var libraries = films.SelectMany(item => item.LibraryIds).Distinct(StringComparer.Ordinal).ToList();
         if (libraries.Count == 0)
         {
             return entries;

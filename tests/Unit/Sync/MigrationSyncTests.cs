@@ -26,8 +26,8 @@ public sealed class MigrationSyncTests : IDisposable
     [Fact]
     public async Task ItRunsASyncAndWaitsForIt()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(2));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(2));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         await _sync.SyncAsync(CancellationToken.None).WaitAsync(_limit);
 
@@ -38,8 +38,8 @@ public sealed class MigrationSyncTests : IDisposable
     [Fact]
     public async Task ItWaitsForASyncAlreadyRunning()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _fixture.Client.OnPage = (_, _) =>
@@ -65,8 +65,8 @@ public sealed class MigrationSyncTests : IDisposable
     [Fact]
     public async Task AnOfflineServerDoesNotHoldItBack()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         _fixture.Client.OnPage = (_, _) => RemoteFailure.Unreachable;
 
         await _sync.SyncAsync(CancellationToken.None).WaitAsync(_limit);
@@ -77,8 +77,8 @@ public sealed class MigrationSyncTests : IDisposable
     [Fact]
     public async Task AServerThatNeverAnswersIsLeftAtTheReadLimit()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         _fixture.Client.BeforeClock = (_, token) => Task.Delay(Timeout.Infinite, token);
         _fixture.Sync.ServerReadLimit = TimeSpan.FromMilliseconds(200);
 
