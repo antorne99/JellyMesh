@@ -412,6 +412,53 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal(("Casa", Ciphertext), (server.Name, server.EncryptedCredentials));
     }
 
+    // A database opened again, as after a restore from a copy, may hold other rows: the store reads them again.
+    [Fact]
+    public void ADatabaseOpenedAgainIsReadAgain()
+    {
+        var database = new SpyDatabase(Open());
+        var store = Store(database);
+        store.Read(config => config.Servers.Count);
+        var changes = 0;
+        store.SettingsChanged += (_, _) => changes++;
+        Store(database).Update(config =>
+        {
+            config.SyncIntervalSeconds = 1200;
+            config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa" });
+        });
+        Assert.Empty(store.Read(config => config.Servers.ToList()));
+
+        database.Reopened++;
+
+        Assert.Equal("Casa", Assert.Single(store.Read(config => config.Servers.ToList())).Name);
+        Assert.Equal(1200, store.Read(config => config.SyncIntervalSeconds));
+        Assert.Equal(1, changes);
+    }
+
+    [Fact]
+    public void ADatabaseOpenedAgainThatCannotBeReadKeepsTheLoadedConfiguration()
+    {
+        Store().Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa" }));
+        var database = new SpyDatabase(Open());
+        var clock = new FixedClock(DateTimeOffset.UnixEpoch);
+        var store = Store(database, clock: clock);
+        store.Read(config => config.Servers.Count);
+
+        database.Reopened++;
+        database.ReadFailure = new InvalidOperationException("database is locked");
+
+        Assert.Equal("Casa", Assert.Single(store.Read(config => config.Servers.ToList())).Name);
+        Assert.Equal("Casa", Assert.Single(store.Read(config => config.Servers.ToList())).Name);
+        Assert.Equal(2, database.Reads);
+
+        database.ReadFailure = null;
+        clock.Now += TimeSpan.FromSeconds(5);
+        store.Read(config => config.Servers.Count);
+        store.Read(config => config.Servers.Count);
+
+        Assert.Equal(3, database.Reads);
+    }
+
     private PluginDatabase Open()
     {
         var database = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1);

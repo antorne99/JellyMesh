@@ -31,6 +31,9 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
     // The rows in the database; null until the configuration was read from it.
     private ConfigurationRows? _saved;
 
+    // The database generation the rows were read in: a database opened again is read again.
+    private long _loadedGeneration;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="PluginConfigurationStore"/> class.
     /// </summary>
@@ -54,11 +57,20 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
     public T Read<T>(Func<PluginConfiguration, T> read)
     {
         ArgumentNullException.ThrowIfNull(read);
+        T result;
+        bool reloaded;
         lock (_lock)
         {
-            EnsureLoaded();
-            return read(_config);
+            reloaded = EnsureLoaded();
+            result = read(_config);
         }
+
+        if (reloaded)
+        {
+            SettingsChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        return result;
     }
 
     /// <inheritdoc />
@@ -72,72 +84,88 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
     private void Change(Action<PluginConfiguration> update, Action<PluginConfiguration>? rollback)
     {
         ArgumentNullException.ThrowIfNull(update);
-        bool settingsChanged;
-        lock (_lock)
+        var settingsChanged = false;
+        try
         {
-            EnsureLoaded();
+            lock (_lock)
+            {
+                settingsChanged = EnsureLoaded();
 
-            // Compared with the settings in force, not the saved rows: a database with no settings saved runs the defaults.
-            var before = ConfigurationRows.From(_config);
-            try
-            {
-                update(_config);
-                var current = ConfigurationRows.From(_config);
-                settingsChanged = !before.SameRows(current, ConfigurationTables.Settings);
-                Save(current);
-            }
-            catch
-            {
-                rollback?.Invoke(_config);
-                throw;
+                // Compared with the settings in force, not the saved rows: a database with no settings saved runs the defaults.
+                var before = ConfigurationRows.From(_config);
+                try
+                {
+                    update(_config);
+                    var current = ConfigurationRows.From(_config);
+                    var changed = !before.SameRows(current, ConfigurationTables.Settings);
+                    Save(current);
+                    settingsChanged |= changed;
+                }
+                catch
+                {
+                    rollback?.Invoke(_config);
+                    throw;
+                }
             }
         }
-
-        if (settingsChanged)
+        finally
         {
-            SettingsChanged?.Invoke(this, EventArgs.Empty);
+            if (settingsChanged)
+            {
+                SettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
         }
     }
 
-    // Reads the configuration once. Until that works nothing is handed out, not even the defaults; once read it is kept.
-    private void EnsureLoaded()
+    // Reads the configuration once, and again when the database was opened again; true when that changed the settings.
+    // Until the first read nothing is handed out, not even the defaults; after it a failed read keeps what was loaded.
+    private bool EnsureLoaded()
     {
-        if (_saved is not null)
+        var loaded = _saved is not null;
+        if (loaded && _database.Generation == _loadedGeneration)
         {
-            return;
+            return false;
         }
 
-        if (_database.Health.Suspended)
+        if (!loaded && _database.Health.Suspended)
         {
             throw new StoreSuspendedException("The JellyMesh database is suspended, so its settings are not known.");
         }
 
         if (_timeProvider.GetUtcNow() < _retryAfter)
         {
-            throw new StoreSuspendedException("The JellyMesh settings could not be read from the database.", _loadFailure!);
+            return loaded ? false : throw new StoreSuspendedException("The JellyMesh settings could not be read from the database.", _loadFailure!);
         }
 
+        var before = loaded ? ConfigurationRows.From(_config) : null;
         try
         {
             Load();
             _loadFailure = null;
+            return before is not null && !before.SameRows(ConfigurationRows.From(_config), ConfigurationTables.Settings);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            if (_loadFailure is null)
+            if (_loadFailure is null && loaded)
+            {
+                _logger.LogWarning(exception, "The JellyMesh settings could not be read again from the database; the loaded ones stay until they can");
+            }
+            else if (_loadFailure is null)
             {
                 _logger.LogWarning(exception, "The JellyMesh settings could not be read from the database; JellyMesh waits until they can");
             }
 
             _loadFailure = exception;
             _retryAfter = _timeProvider.GetUtcNow() + RetryPause;
-            throw new StoreSuspendedException("The JellyMesh settings could not be read from the database.", exception);
+            return loaded ? false : throw new StoreSuspendedException("The JellyMesh settings could not be read from the database.", exception);
         }
     }
 
     private void Load()
     {
-        var rows = _database.ReadAsync(ConfigurationTables.Read, CancellationToken.None).GetAwaiter().GetResult();
+        var (rows, generation) = _database.ReadAsync(
+            (connection, transaction) => (ConfigurationTables.Read(connection, transaction), _database.Generation),
+            CancellationToken.None).GetAwaiter().GetResult();
         var config = rows.ToConfiguration();
         foreach (var setting in config.Normalize())
         {
@@ -153,6 +181,7 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
 
         _config = config;
         _saved = rows;
+        _loadedGeneration = generation;
         if (root is null || string.Equals(root, config.FederatedFolderPath, StringComparison.Ordinal))
         {
             return;
