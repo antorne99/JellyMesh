@@ -145,6 +145,53 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task While_a_library_has_no_id_yet_nothing_of_a_vanished_remote_library_is_removed()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+        fixture.Libraries.Folders.Add(new VirtualFolderInfo { Name = "Nuova", CollectionType = CollectionTypeOptions.movies, Locations = ["/media/nuova"] });
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Libraries.RemovedPaths);
+    }
+
+    [Fact]
+    public async Task A_check_after_the_cleanup_changes_nothing_more()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Libraries.Add("Film 4K di casa", CollectionTypeOptions.movies, Absolute(_filmsBFolder));
+        HoldsFilms(fixture, _filmsFolder, _filmsBFolder);
+        HoldsSeries(fixture);
+        fixture.Server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.ShowsB, Name = "Serie 4K", CollectionType = "tvshows" });
+        fixture.Server.ImportedLibraryIds.Add(TestLibraries.ShowsB);
+        var showsB = FederatedPaths.TypeFolderOf(_serverId, TestLibraries.ShowsB, TypeFolder.Series);
+        fixture.Stubs.Setup(stubs => stubs.TypeFoldersOf(_serverId, TypeFolder.Series)).Returns([_showsFolder, showsB]);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        Vanish(fixture, TestLibraries.ShowsB, "Serie 4K");
+        HoldsFilms(fixture, _filmsFolder);
+        HoldsSeries(fixture);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        Assert.Equal(["Casa - Serie 4K"], fixture.Libraries.Removed.Select(call => call.Name));
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Single(fixture.Libraries.Removed);
+        Assert.Single(fixture.Libraries.RemovedPaths);
+        Assert.Empty(fixture.Scans.Steps);
+        Assert.Contains(fixture.Libraries.Folders, folder => folder.Name == "Film 4K di casa");
+        Assert.Empty(fixture.Renamer.Calls);
+        var state = fixture.Manager.GetState(_serverId);
+        Assert.Equal(AutomaticLibrariesError.None, state.Error);
+        Assert.Empty(state.Conflicts);
+        Assert.Equal(["Film 4K", "Serie 4K"], state.Vanished.Order());
+    }
+
+    [Fact]
     public void The_state_names_the_vanished_remote_libraries()
     {
         var fixture = OnTypeFolders();

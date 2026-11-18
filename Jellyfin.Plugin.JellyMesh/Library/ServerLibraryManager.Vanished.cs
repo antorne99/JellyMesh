@@ -33,8 +33,9 @@ public sealed partial class ServerLibraryManager
         var changed = false;
         foreach (var (serverId, ids) in vanished)
         {
+            // A library with no id yet may be a renamed one, so nothing goes until the next check (decision 213).
             var gone = ids.Where(id => TitlesGone(serverId, id)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (gone.Count > 0 && ReadFolders() is { } folders)
+            if (gone.Count > 0 && ReadFolders() is { } folders && folders.All(folder => !string.IsNullOrEmpty(folder.ItemId)))
             {
                 changed |= await RemoveVanishedPathsAsync(serverId, gone, root, folders, cancellationToken).ConfigureAwait(false);
                 DeleteVanishedFolders(serverId, gone, root);
@@ -140,7 +141,7 @@ public sealed partial class ServerLibraryManager
     // Deletes the folder of each vanished remote library that no library, of the plugin or of the admin, points into.
     private void DeleteVanishedFolders(Guid serverId, IReadOnlySet<string> gone, string root)
     {
-        if (ReadFolders() is not { } folders)
+        if (ReadFolders() is not { } folders || folders.Any(folder => string.IsNullOrEmpty(folder.ItemId)))
         {
             return;
         }
