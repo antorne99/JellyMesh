@@ -200,7 +200,13 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
                 if (FollowAll() is { } folders)
                 {
-                    await ConvergeAsync(serverIds, folders, false, cancellationToken).ConfigureAwait(false);
+                    var scanned = await ConvergeAsync(serverIds, folders, false, cancellationToken).ConfigureAwait(false);
+
+                    // A change of library mode stopped halfway goes on here.
+                    foreach (var serverId in _store.Read(config => config.Servers.Where(server => server.AutomaticLibraryRegistry.Any(record => Retires(server.LibraryMode, record))).Select(server => server.Id).ToList()))
+                    {
+                        await RetireAsync(serverId, scanned, cancellationToken).ConfigureAwait(false);
+                    }
                 }
             }
             finally
@@ -528,7 +534,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
     }
 
-    private async Task EnableAsync(Guid serverId, RemoteServerConfig owner, LibraryMode mode, CancellationToken cancellationToken)
+    // Tells whether a scan ran after the libraries changed.
+    private async Task<bool> EnableAsync(Guid serverId, RemoteServerConfig owner, LibraryMode mode, CancellationToken cancellationToken)
     {
         var live = false;
         _store.Update(config =>
@@ -542,7 +549,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         });
         if (!live)
         {
-            return;
+            return false;
         }
 
         var folders = ReadFolders();
@@ -550,7 +557,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         {
             MarkSkipped(config => [Owned(config, owner) is null ? null : LiveRegistry(config, serverId)]);
             _errors[serverId] = AutomaticLibrariesError.ReadFailed;
-            return;
+            return false;
         }
 
         Follow(config => Owned(config, owner) is null ? null : LiveRegistry(config, serverId), folders);
@@ -564,23 +571,24 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
         RecordPreexisting(serverId, owner, folders);
         _materializer.PrepareServerFolders();
-        await ConvergeAsync([serverId], folders, true, cancellationToken, recreate: true).ConfigureAwait(false);
+        return await ConvergeAsync([serverId], folders, true, cancellationToken, recreate: true).ConfigureAwait(false);
     }
 
     // Gives each server the libraries its mode wants: those it never had, or all missing on a switch-on, are created with no
     // refresh, and those it has take the folders they lack and drop the 0.5 server folder; then one scan (§10 row 437).
-    private async Task ConvergeAsync(IReadOnlyList<Guid> serverIds, List<VirtualFolderInfo> folders, bool prepared, CancellationToken cancellationToken, bool recreate = false)
+    // Tells whether that scan ran.
+    private async Task<bool> ConvergeAsync(IReadOnlyList<Guid> serverIds, List<VirtualFolderInfo> folders, bool prepared, CancellationToken cancellationToken, bool recreate = false)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
         if (root.Length == 0 || serverIds.Count == 0)
         {
-            return;
+            return false;
         }
 
         // Until the registry is read, the layout of the titles and so the folders of the libraries are unknown.
         if (_stubs.UsesOlderLayout() is not { } usesOlder)
         {
-            return;
+            return false;
         }
 
         var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
@@ -608,6 +616,11 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 if (records.FirstOrDefault(record => string.Equals(KeyOf(record), planned.Key, StringComparison.OrdinalIgnoreCase)) is { } record)
                 {
                     changed |= AddFolders(serverId, record, planned, root, olderLayout, folders);
+                    continue;
+                }
+
+                if (TakeOver(owner, planned, folders))
+                {
                     continue;
                 }
 
@@ -651,6 +664,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         {
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
+
+        return changed;
     }
 
     private static AutomaticLibraryConfig Copy(AutomaticLibraryConfig record) =>
@@ -1057,7 +1072,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     private async Task DisableAsync(Guid serverId, CancellationToken cancellationToken)
     {
         _conflicts.TryRemove(serverId, out _);
-        if (!await DeleteAllAsync(config => LiveRegistry(config, serverId), serverId, cancellationToken).ConfigureAwait(false))
+        if (!await DeleteAllAsync(config => LiveRegistry(config, serverId), serverId, null, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -1124,7 +1139,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 continue;
             }
 
-            if (!await DeleteAllAsync(config => HeldRegistry(config, serverId), null, cancellationToken).ConfigureAwait(false))
+            if (!await DeleteAllAsync(config => HeldRegistry(config, serverId), null, null, cancellationToken).ConfigureAwait(false))
             {
                 continue;
             }
@@ -1139,14 +1154,14 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
     }
 
-    // Deletes the libraries of a registry one at a time, each checked again on a fresh read, and scans after a release.
-    // False when it had to stop.
-    private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, CancellationToken cancellationToken)
+    // Deletes the libraries of a registry one at a time, or only those the filter takes, each checked again on a fresh
+    // read, and scans after a release. False when it had to stop.
+    private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, CancellationToken cancellationToken)
     {
         var released = false;
         try
         {
-            return await DeleteEachAsync(locate, errorKey, () => released = true, cancellationToken).ConfigureAwait(false);
+            return await DeleteEachAsync(locate, errorKey, only, () => released = true, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1158,9 +1173,9 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
     }
 
-    private async Task<bool> DeleteEachAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Action onRelease, CancellationToken cancellationToken)
+    private async Task<bool> DeleteEachAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, Action onRelease, CancellationToken cancellationToken)
     {
-        while (_store.Read(config => locate(config)?.Libraries.Count > 0))
+        while (_store.Read(config => locate(config)?.Libraries.Any(record => only is null || only(config, record)) == true))
         {
             await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
             var folders = ReadFolders();
@@ -1174,7 +1189,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
             // Checked again on a fresh read, so that the name is the current one and a changed library is left alone.
             Follow(locate, folders);
-            var next = _store.Read(config => locate(config) is { } registry && registry.Libraries.FirstOrDefault() is { } record
+            var next = _store.Read(config => locate(config) is { } registry && registry.Libraries.FirstOrDefault(record => only is null || only(config, record)) is { } record
                 ? new DeletedLibrary(registry.ServerId, record.Kind, record.RemoteLibraryId, record.Name, record.Adopted)
                 : null);
             if (next is null)
@@ -1215,6 +1230,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     {
                         registry.Libraries.Remove(record);
                     }
+                }
+
+                // A library the plugin took away for another mode may be made again when the mode comes back.
+                if (only is not null && Find(config, next.ServerId) is { } server)
+                {
+                    server.CreatedLibraryKeys.Remove(next.RemoteLibraryId.Length > 0 ? next.RemoteLibraryId : next.Kind.ToString());
                 }
             });
             if (next.Adopted)
