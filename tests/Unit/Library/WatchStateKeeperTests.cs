@@ -112,6 +112,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         _users.Object,
         _userData.Object,
         store,
+        _fixture.Merges,
         _fixture.Sync.Clock,
         _logger);
 
@@ -689,6 +690,71 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Equal(7_000_000_000, Row(_bruno, episode).PlaybackPositionTicks);
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
+
+    // D21: a title merged by hand gets the kept state of each of its identities, on every copy of it.
+    [Fact]
+    public async Task AMergedTitleGetsTheKeptStateOfEachOfItsIdentities()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", "films");
+        var c = await AddAndMaterializeAsync("C", "films-c");
+        await MergeAsync((a, "x", "1"), (c, "y", null));
+        var alfa = FilmItem(a);
+        var sonda = FilmItem(c);
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna), KeptFilm("Sonda Senza ID", null, _bruno)], CancellationToken.None);
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.All(new[] { alfa, sonda }, film => Assert.True(Row(_anna, film).Played));
+        Assert.All(new[] { alfa, sonda }, film => Assert.True(Row(_bruno, film).Played));
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // D21: two films of one server merged by hand are one stub, which gets the kept state of each.
+    [Fact]
+    public async Task AStubOfTwoFilmsMergedByHandGetsTheKeptStateOfEach()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await _fixture.Sync.AddServerAsync("A", "films", "films-c");
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await MergeAsync((a, "x", "1"), (a, "y", null));
+        var film = FilmItem(a);
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna), KeptFilm("Sonda Senza ID", null, _bruno)], CancellationToken.None);
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, film).Played);
+        Assert.True(Row(_bruno, film).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    private async Task MergeAsync(params (RemoteServerInfo Server, string ItemId, string? Tmdb)[] copies)
+    {
+        var merge = new ManualMerge
+        {
+            Id = Guid.NewGuid(),
+            CreatedUtc = SyncFixture.Start,
+            Copies = copies.Select(copy => new MergedCopy { ServerId = copy.Server.Id.ToString("N"), ItemId = copy.ItemId, Kind = ContentKind.Movie, Tmdb = copy.Tmdb }).ToList()
+        };
+        await _fixture.Merges.UpdateAsync(_ => [merge], CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+    }
+
+    private static KeptTitle KeptFilm(string title, string? tmdb, User user) => new()
+    {
+        OldItemId = Guid.NewGuid(),
+        Kind = KeptTitleKind.Movie,
+        Title = title,
+        Year = 2026,
+        Ids = new ContentIds(tmdb, null, null),
+        RunTimeTicks = NinetyMinutes,
+        SavedUtc = _watched,
+        Users = [new KeptUserState(user.Id, true, 1, 0, _watched, false, null)]
+    };
 
     // The items a scan makes of the series stub and its one episode.
     private (Series Series, Episode Episode) ShowItems(RemoteServerInfo server)

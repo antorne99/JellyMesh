@@ -26,7 +26,6 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 {
     private const string SavedServer = "kept";
-    private const string CurrentServer = "current";
 
     // How long a record nobody used is kept (row 412).
     private static readonly TimeSpan _keptFor = TimeSpan.FromDays(90);
@@ -39,6 +38,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     private readonly IUserManager _users;
     private readonly IUserDataManager _userData;
     private readonly IKeptWatchStateStore _kept;
+    private readonly IManualMergeStore _merges;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<WatchStateKeeper> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -57,6 +57,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     /// <param name="users">The user manager.</param>
     /// <param name="userData">The user data manager.</param>
     /// <param name="kept">Where the state is kept.</param>
+    /// <param name="merges">The manual merges, which also join kept titles (D21).</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
     public WatchStateKeeper(
@@ -68,6 +69,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         IUserManager users,
         IUserDataManager userData,
         IKeptWatchStateStore kept,
+        IManualMergeStore merges,
         TimeProvider timeProvider,
         ILogger<WatchStateKeeper> logger)
     {
@@ -79,6 +81,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         _users = users;
         _userData = userData;
         _kept = kept;
+        _merges = merges;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -286,13 +289,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         var saved = titles.Where(title => title.Kind != KeptTitleKind.Series).Select(Saved).ToList();
         var savedSeries = titles.Where(title => title.Kind == KeptTitleKind.Series).Select(Saved).ToList();
         var done = new List<(long TitleId, Guid UserId)>();
-        var pairs = DedupEngine.Pair(saved, savedSeries, current, currentSeries);
+        var pairs = DedupEngine.Pair(saved, savedSeries, current, currentSeries, _merges.Merges);
         foreach (var match in pairs.GroupBy(pair => pair.Saved.ItemId, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var title = byId[match.Key];
+            var isSeries = title.Kind == KeptTitleKind.Series;
             var items = match
-                .Select(pair => paths[pair.Current.ItemId])
+                .SelectMany(pair => paths[(isSeries, pair.Current.ServerId, pair.Current.ItemId)])
                 .Distinct()
                 .Select(path => _library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder))
                 .OfType<BaseItem>()
@@ -306,7 +310,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             var people = users.ToDictionary(user => user.Id);
             foreach (var state in title.Users)
             {
-                if (people.TryGetValue(state.UserId, out var user) && PutBack(user, state, items, title.Kind == KeptTitleKind.Series, cancellationToken))
+                if (people.TryGetValue(state.UserId, out var user) && PutBack(user, state, items, isSeries, cancellationToken))
                 {
                     done.Add((title.Id, state.UserId));
                 }
@@ -358,8 +362,9 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
     }
 
-    // The stubs of configured servers as the dedup reads them, by stub id, with where each one is.
-    private (List<CatalogItem> Titles, List<CatalogItem> Series, Dictionary<string, (string Path, bool IsFolder)> Paths) CurrentStubs()
+    // Every indexed source of the stubs of configured servers, as the dedup reads it, with the stubs it is in. Sources keep
+    // their server and item, so that a manual merge finds them (D21).
+    private (List<CatalogItem> Titles, List<CatalogItem> Series, Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>> Paths) CurrentStubs()
     {
         var snapshot = _index.Snapshot;
         var configured = _servers.GetServers().Select(server => server.Id).ToHashSet();
@@ -370,34 +375,45 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             .ToDictionary(group => group.Key, group => group.First().Item);
 
         var state = _registry.State;
-        var titles = new List<CatalogItem>();
-        var series = new Dictionary<string, CatalogItem>(StringComparer.Ordinal);
-        var paths = new Dictionary<string, (string Path, bool IsFolder)>(StringComparer.Ordinal);
+        var seriesPaths = state.Series.ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
+        var items = new Dictionary<(bool IsSeries, string ServerId, string ItemId), CatalogItem>();
+        var paths = new Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>>();
+        void Add(CatalogItem item, bool isSeries, string path)
+        {
+            var key = (isSeries, item.ServerId, item.ItemId);
+            items.TryAdd(key, item);
+            if (!paths.TryGetValue(key, out var list))
+            {
+                paths[key] = list = [];
+            }
+
+            if (!list.Contains((path, isSeries)))
+            {
+                list.Add((path, isSeries));
+            }
+        }
+
         foreach (var stub in state.Stubs.Where(stub => stub.ServerId is { } server ? configured.Contains(server) : stub.Sources.Any(source => configured.Contains(source.ServerId))))
         {
-            var item = stub.Sources
+            var sources = stub.Sources
                 .Where(source => configured.Contains(source.ServerId))
                 .Select(source => indexed.GetValueOrDefault((source.ServerId, source.ItemId)))
-                .FirstOrDefault(found => found is not null);
-            if (item is null)
+                .OfType<CatalogItem>();
+            foreach (var item in sources)
             {
-                continue;
-            }
-
-            titles.Add(item with { ServerId = CurrentServer, ItemId = stub.Id });
-            paths[stub.Id] = (stub.RelativePath, false);
-            if (item.Kind == ContentKind.Episode && stub.SeriesStubId is { } seriesId && !series.ContainsKey(seriesId))
-            {
-                series[seriesId] = item with { ServerId = CurrentServer, ItemId = seriesId, SeasonNumber = null, EpisodeNumber = null, EpisodeNumberEnd = null };
+                Add(item, false, stub.RelativePath);
+                if (item.Kind == ContentKind.Episode && stub.SeriesStubId is { } seriesId && seriesPaths.TryGetValue(seriesId, out var seriesPath))
+                {
+                    // A series is its series item, or the episode itself when that is not known.
+                    Add(item with { ItemId = item.SeriesId ?? item.ItemId, SeasonNumber = null, EpisodeNumber = null, EpisodeNumberEnd = null }, true, seriesPath);
+                }
             }
         }
 
-        foreach (var entry in state.Series.Where(entry => series.ContainsKey(entry.Id)))
-        {
-            paths[entry.Id] = (entry.RelativePath, true);
-        }
-
-        return (titles, series.Values.Where(item => paths.ContainsKey(item.ItemId)).ToList(), paths);
+        return (
+            items.Where(entry => !entry.Key.IsSeries).Select(entry => entry.Value).ToList(),
+            items.Where(entry => entry.Key.IsSeries).Select(entry => entry.Value).ToList(),
+            paths);
     }
 
     // Saves the state of the titles, or says why not in the log; false when they must stay.
