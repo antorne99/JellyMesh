@@ -100,8 +100,8 @@ check "nothing covers the folders any more" '[]' "$(folder .Covering)"
 
 echo "--- the automatic libraries of one server, one of them deleted in the dashboard, then another library on its folder"
 own() { get local /JellyMesh/Admin/Status | jq -c --arg id "$id_b" ".Servers[] | select(.Id == \$id) | .AutomaticLibraries | $1"; }
-post local "/JellyMesh/Admin/Servers/$id_b/AutomaticLibraries" '{"Enabled":true}' >/dev/null
-check "switching on answers 202" 202 "$(cat "$WORK/status")"
+save_server local "$id_b" '{"LibraryMode":"ByType"}' >/dev/null
+check "switching on answers 200" 200 "$(cat "$WORK/status")"
 for i in $(seq 1 120); do [ "$(own '[.Busy, (.Libraries | length)]')" = '[false,2]' ] && break; sleep 1; done
 check "the server has its two libraries" 2 "$(own '.Libraries | length')"
 own_serie=$(own '.Libraries[] | select(.Kind == "Series") | .Name' | jq -r .)

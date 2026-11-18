@@ -146,8 +146,8 @@ FOLDER=$(server_folder "$SERVER")
 import_all local "$SERVER"
 scan local
 sync_now local
-post local "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' >/dev/null
-check "automatic libraries switched on" 202 "$(status)"
+save_server local "$SERVER" '{"LibraryMode":"ByType"}' >/dev/null
+check "automatic libraries switched on" 200 "$(status)"
 wait_own
 scan local
 sync_now local
@@ -194,11 +194,10 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   local old=$1 new=$2 answer
   echo "--- rename $old to $new"
   local old_film=$(lib_id "$old - Film") old_serie=$(lib_id "$old - Serie")
-  answer=$(post local "/JellyMesh/Admin/Servers/$SERVER/Rename" "{\"Name\":\"$new\"}")
-  check "without a confirmation: 409" 409 "$(status)"
-  check "listing the libraries it renames" "[\"$old - Film\",\"$old - Serie\"]" "$(echo "$answer" | jq -c .Libraries)"
-  post local "/JellyMesh/Admin/Servers/$SERVER/Rename" "{\"Name\":\"$new\",\"Confirmed\":true}" >/dev/null
-  check "confirmed: 202" 202 "$(status)"
+  answer=$(check_server local "$SERVER" "{\"Name\":\"$new\"}")
+  check "the check lists the libraries it renames" "[\"$old - Film\",\"$old - Serie\"]" "$(echo "$answer" | jq -c .Consequences.Rename.Libraries)"
+  save_server local "$SERVER" "{\"Name\":\"$new\"}" >/dev/null
+  check "saved: 200" 200 "$(status)"
   check "the rename running is no library change" '{"Added":[],"Removed":[]}' "$(changes)"
   wait_rename
   OLD_SERIES+=("$old_serie")

@@ -139,11 +139,17 @@ configure() { # configure <server> <metadata protection>
 }
 
 add_remote() { # add_remote <consumer> <name> <url> -> server id
-  local id ids
+  local id
   id=$(post "$1" /JellyMesh/Admin/Servers "$(jq -n --arg n "$2" --arg u "$3" '{Name:$n,Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" | jq -r .Id)
-  ids=$(get "$1" "/JellyMesh/Admin/Servers/$id/Libraries" | jq -c '{LibraryIds: map(.Id)}')
-  post "$1" "/JellyMesh/Admin/Servers/$id/Libraries" "$ids" >/dev/null
+  import_all "$1" "$id"
   echo "$id"
+}
+
+import_all() { # import_all <consumer> <server id>: every library the remote user sees, saved with the edit form
+  local form ids
+  form=$(get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+  ids=$(post "$1" "/JellyMesh/Admin/Servers/$2/Edit/Check" "$form" | jq -c '[.Libraries[].Id]')
+  req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" >/dev/null
 }
 
 share_all() { # share_all <server>: everything to the dedicated user

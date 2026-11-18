@@ -160,8 +160,9 @@ for n in $(seq 1 "$REMOTES"); do
   [ -n "$server" ] && [ "$server" != null ] || { echo "cannot add server $name" >&2; exit 1; }
   # The server folder is named by the dashed form of the GUID.
   server=$(echo "$server" | sed -E 's/^(.{8})-?(.{4})-?(.{4})-?(.{4})-?(.{12})$/\1-\2-\3-\4-\5/')
-  libraries=$(get "/JellyMesh/Admin/Servers/$server/Libraries" | jq -c '{LibraryIds: map(.Id)}')
-  post "/JellyMesh/Admin/Servers/$server/Libraries" "$libraries" >/dev/null
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$server" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+  libraries=$(post "/JellyMesh/Admin/Servers/$server/Edit/Check" "$form" | jq -c '{LibraryIds: [.Libraries[].Id]}')
+  req PUT "/JellyMesh/Admin/Servers/$server" "$(jq -c --argjson l "$libraries" '. + $l' <<<"$form")" >/dev/null
   echo "server $name $server, libraries $libraries"
   SERVERS="$SERVERS $server"
 done

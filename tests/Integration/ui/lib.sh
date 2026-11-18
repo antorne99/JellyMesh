@@ -95,7 +95,7 @@ fix_key() {
     restart_server "$1"
   fi
   for id in $(get "$1" /JellyMesh/Admin/Status | jq -r '.Servers[] | select(.NeedsPassword) | .Id'); do
-    post "$1" "/JellyMesh/Admin/Servers/$id/Credentials" '{"Username":"jellymesh","Password":"jellymesh-test"}' >/dev/null
+    req "$1" PUT "/JellyMesh/Admin/Servers/$id" "$(get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$id" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "jellymesh", Password: "jellymesh-test"}')" >/dev/null
   done
 }
 
