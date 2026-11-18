@@ -25,7 +25,7 @@ public class RemoteServerConfig
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the normalized tailnet base URL.
+    /// Gets or sets the normalized base URL of the remote.
     /// </summary>
     public string Url { get; set; } = string.Empty;
 

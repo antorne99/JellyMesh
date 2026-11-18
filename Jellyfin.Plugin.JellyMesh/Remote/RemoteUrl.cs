@@ -4,8 +4,8 @@ using System.Linq;
 namespace Jellyfin.Plugin.JellyMesh.Remote;
 
 /// <summary>
-/// Validation of remote base URLs. Whether an address is on the tailnet cannot be told from the URL
-/// (MagicDNS short names are plain host names), so it stays the responsibility of the administrator.
+/// Validation of remote base URLs. Any http or https address the administrator enters is accepted: the plugin
+/// does not check where it points.
 /// </summary>
 public static class RemoteUrl
 {

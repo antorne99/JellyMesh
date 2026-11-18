@@ -20,7 +20,7 @@ public sealed class AddServerRequest
     public string Name { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets the tailnet base URL.
+    /// Gets the base URL of the remote, as the administrator entered it.
     /// </summary>
     [Required]
     public string Url { get; init; } = string.Empty;

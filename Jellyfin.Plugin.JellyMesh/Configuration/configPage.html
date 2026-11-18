@@ -1353,8 +1353,8 @@
                                     <input id="jmServerName" type="text" is="emby-input" required />
                                 </div>
                                 <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Tailnet URL</label>
-                                    <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server.tailnet.ts.net:8096" />
+                                    <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Server URL</label>
+                                    <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server:8096" />
                                 </div>
                                 <div class="inputContainer">
                                     <label class="inputLabel inputLabelUnfocused" for="jmServerUser">User</label>
@@ -1637,7 +1637,7 @@
                     "Catalog": "Catalogo",
                     "Check that the URL leads to a Jellyfin server, then test the connection.": "Controlla che l'URL porti a un server Jellyfin, poi prova la connessione.",
                     "Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.": "Controlla che l'URL porti a un server Jellyfin. Se non è così, rimuovi questo server e aggiungilo di nuovo.",
-                    "Check that the server is running and reachable on the tailnet, then test the connection.": "Controlla che il server sia acceso e raggiungibile sulla tailnet, poi prova la connessione.",
+                    "Check that the server is running and reachable at its URL, then test the connection.": "Controlla che il server sia acceso e raggiungibile al suo URL, poi prova la connessione.",
                     "Check the log of that server, then test the connection.": "Controlla il log di quel server, poi prova la connessione.",
                     "Checking which copy would play.": "Controllo di quale copia verrebbe riprodotta.",
                     "Choose a folder to see the paths to link.": "Scegli una cartella per vedere i percorsi da collegare.",
@@ -1736,7 +1736,7 @@
                     "Link the folders of each server": "Collega le cartelle di ogni server",
                     "Linked": "Collegata",
                     "Locks federated items, so metadata fetchers and \"Replace all metadata\" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.": "Blocca gli elementi federati, così i recuperi di metadati e \"Sostituisci tutti i metadati\" non li toccano. Se disattivata, i recuperi completano i metadati e i titoli senza ID provider possono essere abbinati al film sbagliato.",
-                    "Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.": "Accedi con un utente dedicato non amministratore di quel server, al suo indirizzo tailnet. Subito dopo compaiono le sue librerie.",
+                    "Log in with a dedicated non-admin user of that server, at its URL. Its libraries are listed right after.": "Accedi con un utente dedicato non amministratore di quel server, al suo URL. Subito dopo compaiono le sue librerie.",
                     "Merge selected": "Unisci selezionati",
                     "Merge the ones that are one film.": "Unisci quelli che sono un solo film.",
                     "Merge the ones that are one series.": "Unisci quelle che sono una sola serie.",
@@ -1823,6 +1823,7 @@
                     "Series library": "Libreria serie",
                     "Server": "Server",
                     "Server libraries": "Librerie del server",
+                    "Server URL": "URL del server",
                     "Servers": "Server",
                     "Set by JELLYMESH_FEDERATED_ROOT on the server. To choose it here, remove the variable and restart.": "Impostata da JELLYMESH_FEDERATED_ROOT sul server. Per sceglierla qui, rimuovi la variabile e riavvia.",
                     "Set the federated folder first.": "Imposta prima la cartella federata.",
@@ -1920,7 +1921,6 @@
                     "Sync now": "Sincronizza ora",
                     "Sync running...": "Sincronizzazione in corso...",
                     "Sync state unknown.": "Stato della sincronizzazione sconosciuto.",
-                    "Tailnet URL": "URL tailnet",
                     "Test connection": "Prova la connessione",
                     "Test the connection to see what is wrong.": "Prova la connessione per vedere cosa non va.",
                     "The Jellyfin user stays and can still log in, so that server can keep reading and playing in standard mode, with all the access this user has in Jellyfin and no stream limit. To keep it out, disable the user in Dashboard > Users.": "L'utente Jellyfin resta e può ancora accedere, quindi quel server può continuare a leggere e riprodurre in modalità standard, con tutti gli accessi che questo utente ha in Jellyfin e senza limite di stream. Per tenerlo fuori, disattiva l'utente nel Pannello di controllo > Utenti.",
@@ -2100,7 +2100,7 @@
                     Timeout: t('no answer in time')
                 };
                 var connectionSteps = {
-                    Offline: t('Check that the server is running and reachable on the tailnet, then test the connection.'),
+                    Offline: t('Check that the server is running and reachable at its URL, then test the connection.'),
                     AuthenticationFailed: t('Fix the login on that server, or remove this server and add it again with a working one.'),
                     Forbidden: t('Give the dedicated user access on that server, then test the connection.'),
                     AdministratorAccount: t('Remove this server and add it again with a dedicated non-admin user.'),
@@ -4958,7 +4958,7 @@
                         key: 'server',
                         name: t('Add a remote server'),
                         state: stateOf(status.Servers.length > 0),
-                        text: t('Log in with a dedicated non-admin user of that server, at its tailnet address. Its libraries are listed right after.'),
+                        text: t('Log in with a dedicated non-admin user of that server, at its URL. Its libraries are listed right after.'),
                         tab: 'servers'
                     }, {
                         key: 'libraries',

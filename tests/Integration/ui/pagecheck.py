@@ -2279,14 +2279,14 @@ def cards_faults(s, width):
     shows("a sync failure on a working connection", "Online, last sync failed", "Last sync failed (server error)", "log of that server")
 
     fault("Offline", None, "Complete")
-    shows("a failed check after a good sync", "Offline", "tailnet")
+    shows("a failed check after a good sync", "Offline", "reachable at its URL")
 
     fault("NewFailure", "AnotherNewFailure", Mode="NewMode")
     shows("an unknown failure", "Unknown problem", "Last sync failed (unknown problem)", "Test the connection")
     check(name + " an unknown failure shows no enum name", "NewFailure" not in stock.inner_text(), stock.inner_text())
     check(name + " an unknown mode shows no enum name", u.card_fact(stock, "Mode") == "Mode not known yet", u.card_fact(stock, "Mode"))
 
-    long_url = "http://" + "a-very-long-host-name-without-any-place-to-break" * 3 + ".tailnet.ts.net:8096"
+    long_url = "http://" + "a-very-long-host-name-without-any-place-to-break" * 3 + ".invalid:8096"
     fault("Online", None, "Complete", Name=LONG_NAME, Url=long_url)
     long_card = u.server_row(page, LONG_NAME)
     check(name + " a long name updates in place", until(page, lambda: long_card.count() == 1, 22))
@@ -2446,7 +2446,7 @@ def cards_offline(s, width):
     stock = card_shows(page, name, of_server(status, "stock"), of_server(sync, "stock"))
     cause = u.cause_of(stock)
     check(name + " says offline", u.state_of(stock) == "Offline", u.state_of(stock))
-    for part in ["could not reach it", "kept as they were", "full read runs when it answers again", "tailnet"]:
+    for part in ["could not reach it", "kept as they were", "full read runs when it answers again", "reachable at its URL"]:
         check(f"{name} says {part}", part in cause, cause)
     check(name + " has no capitals", "OFFLINE" not in page.locator(u.PAGE).inner_text())
     state_is_written(page, name)
