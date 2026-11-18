@@ -146,6 +146,46 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
+    public async Task TheOrderOfTheEntriesComesBackAfterARestart()
+    {
+        using var index = NewIndex();
+        await index.ReplaceServerAsync(_first, [Item("a"), Item("b"), Item("c")], _now, null, CancellationToken.None);
+        await index.ReplaceServerAsync(_first, [Item("c"), Item("a"), Item("d"), Item("b")], _now, null, CancellationToken.None);
+
+        using var restarted = NewIndex();
+
+        Assert.Equal(["c", "a", "d", "b"], restarted.Snapshot.Find(_first)!.Items.Select(item => item.ItemId));
+    }
+
+    [Fact]
+    public async Task RowsThatDoNotReadGiveAnEmptyFlaggedIndexWhoseNextChangeStartsAfresh()
+    {
+        using (var index = NewIndex())
+        {
+            await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
+            await index.ReplaceServerAsync(_second, [Item("b")], _now, null, CancellationToken.None);
+        }
+
+        await _database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE index_items SET data = '{' WHERE item_id = 'b';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+
+        using var damaged = NewIndex();
+        Assert.Equal(IndexHealth.Corrupt, damaged.Snapshot.Health);
+        Assert.Empty(damaged.Snapshot.Servers);
+
+        Assert.True(await damaged.ReplaceServerAsync(_first, [Item("c")], _now, null, CancellationToken.None));
+
+        using var restarted = NewIndex();
+        Assert.Equal(IndexHealth.Ok, restarted.Snapshot.Health);
+        Assert.Equal("c", Assert.Single(Assert.Single(restarted.Snapshot.Servers).Items).ItemId);
+    }
+
+    [Fact]
     public async Task TheIndexComesBackAfterARestart()
     {
         using (var index = NewIndex())

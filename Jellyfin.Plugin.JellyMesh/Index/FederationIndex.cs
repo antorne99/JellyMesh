@@ -22,8 +22,11 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private volatile IndexSnapshot _snapshot;
 
-    // The fingerprints of the stored entries; null while the store could not be read, so memory is not its copy.
-    private Dictionary<Guid, Dictionary<string, UInt128>>? _rows;
+    // The stored entries; null while the store could not be read, so memory is not its copy.
+    private Dictionary<Guid, Dictionary<string, IndexTables.StoredRow>>? _rows;
+
+    // True after rows that do not read: the next write drops every row, so the damage does not outlive it.
+    private bool _damaged;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationIndex"/> class, reading the index from the database.
@@ -41,6 +44,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         var stored = LoadAsync(CancellationToken.None).GetAwaiter().GetResult();
         _snapshot = stored?.Snapshot ?? IndexSnapshot.Empty(IndexHealth.Corrupt);
         _rows = stored?.Rows;
+        _damaged = stored is { Snapshot.Health: IndexHealth.Corrupt };
     }
 
     /// <inheritdoc />
@@ -129,7 +133,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
     }
 
     // What changed between two snapshots, server by server; a catalog that is the same object did not change.
-    private static List<IndexTables.ServerWrite> Plan(IndexSnapshot current, IndexSnapshot next, Dictionary<Guid, Dictionary<string, UInt128>> rows)
+    private static List<IndexTables.ServerWrite> Plan(IndexSnapshot current, IndexSnapshot next, Dictionary<Guid, Dictionary<string, IndexTables.StoredRow>> rows)
     {
         var writes = new List<IndexTables.ServerWrite>();
         var before = current.Servers.ToDictionary(server => server.ServerId);
@@ -154,8 +158,8 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         return writes;
     }
 
-    // Brings the fingerprints in step with a committed write.
-    private static void Apply(Dictionary<Guid, Dictionary<string, UInt128>> rows, IReadOnlyList<IndexTables.ServerWrite> writes)
+    // Brings the stored entries in step with a committed write.
+    private static void Apply(Dictionary<Guid, Dictionary<string, IndexTables.StoredRow>> rows, IReadOnlyList<IndexTables.ServerWrite> writes)
     {
         foreach (var write in writes)
         {
@@ -167,7 +171,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
 
             if (write.Rewrite || !rows.TryGetValue(write.ServerId, out var stored))
             {
-                rows[write.ServerId] = stored = new Dictionary<string, UInt128>(StringComparer.Ordinal);
+                rows[write.ServerId] = stored = new Dictionary<string, IndexTables.StoredRow>(StringComparer.Ordinal);
             }
 
             foreach (var itemId in write.Deletes)
@@ -175,15 +179,20 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
                 stored.Remove(itemId);
             }
 
+            foreach (var (itemId, position) in write.Moves)
+            {
+                stored[itemId] = stored[itemId] with { Position = position };
+            }
+
             foreach (var row in write.Upserts)
             {
-                stored[row.Item.ItemId] = row.Fingerprint;
+                stored[row.Item.ItemId] = new IndexTables.StoredRow(row.Fingerprint, row.Position);
             }
         }
     }
 
     // Null when the store is suspended or cannot be read, to be tried again before the next change. Rows that do not read
-    // give an empty index whose servers are written whole at their next read. Either way it is empty for lack of data.
+    // give an empty index that the next write starts afresh. Either way it is empty for lack of data.
     private async Task<IndexTables.StoredIndex?> LoadAsync(CancellationToken cancellationToken)
     {
         try
@@ -217,6 +226,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
 
                 _snapshot = stored.Snapshot;
                 _rows = stored.Rows;
+                _damaged = stored.Snapshot.Health == IndexHealth.Corrupt;
             }
 
             var current = _snapshot;
@@ -229,8 +239,10 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
             var writes = Plan(current, next, _rows);
             if (writes.Count > 0)
             {
-                await _database.WriteAsync((connection, transaction) => IndexTables.Write(connection, transaction, writes), cancellationToken).ConfigureAwait(false);
+                var clear = _damaged;
+                await _database.WriteAsync((connection, transaction) => IndexTables.Write(connection, transaction, writes, clear), cancellationToken).ConfigureAwait(false);
                 Apply(_rows, writes);
+                _damaged = false;
             }
 
             _snapshot = next;
@@ -238,6 +250,12 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
+            // A store that comes back may not hold what it held, so it is read again before the next change.
+            if (exception is StoreSuspendedException)
+            {
+                _rows = null;
+            }
+
             _logger.LogError("Cannot save the federation index: {Error}", exception.GetType().Name);
             return false;
         }
