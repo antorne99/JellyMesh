@@ -467,6 +467,17 @@ public class StubPlannerTests
     }
 
     [Fact]
+    public void ALibraryThatHoldsAnItemReadFirstFromAnotherIsNotEmpty()
+    {
+        var plan = Plan(
+            [],
+            [Catalog(_serverA, ServerSyncState.Complete, EpisodeItem("e", "s", 1, 1) with { OtherLibraryIds = [Library] })],
+            new StubState { Stubs = [ExistingStub("s1", "k1", _serverA, "m1")] });
+
+        Assert.Empty(plan.Held);
+    }
+
+    [Fact]
     public void ADeselectedLibraryIsNotHeld()
     {
         var plan = Plan(

@@ -494,6 +494,36 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task AnItemInTwoChosenLibrariesKeepsBothWithTheFirstReadFirst()
+    {
+        _fixture.Client.Libraries.Add(new("films4k", "Film 4K", "movies"));
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Client.Add("films4k", RemoteItemType.Movie, TestItems.Movie("m"), TestItems.Movie("k"));
+        var server = await _fixture.AddServerAsync("A", "films4k", "films");
+
+        var result = await ReadAsync(server);
+
+        var both = Assert.Single(result.Value!, item => item.ItemId == "m");
+        Assert.Equal("films", both.LibraryId);
+        Assert.Equal(["films4k"], both.OtherLibraryIds);
+        Assert.Equal(["films", "films4k"], both.LibraryIds);
+        Assert.Equal(["films4k"], Assert.Single(result.Value!, item => item.ItemId == "k").LibraryIds);
+    }
+
+    [Fact]
+    public async Task AChangedItemKeepsEveryChosenLibraryTheFeedNames()
+    {
+        _fixture.Client.Libraries.Add(new("films4k", "Film 4K", "movies"));
+        _fixture.Client.ItemsById.Add(TestItems.Movie("m"));
+        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", false, [new RemoteChange("m", "Movie", ["films4k", "other", "films"])]));
+        var server = await _fixture.AddServerAsync("A", "films", "films4k");
+
+        var result = await _fixture.Reader.ReadFeedAsync(server, "start", new System.Collections.Generic.HashSet<string>(), SyncFixture.Start, CancellationToken.None);
+
+        Assert.Equal(["films4k", "films"], Assert.Single(result.Value!.Items).LibraryIds);
+    }
+
+    [Fact]
     public async Task NoChosenLibraryMeansNoRequest()
     {
         var server = await _fixture.AddServerAsync("A");
