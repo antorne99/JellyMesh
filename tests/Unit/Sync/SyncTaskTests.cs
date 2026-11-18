@@ -42,6 +42,17 @@ public sealed class SyncTaskTests : IDisposable
         Assert.Equal(TimeSpan.FromHours(3).Ticks, daily.TimeOfDayTicks);
     }
 
+    // Jellyfin asks for them while it starts, and a failure there would stop the server.
+    [Fact]
+    public void WhileTheSettingsCannotBeReadTheDefaultTriggersAreTheDefaultOnes()
+    {
+        _fixture.Store.Configuration.SyncIntervalSeconds = 600;
+        _fixture.Store.Unavailable = true;
+
+        Assert.Equal(TimeSpan.FromSeconds(900).Ticks, Assert.Single(Incremental().GetDefaultTriggers()).IntervalTicks);
+        Assert.Equal(TimeSpan.FromHours(3).Ticks, Assert.Single(Reconciliation().GetDefaultTriggers()).TimeOfDayTicks);
+    }
+
     [Fact]
     public void TheDefaultTriggersFollowTheConfiguration()
     {

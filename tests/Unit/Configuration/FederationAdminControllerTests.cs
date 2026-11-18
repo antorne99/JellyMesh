@@ -16,6 +16,7 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -241,6 +242,21 @@ public class FederationAdminControllerTests
 
         Assert.Equal(forgotten, Assert.IsType<ForgetResponse>(result.Value).Servers);
         sync.Verify(service => service.StartRemovalCleanup(), Times.Exactly(cleanups));
+    }
+
+    [Fact]
+    public async Task Forgetting_missing_servers_while_the_settings_cannot_be_read_is_unavailable()
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new StoreSuspendedException("never read"));
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = Assert.IsType<ObjectResult>((await controller.ForgetMissingServers(CancellationToken.None)).Result);
+
+        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(StoreUnavailableFilter.Message, Assert.IsType<FailureResponse>(result.Value).Message);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
     }
 
     [Fact]

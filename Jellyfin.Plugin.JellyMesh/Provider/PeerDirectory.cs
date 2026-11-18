@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Http;
 
@@ -54,5 +55,23 @@ public sealed class PeerDirectory
 
         var authorization = await _authorization.GetAuthorizationInfo(context).ConfigureAwait(false);
         return authorization.User is { } user && Find(user.Id) is { } grant ? new PeerCaller(grant, user, authorization.DeviceId) : null;
+    }
+
+    /// <summary>
+    /// Finds the peer behind a request on a stock route. Nothing outside the peers table marks a peer user, so while it
+    /// cannot be read nobody is known as one and local users keep stock Jellyfin; JellyMesh routes use <see cref="FindCallerAsync"/>.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <returns>The peer, null for anyone else or while the peers cannot be read.</returns>
+    public async Task<PeerCaller?> FindStockCallerAsync(HttpContext context)
+    {
+        try
+        {
+            return await FindCallerAsync(context).ConfigureAwait(false);
+        }
+        catch (StoreSuspendedException)
+        {
+            return null;
+        }
     }
 }

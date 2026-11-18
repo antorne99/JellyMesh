@@ -49,7 +49,9 @@ public sealed class ReconciliationTask : SyncTask
     internal TimeSpan RetryDelay { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <inheritdoc />
-    public override IEnumerable<TaskTriggerInfo> GetDefaultTriggers() => Store.Read(SyncSchedule.ReconciliationTriggers);
+    /// <remarks>Jellyfin asks while it starts, so the defaults stand in while the settings cannot be read.</remarks>
+    public override IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
+        => Store.ReadOr(SyncSchedule.ReconciliationTriggers, SyncSchedule.ReconciliationTriggers(new PluginConfiguration()));
 
     /// <inheritdoc />
     protected override async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)

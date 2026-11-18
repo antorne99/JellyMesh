@@ -148,7 +148,8 @@ public sealed class UnchangedSyncGate : IUnchangedSyncGate, IDisposable
     {
         if (IsTitle(e.Item)
             && (e.UpdateReason.HasFlag(ItemUpdateType.MetadataEdit)
-                || !FederatedPaths.IsInside(_store.Read(config => config.FederatedFolderPath), e.Item.Path)))
+                || _store.ReadOr(config => config.FederatedFolderPath, null) is not { } root
+                || !FederatedPaths.IsInside(root, e.Item.Path)))
         {
             Interlocked.Increment(ref _libraryEvents);
         }

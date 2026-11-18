@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 
 namespace Jellyfin.Plugin.JellyMesh.Storage;
 
@@ -21,7 +22,8 @@ public static class SchemaMigrations
             Index.IndexTables.Create(connection, transaction);
             Library.StubTables.Create(connection, transaction);
         }),
-        new(SmallStateSchema.Version, SmallStateSchema.Apply)
+        new(SmallStateSchema.Version, SmallStateSchema.Apply),
+        new(4, ConfigurationTables.Create)
     ];
 
     /// <summary>

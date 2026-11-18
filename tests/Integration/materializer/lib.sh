@@ -1,11 +1,8 @@
 # Scenario helpers on top of env.sh. Source this file.
 source "$(dirname "${BASH_SOURCE[0]}")"/env.sh
 USER_ID=$(get /Users/Me 2>/dev/null | jq -r .Id || true)
-PID=$(get /Plugins 2>/dev/null | jq -r '.[] | select(.Name=="JellyMesh") | .Id' || true)
 set_folder() {
-  local cfg
-  cfg=$(get "/Plugins/$PID/Configuration" | jq -c --argjson p "${1:-true}" '.FederatedFolderPath="/federata" | .MetadataProtection=$p')
-  post "/Plugins/$PID/Configuration" "$cfg" >/dev/null
+  put /JellyMesh/Admin/Settings "$(jq -nc --argjson p "${1:-true}" '{FederatedFolderPath: "/federata", MetadataProtection: $p}')" >/dev/null
 }
 add_server() { # <name> <url> [user] -> prints id
   local id libs

@@ -117,6 +117,19 @@ public class PeerGuardFilterTests
         Assert.True(ran);
     }
 
+    // Nothing outside the peers table marks a peer, so this filter lets everyone by; StoreNotLoadedFilter stops non-admins (D32).
+    [Fact]
+    public async Task While_the_peers_cannot_be_read_a_local_user_passes_untouched()
+    {
+        _fixture.Caller = new Jellyfin.Database.Implementations.Entities.User("mario", "auth", "reset");
+        _fixture.Store.Unavailable = true;
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Items", "GetItems"), "GET", null);
+
+        Assert.True(ran);
+        Assert.Null(context.Result);
+    }
+
     [Fact]
     public async Task With_no_peers_the_request_is_not_even_looked_at()
     {
@@ -1226,6 +1239,19 @@ public class PeerPlaybackInfoFilterTests
     private static OkObjectResult Answer(string? playSession = "play", PlaybackErrorCode? error = null)
     {
         return new OkObjectResult(new PlaybackInfoResponse { PlaySessionId = playSession, ErrorCode = error });
+    }
+
+    // This filter lets everyone by while the peers cannot be read; StoreNotLoadedFilter stops non-admins (D32).
+    [Fact]
+    public async Task While_the_peers_cannot_be_read_a_local_user_plays_as_on_stock()
+    {
+        _fixture.Caller = new Jellyfin.Database.Implementations.Entities.User("mario", "auth", "reset");
+        _fixture.Store.Unavailable = true;
+
+        var (context, ran) = await RunAsync(Answer());
+
+        Assert.True(ran);
+        Assert.Null(context.Result);
     }
 
     [Fact]

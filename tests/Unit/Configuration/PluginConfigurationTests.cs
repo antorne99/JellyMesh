@@ -364,6 +364,29 @@ public class PluginConfigurationTests
         Assert.Equal(2, Regex.Matches(page, "config\\." + setting + "\\b").Count);
     }
 
+    // The plugin has no Jellyfin configuration, so the stock endpoint answers 404 (§3.2).
+    [Fact]
+    public void TheConfigPageReadsAndSavesTheSettingsThroughTheirOwnEndpoint()
+    {
+        var page = ConfigPage();
+
+        Assert.Contains("read('Settings')", page, StringComparison.Ordinal);
+        Assert.Contains("api('PUT', 'Settings', config)", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("PluginConfiguration(", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheConfigPageHasAnInputForEverySetting()
+    {
+        var page = ConfigPage();
+
+        foreach (var setting in typeof(PluginSettings).GetProperties().Where(property => property.Name != nameof(PluginSettings.FixedByEnvironment)))
+        {
+            var id = Regex.Match(page, "\\b" + setting.Name + ": '(jm\\w+)'").Groups[1].Value;
+            Assert.Matches("<input id=\"" + id + "\"", page);
+        }
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("3:00")]
@@ -393,16 +416,5 @@ public class PluginConfigurationTests
     public void FolderCanBeEmptyOrAbsolute(string path)
     {
         new PluginConfiguration { FederatedFolderPath = path }.Validate();
-    }
-
-    [Fact]
-    public void AdoptingFromItselfKeepsTheServers()
-    {
-        var config = new PluginConfiguration();
-        config.Servers.Add(new RemoteServerConfig());
-
-        config.AdoptServersFrom(config);
-
-        Assert.Single(config.Servers);
     }
 }

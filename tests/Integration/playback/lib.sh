@@ -11,6 +11,7 @@ TOKEN=
 hdr() { if [ -n "$TOKEN" ]; then printf 'Authorization: %s, Token="%s"' "$AUTHB" "$TOKEN"; else printf 'Authorization: %s' "$AUTHB"; fi; }
 get() { curl -fsS -H "$ACCEPT" -H "$(hdr)" "$BASE$1"; }
 post() { curl -fsS -X POST -H "$ACCEPT" -H "$(hdr)" -H 'Content-Type: application/json' -d "${2:-}" "$BASE$1"; }
+put() { curl -fsS -X PUT -H "$ACCEPT" -H "$(hdr)" -H 'Content-Type: application/json' -d "$2" "$BASE$1"; }
 wait_up() { for i in $(seq 1 120); do get /System/Info/Public 2>/dev/null | jq -e .Version >/dev/null 2>&1 && return 0; sleep 1; done; echo "not up"; return 1; }
 up() {
   docker rm -f $NAME >/dev/null 2>&1 || true

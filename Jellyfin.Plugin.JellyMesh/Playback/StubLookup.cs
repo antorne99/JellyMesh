@@ -210,9 +210,7 @@ public sealed class StubLookup
             return false;
         }
 
-        return PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _)
-            || (video.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true
-                && FederatedPaths.IsInside(_store.Read(config => config.FederatedFolderPath), video.Path));
+        return PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path);
     }
 
     /// <summary>
@@ -279,10 +277,11 @@ public sealed class StubLookup
             return false;
         }
 
-        var root = _store.Read(config => config.FederatedFolderPath);
+        var root = _store.ReadOr(config => config.FederatedFolderPath, null);
         foreach (var member in members.Values)
         {
-            if (FederatedPaths.IsInside(root, member.Path) || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && _stubs.Find(stubId) is not null))
+            if ((root is null ? IsStrm(member.Path) : FederatedPaths.IsInside(root, member.Path))
+                || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && _stubs.Find(stubId) is not null))
             {
                 return true;
             }
@@ -290,6 +289,12 @@ public sealed class StubLookup
 
         return false;
     }
+
+    private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
+
+    // A .strm in the federated folder; while the folder is not known, any .strm, since stock would send its signed URL.
+    private bool IsStrmInFolder(string? path)
+        => IsStrm(path) && (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path));
 
     private void AddAlternates(Dictionary<Guid, Video> members, Video video)
     {

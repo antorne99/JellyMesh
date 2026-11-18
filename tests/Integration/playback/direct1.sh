@@ -4,8 +4,7 @@ mkdir -p "$S/extra/remota/JM Diretto Fonte (2026)"
 docker exec $NAME /usr/lib/jellyfin-ffmpeg/ffmpeg -y -v error -t 40 -i "/media/film/Elephants Dream (2006)/Elephants Dream (2006).mkv" -vf scale=640:-2 -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -b:v 700k -c:a libopus -b:a 96k "/extra/remota/JM Diretto Fonte (2026)/JM Diretto Fonte (2026).webm"
 ls -la "$S/extra/remota/JM Diretto Fonte (2026)"
 login admin
-PID=$(get /Plugins | jq -r '.[]|select(.Name=="JellyMesh").Id')
-post "/Plugins/$PID/Configuration" "$(get "/Plugins/$PID/Configuration" | jq -c '.SyncIntervalSeconds=86400')"
+put /JellyMesh/Admin/Settings '{"SyncIntervalSeconds":86400}'
 post '/Library/VirtualFolders?name=Remota&collectionType=movies&refreshLibrary=true&paths=/extra/remota' '{"LibraryOptions":{"EnableRealtimeMonitor":false}}'
 sleep 6
 DU=$(post /Users/New '{"Name":"dedicato","Password":"jellymesh-test"}' | jq -r .Id); echo "dedicato $DU"

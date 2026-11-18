@@ -80,7 +80,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         ArgumentNullException.ThrowIfNull(next);
 
         var http = context.HttpContext;
-        if (await _peers.FindCallerAsync(http).ConfigureAwait(false) is not { } caller)
+        if (await _peers.FindStockCallerAsync(http).ConfigureAwait(false) is not { } caller)
         {
             await next().ConfigureAwait(false);
             return;

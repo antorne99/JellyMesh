@@ -16,6 +16,7 @@ auth_header() {
 }
 get() { curl -fsS -H "$ACCEPT" -H "$(auth_header)" "$BASE$1"; }
 post() { curl -fsS -X POST -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "${2:-}" "$BASE$1"; }
+put() { curl -fsS -X PUT -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "$2" "$BASE$1"; }
 wait_ready() {
   local i
   for i in $(seq 1 120); do

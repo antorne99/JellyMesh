@@ -113,7 +113,12 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             return null;
         }
 
-        var folder = _store.Read(config => config.FederatedFolderPath);
+        // Every new item of every library comes here: while the folder is not known, no path is a stub's.
+        if (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } folder)
+        {
+            return null;
+        }
+
         var relative = FederatedPaths.RelativeTo(folder, path);
         return relative is not null && _lookup.ByPath.TryGetValue(relative, out var stub) ? stub : null;
     }

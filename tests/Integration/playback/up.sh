@@ -25,8 +25,7 @@ post "/Users/$NOLIB/Policy" "$P"
 bash "$WT/tests/Integration/scripts/install-plugin.sh" $NAME 2>&1 | tail -2
 sleep 3; wait_up; login admin
 PID=$(get /Plugins | jq -r '.[]|select(.Name=="JellyMesh").Id'); echo "plugin $PID"
-C=$(get "/Plugins/$PID/Configuration" | jq -c '.FederatedFolderPath="/federata"')
-post "/Plugins/$PID/Configuration" "$C"
+put /JellyMesh/Admin/Settings '{"FederatedFolderPath":"/federata"}'
 add() { # name url
   id=$(post /JellyMesh/Admin/Servers "$(jq -n --arg n "$1" --arg u "$2" '{Name:$n,Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" | jq -r .Id)
   libs=$(get "/JellyMesh/Admin/Servers/$id/Libraries" | jq -c '{LibraryIds:[.[].Id]}')

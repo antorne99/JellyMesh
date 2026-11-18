@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Xunit;
 
@@ -190,6 +191,27 @@ public sealed class CatalogSyncServiceTests : IDisposable
         Assert.Same(before, _fixture.Index.Snapshot);
         Assert.Empty(_fixture.Client.Queries);
         Assert.True(before.IsAuthoritativeFor(server.Id));
+    }
+
+    [Fact]
+    public async Task WhileTheSettingsCannotBeReadNothingStartsAndNoServerIsForgotten()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        var server = await _fixture.AddServerAsync("A", "films");
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        var before = _fixture.Index.Snapshot;
+        _fixture.Client.Queries.Clear();
+        _fixture.Store.Unavailable = true;
+
+        Assert.Equal(SyncStartResult.DatabaseSuspended, _fixture.Sync.TryStart());
+        Assert.Equal(SyncStartResult.DatabaseSuspended, await _fixture.Sync.RunAsync(CancellationToken.None));
+        Assert.Equal(SyncStartResult.DatabaseSuspended, await _fixture.Sync.RunIncrementalAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => _fixture.Sync.ForgetMissingServersAsync(CancellationToken.None));
+
+        _fixture.Store.Unavailable = false;
+        Assert.Same(before, _fixture.Index.Snapshot);
+        Assert.Empty(_fixture.Client.Queries);
+        Assert.Equal(server.Id, Assert.Single(_fixture.Registry.GetServers()).Id);
     }
 
     [Fact]

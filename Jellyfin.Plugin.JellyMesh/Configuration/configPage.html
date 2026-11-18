@@ -1830,7 +1830,9 @@
                     "Set the federated folder first.": "Imposta prima la cartella federata.",
                     "Settings": "Impostazioni",
                     "Settings not saved. {reason}": "Impostazioni non salvate. {reason}",
-                    "Settings not saved: the server answered with error {status}.": "Impostazioni non salvate: il server ha risposto con l'errore {status}.",
+                    "Settings saved.": "Impostazioni salvate.",
+                    "The JellyMesh database cannot be used now, so JellyMesh is suspended until it can.": "Il database di JellyMesh ora non si può usare, quindi JellyMesh resta sospeso finché non si potrà.",
+                    "The JellyMesh database cannot be written now, so the settings were not saved.": "Il database di JellyMesh non si può scrivere ora, quindi le impostazioni non sono state salvate.",
                     "Setup": "Configurazione",
                     "Shared libraries": "Librerie condivise",
                     "Sharing": "Condivisione",
@@ -1954,7 +1956,6 @@
                     "The server does not allow this for the dedicated user.": "Il server non lo consente all'utente dedicato.",
                     "The server redirected somewhere that is not followed. Check the URL.": "Il server ha reindirizzato verso un indirizzo che non viene seguito. Controlla l'URL.",
                     "The server refused the login.": "Il server ha rifiutato l'accesso.",
-                    "The server refused the settings and gave no reason, so nothing was saved.": "Il server ha rifiutato le impostazioni senza dare un motivo, quindi non è stato salvato nulla.",
                     "The server sent an answer too large to accept.": "Il server ha inviato una risposta troppo grande per essere accettata.",
                     "The settings could not be read. Reload the page before saving.": "Non è stato possibile leggere le impostazioni. Ricarica la pagina prima di salvare.",
                     "The state of the sync could not be read. The page keeps trying.": "Non è stato possibile leggere lo stato della sincronizzazione. La pagina continua a provare.",
@@ -2162,6 +2163,24 @@
                 var outcomeKinds = { Done: t('Done'), Error: t('Error') };
                 var reading = t('Reading...');
                 var savedSettings = null;
+
+                // The settings an environment variable decides, by their name in the settings of the server.
+                var fixedSettings = [];
+
+                // The input of each setting, by its name in the settings of the server.
+                var settingInputIds = {
+                    SyncIntervalSeconds: 'jmSyncInterval',
+                    ReconciliationTime: 'jmReconciliationTime',
+                    FederatedFolderPath: 'jmFederatedFolder',
+                    MetadataProtection: 'jmMetadataProtection',
+                    FederateCollections: 'jmFederateCollections',
+                    CloseTranscodeAtSlotExpiry: 'jmCloseAtExpiry',
+                    RemotePlaybackInfoTimeoutSeconds: 'jmRemotePlaybackInfoTimeout',
+                    StreamOpenTimeoutSeconds: 'jmStreamOpenTimeout',
+                    PlaybackIdleSeconds: 'jmPlaybackIdle',
+                    SessionRetentionHours: 'jmSessionRetention',
+                    PolicyCacheMinutes: 'jmPolicyCache'
+                };
                 var serverCount = null;
 
                 function el(selector) {
@@ -2456,6 +2475,7 @@
                                 var failure = new Error(data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status }));
                                 failure.failure = data.Failure;
                                 failure.serverName = data.ServerName;
+                                failure.field = data.Field;
                                 throw failure;
                             }
 
@@ -3244,10 +3264,6 @@
                     }
 
                     folderShown = shown;
-                    var fromEnvironment = !!folder.FromEnvironment;
-                    el('#jmFederatedFolder').disabled = fromEnvironment;
-                    el('#jmChooseFolder').disabled = fromEnvironment;
-                    el('#jmFolderFromEnvironment').hidden = !fromEnvironment;
                     var notes = el('#jmFolderNotes');
                     notes.textContent = '';
                     var checked = folder.Link !== 'NotChecked';
@@ -4453,6 +4469,15 @@
                     el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
                     el('#jmSessionRetention').value = config.SessionRetentionHours;
                     el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                    fixedSettings = (config.FixedByEnvironment || []).map(function (setting) {
+                        return setting.Field;
+                    });
+                    Object.keys(settingInputIds).forEach(function (field) {
+                        el('#' + settingInputIds[field]).disabled = fixedSettings.indexOf(field) >= 0;
+                    });
+                    var folderFixed = fixedSettings.indexOf('FederatedFolderPath') >= 0;
+                    el('#jmChooseFolder').disabled = folderFixed;
+                    el('#jmFolderFromEnvironment').hidden = !folderFixed;
                     keepSettings();
                 }
 
@@ -5126,9 +5151,7 @@
 
                 var settingsSection = section(function () {
                     settingFields().forEach(clearField);
-                    return ApiClient.getPluginConfiguration(pluginId).catch(function (error) {
-                        throw new Error(error && error.status ? t('The server answered with error {status} and gave no reason.', { status: error.status }) : noAnswer);
-                    });
+                    return read('Settings');
                 }, renderSettings, function (reason) {
                     showFailure('#jmSettingsFailure', t('the settings'), t('Reload the page before saving.'), reason);
                 });
@@ -5245,14 +5268,18 @@
                     return false;
                 }
 
+                // Marks the field the server refused, if the page has it, and says why nothing was saved.
                 function settingsFailure(error) {
-                    if (!error || !error.status) {
-                        return t('Settings not saved. {reason}', { reason: noAnswer });
+                    var input = error.field && settingInputIds[error.field] ? el('#' + settingInputIds[error.field]) : null;
+                    if (!input) {
+                        return t('Settings not saved. {reason}', { reason: error.message });
                     }
 
-                    return error.status === 400
-                        ? t('The server refused the settings and gave no reason, so nothing was saved.')
-                        : t('Settings not saved: the server answered with error {status}.', { status: error.status });
+                    var rule = settingRule(input) || error.message;
+                    clearField(input);
+                    markField(input, rule);
+                    focusField(input);
+                    return refusedText(el('label[for="' + input.id + '"]').textContent, rule);
                 }
 
                 selectTab(tabInUrl() || rememberedTab() || shownTab);
@@ -5372,22 +5399,25 @@
                         return;
                     }
 
-                    act(ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                        config.SyncIntervalSeconds = parseInt(el('#jmSyncInterval').value, 10);
-                        config.ReconciliationTime = el('#jmReconciliationTime').value;
-                        config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
-                        config.MetadataProtection = el('#jmMetadataProtection').checked;
-                        config.FederateCollections = el('#jmFederateCollections').checked;
-                        config.CloseTranscodeAtSlotExpiry = el('#jmCloseAtExpiry').checked;
-                        config.RemotePlaybackInfoTimeoutSeconds = parseInt(el('#jmRemotePlaybackInfoTimeout').value, 10);
-                        config.StreamOpenTimeoutSeconds = parseInt(el('#jmStreamOpenTimeout').value, 10);
-                        config.PlaybackIdleSeconds = parseInt(el('#jmPlaybackIdle').value, 10);
-                        config.SessionRetentionHours = parseInt(el('#jmSessionRetention').value, 10);
-                        config.PolicyCacheMinutes = parseInt(el('#jmPolicyCache').value, 10);
-                        return ApiClient.updatePluginConfiguration(pluginId, config);
-                    }).then(function (result) {
-                        Dashboard.processPluginConfigurationUpdateResult(result);
-                        keepSettings();
+                    var config = {};
+                    config.SyncIntervalSeconds = parseInt(el('#jmSyncInterval').value, 10);
+                    config.ReconciliationTime = el('#jmReconciliationTime').value;
+                    config.FederatedFolderPath = el('#jmFederatedFolder').value.trim();
+                    config.MetadataProtection = el('#jmMetadataProtection').checked;
+                    config.FederateCollections = el('#jmFederateCollections').checked;
+                    config.CloseTranscodeAtSlotExpiry = el('#jmCloseAtExpiry').checked;
+                    config.RemotePlaybackInfoTimeoutSeconds = parseInt(el('#jmRemotePlaybackInfoTimeout').value, 10);
+                    config.StreamOpenTimeoutSeconds = parseInt(el('#jmStreamOpenTimeout').value, 10);
+                    config.PlaybackIdleSeconds = parseInt(el('#jmPlaybackIdle').value, 10);
+                    config.SessionRetentionHours = parseInt(el('#jmSessionRetention').value, 10);
+                    config.PolicyCacheMinutes = parseInt(el('#jmPolicyCache').value, 10);
+                    // A setting of the environment is left out, so it keeps the value of the variable.
+                    fixedSettings.forEach(function (field) {
+                        delete config[field];
+                    });
+                    act(api('PUT', 'Settings', config).then(function (settings) {
+                        adopt(settingsSection, settings);
+                        showMessage(t('Settings saved.'));
                         return loadStatus();
                     }, function (error) {
                         throw new Error(settingsFailure(error));

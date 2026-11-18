@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
@@ -92,6 +93,10 @@ public sealed class PlaybackSweeper : BackgroundService
             {
                 _sessions.ForgetUnusedLocal(_store.Read(PlaybackTimes.From));
                 await _coordinator.SweepAsync().ConfigureAwait(false);
+            }
+            catch (StoreSuspendedException)
+            {
+                // No session opens without the settings, and the store already said why it cannot read them.
             }
 #pragma warning disable CA1031 // One failed pass must not end the sweeps for good.
             catch (Exception exception) when (exception is not OperationCanceledException || !stoppingToken.IsCancellationRequested)

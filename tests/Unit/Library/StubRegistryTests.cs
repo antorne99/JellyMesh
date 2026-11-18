@@ -77,6 +77,17 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Null(registry.FindByPath("/federata/S/Film/A/A - Casa.strm"));
     }
 
+    // Every new item of every library is looked up here, so the lookup must not fail while the settings cannot be read.
+    [Fact]
+    public async Task WhileTheSettingsCannotBeReadNoPathFindsAStub()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", "S/Film/A/A - Mare.strm")] });
+        _store.Unavailable = true;
+
+        Assert.Null(registry.FindByPath("/federata/S/Film/A/A - Mare.strm"));
+    }
+
     [Fact]
     public async Task ACurrentPathWinsOverTheOldPathOfAnotherStub()
     {

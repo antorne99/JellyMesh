@@ -162,6 +162,26 @@ public sealed class SyncScheduleServiceTests : IDisposable
         _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Once);
     }
 
+    // A database busy at start would otherwise leave the schedule and the first sync to the next restart.
+    [Fact]
+    public async Task SettingsThatCannotBeReadAtStartAreAppliedOnceTheyCan()
+    {
+        var (incremental, _) = WithTasks(null);
+        _store.Configuration.SyncIntervalSeconds = 600;
+        _store.Unavailable = true;
+        _service.StoreRetryDelay = TimeSpan.FromMilliseconds(10);
+        await _service.StartAsync(CancellationToken.None);
+        await Task.Delay(100);
+        Assert.False(_service.ExecuteTask!.IsCompleted);
+
+        _store.Unavailable = false;
+        await _service.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(TimeSpan.FromMinutes(10).Ticks, incremental.Object.Triggers.Single().IntervalTicks);
+        _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Once);
+        Assert.DoesNotContain(Microsoft.Extensions.Logging.LogLevel.Error, _logger.Levels);
+    }
+
     [Fact]
     public async Task ATaskThatAlreadyRanIsLeftToItsTrigger()
     {
