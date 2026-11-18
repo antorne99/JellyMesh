@@ -500,6 +500,22 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task ARemoteThatRepeatsOneImportedLibraryInPlaceOfAnotherHasItsReadRefused()
+    {
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
+        await ReadAsync(server);
+        _fixture.Client.Libraries.Clear();
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.Films, "Film", "movies"));
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.Films, "Film bis", "movies"));
+
+        await ReadAsync(server);
+
+        Assert.Equal(
+            [TestLibraries.Films, TestLibraries.Shows],
+            _fixture.Store.Configuration.Servers.Single().RemoteLibraries.Select(library => library.Id));
+    }
+
+    [Fact]
     public async Task AFailedReadOfTheLibrariesKeepsTheOnesRemembered()
     {
         var server = await _fixture.AddServerAsync("A", TestLibraries.Films);

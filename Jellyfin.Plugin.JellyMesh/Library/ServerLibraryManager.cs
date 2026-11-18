@@ -813,7 +813,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             config.FederatedFolderPath,
             Find(config, serverId)?.Name,
             Find(config, serverId)?.AutomaticLibraryRegistry.Select(Copy).ToList() ?? [],
-            Find(config, serverId)?.RemoteLibraries.ToDictionary(library => library.Id, library => library.Name, StringComparer.OrdinalIgnoreCase) ?? []));
+            Find(config, serverId)?.RemoteLibraries.DistinctBy(library => library.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(library => library.Id, library => library.Name, StringComparer.OrdinalIgnoreCase) ?? []));
         var done = true;
         var moved = false;
         foreach (var record in records)

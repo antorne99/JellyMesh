@@ -185,4 +185,17 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Equal(["Casa - Film", "Casa - Film 4K", "Casa - Serie"], fixture.Libraries.Created.Select(call => call.Name).Order(StringComparer.Ordinal));
     }
+
+    [Fact]
+    public async Task A_remote_library_kept_twice_does_not_stop_a_rename_of_the_server()
+    {
+        var fixture = OnTypeFolders();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+        fixture.Server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.FilmsB, Name = "Film 4K bis", CollectionType = "movies" });
+        fixture.Server.Name = "Mare";
+
+        Assert.True(await fixture.Manager.RenameAsync(_serverId, CancellationToken.None));
+
+        Assert.Equal(["Mare - Film", "Mare - Film 4K", "Mare - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name).Order(StringComparer.Ordinal));
+    }
 }

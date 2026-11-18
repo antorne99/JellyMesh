@@ -222,6 +222,13 @@ sync_now
 check "a catalog error with a huge body" ServerError "$(last_failure)"
 at_most "seconds of that sync" 12 "$(cat "$WORK/sync-seconds")"
 
+echo "--- a library listed twice"
+set_mode views-repeat
+sync_now
+check "catalog read with the imported library listed twice" null "$(last_failure)"
+check "plugin alive after it" yes "$(alive)"
+set_mode normal
+
 echo "--- bodies that stall"
 set_mode catalog-stall
 sync_now

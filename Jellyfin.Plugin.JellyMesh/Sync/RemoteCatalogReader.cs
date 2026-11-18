@@ -422,8 +422,9 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
             return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(libraries.Failure);
         }
 
-        var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).ToList();
-        if (chosen.Count != server.ImportedLibraryIds.Count)
+        // Each library once, so a remote that repeats one in place of another fails the count.
+        var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).DistinctBy(library => library.Id).ToList();
+        if (chosen.Count != server.ImportedLibraryIds.Distinct().Count())
         {
             return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(RemoteFailure.LibraryUnavailable);
         }

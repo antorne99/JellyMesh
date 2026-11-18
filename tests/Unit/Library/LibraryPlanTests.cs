@@ -131,4 +131,16 @@ public sealed class LibraryPlanTests
         Assert.Single(LibraryPlan.TypeFolders(server));
         Assert.Single(LibraryPlan.ManualPaths(server, Root, olderLayout: false));
     }
+
+    [Fact]
+    public void ARemoteLibraryKeptTwiceGivesOneLibraryAndOneFolder()
+    {
+        var server = Server(LibraryMode.ByRemoteLibrary, (Films, "Film", "movies"));
+        server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = Films, Name = "Film bis", CollectionType = "movies" });
+
+        Assert.Equal([Folder(Films, "Film")], Assert.Single(LibraryPlan.For(server, Root, olderLayout: false)).Paths);
+        server.LibraryMode = LibraryMode.ByType;
+        Assert.Equal([Folder(Films, "Film")], Assert.Single(LibraryPlan.For(server, Root, olderLayout: false)).Paths);
+        Assert.Single(LibraryPlan.TypeFolders(server));
+    }
 }

@@ -197,7 +197,10 @@ class Handler(socketserver.StreamRequestHandler):
         if path == "/System/Info/Public":
             return self.json({"Version": "12.4.0"})
         if path == "/UserViews":
-            return self.json({"Items": [{"Id": "c" * 32, "Name": "Film", "CollectionType": "movies"}], "TotalRecordCount": 1})
+            views = [{"Id": "c" * 32, "Name": "Film", "CollectionType": "movies"}]
+            if mode() == "views-repeat":
+                views.append({"Id": "c" * 32, "Name": "Film bis", "CollectionType": "movies"})
+            return self.json({"Items": views, "TotalRecordCount": len(views)})
         if path == "/Items":
             return self.items(m)
         if re.fullmatch(r"/Items/[^/]+/Images/.+", path):

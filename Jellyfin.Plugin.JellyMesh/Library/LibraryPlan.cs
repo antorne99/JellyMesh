@@ -89,6 +89,7 @@ internal static class LibraryPlan
     private static List<ImportedLibrary> Imported(RemoteServerConfig server)
         => [.. server.RemoteLibraries
             .Where(library => FederatedPaths.IsLibraryId(library.Id) && server.ImportedLibraryIds.Contains(library.Id, StringComparer.OrdinalIgnoreCase))
+            .DistinctBy(library => library.Id, StringComparer.OrdinalIgnoreCase)
             .Select(library => KindOf(library.CollectionType) is { } kind ? new ImportedLibrary(library.Id, library.Name, kind) : null)
             .OfType<ImportedLibrary>()];
 
