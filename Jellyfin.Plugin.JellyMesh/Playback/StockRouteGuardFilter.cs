@@ -2,7 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading.Tasks;
+using Jellyfin.Data;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Common;
@@ -29,6 +33,8 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
     private const string StopEncodingAction = "StopEncodingProcess";
+
+    private const string DownloadAction = "GetDownload";
 
     private const string LegacySegmentAction = "GetHlsVideoSegmentLegacy";
 
@@ -184,6 +190,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             await RefuseAsync(context, next, refusal, controller, action).ConfigureAwait(false);
             return;
         }
+        else if (IsFileAction(controller, action) && StubLookup.ItemIdOf(context) is { } fileId && _stubs.IsStub(fileId))
+        {
+            // Stock would send the text of the .strm, which holds the signed loopback URL, so it is never reached.
+            context.Result = await FileResultAsync(context, action, fileId).ConfigureAwait(false);
+            return;
+        }
         else if (IsMedia(controller, action)
             && StubsOf(context, named, out var recorded) is var stubs
             && (stubs.Count > 0 || recorded))
@@ -240,6 +252,46 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         context.Result = refusal;
+    }
+
+    // Serves Download and File of a stub from its remote file, as a static stream of the stub reads it. File wants a user who
+    // sees the stub, Download also the download permission, as on stock; a file no source gives is a bare 503.
+    private async Task<IActionResult> FileResultAsync(ActionExecutingContext context, string action, Guid itemId)
+    {
+        var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
+        if (authorization.User is not { } user)
+        {
+            return new StatusCodeResult(StatusCodes.Status401Unauthorized);
+        }
+
+        if (!_stubs.Sees(user, itemId))
+        {
+            return new StatusCodeResult(StatusCodes.Status404NotFound);
+        }
+
+        if (action == DownloadAction && !user.HasPermission(PermissionKind.EnableContentDownloading))
+        {
+            return new StatusCodeResult(StatusCodes.Status403Forbidden);
+        }
+
+        if (_stubs.Find(itemId) is not { } stub)
+        {
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var http = context.HttpContext;
+        var method = HttpMethods.IsHead(http.Request.Method) ? HttpMethod.Head : HttpMethod.Get;
+        var range = http.Request.Headers.Range.ToString();
+        using var opened = await _coordinator.OpenFileAsync(stub, method, string.IsNullOrEmpty(range) ? null : range, http.RequestAborted).ConfigureAwait(false);
+        if (opened is null)
+        {
+            return _coordinator.TakeFileRefusal(stub.Id)
+                ? _refusal.Refuse(http, authorization.DeviceId ?? string.Empty, PlaybackRefusal.LimitText)
+                : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        await StreamRelay.CopyAsync(opened, http, _coordinator.StallLimit, http.RequestAborted).ConfigureAwait(false);
+        return new EmptyResult();
     }
 
     // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.
@@ -428,7 +480,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     private static bool IsFileAction(string controller, string action)
     {
-        return controller == "Library" && action is "GetDownload" or "GetFile";
+        return controller == "Library" && action is DownloadAction or "GetFile";
     }
 
     // Only a segment makes stock stop the jobs of a device; playlists and live.m3u8 stop none.

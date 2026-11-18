@@ -198,6 +198,16 @@ public sealed class StubLookup
     }
 
     /// <summary>
+    /// Tells whether an item is a stub by the URL of its <c>.strm</c>, even one the registry no longer knows.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a stub.</returns>
+    public bool IsStub(Guid itemId)
+    {
+        return _libraryManager.GetItemById(itemId) is Video video && PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _);
+    }
+
+    /// <summary>
     /// Finds the stub of an item.
     /// </summary>
     /// <param name="itemId">The item.</param>

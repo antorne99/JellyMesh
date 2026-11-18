@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -1686,5 +1687,181 @@ public class PlaybackFiltersTests
         _fixture.Sessions.RecordLocal(Guid.NewGuid(), "local-play", _itemId);
 
         Assert.True(await RunAsync(GuardFilter(), LegacyPlaylist(LocalItem(), playlistId)));
+    }
+    private static readonly byte[] _remoteBytes = [0x1A, 0x45, 0xDF, 0xA3, 7];
+
+    // A Download or a File of the stub, with a response body that keeps what is written.
+    private static ActionExecutingContext FileRequest(string action, string? range = null)
+    {
+        var context = Context("Library", action, ("itemId", _itemId));
+        context.HttpContext.Response.Body = new MemoryStream();
+        if (range is not null)
+        {
+            context.HttpContext.Request.Headers.Range = range;
+        }
+
+        return context;
+    }
+
+    private static byte[] BodyOf(ActionExecutingContext context)
+    {
+        return ((MemoryStream)context.HttpContext.Response.Body).ToArray();
+    }
+
+    private void RemoteServes(System.Net.HttpStatusCode status = System.Net.HttpStatusCode.OK, string? contentRange = null)
+    {
+        _fixture.Client.Open = (request, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(
+            status,
+            new RemoteContentHeaders("video/x-matroska", _remoteBytes.Length, contentRange, "bytes"),
+            new MemoryStream(_remoteBytes))));
+    }
+
+    [Fact]
+    public async Task File_of_a_visible_stub_comes_from_the_remote_and_never_from_stock()
+    {
+        CanSeeItem();
+        RemoteServes();
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status200OK, context.HttpContext.Response.StatusCode);
+        Assert.Equal("video/x-matroska", context.HttpContext.Response.ContentType);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.StartsWith("/Videos/remote-item/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
+    }
+    private void MayDownload(bool allowed)
+    {
+        _user.Permissions.Add(new Permission(PermissionKind.EnableContentDownloading, allowed));
+    }
+
+    [Fact]
+    public async Task Download_without_the_download_permission_is_refused_and_nothing_is_read()
+    {
+        CanSeeItem();
+        MayDownload(false);
+        RemoteServes();
+        var context = FileRequest("GetDownload");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(BodyOf(context));
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task Download_with_the_download_permission_comes_from_the_remote_with_its_range()
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        RemoteStreamRequest? asked = null;
+        var serve = _fixture.Client.Open;
+        _fixture.Client.Open = (request, token) =>
+        {
+            asked = request;
+            return serve(request, token);
+        };
+        var context = FileRequest("GetDownload", "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal("bytes 0-4/100", context.HttpContext.Response.Headers.ContentRange.ToString());
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("bytes=0-4", asked?.Range);
+    }
+
+    [Fact]
+    public async Task File_needs_no_download_permission()
+    {
+        CanSeeItem();
+        MayDownload(false);
+        RemoteServes();
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task File_and_download_of_a_stub_the_user_cannot_see_are_not_found(string action)
+    {
+        MayDownload(true);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Theory]
+    [InlineData("GetFile", RemoteFailure.Unreachable)]
+    [InlineData("GetDownload", RemoteFailure.ServerError)]
+    public async Task When_no_source_gives_the_file_the_answer_is_503_and_never_the_stub(string action, RemoteFailure failure)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(failure));
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_file_refused_for_the_stream_limit_is_answered_as_such_and_not_left_to_a_later_failure()
+    {
+        CanSeeItem();
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.StreamLimitReached));
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.False(_fixture.Coordinator.TakeFileRefusal(_stub.Id));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_stub_the_plugin_no_longer_knows_never_reaches_stock(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns((StubEntry?)null);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_stub_the_plugin_no_longer_knows_still_wants_a_user(string action)
+    {
+        Anonymous();
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns((StubEntry?)null);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stub_the_plugin_no_longer_knows_is_not_found_for_a_user_who_cannot_see_it()
+    {
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns((StubEntry?)null);
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task File_of_an_item_that_is_not_a_stub_stays_with_stock()
+    {
+        Assert.True(await RunAsync(GuardFilter(), Context("Library", "GetFile", ("itemId", LocalItem()))));
     }
 }
