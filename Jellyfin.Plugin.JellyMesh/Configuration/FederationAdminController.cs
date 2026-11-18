@@ -245,9 +245,9 @@ public class FederationAdminController : ControllerBase
                 serverId,
                 async () =>
                 {
-                    // The streams stop while the login ends, within one limit (row 434).
                     stopping = true;
-                    return await _registry.RemoveAsync(serverId, () => _playback.CloseServerAsync(serverId)).ConfigureAwait(false);
+                    await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
+                    return await _registry.RemoveAsync(serverId).ConfigureAwait(false);
                 },
                 cancellationToken).ConfigureAwait(false);
         }

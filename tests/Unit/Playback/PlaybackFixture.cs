@@ -133,17 +133,6 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
         return Task.FromResult(Servers.RemoveAll(server => server.Id == serverId) > 0);
     }
 
-    // The stop keeps the login, so here it simply runs while the server can still be reached.
-    public async Task<bool> RemoveAsync(Guid serverId, Func<Task>? stopStreams)
-    {
-        if (stopStreams is not null)
-        {
-            await stopStreams();
-        }
-
-        return await RemoveAsync(serverId);
-    }
-
     public Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
