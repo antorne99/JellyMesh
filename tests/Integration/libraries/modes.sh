@@ -50,7 +50,10 @@ check_edit() { post local "/JellyMesh/Admin/Servers/$SERVER/Edit/Check" "$(form 
 save_edit() { req local PUT "/JellyMesh/Admin/Servers/$SERVER" "$(form "$1")"; }
 # film <title>: the id of a federated film whose path has the title.
 film() { stub_item local "$1"; }
+episode() { get local '/Items?Recursive=true&IncludeItemTypes=Episode&Fields=Path' | jq -r --arg t "$1" '[.Items[] | select((.Path // "") | (contains($t) and startswith("/federata")))][0].Id // ""'; }
 played() { get local "/UserItems/$1/UserData?userId=$ME" | jq -r .Played; }
+# watched: the state of the film and the two episodes marked before the first change.
+watched() { echo "$(played "$TEARS") $(played "$E3") $(get local "/UserItems/$E4/UserData?userId=$ME" | jq -r .PlaybackPositionTicks)"; }
 # ids: the ids of the federated films and episodes, sorted, to compare before and after a change.
 ids() { get local '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path' | jq -c '[.Items[] | select((.Path // "") | startswith("/federata")) | "\(.Id) \(.Path | split("/") | last)"] | sort'; }
 
@@ -80,7 +83,11 @@ check "per type makes a film and a series library" '[["Casa - Film",false],["Cas
 TEARS=$(film "Tears of Steel")
 check "the film is in the per type library" 1 "$([ -n "$TEARS" ] && echo 1 || echo 0)"
 post local "/UserItems/$TEARS/UserData?userId=$ME" '{"Played":true}' >/dev/null
-check "the film is marked played" true "$(played "$TEARS")"
+E3=$(episode "S01E03")
+E4=$(episode "S01E04")
+post local "/UserItems/$E3/UserData?userId=$ME" '{"Played":true}' >/dev/null
+post local "/UserItems/$E4/UserData?userId=$ME" '{"PlaybackPositionTicks":600000000}' >/dev/null
+check "the film and an episode are played, another episode is half seen" "true true 600000000" "$(watched)"
 BEFORE=$(ids)
 
 echo "--- the check lists the change and saves nothing [row 438]"
@@ -97,7 +104,8 @@ check "the libraries of the remote libraries replace those per type" '[["Casa - 
 check "the old libraries are gone" "no no" "$(exists 'Casa - Film') $(exists 'Casa - Serie')"
 check "the film library has the film folder" "$(own | jq -c '[.ManualPaths[] | select(.LibraryType == "movies") | .Path] | sort')" "$(locations 'Casa - Film HD')"
 check "the items keep their ids" "$BEFORE" "$(ids)"
-check "the film keeps its id and stays played" "$TEARS true" "$(film "Tears of Steel") $(played "$TEARS")"
+check "the film keeps its id" "$TEARS" "$(film "Tears of Steel")"
+check "the watch state stays" "true true 600000000" "$(watched)"
 
 echo "--- with the remote down the mode still changes [D28]"
 docker stop "$PREFIX-remote" >/dev/null
@@ -106,7 +114,7 @@ check "the save answers 200" 200 "$(status)"
 wait_own
 check "the per type libraries are back" '[["Casa - Film",false],["Casa - Serie",false]]' "$(registry)"
 check "the items keep their ids" "$BEFORE" "$(ids)"
-check "the film stays played" true "$(played "$TEARS")"
+check "the watch state stays" "true true 600000000" "$(watched)"
 docker start "$PREFIX-remote" >/dev/null
 wait_ready remote
 
