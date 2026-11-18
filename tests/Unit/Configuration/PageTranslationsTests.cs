@@ -79,8 +79,9 @@ public class PageTranslationsTests
 
     private static IEnumerable<string> ServerTexts()
     {
-        // The page translates the refusal of another server from F35, with the edit form.
-        foreach (var failure in Enum.GetValues<RemoteFailure>().Where(failure => failure != RemoteFailure.OtherServer))
+        // The page translates the refusals of the edit form from F35, with that form.
+        RemoteFailure[] edit = [RemoteFailure.OtherServer, RemoteFailure.BeingRemoved, RemoteFailure.NameTaken, RemoteFailure.RenameUnfinished];
+        foreach (var failure in Enum.GetValues<RemoteFailure>().Where(failure => !edit.Contains(failure)))
         {
             yield return FederationAdminController.FailureMessage(failure);
         }

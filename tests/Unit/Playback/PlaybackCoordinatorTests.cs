@@ -324,6 +324,58 @@ public class PlaybackCoordinatorTests
         await opened.CopyToAsync(System.IO.Stream.Null, TimeSpan.FromMinutes(5), CancellationToken.None);
     }
 
+    // A stream opened across a stop and reopen (a user change, a failed removal) belongs to what was stopped: it closes.
+    [Fact]
+    public async Task A_stream_that_was_opening_while_the_server_stopped_is_closed_after_a_reopen()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        var answer = new TaskCompletionSource<RemoteResult<RemoteContent>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Client.Open = (_, _) =>
+        {
+            called.TrySetResult();
+            return answer.Task;
+        };
+        var opening = fixture.Coordinator.OpenAsync(leaving.ServerId, new RemoteStreamRequest(HttpMethod.Get, "/Videos/leaving/stream", null), CancellationToken.None);
+        await called.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+        fixture.Coordinator.ReopenServer(leaving.ServerId);
+        var content = new TrackingStream();
+        answer.SetResult(RemoteResult.Success(new RemoteContent(System.Net.HttpStatusCode.OK, new RemoteContentHeaders("video/mp4", 1, null, null), content)));
+
+        var result = await opening.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(result.IsSuccess);
+        Assert.True(content.Disposed);
+    }
+
+    [Fact]
+    public async Task A_playback_info_that_was_asked_while_the_server_stopped_keeps_no_session_after_a_reopen()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        var answer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Client.Answer = async (request, _) =>
+        {
+            called.TrySetResult();
+            await answer.Task;
+            return FakePlaybackClient.Hls(request);
+        };
+        var opening = fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        await called.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
+        fixture.Coordinator.ReopenServer(leaving.ServerId);
+        answer.SetResult();
+
+        Assert.NotEqual(PlaybackOutcomeKind.Remote, (await opening.WaitAsync(TimeSpan.FromSeconds(10))).Kind);
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Contains(PlaybackValues.RemotePlaySession + "leaving", fixture.Client.Released);
+    }
+
     [Fact]
     public async Task A_server_about_to_go_closes_the_local_transcodes_of_its_files_and_only_those()
     {
@@ -1149,5 +1201,17 @@ public class PlaybackCoordinatorTests
         public override void SetLength(long value) => throw new NotSupportedException();
 
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}
+
+// A stream that only records that it was disposed.
+internal sealed class TrackingStream : System.IO.MemoryStream
+{
+    public bool Disposed { get; private set; }
+
+    protected override void Dispose(bool disposing)
+    {
+        Disposed = true;
+        base.Dispose(disposing);
     }
 }

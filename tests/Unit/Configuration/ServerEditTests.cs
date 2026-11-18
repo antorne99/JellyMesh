@@ -21,28 +21,37 @@ using Xunit;
 namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
 
 // Rows 432-434: the edit form of a server, its check and its save.
-public sealed class ServerEditTests : IDisposable
+public sealed partial class ServerEditTests : IDisposable
 {
     private const string FirstId = "8e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b";
     private const string OtherId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9";
     private const string OtherUrl = "http://other.invalid:8096";
+    private const string SecondHost = "second.invalid";
 
     private readonly RegistryFixture _fixture;
     private readonly CoordinatorFixture _playback = new();
     private readonly Mock<IServerLibraryManager> _libraries = new();
+    private readonly Mock<ICatalogSyncService> _sync = new();
+    private readonly List<string> _steps = [];
     private string _serverId = FirstId;
     private string _views = TestValues.ViewsJson;
     private HttpStatusCode _login = HttpStatusCode.OK;
     private bool _admin;
     private bool _publicSet;
     private string? _publicOverride;
+    private string _token = TestValues.Token;
+    private HttpStatusCode _logout = HttpStatusCode.NoContent;
+    private bool _offline;
+    private ManualResetEventSlim? _loginHold;
+    private SemaphoreSlim _loginsHeld = new(0);
 
     private string? PublicId => _publicSet ? _publicOverride : _serverId;
 
     private string PublicInfo => "{\"ServerName\":\"" + (PublicId == FirstId ? "Friend box" : "Stranger box") + "\""
         + (PublicId is null ? string.Empty : ",\"Id\":\"" + PublicId + "\"") + "}";
 
-    private string LoginAnswer => "{\"ServerId\":\"" + _serverId + "\"," + (_admin ? TestValues.LoginJson[1..].Replace("false", "true", StringComparison.Ordinal) : TestValues.LoginJson[1..]);
+    private string LoginAnswer => "{\"ServerId\":\"" + _serverId + "\"," + (_admin ? TestValues.LoginJson[1..].Replace("false", "true", StringComparison.Ordinal) : TestValues.LoginJson[1..])
+        .Replace(TestValues.Token, _token, StringComparison.Ordinal);
 
     public ServerEditTests()
     {
@@ -51,30 +60,57 @@ public sealed class ServerEditTests : IDisposable
             .Returns(new AutomaticLibrariesState(true, false, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None));
     }
 
-    public void Dispose() => _fixture.Dispose();
+    public void Dispose()
+    {
+        _fixture.Dispose();
+        _loginsHeld.Dispose();
+    }
 
     private StubHandler.RecordedRequest[] Requests => _fixture.Handler.Requests.ToArray();
 
-    private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => request.RequestUri!.AbsolutePath switch
+    private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => _offline ? throw new System.Net.Http.HttpRequestException("offline") : request.RequestUri!.AbsolutePath switch
     {
-        "/Users/AuthenticateByName" => _login == HttpStatusCode.OK ? StubHandler.Json(LoginAnswer) : StubHandler.Status(_login),
+        "/Users/AuthenticateByName" => Held(_login == HttpStatusCode.OK ? StubHandler.Json(ForHost(request, LoginAnswer)) : StubHandler.Status(_login)),
         "/UserViews" => StubHandler.Json(_views),
-        "/System/Info/Public" => StubHandler.Json(PublicInfo),
-        "/Sessions/Logout" => StubHandler.Status(HttpStatusCode.NoContent),
+        "/System/Info/Public" => StubHandler.Json(ForHost(request, PublicInfo)),
+        "/Sessions/Logout" => Step("logout", StubHandler.Status(_logout)),
         _ => StubHandler.Status(HttpStatusCode.NotFound)
     };
 
-    private FederationAdminController Controller() => new(
+    // The second server of a test answers with its own Server Id.
+    private static string ForHost(System.Net.Http.HttpRequestMessage request, string json)
+        => request.RequestUri!.Host == SecondHost ? json.Replace(FirstId, OtherId, StringComparison.Ordinal) : json;
+
+    // Holds a login while the test keeps the gate shut, and counts the logins that wait there.
+    private T Held<T>(T value)
+    {
+        if (_loginHold is { } hold)
+        {
+            _loginsHeld.Release();
+            hold.Wait(TimeSpan.FromSeconds(10));
+        }
+
+        return value;
+    }
+
+    private T Step<T>(string step, T value)
+    {
+        _steps.Add(step);
+        return value;
+    }
+
+    private FederationAdminController Controller(IServerRenamer? renamer = null) => new(
         _fixture.Registry,
         _fixture.Vault,
         _fixture.Store,
         Mock.Of<IFederatedFolderLinkChecker>(),
         _playback.Coordinator,
         new FixedFederatedRootSource(null),
-        Mock.Of<ICatalogSyncService>(),
+        _sync.Object,
         new InMemoryMergeStore(),
         _libraries.Object,
-        new CapturingLogger<FederationAdminController>());
+        new CapturingLogger<FederationAdminController>(),
+        renamer: renamer);
 
     private async Task<Guid> AddAsync(params string[] libraries)
     {
@@ -98,9 +134,9 @@ public sealed class ServerEditTests : IDisposable
         return (refused.StatusCode!.Value, Assert.IsType<FailureResponse>(refused.Value));
     }
 
-    private string Snapshot()
+    private string Snapshot(Guid? id = null)
     {
-        var server = _fixture.Store.Configuration.Servers.Single();
+        var server = _fixture.Store.Configuration.Servers.Single(candidate => id is null || candidate.Id == id);
         return string.Join('|', server.Name, server.Url, server.EncryptedCredentials, server.JellyfinServerId, string.Join(',', server.ImportedLibraryIds));
     }
 
@@ -492,15 +528,17 @@ public sealed class ServerEditTests : IDisposable
     }
 
     [Fact]
-    public async Task A_new_name_alone_is_saved_with_no_remote()
+    public async Task A_new_name_alone_is_saved_whatever_the_remote_answers_and_touches_no_kept_login()
     {
         var id = await AddAsync("1");
         _login = HttpStatusCode.ServiceUnavailable;
 
         var result = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
 
-        Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
-        Assert.Empty(Requests);
+        var status = Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal("Casa", status.Name);
+        Assert.NotEqual(RemoteFailure.None, status.RemoteWarning);
+        Assert.All(Requests, request => Assert.Equal($"jellymesh-{id:N}-check", DeviceOf(request)));
     }
 
     [Fact]

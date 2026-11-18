@@ -102,7 +102,7 @@ public class ServerRecognitionTests
         fixture.Handler.Requests.Clear();
 
         var second = await AddAsync(fixture, "Friend");
-        var third = await AddAsync(fixture, "Friend");
+        var third = await AddAsync(fixture, "Friend 2");
 
         Assert.NotEqual(first.Id, second.Value!.Id);
         Assert.NotEqual(second.Value.Id, third.Value!.Id);
