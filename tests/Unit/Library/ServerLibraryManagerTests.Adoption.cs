@@ -312,7 +312,7 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task An_adopted_library_whose_paths_the_admin_changed_is_left_to_the_admin_untouched()
+    public async Task An_adopted_library_the_admin_gives_another_folder_stays_adopted_and_keeps_that_folder_on_release()
     {
         var fixture = OnTypeFolders();
         fixture.Server.ImportedLibraryIds.Remove(TestLibraries.Shows);
@@ -321,10 +321,39 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Libraries.Find("Film di casa").Locations = [.. FilmPaths, "/media/film"];
 
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        Assert.Contains(fixture.Server.AutomaticLibraryRegistry, record => record is { Name: "Film di casa", Adopted: true });
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(FilmPaths.Select(path => ("Film di casa", path)), fixture.Libraries.RemovedPaths);
+        Assert.Equal(["/media/film"], fixture.Libraries.Find("Film di casa").Locations);
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Libraries.Created);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task An_adopted_library_with_no_folder_of_the_server_or_another_type_is_left_to_the_admin_untouched(bool otherType)
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.Shows);
+        fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        if (otherType)
+        {
+            fixture.Libraries.Find("Film di casa").CollectionType = CollectionTypeOptions.tvshows;
+        }
+        else
+        {
+            fixture.Libraries.Find("Film di casa").Locations = ["/media/film"];
+        }
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
         await fixture.Manager.Disable(_serverId, true).Job;
 
         Assert.Empty(fixture.Server.AutomaticLibraryRegistry);
         Assert.Empty(fixture.Libraries.RemovedPaths);
+        Assert.Empty(fixture.Libraries.AddedPaths);
         Assert.Empty(fixture.Libraries.Removed);
         Assert.Empty(fixture.Libraries.Created);
     }

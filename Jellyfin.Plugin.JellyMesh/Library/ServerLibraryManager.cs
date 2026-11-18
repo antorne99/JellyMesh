@@ -401,7 +401,17 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     private static bool Passes(VirtualFolderInfo folder, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
         folder.CollectionType == TypeOf(kind)
         && folder.Locations is { Length: > 0 } locations
-        && locations.All(location => FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)) || IsTypeFolderOf(location, kind, remoteLibraryId, root, serverId));
+        && locations.All(location => IsServerFolder(location, kind, remoteLibraryId, root, serverId));
+
+    // An adopted library stays adopted while it keeps its type and a folder of the server; any other folder is the admin's.
+    private static bool Holds(VirtualFolderInfo folder, AutomaticLibraryConfig record, string root, Guid serverId) =>
+        record.Adopted
+            ? folder.CollectionType == TypeOf(record.Kind) && folder.Locations.Any(location => IsServerFolder(location, record.Kind, record.RemoteLibraryId, root, serverId))
+            : Passes(folder, record, root, serverId);
+
+    // The 0.5 folder of the server or a type folder of its remote libraries.
+    private static bool IsServerFolder(string location, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
+        FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)) || IsTypeFolderOf(location, kind, remoteLibraryId, root, serverId);
 
     // A type folder of the given kind in a remote library folder of the server, that of the given remote library if one is given.
     private static bool IsTypeFolderOf(string location, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
@@ -705,7 +715,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // Adds to a library of the registry the folders it lacks, and drops the 0.5 folder of the server once the titles left it.
     private bool AddFolders(Guid serverId, AutomaticLibraryConfig record, PlannedLibrary planned, string root, bool olderLayout, List<VirtualFolderInfo> folders)
     {
-        if (FindRecorded(record, folders) is not { } folder || !Passes(folder, record, root, serverId))
+        if (FindRecorded(record, folders) is not { } folder || !Holds(folder, record, root, serverId))
         {
             return false;
         }
@@ -727,7 +737,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
 
         var serverFolder = PathOf(record.Kind, root, serverId);
-        if (olderLayout || !kept.Any(location => FederatedFolderLinkChecker.IsSamePath(location, serverFolder)) || kept.All(location => FederatedFolderLinkChecker.IsSamePath(location, serverFolder)))
+        if (olderLayout || !kept.Any(location => FederatedFolderLinkChecker.IsSamePath(location, serverFolder)) || !kept.Any(location => IsTypeFolderOf(location, record.Kind, record.RemoteLibraryId, root, serverId)))
         {
             return changed;
         }
@@ -1219,8 +1229,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         return true;
     }
 
-    // Gives an adopted library back to the admin: it loses the folders of the server, which the follow just checked are all
-    // it holds, and keeps its name, its permissions and anything else (§10 row 440).
+    // Gives an adopted library back to the admin: it loses the folders of the server and keeps its other folders, its name,
+    // its permissions and anything else (§10 row 440).
     private bool Release(DeletedLibrary library, string root, List<VirtualFolderInfo> folders)
     {
         if (folders.FirstOrDefault(folder => string.Equals(folder.Name, library.Name, StringComparison.Ordinal)) is not { } folder)
@@ -1228,7 +1238,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             return true;
         }
 
-        foreach (var location in folder.Locations)
+        foreach (var location in folder.Locations.Where(location => IsServerFolder(location, library.Kind, library.RemoteLibraryId, root, library.ServerId)))
         {
             var outcome = _paths.Remove(root, folder.Name, location);
             if (outcome is not (LibraryPathOutcome.Done or LibraryPathOutcome.Unchanged or LibraryPathOutcome.NoLibrary))
@@ -1443,7 +1453,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     ? new FollowChange(record, candidates[0], record.Name, false)
                     : new FollowChange(record, null, passing is [var only] ? only.Name : record.Name, false));
             }
-            else if (!Passes(folder, record, root, registry.ServerId))
+            else if (!Holds(folder, record, root, registry.ServerId))
             {
                 changes.Add(new FollowChange(record, null, folder.Name, PassesUnderOtherRoot(folder, record, registry.ServerId)));
             }
