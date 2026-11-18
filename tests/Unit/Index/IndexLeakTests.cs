@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -41,7 +40,7 @@ public sealed class IndexLeakTests : IDisposable
         """;
 
     [Fact]
-    public async Task TheIndexFileHoldsNoTokenNoAddressAndNoPath()
+    public async Task TheIndexTablesHoldNoTokenNoAddressAndNoPath()
     {
         var item = JsonSerializer.Deserialize<RemoteItem>(HostileItem, _options)!;
         _fixture.Client.Add("films", RemoteItemType.Movie, item);
@@ -49,7 +48,7 @@ public sealed class IndexLeakTests : IDisposable
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
-        var content = await File.ReadAllTextAsync(Path.Combine(_fixture.Folder, IndexFile.FileName));
+        var content = await _fixture.Database.DumpAsync("index_");
         Assert.Contains("\"source\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Token, content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Password, content, StringComparison.Ordinal);

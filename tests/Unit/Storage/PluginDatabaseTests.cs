@@ -212,6 +212,56 @@ public sealed class PluginDatabaseTests : IDisposable
         await database.WriteAsync((_, _) => { }, CancellationToken.None);
     }
 
+    [Fact]
+    public async Task TheGenerationChangesOnlyWhenTheDatabaseIsOpenedHealthy()
+    {
+        Directory.CreateDirectory(DatabasePath);
+        var database = Open();
+        Assert.Equal(0, database.Generation);
+        Assert.True(database.Health.Suspended);
+        Assert.Equal(0, database.Generation);
+
+        Directory.Delete(DatabasePath);
+        database.Retry();
+        Assert.Equal(1, database.Generation);
+
+        database.Retry();
+        await database.WriteAsync((_, _) => { }, CancellationToken.None);
+        Assert.Equal(1, database.Generation);
+    }
+
+    [Fact]
+    public async Task DisposeWaitsForTheWriteInProgressAndRefusesWhatComesAfter()
+    {
+        var database = Open();
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var write = Task.Run(() => database.WriteAsync(
+            (connection, transaction) =>
+            {
+                started.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+                Scalar(connection, "CREATE TABLE kept (id INTEGER);", transaction);
+            },
+            CancellationToken.None));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+
+        var dispose = Task.Run(database.Dispose);
+        await Task.Delay(200);
+        Assert.False(dispose.IsCompleted);
+
+        release.Set();
+        await write;
+        await dispose.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var kept = await Open().ReadAsync((connection, transaction) => Scalar(connection, "SELECT count(*) FROM sqlite_master WHERE name = 'kept';", transaction), CancellationToken.None);
+        Assert.Equal(1L, kept);
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((_, _) => { }, CancellationToken.None));
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync((_, _) => 0, CancellationToken.None));
+        Assert.True(database.Retry().Suspended);
+        database.Dispose();
+    }
+
     private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
     private const UnixFileMode Shared = OwnerOnly | UnixFileMode.GroupRead | UnixFileMode.OtherRead;

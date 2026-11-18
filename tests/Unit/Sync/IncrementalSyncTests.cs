@@ -407,16 +407,42 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task AnIncrementalThatCannotBeSavedIsReported()
     {
-        await SyncedServerAsync();
+        var server = await SyncedServerAsync();
         Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
         SaveOnRemote("c");
-        var folder = _fixture.Folder;
-        System.IO.Directory.Delete(folder, recursive: true);
-        await System.IO.File.WriteAllTextAsync(folder, "a file where the folder should be");
+        _fixture.Database.InterruptNextWrite();
 
         await RunIncremental();
 
         Assert.True(_fixture.Sync.GetStatus().IndexSaveFailed);
-        System.IO.File.Delete(folder);
+        Assert.DoesNotContain(_fixture.Index.Snapshot.Find(server.Id)!.Items, item => item.ItemId == "c");
+    }
+
+    // D27: a sync with no changes writes nothing.
+    [Fact]
+    public async Task AnIncrementalSyncThatFindsNothingWritesNothing()
+    {
+        await SyncedServerAsync();
+        await RunIncremental();
+        Tick();
+        var writes = _fixture.Database.Writes;
+
+        await RunIncremental();
+        Tick();
+        await RunIncremental();
+
+        Assert.Equal(writes, _fixture.Database.Writes);
+    }
+
+    [Fact]
+    public async Task AFullSyncThatFindsNothingNewWritesNothing()
+    {
+        var server = await SyncedServerAsync();
+        var writes = _fixture.Database.Writes;
+
+        await RunFull();
+
+        Assert.Equal(writes, _fixture.Database.Writes);
+        Assert.Equal(_fixture.Clock.Now, CatalogOf(server).LastSuccessUtc);
     }
 }

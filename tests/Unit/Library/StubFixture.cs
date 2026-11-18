@@ -28,7 +28,7 @@ internal sealed class StubFixture : IDisposable
     public StubFixture()
     {
         Root = Path.Combine(_data, "federata");
-        Sync = new SyncFixture(stubFolder: Path.Combine(_data, "plugin"));
+        Sync = new SyncFixture();
         Sync.Store.Configuration.FederatedFolderPath = Root;
         Registry = Sync.Stubs;
         Merges = new ManualMergeStore(Path.Combine(_data, "plugin"), new CapturingLogger<ManualMergeStore>());
