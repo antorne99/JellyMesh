@@ -244,6 +244,35 @@ public sealed class ServerEditTests : IDisposable
     }
 
     [Fact]
+    public async Task The_answers_of_a_save_hold_no_token_and_no_password()
+    {
+        var id = await AddAsync("1");
+
+        var saved = await Controller().SaveServerEdit(id, Edit(password: "new-pass-sentinel"), CancellationToken.None);
+        _serverId = OtherId;
+        var refused = await Controller().SaveServerEdit(id, Edit(password: "other-pass-sentinel"), CancellationToken.None);
+
+        foreach (var json in new[] { ToJson(saved.Value), ToJson(((ObjectResult)refused.Result!).Value) })
+        {
+            Assert.DoesNotContain(TestValues.Token, json, StringComparison.Ordinal);
+            Assert.DoesNotContain(TestValues.Password, json, StringComparison.Ordinal);
+            Assert.DoesNotContain("pass-sentinel", json, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task Empty_fields_reach_the_registry_and_are_refused_on_their_field()
+    {
+        var id = await AddAsync("1");
+        var request = JsonSerializer.Deserialize<ServerEditRequest>("{\"Name\":\"\",\"Url\":\"\",\"Username\":\"\"}", JsonDefaults.Options)!;
+
+        var result = await Controller().CheckServerEdit(id, request, CancellationToken.None);
+
+        Assert.Equal(RemoteEditField.Name, Refusal(result).Failure.Field);
+        Assert.DoesNotContain(typeof(ServerEditRequest).GetProperties(), property => property.IsDefined(typeof(System.ComponentModel.DataAnnotations.RequiredAttribute), false));
+    }
+
+    [Fact]
     public async Task A_refused_login_is_shown_on_the_password()
     {
         var id = await AddAsync("1");
@@ -409,7 +438,8 @@ public sealed class ServerEditTests : IDisposable
 
         Assert.All(Requests.Where(request => request.Uri.AbsolutePath is "/Users/AuthenticateByName" or "/Sessions/Logout"), request => Assert.Equal($"jellymesh-{id:N}-check", DeviceOf(request)));
         _fixture.Handler.Requests.Clear();
-        await _fixture.Registry.RunWithSessionAsync(id, (endpoint, _, _) => Task.FromResult(RemoteResult.Success(endpoint.BaseUrl.Host)), CancellationToken.None);
+        var host = await _fixture.Registry.RunWithSessionAsync(id, (endpoint, _, _) => Task.FromResult(RemoteResult.Success(endpoint.BaseUrl.Host)), CancellationToken.None);
+        Assert.Equal("other.invalid", host.Value);
         Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
     }
 

@@ -324,7 +324,7 @@ public class FederationAdminController : ControllerBase
         ArgumentNullException.ThrowIfNull(request);
 
         var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToCheck(serverId, request.Name.Trim(), result.Value!) : EditFailed(result);
+        return result.IsSuccess ? ToCheck(serverId, request.Name!.Trim(), result.Value!) : EditFailed(result);
     }
 
     /// <summary>
