@@ -371,6 +371,33 @@ public sealed partial class ServerEditTests
         _sync.Verify(sync => sync.StartServerSync(id), Times.Once);
     }
 
+    // A lost key leaves only a live login to end the old user with: the new one is saved and the server works again.
+    [Fact]
+    public async Task A_new_user_through_the_old_credentials_endpoint_fixes_a_lost_key()
+    {
+        var id = await AddAsync("1");
+        _fixture.KeySource.Key = TestValues.OtherKey;
+
+        var result = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = "someone", Password = "new-pass" }, CancellationToken.None);
+
+        Assert.False(Assert.IsType<ServerStatus>(result.Value).NeedsPassword);
+        Assert.Equal("someone", _fixture.Vault.Unprotect(id, _fixture.Store.Configuration.Servers.Single().EncryptedCredentials)!.Username);
+        Assert.All(Requests.Where(request => request.Uri.AbsolutePath == "/Sessions/Logout"), logout => Assert.Contains(TestValues.Token, logout.Authorization, StringComparison.Ordinal));
+        _sync.Verify(sync => sync.StartServerSync(id), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_server_saved_without_its_id_takes_the_one_read_through_the_old_credentials_endpoint()
+    {
+        var id = await AddAsync("1");
+        _fixture.Store.Configuration.Servers.Single().JellyfinServerId = string.Empty;
+
+        var result = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = TestValues.Username, Password = "new-pass" }, CancellationToken.None);
+
+        Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal(FirstId, _fixture.Store.Configuration.Servers.Single().JellyfinServerId);
+    }
+
     [Fact]
     public async Task A_new_user_without_a_live_login_ends_the_device_of_the_old_user_with_its_saved_credentials()
     {
