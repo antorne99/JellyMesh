@@ -186,20 +186,19 @@ public sealed class LibraryRenamer : ILibraryRenamer
         foreach (var user in _users.GetUsers().ToList())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (user.HasPermission(PermissionKind.EnableAllFolders))
-            {
-                continue;
-            }
-
             var enabled = user.GetPreference(PreferenceKind.EnabledFolders);
-            var held = enabled.Select(value => Guid.TryParse(value, out var id) ? id : Guid.Empty).ToHashSet();
-            var missing = access.Where(pair => held.Contains(pair.Key)).SelectMany(pair => pair.Value).Where(id => !held.Contains(id)).Distinct().ToList();
-            if (missing.Count == 0)
+            var blocked = user.GetPreference(PreferenceKind.BlockedMediaFolders);
+            var touched = CarryIds(user, PreferenceKind.BlockedMediaFolders, access);
+            if (!user.HasPermission(PermissionKind.EnableAllFolders))
+            {
+                touched |= CarryIds(user, PreferenceKind.EnabledFolders, access);
+            }
+
+            if (!touched)
             {
                 continue;
             }
 
-            user.SetPreference(PreferenceKind.EnabledFolders, [.. enabled, .. missing.Select(id => id.ToString("N", CultureInfo.InvariantCulture))]);
             try
             {
                 await _users.UpdateUserAsync(user).ConfigureAwait(false);
@@ -207,9 +206,25 @@ public sealed class LibraryRenamer : ILibraryRenamer
             catch
             {
                 user.SetPreference(PreferenceKind.EnabledFolders, enabled);
+                user.SetPreference(PreferenceKind.BlockedMediaFolders, blocked);
                 throw;
             }
         }
+    }
+
+    // Adds to a list of the user the ids that take the titles of an id it names. Tells whether it changed.
+    private static bool CarryIds(User user, PreferenceKind kind, IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> access)
+    {
+        var values = user.GetPreference(kind);
+        var held = values.Select(value => Guid.TryParse(value, out var id) ? id : Guid.Empty).ToHashSet();
+        var missing = access.Where(pair => held.Contains(pair.Key)).SelectMany(pair => pair.Value).Where(id => !held.Contains(id)).Distinct().ToList();
+        if (missing.Count == 0)
+        {
+            return false;
+        }
+
+        user.SetPreference(kind, [.. values, .. missing.Select(id => id.ToString("N", CultureInfo.InvariantCulture))]);
+        return true;
     }
 
     // The path of a child of the libraries folder, or null for a name that would leave it.

@@ -31,8 +31,8 @@ public interface ILibraryRenamer
     Task<Guid?> RenameAsync(string name, Guid? itemId, CollectionType? type, string newName, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Gives each user with access to a library by id, not to all of them, access to the libraries that take its titles.
-    /// Only the per-id access lists change, as on a rename (§10 row 438).
+    /// Keeps what each user can see when libraries take the titles of an old one: who blocks the old one blocks them, and
+    /// who has access to it by id, not to all libraries, gets them. Only the per-id lists change, as on a rename (§10 row 438).
     /// </summary>
     /// <param name="access">For each old library id, the ids of the libraries that take its titles.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

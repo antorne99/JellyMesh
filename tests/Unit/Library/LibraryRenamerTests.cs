@@ -174,6 +174,42 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task Users_who_block_an_old_library_also_block_the_new_ones_with_all_libraries_or_not()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("D")]);
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N"), first.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+
+        await _renamer.CarryAccessAsync(new Dictionary<Guid, IReadOnlyList<Guid>> { [OldId] = [first, second] }, CancellationToken.None);
+
+        Assert.Equal([OldId.ToString("D"), first.ToString("N"), second.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Equal([OldId.ToString("N"), first.ToString("N"), second.ToString("N")], _limited.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Empty(_blocked.GetPreference(PreferenceKind.EnabledFolders));
+        _users.Verify(users => users.UpdateUserAsync(_blocked), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_limited), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_user_whose_blocked_list_cannot_be_saved_keeps_both_lists_it_had()
+    {
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.CarryAccessAsync(new Dictionary<Guid, IReadOnlyList<Guid>> { [OldId] = [NewId] }, CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
     public async Task Access_already_carried_is_not_written_again()
     {
         var first = Guid.NewGuid();
