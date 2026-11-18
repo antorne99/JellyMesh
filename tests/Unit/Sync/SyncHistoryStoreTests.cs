@@ -1,10 +1,11 @@
 using System;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Sync;
@@ -13,19 +14,11 @@ public sealed class SyncHistoryStoreTests : IDisposable
 {
     private static readonly DateTimeOffset Start = new(2026, 11, 12, 3, 0, 0, TimeSpan.Zero);
 
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "jellymesh-history-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database = new();
 
-    private string FilePath => Path.Combine(_folder, SyncHistoryStore.FileName);
+    public void Dispose() => _database.Dispose();
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_folder))
-        {
-            Directory.Delete(_folder, true);
-        }
-    }
-
-    private SyncHistoryStore Store(CapturingLogger<SyncHistoryStore>? logger = null) => new(_folder, logger ?? new CapturingLogger<SyncHistoryStore>());
+    private SyncHistoryStore Store(CapturingLogger<SyncHistoryStore>? logger = null) => new(_database, logger ?? new CapturingLogger<SyncHistoryStore>());
 
     private static SyncRun Run(int minute, SyncRunOutcome outcome = SyncRunOutcome.Succeeded) => new(
         Start.AddMinutes(minute),
@@ -40,7 +33,7 @@ public sealed class SyncHistoryStoreTests : IDisposable
     };
 
     [Fact]
-    public void AMissingFileMeansNoRuns()
+    public void AnEmptyDatabaseMeansNoRuns()
     {
         using var store = Store();
 
@@ -131,97 +124,45 @@ public sealed class SyncHistoryStoreTests : IDisposable
         AssertKept(store, [.. Enumerable.Range(8, 50).Reverse(), .. Enumerable.Range(2, 6).Reverse()]);
     }
 
-    [Fact]
-    public void AFileWrittenBeforeTheTotals_StillLoads()
-    {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(
-            FilePath,
-            "{\"Version\":1,\"Runs\":[{\"StartedUtc\":\"2026-11-12T03:00:00+00:00\",\"DurationMilliseconds\":5,\"Kind\":\"Reconciliation\",\"Outcome\":\"Succeeded\",\"Servers\":[]}]}");
-
-        using var store = Store();
-
-        var run = Assert.Single(store.Runs);
-        Assert.Equal(SyncRunKind.Reconciliation, run.Kind);
-        Assert.Equal(0, run.Created);
-        Assert.False(store.IsDamaged);
-    }
-
     private static SyncRun Reconciliation(int minute) => Run(minute) with { Kind = SyncRunKind.Reconciliation };
 
     private static void AssertKept(SyncHistoryStore store, int[] minutes) =>
         Assert.Equal(minutes.Select(minute => Start.AddMinutes(minute)), store.Runs.Select(run => run.StartedUtc));
 
     [Fact]
-    public async Task NoTemporaryFileStays()
+    public async Task EachRunIsARowWithAServerPerRow_AndTheDroppedRunsLeaveNoRow()
     {
         using var store = Store();
+        for (var minute = 0; minute < SyncHistoryStore.Capacity + 2; minute++)
+        {
+            await store.AddAsync(Run(minute), CancellationToken.None);
+        }
 
-        await store.AddAsync(Run(0), CancellationToken.None);
-
-        Assert.Equal([SyncHistoryStore.FileName], Directory.GetFiles(_folder).Select(Path.GetFileName));
+        Assert.Equal(SyncHistoryStore.Capacity, _database.Count("sync_runs"));
+        Assert.Equal(SyncHistoryStore.Capacity, _database.Count("sync_run_servers"));
     }
 
-    [Theory]
-    [InlineData("not json")]
-    [InlineData("{\"Version\":99,\"Runs\":[]}")]
-    [InlineData("{\"Version\":1}")]
-    [InlineData("{\"Version\":1,\"Runs\":[{\"DurationMilliseconds\":5}]}")]
-    [InlineData("{\"Version\":1,\"Runs\":[null]}")]
-    [InlineData("{\"Version\":1,\"Runs\":[{\"StartedUtc\":\"2026-11-12T03:00:00+00:00\",\"DurationMilliseconds\":5,\"Kind\":\"Incremental\",\"Outcome\":\"Succeeded\",\"Servers\":[null]}]}")]
-    public void ABadFileIsSetAside_AndTheHistoryStartsEmpty(string content)
+    [Fact]
+    public async Task WhileTheDatabaseIsSuspended_ARunStillShows_TheSaveThrows_AndTheNextSaveKeepsIt()
     {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(FilePath, content);
+        using (var earlier = Store())
+        {
+            await earlier.AddAsync(Run(0), CancellationToken.None);
+        }
 
+        _database.Suspended = true;
         using var store = Store();
 
-        Assert.Empty(store.Runs);
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => store.AddAsync(Run(1), CancellationToken.None));
+
         Assert.True(store.IsDamaged);
-        Assert.Equal(content, File.ReadAllText(FilePath + ".damaged"));
-    }
+        AssertKept(store, [1]);
 
-    [Fact]
-    public async Task ASaveClearsTheDamage()
-    {
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(FilePath, "not json");
-        using var store = Store();
-
-        await store.AddAsync(Run(0), CancellationToken.None);
-
+        _database.Suspended = false;
         Assert.False(store.IsDamaged);
-        Assert.True(File.Exists(FilePath + ".damaged"));
-    }
-
-    [Fact]
-    public async Task ARunThatCannotBeSavedStillShows_AndTheSaveThrows()
-    {
-        // A file where the folder should be makes every save fail, also as root.
-        await File.WriteAllTextAsync(_folder, string.Empty);
-        try
-        {
-            using var store = Store();
-
-            await Assert.ThrowsAnyAsync<IOException>(() => store.AddAsync(Run(0), CancellationToken.None));
-
-            Assert.Single(store.Runs);
-        }
-        finally
-        {
-            File.Delete(_folder);
-        }
-    }
-
-    [Fact]
-    public async Task TheFileHoldsNoAddress()
-    {
-        using var store = Store();
-
-        await store.AddAsync(Run(0), CancellationToken.None);
-
-        var text = await File.ReadAllTextAsync(FilePath);
-        Assert.DoesNotContain("http", text, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(TestValues.Host, text, StringComparison.OrdinalIgnoreCase);
+        AssertKept(store, [1, 0]);
+        await store.AddAsync(Run(2), CancellationToken.None);
+        using var reloaded = Store();
+        AssertKept(reloaded, [2, 1, 0]);
     }
 }

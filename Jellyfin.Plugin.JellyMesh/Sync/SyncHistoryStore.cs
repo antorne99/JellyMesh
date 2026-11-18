@@ -1,23 +1,24 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Sync;
 
 /// <summary>
-/// <see cref="ISyncHistory"/> over a file in the plugin data folder. A write replaces the file in one step. A file that
-/// cannot be read is set aside and the history starts empty.
+/// <see cref="ISyncHistory"/> over the tables <c>sync_runs</c> and <c>sync_run_servers</c> of the plugin database. A run is
+/// inserted and the oldest dropped in one short transaction. While the database cannot be read the history shows only the
+/// runs since, which are saved with the next run that can be.
 /// </summary>
 public sealed class SyncHistoryStore : ISyncHistory, IDisposable
 {
     /// <summary>
-    /// The file name.
+    /// The file of 0.5, which the data migration reads once.
     /// </summary>
     public const string FileName = "sync-history.json";
 
@@ -31,40 +32,67 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     /// </summary>
     public const int ReconciliationCapacity = 7;
 
-    private const int CurrentVersion = 1;
+    private const string SelectRuns = """
+        SELECT id, started_utc, offset_minutes, duration_ms, kind, outcome, created, updated, removed, failed, index_save_failed,
+            materialization_failed
+        FROM sync_runs ORDER BY id DESC;
+        """;
 
-    private static readonly JsonSerializerOptions _options = new()
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        RespectNullableAnnotations = true,
-        RespectRequiredConstructorParameters = true,
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
+    private const string SelectServers = """
+        SELECT run_id, server_id, server_name, read, created, updated, removed, failed, failure
+        FROM sync_run_servers ORDER BY run_id, position;
+        """;
 
-    private readonly string _path;
+    private const string InsertRun = """
+        INSERT INTO sync_runs (started_utc, offset_minutes, duration_ms, kind, outcome, created, updated, removed, failed,
+            index_save_failed, materialization_failed)
+        VALUES ($started, $offset, $duration, $kind, $outcome, $created, $updated, $removed, $failed, $indexFailed, $materializationFailed)
+        RETURNING id;
+        """;
+
+    private const string InsertServer = """
+        INSERT INTO sync_run_servers (run_id, position, server_id, server_name, read, created, updated, removed, failed, failure)
+        VALUES ($run, $position, $server, $name, $read, $created, $updated, $removed, $failed, $failure);
+        """;
+
+    private const string SelectKinds = "SELECT id, kind FROM sync_runs ORDER BY id DESC;";
+
+    private const string DeleteRun = """
+        DELETE FROM sync_run_servers WHERE run_id = $id;
+        DELETE FROM sync_runs WHERE id = $id;
+        """;
+
+    private readonly IPluginDatabase _database;
     private readonly ILogger<SyncHistoryStore> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private volatile IReadOnlyList<SyncRun> _runs;
-    private volatile bool _isDamaged;
+    private readonly Lock _lock = new();
+    private List<SyncRun> _unsaved = [];
+    private IReadOnlyList<SyncRun>? _saved;
+    private volatile IReadOnlyList<SyncRun> _runs = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SyncHistoryStore"/> class.
     /// </summary>
-    /// <param name="folder">The folder of the file.</param>
+    /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public SyncHistoryStore(string folder, ILogger<SyncHistoryStore> logger)
+    public SyncHistoryStore(IPluginDatabase database, ILogger<SyncHistoryStore> logger)
     {
-        _path = Path.Combine(folder, FileName);
+        _database = database;
         _logger = logger;
-        _runs = Load();
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<SyncRun> Runs => _runs;
+    public IReadOnlyList<SyncRun> Runs
+    {
+        get
+        {
+            Load();
+            return _runs;
+        }
+    }
 
     /// <inheritdoc />
-    public bool IsDamaged => _isDamaged;
+    public bool IsDamaged => !Load();
 
     /// <inheritdoc />
     public async Task AddAsync(SyncRun run, CancellationToken cancellationToken)
@@ -74,10 +102,26 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var next = Trim(_runs.Prepend(run));
-            _runs = next;
-            await SaveAsync(next, cancellationToken).ConfigureAwait(false);
-            _isDamaged = false;
+            List<SyncRun> unsaved;
+            lock (_lock)
+            {
+                _unsaved = Trim([run, .. _unsaved], entry => entry.Kind);
+                unsaved = _unsaved;
+                Publish();
+            }
+
+            if (!Load())
+            {
+                throw new StoreSuspendedException("The sync history cannot be read, so the run is not saved yet.");
+            }
+
+            var saved = await _database.WriteAsync((connection, transaction) => Save(connection, transaction, unsaved), cancellationToken).ConfigureAwait(false);
+            lock (_lock)
+            {
+                _unsaved = [];
+                _saved = saved;
+                Publish();
+            }
         }
         finally
         {
@@ -88,66 +132,15 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
 
-    private async Task SaveAsync(IReadOnlyList<SyncRun> runs, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-
-        var temporary = _path + ".tmp";
-        try
-        {
-            var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-            await using (stream.ConfigureAwait(false))
-            {
-                await JsonSerializer.SerializeAsync(stream, new HistoryFile(CurrentVersion, runs), _options, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                RandomAccess.FlushToDisk(stream.SafeFileHandle);
-            }
-
-            File.Move(temporary, _path, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporary);
-        }
-    }
-
-    private IReadOnlyList<SyncRun> Load()
-    {
-        if (!File.Exists(_path))
-        {
-            return [];
-        }
-
-        try
-        {
-            using var stream = File.OpenRead(_path);
-            var file = JsonSerializer.Deserialize<HistoryFile>(stream, _options);
-            if (file?.Version == CurrentVersion && IsWhole(file.Runs))
-            {
-                return Trim(file.Runs);
-            }
-
-            _logger.LogError("The file of the sync history has an unsupported format. The history starts empty");
-        }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            _logger.LogError("Cannot read the file of the sync history: {Error}. The history starts empty", exception.GetType().Name);
-        }
-
-        _isDamaged = true;
-        KeepDamagedCopy();
-        return [];
-    }
-
     // Keeps the last runs and the last reconciliations, newest first. By position, since two runs can be equal.
-    private static List<SyncRun> Trim(IEnumerable<SyncRun> runs)
+    private static List<T> Trim<T>(IEnumerable<T> runs, Func<T, SyncRunKind> kindOf)
     {
-        var kept = new List<SyncRun>();
+        var kept = new List<T>();
         var index = 0;
         var reconciliations = 0;
         foreach (var run in runs)
         {
-            var isLastReconciliation = run.Kind == SyncRunKind.Reconciliation && reconciliations++ < ReconciliationCapacity;
+            var isLastReconciliation = kindOf(run) == SyncRunKind.Reconciliation && reconciliations++ < ReconciliationCapacity;
             if (index++ < Capacity || isLastReconciliation)
             {
                 kept.Add(run);
@@ -157,21 +150,153 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         return kept;
     }
 
-    // Tells whether no run and no server row is null, which the serializer lets through in lists.
-    private static bool IsWhole(IReadOnlyList<SyncRun?> runs) =>
-        runs.All(run => run is not null && run.Servers is not null && run.Servers.All(server => server is not null));
-
-    private void KeepDamagedCopy()
+    // Inserts the unsaved runs oldest first, drops what the limits leave out, and reads the history back.
+    private static List<SyncRun> Save(SqliteConnection connection, SqliteTransaction transaction, List<SyncRun> unsaved)
     {
-        try
+        foreach (var run in Enumerable.Reverse(unsaved))
         {
-            File.Copy(_path, _path + ".damaged", overwrite: true);
+            long id;
+            using (var command = StoreSql.Command(
+                connection,
+                transaction,
+                InsertRun,
+                ("$started", run.StartedUtc.UtcTicks),
+                ("$offset", (int)run.StartedUtc.Offset.TotalMinutes),
+                ("$duration", run.DurationMilliseconds),
+                ("$kind", run.Kind.ToString()),
+                ("$outcome", run.Outcome.ToString()),
+                ("$created", run.Created),
+                ("$updated", run.Updated),
+                ("$removed", run.Removed),
+                ("$failed", run.Failed),
+                ("$indexFailed", run.IndexSaveFailed),
+                ("$materializationFailed", run.MaterializationFailed)))
+            {
+                id = (long)command.ExecuteScalar()!;
+            }
+
+            for (var position = 0; position < run.Servers.Count; position++)
+            {
+                var server = run.Servers[position];
+                StoreSql.Execute(
+                    connection,
+                    transaction,
+                    InsertServer,
+                    ("$run", id),
+                    ("$position", position),
+                    ("$server", StoreSql.Text(server.ServerId)),
+                    ("$name", server.ServerName),
+                    ("$read", server.Read),
+                    ("$created", server.Created),
+                    ("$updated", server.Updated),
+                    ("$removed", server.Removed),
+                    ("$failed", server.Failed),
+                    ("$failure", server.Failure?.ToString()));
+            }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+
+        var all = new List<(long Id, SyncRunKind Kind)>();
+        using (var command = StoreSql.Command(connection, transaction, SelectKinds))
+        using (var reader = command.ExecuteReader())
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the sync history: {Error}", exception.GetType().Name);
+            while (reader.Read())
+            {
+                all.Add((reader.GetInt64(0), Enum.Parse<SyncRunKind>(reader.GetString(1))));
+            }
         }
+
+        var kept = Trim(all, entry => entry.Kind).Select(entry => entry.Id).ToHashSet();
+        foreach (var (id, _) in all.Where(entry => !kept.Contains(entry.Id)))
+        {
+            StoreSql.Execute(connection, transaction, DeleteRun, ("$id", id));
+        }
+
+        return ReadAll(connection, transaction);
     }
 
-    private sealed record HistoryFile(int Version, IReadOnlyList<SyncRun> Runs);
+    private static List<SyncRun> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var servers = new Dictionary<long, List<SyncRunServer>>();
+        using (var command = StoreSql.Command(connection, transaction, SelectServers))
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var runId = reader.GetInt64(0);
+                if (!servers.TryGetValue(runId, out var list))
+                {
+                    servers[runId] = list = [];
+                }
+
+                list.Add(new SyncRunServer(
+                    Guid.ParseExact(reader.GetString(1), "N"),
+                    reader.GetString(2),
+                    reader.GetInt32(3),
+                    reader.GetInt32(4),
+                    reader.GetInt32(5),
+                    reader.GetInt32(6),
+                    reader.GetInt32(7),
+                    StoreSql.TextOrNull(reader, 8) is { } failure && Enum.TryParse<RemoteFailure>(failure, out var parsed) ? parsed : null));
+            }
+        }
+
+        var runs = new List<SyncRun>();
+        using (var command = StoreSql.Command(connection, transaction, SelectRuns))
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var id = reader.GetInt64(0);
+                var offset = TimeSpan.FromMinutes(reader.GetInt32(2));
+                runs.Add(new SyncRun(
+                    new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero).ToOffset(offset),
+                    reader.GetInt64(3),
+                    Enum.Parse<SyncRunKind>(reader.GetString(4)),
+                    Enum.Parse<SyncRunOutcome>(reader.GetString(5)),
+                    servers.GetValueOrDefault(id) ?? [])
+                {
+                    Created = reader.GetInt32(6),
+                    Updated = reader.GetInt32(7),
+                    Removed = reader.GetInt32(8),
+                    Failed = reader.GetInt32(9),
+                    IndexSaveFailed = reader.GetInt64(10) != 0,
+                    MaterializationFailed = reader.GetInt64(11) != 0
+                });
+            }
+        }
+
+        return runs;
+    }
+
+    // Called with the lock held: the runs not saved yet before the saved ones, within the limits.
+    private void Publish() => _runs = Trim(_unsaved.Concat(_saved ?? []), run => run.Kind);
+
+    // Reads the saved runs once the database can be read, and tells whether they are known.
+    private bool Load()
+    {
+        lock (_lock)
+        {
+            if (_saved is not null)
+            {
+                return true;
+            }
+        }
+
+        try
+        {
+            var saved = _database.ReadAsync(ReadAll, CancellationToken.None).GetAwaiter().GetResult();
+            lock (_lock)
+            {
+                _saved ??= saved;
+                Publish();
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
+        {
+            _logger.LogDebug("Cannot read the sync history for now: {Error}", exception.GetType().Name);
+            return false;
+        }
+    }
 }

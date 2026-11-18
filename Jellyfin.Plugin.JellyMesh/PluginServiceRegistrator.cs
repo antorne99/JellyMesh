@@ -94,9 +94,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<KeptWatchStateStore>>()));
         serviceCollection.AddSingleton<IWatchStateKeeper, WatchStateKeeper>();
-        serviceCollection.AddSingleton<ISyncHistory>(provider => new SyncHistoryStore(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<SyncHistoryStore>>()));
+        serviceCollection.AddSingleton<ISyncHistory, SyncHistoryStore>();
         serviceCollection.AddSingleton<IMigrationSync, MigrationSync>();
         serviceCollection.AddSingleton<ILayoutMigration, LayoutMigration>();
         serviceCollection.AddSingleton<ILibraryChangeTracker, LibraryChangeTracker>();
