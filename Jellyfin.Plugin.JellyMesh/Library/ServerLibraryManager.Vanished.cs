@@ -108,7 +108,8 @@ public sealed partial class ServerLibraryManager
     {
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
         if (ReadFolders() is not { } folders
-            || FindRecorded(record, folders) is not { } folder
+            || record.ItemId.Length == 0
+            || folders.FirstOrDefault(found => string.Equals(found.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase)) is not { } folder
             || record.Adopted
             || !Holds(folder, record, root, serverId)
             || !folder.Locations.All(location => IsVanishedFolder(location, root, serverId, gone)))

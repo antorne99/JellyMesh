@@ -103,6 +103,30 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task An_own_library_renamed_in_place_while_waiting_for_the_scans_is_deleted_under_its_new_name_in_that_check()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+
+        await ReconcileChangingDuringTheWaitAsync(fixture, () => fixture.Libraries.Find("Casa - Film 4K").Name = "Film in 4K");
+
+        Assert.Equal(["Film in 4K"], fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task A_library_of_another_id_given_the_recorded_name_while_waiting_for_the_scans_is_left_alone()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+
+        await ReconcileChangingDuringTheWaitAsync(fixture, () => fixture.Libraries.Find("Casa - Film 4K").ItemId = "another-id");
+
+        Assert.Empty(fixture.Libraries.Removed);
+    }
+
+    [Fact]
     public async Task An_own_library_given_a_folder_of_the_admin_while_waiting_for_the_scans_is_left_alone()
     {
         var fixture = await ByRemoteLibraryWithFilmsB();
