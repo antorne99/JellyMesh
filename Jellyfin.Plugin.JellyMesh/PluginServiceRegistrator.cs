@@ -7,6 +7,7 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
@@ -38,6 +39,12 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IFederatedFolderLinkChecker, FederatedFolderLinkChecker>();
 
         serviceCollection.TryAddSingleton(TimeProvider.System);
+
+        // Opens on first use; the services move into it from later phases.
+        serviceCollection.AddSingleton(provider => new PluginDatabase(
+            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<ILogger<PluginDatabase>>()));
+        serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
         serviceCollection.AddSingleton(provider => new IndexFile(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<IndexFile>>()));
