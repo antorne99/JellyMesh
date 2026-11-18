@@ -1,66 +1,53 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// <see cref="IWatchStateCarryLog"/> over a file in the plugin data folder. It holds user and item IDs and a date. A write
-/// replaces the file in one step. A damaged file is set aside; one that cannot be read for now suspends the carries until
-/// it reads again (decision 176).
+/// <see cref="IWatchStateCarryLog"/> over the table <c>watch_state_carries</c> of the plugin database. It holds user and
+/// item IDs and a date. A carry recorded or forgotten is written at once in a short transaction; one that cannot be is
+/// written by the next save. While the database cannot be read the carries are suspended until it reads (decision 176).
 /// </summary>
 public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 {
     /// <summary>
-    /// The file name.
+    /// The file of 0.5, which the data migration reads once.
     /// </summary>
     public const string FileName = "watch-state-carries.json";
 
-    private const int CurrentVersion = 1;
+    private const string SelectAll = "SELECT user_id, item_id, last_played_ticks FROM watch_state_carries;";
 
-    private static readonly JsonSerializerOptions _options = new()
-    {
-        RespectNullableAnnotations = true,
-        RespectRequiredConstructorParameters = true,
-        WriteIndented = true
-    };
+    private const string Upsert = """
+        INSERT INTO watch_state_carries (user_id, item_id, last_played_ticks) VALUES ($user, $item, $played)
+        ON CONFLICT (user_id, item_id) DO UPDATE SET last_played_ticks = excluded.last_played_ticks;
+        """;
 
-    private readonly string _path;
+    private const string Delete = "DELETE FROM watch_state_carries WHERE user_id = $user AND item_id = $item;";
+
+    private readonly IPluginDatabase _database;
     private readonly ILogger<WatchStateCarryLog> _logger;
-    private readonly Func<string, Stream> _openRead;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), DateTime?> _carries = new();
-    private volatile bool _unsaved;
+    private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), byte> _unsaved = new();
     private volatile bool _loaded;
+    private int _reported;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WatchStateCarryLog"/> class.
     /// </summary>
-    /// <param name="folder">The folder of the file.</param>
+    /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public WatchStateCarryLog(string folder, ILogger<WatchStateCarryLog> logger)
-        : this(folder, logger, File.OpenRead)
+    public WatchStateCarryLog(IPluginDatabase database, ILogger<WatchStateCarryLog> logger)
     {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="WatchStateCarryLog"/> class that reads the file through a test seam.
-    /// </summary>
-    /// <param name="folder">The folder of the file.</param>
-    /// <param name="logger">The logger.</param>
-    /// <param name="openRead">Opens the file to read it.</param>
-    internal WatchStateCarryLog(string folder, ILogger<WatchStateCarryLog> logger, Func<string, Stream> openRead)
-    {
-        _path = Path.Combine(folder, FileName);
+        _database = database;
         _logger = logger;
-        _openRead = openRead;
-        EnsureLoaded();
     }
 
     /// <inheritdoc />
@@ -74,17 +61,22 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         _gate.Wait();
         try
         {
-            if (!_loaded && Load() is { } entries)
+            if (!_loaded)
             {
-                foreach (var entry in entries)
+                foreach (var (key, lastPlayed) in _database.ReadAsync(ReadAll, CancellationToken.None).GetAwaiter().GetResult())
                 {
-                    _carries[(entry.UserId, entry.ItemId)] = entry.LastPlayedDate;
+                    _carries[key] = lastPlayed;
                 }
 
                 _loaded = true;
             }
 
-            return _loaded;
+            return true;
+        }
+        catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
+        {
+            _logger.LogWarning("Cannot read the watch state carries done for now: {Error}. Carries are suspended until the database reads", exception.GetType().Name);
+            return false;
         }
         finally
         {
@@ -93,160 +85,124 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     }
 
     /// <inheritdoc />
-    public bool TryFind(Guid userId, Guid fromItemId, out DateTime? lastPlayedDate) => _carries.TryGetValue((userId, fromItemId), out lastPlayedDate);
+    public bool TryFind(Guid userId, Guid fromItemId, out DateTime? lastPlayedDate)
+    {
+        lastPlayedDate = null;
+        return EnsureLoaded() && _carries.TryGetValue((userId, fromItemId), out lastPlayedDate);
+    }
 
     /// <inheritdoc />
     public void Record(Guid userId, Guid fromItemId, DateTime? lastPlayedDate)
     {
-        if (!_loaded)
+        if (!EnsureLoaded())
         {
             return;
         }
 
-        _carries[(userId, fromItemId)] = lastPlayedDate;
-        _unsaved = true;
+        var key = (userId, fromItemId);
+        _carries[key] = lastPlayedDate;
+        _unsaved[key] = 0;
+        WriteKeysAsync([key], CancellationToken.None).GetAwaiter().GetResult();
     }
 
     /// <inheritdoc />
     public int Forget(Func<Guid, Guid, bool> match)
     {
         ArgumentNullException.ThrowIfNull(match);
+        if (!EnsureLoaded())
+        {
+            return 0;
+        }
 
-        var forgotten = 0;
+        var forgotten = new List<(Guid UserId, Guid ItemId)>();
         foreach (var key in _carries.Keys.Where(key => match(key.UserId, key.ItemId)).ToList())
         {
             if (_carries.TryRemove(key, out _))
             {
-                forgotten++;
+                _unsaved[key] = 0;
+                forgotten.Add(key);
             }
         }
 
-        if (forgotten > 0)
+        if (forgotten.Count > 0)
         {
-            _unsaved = true;
+            WriteKeysAsync(forgotten, CancellationToken.None).GetAwaiter().GetResult();
         }
 
-        return forgotten;
+        return forgotten.Count;
     }
 
     /// <inheritdoc />
     public async Task<bool> SaveAsync(CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        if (!EnsureLoaded())
         {
-            // A file not read yet would be replaced by what little is in memory.
-            if (!_loaded)
-            {
-                return false;
-            }
-
-            if (!_unsaved)
-            {
-                return true;
-            }
-
-            _unsaved = false;
-            await WriteAsync(cancellationToken).ConfigureAwait(false);
-            return true;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            _unsaved = true;
-            _logger.LogError("Cannot save the watch state carries done: {Error}", exception.GetType().Name);
             return false;
         }
-        catch
-        {
-            _unsaved = true;
-            throw;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+
+        return _unsaved.IsEmpty || await WriteKeysAsync(_unsaved.Keys.ToList(), cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
 
-    private async Task WriteAsync(CancellationToken cancellationToken)
+    private static List<KeyValuePair<(Guid UserId, Guid ItemId), DateTime?>> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-
-        var entries = _carries
-            .Select(pair => new Entry(pair.Key.UserId, pair.Key.ItemId, pair.Value))
-            .OrderBy(entry => entry.UserId)
-            .ThenBy(entry => entry.ItemId)
-            .ToList();
-        var temporary = _path + ".tmp";
-        try
+        var rows = new List<KeyValuePair<(Guid, Guid), DateTime?>>();
+        using var command = StoreSql.Command(connection, transaction, SelectAll);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
         {
-            var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-            await using (stream.ConfigureAwait(false))
-            {
-                await JsonSerializer.SerializeAsync(stream, new CarryFile(CurrentVersion, entries), _options, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                RandomAccess.FlushToDisk(stream.SafeFileHandle);
-            }
+            var lastPlayed = StoreSql.LongOrNull(reader, 2) is { } ticks ? new DateTime(ticks, DateTimeKind.Utc) : (DateTime?)null;
+            rows.Add(new((Guid.ParseExact(reader.GetString(0), "N"), Guid.ParseExact(reader.GetString(1), "N")), lastPlayed));
+        }
 
-            File.Move(temporary, _path, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporary);
-        }
+        return rows;
     }
 
-    // Null when the file cannot be read for now, or is damaged and cannot be set aside: the carries wait for it rather
-    // than start again from nothing.
-    private IReadOnlyList<Entry>? Load()
+    // Writes the current date of each key, or drops its row when it is forgotten; the keys stay unsaved when it cannot.
+    private async Task<bool> WriteKeysAsync(List<(Guid UserId, Guid ItemId)> keys, CancellationToken cancellationToken)
     {
+        foreach (var key in keys)
+        {
+            _unsaved.TryRemove(key, out _);
+        }
+
         try
         {
-            using var stream = _openRead(_path);
-            var file = JsonSerializer.Deserialize<CarryFile>(stream, _options);
-            if (file?.Version == CurrentVersion && file.Entries.All(entry => entry is not null))
-            {
-                return file.Entries;
-            }
-
-            _logger.LogError("The file of the watch state carries done has an unsupported format. It is set aside");
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            _logger.LogError("Cannot read the file of the watch state carries done: {Error}. It is set aside", exception.GetType().Name);
-        }
-        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
-        {
-            return [];
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries are suspended until it reads", exception.GetType().Name);
-            return null;
-        }
-
-        // Starting from nothing would overwrite the damaged file, so that waits until it is set aside (decision 176).
-        return KeepDamagedCopy() ? [] : null;
-    }
-
-    // Copies the damaged file aside, and tells whether it could.
-    private bool KeepDamagedCopy()
-    {
-        try
-        {
-            File.Copy(_path, _path + ".damaged", overwrite: true);
+            await _database.WriteAsync(
+                (connection, transaction) =>
+                {
+                    foreach (var key in keys)
+                    {
+                        var (user, item) = (StoreSql.Text(key.UserId), StoreSql.Text(key.ItemId));
+                        if (_carries.TryGetValue(key, out var lastPlayed))
+                        {
+                            StoreSql.Execute(connection, transaction, Upsert, ("$user", user), ("$item", item), ("$played", lastPlayed?.Ticks));
+                        }
+                        else
+                        {
+                            StoreSql.Execute(connection, transaction, Delete, ("$user", user), ("$item", item));
+                        }
+                    }
+                },
+                cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _reported, 0);
             return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is StoreSuspendedException or SqliteException or OperationCanceledException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}. Carries are suspended until it is set aside", exception.GetType().Name);
+            foreach (var key in keys)
+            {
+                _unsaved.TryAdd(key, 0);
+            }
+
+            if (exception is not OperationCanceledException && Interlocked.Exchange(ref _reported, 1) == 0)
+            {
+                _logger.LogError("Cannot save the watch state carries done: {Error}", exception.GetType().Name);
+            }
+
             return false;
         }
     }
-
-    private sealed record Entry(Guid UserId, Guid ItemId, DateTime? LastPlayedDate);
-
-    private sealed record CarryFile(int Version, IReadOnlyList<Entry> Entries);
 }

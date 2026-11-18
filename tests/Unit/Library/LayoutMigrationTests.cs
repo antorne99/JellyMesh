@@ -8,6 +8,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using MediaBrowser.Controller.Entities;
@@ -33,6 +34,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-migration-" + Guid.NewGuid().ToString("N"));
     private readonly InMemoryConfigurationStore _store = new();
+    private readonly TestDatabase _database = new();
     private readonly WatchStateCarryLog _log;
     private readonly InMemoryLastServedStore _lastServed = new();
     private readonly Mock<ILibraryManager> _library = new();
@@ -66,7 +68,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Manual;
         _registry = NewRegistry();
         SetUpLibraryPaths();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>()))
@@ -115,6 +117,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
         _manager?.Dispose();
         _registry.Dispose();
         _log.Dispose();
+        _database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);

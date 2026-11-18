@@ -1,9 +1,8 @@
 using System;
-using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -17,40 +16,29 @@ public sealed class WatchStateCarryLogTests : IDisposable
     private static readonly Guid _otherItem = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private static readonly DateTime _date = new(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc);
 
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "jellymesh-carry-log-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database = new();
 
-    private string FilePath => Path.Combine(_folder, WatchStateCarryLog.FileName);
-
-    public void Dispose()
-    {
-        if (File.Exists(_folder))
-        {
-            File.Delete(_folder);
-        }
-        else if (Directory.Exists(_folder))
-        {
-            Directory.Delete(_folder, true);
-        }
-    }
+    public void Dispose() => _database.Dispose();
 
     [Fact]
-    public void NothingIsKnownWithoutAFile()
+    public void NothingIsKnownInAnEmptyDatabase()
     {
         using var log = Log();
 
+        Assert.True(log.EnsureLoaded());
         Assert.False(log.TryFind(_user, _item, out _));
     }
 
     [Fact]
-    public async Task EachCarrySurvivesARestartWithItsDate()
+    public void EachCarryIsWrittenAtOnce_AndSurvivesARestartWithItsDate()
     {
         using (var log = Log())
         {
             log.Record(_user, _item, _date);
             log.Record(_otherUser, _item, null);
-            Assert.True(await log.SaveAsync(CancellationToken.None));
         }
 
+        Assert.Equal(2, _database.Count("watch_state_carries"));
         using var reloaded = Log();
 
         Assert.True(reloaded.TryFind(_user, _item, out var date));
@@ -61,66 +49,30 @@ public sealed class WatchStateCarryLogTests : IDisposable
     }
 
     [Fact]
-    public async Task AFailedSaveIsReportedAndTriedAgain()
+    public void ANewerCarryReplacesTheOneBefore()
     {
-        await File.WriteAllTextAsync(_folder, "in the way");
-        var logger = new CapturingLogger<WatchStateCarryLog>();
-        using var log = Log(logger);
-        log.Record(_user, _item, _date);
+        using (var log = Log())
+        {
+            log.Record(_user, _item, null);
+            log.Record(_user, _item, _date);
+        }
 
-        Assert.False(await log.SaveAsync(CancellationToken.None));
-        Assert.NotEmpty(logger.Lines);
-        Assert.True(log.TryFind(_user, _item, out _));
-
-        File.Delete(_folder);
-        Assert.True(await log.SaveAsync(CancellationToken.None));
         using var reloaded = Log();
-        Assert.True(reloaded.TryFind(_user, _item, out _));
+
+        Assert.True(reloaded.TryFind(_user, _item, out var date));
+        Assert.Equal(_date, date);
+        Assert.Equal(1, _database.Count("watch_state_carries"));
     }
 
     [Fact]
-    public async Task NothingNewWritesNoFile()
+    public async Task NothingNewWritesNothing()
     {
         using var log = Log();
 
         Assert.True(await log.SaveAsync(CancellationToken.None));
+        Assert.Equal(0, log.Forget((_, _) => true));
 
-        Assert.False(File.Exists(FilePath));
-    }
-
-    [Theory]
-    [InlineData("not json")]
-    [InlineData("{\"Version\":99,\"Entries\":[]}")]
-    [InlineData("{\"Version\":1,\"Entries\":[null]}")]
-    public void ABadFileIsSetAside(string content)
-    {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(FilePath, content);
-
-        using var log = Log();
-
-        Assert.False(log.TryFind(_user, _item, out _));
-        Assert.Equal(content, File.ReadAllText(FilePath + ".damaged"));
-    }
-
-    [Fact]
-    public async Task ABadFileThatCannotBeSetAsideSuspendsTheLogUntilItIs()
-    {
-        Directory.CreateDirectory(FilePath + ".damaged");
-        await File.WriteAllTextAsync(FilePath, "not json");
-
-        using var log = Log();
-
-        Assert.False(log.EnsureLoaded());
-        log.Record(_user, _item, _date);
-        Assert.False(await log.SaveAsync(CancellationToken.None));
-        Assert.Equal("not json", await File.ReadAllTextAsync(FilePath));
-
-        Directory.Delete(FilePath + ".damaged");
-
-        Assert.True(log.EnsureLoaded());
-        Assert.Equal("not json", await File.ReadAllTextAsync(FilePath + ".damaged"));
-        Assert.False(log.TryFind(_user, _item, out _));
+        Assert.Equal(0, _database.Writes);
     }
 
     [Fact]
@@ -131,13 +83,13 @@ public sealed class WatchStateCarryLogTests : IDisposable
             log.Record(_user, _item, _date);
             log.Record(_otherUser, _item, _date);
             log.Record(_user, _otherItem, _date);
-            Assert.True(await log.SaveAsync(CancellationToken.None));
 
             Assert.Equal(2, log.Forget((user, item) => user == _otherUser || item == _otherItem));
             Assert.False(log.TryFind(_otherUser, _item, out _));
             Assert.True(await log.SaveAsync(CancellationToken.None));
         }
 
+        Assert.Equal(1, _database.Count("watch_state_carries"));
         using var reloaded = Log();
 
         Assert.True(reloaded.TryFind(_user, _item, out _));
@@ -146,96 +98,54 @@ public sealed class WatchStateCarryLogTests : IDisposable
     }
 
     [Fact]
-    public async Task ForgettingNothingWritesNoFile()
-    {
-        using var log = Log();
-
-        Assert.Equal(0, log.Forget((_, _) => true));
-        Assert.True(await log.SaveAsync(CancellationToken.None));
-
-        Assert.False(File.Exists(FilePath));
-    }
-
-    [Theory]
-    [InlineData(typeof(IOException))]
-    [InlineData(typeof(UnauthorizedAccessException))]
-    public async Task AFileThatCannotBeReadForNowSuspendsTheLogUntilItReads(Type error)
+    public async Task ADatabaseThatCannotBeReadForNowSuspendsTheLogUntilItReads()
     {
         using (var log = Log())
         {
             log.Record(_user, _item, _date);
-            Assert.True(await log.SaveAsync(CancellationToken.None));
         }
 
-        var content = await File.ReadAllTextAsync(FilePath);
-        var failing = true;
+        _database.Suspended = true;
         var logger = new CapturingLogger<WatchStateCarryLog>();
-        using var reloaded = new WatchStateCarryLog(
-            _folder,
-            logger,
-            path => failing ? throw (Exception)Activator.CreateInstance(error, "denied /secret")! : File.OpenRead(path));
+        using var reloaded = Log(logger);
 
         Assert.False(reloaded.EnsureLoaded());
         Assert.False(reloaded.TryFind(_user, _item, out _));
         reloaded.Record(_otherUser, _item, _date);
         Assert.False(await reloaded.SaveAsync(CancellationToken.None));
-        Assert.Equal(content, await File.ReadAllTextAsync(FilePath));
-        Assert.False(File.Exists(FilePath + ".damaged"));
-        Assert.Contains(logger.Lines, line => line.Contains(error.Name, StringComparison.Ordinal));
-        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("StoreSuspendedException", StringComparison.Ordinal));
 
-        failing = false;
+        _database.Suspended = false;
 
         Assert.True(reloaded.EnsureLoaded());
         Assert.True(reloaded.TryFind(_user, _item, out var date));
         Assert.Equal(_date, date);
         Assert.False(reloaded.TryFind(_otherUser, _item, out _));
-    }
-
-    [Theory]
-    [InlineData(typeof(IOException))]
-    [InlineData(typeof(UnauthorizedAccessException))]
-    public async Task AFileThatCannotBeCheckedForNowSuspendsTheLogRatherThanStartFromNothing(Type error)
-    {
-        // Seen from outside, an error that hides the file looks like no file at all.
-        var failing = true;
-        using var log = new WatchStateCarryLog(
-            _folder,
-            new CapturingLogger<WatchStateCarryLog>(),
-            path => failing ? throw (Exception)Activator.CreateInstance(error, "denied")! : File.OpenRead(path));
-
-        Assert.False(log.EnsureLoaded());
-        log.Record(_user, _item, _date);
-        Assert.False(await log.SaveAsync(CancellationToken.None));
-        Assert.False(File.Exists(FilePath));
-
-        failing = false;
-
-        Assert.True(log.EnsureLoaded());
-        Assert.False(log.TryFind(_user, _item, out _));
-    }
-
-    [Theory]
-    [InlineData(typeof(FileNotFoundException))]
-    [InlineData(typeof(DirectoryNotFoundException))]
-    public void AMissingFileStartsAnEmptyLog(Type error)
-    {
-        using var log = new WatchStateCarryLog(_folder, new CapturingLogger<WatchStateCarryLog>(), _ => throw (Exception)Activator.CreateInstance(error)!);
-
-        Assert.True(log.EnsureLoaded());
-        Assert.False(log.TryFind(_user, _item, out _));
+        Assert.Equal(1, _database.Count("watch_state_carries"));
     }
 
     [Fact]
-    public async Task NoTemporaryFileStays()
+    public async Task ACarryThatCannotBeWrittenIsReported_AndWrittenByTheNextSave()
     {
-        using var log = Log();
+        var logger = new CapturingLogger<WatchStateCarryLog>();
+        using var log = Log(logger);
+        Assert.True(log.EnsureLoaded());
+        _database.Suspended = true;
+
         log.Record(_user, _item, _date);
+        log.Record(_otherUser, _item, _date);
+        Assert.Equal(1, log.Forget((user, _) => user == _otherUser));
 
-        await log.SaveAsync(CancellationToken.None);
+        Assert.True(log.TryFind(_user, _item, out _));
+        Assert.False(await log.SaveAsync(CancellationToken.None));
+        Assert.Single(logger.Lines);
 
-        Assert.Equal([WatchStateCarryLog.FileName], Directory.GetFiles(_folder).Select(Path.GetFileName));
+        _database.Suspended = false;
+        Assert.True(await log.SaveAsync(CancellationToken.None));
+        using var reloaded = Log();
+        Assert.True(reloaded.TryFind(_user, _item, out _));
+        Assert.False(reloaded.TryFind(_otherUser, _item, out _));
     }
 
-    private WatchStateCarryLog Log(CapturingLogger<WatchStateCarryLog>? logger = null) => new(_folder, logger ?? new CapturingLogger<WatchStateCarryLog>());
+    private WatchStateCarryLog Log(CapturingLogger<WatchStateCarryLog>? logger = null) => new(_database, logger ?? new CapturingLogger<WatchStateCarryLog>());
 }
