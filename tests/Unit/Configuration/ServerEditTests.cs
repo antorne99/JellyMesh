@@ -414,7 +414,6 @@ public sealed partial class ServerEditTests : IDisposable
     [Theory]
     [InlineData(" ", TestValues.Url, TestValues.Username, RemoteEditField.Name)]
     [InlineData("Friend", "ftp://remote.invalid", TestValues.Username, RemoteEditField.Url)]
-    [InlineData("Friend", TestValues.Url, "", RemoteEditField.Username)]
     public async Task An_invalid_field_is_refused_on_that_field_before_any_request(string name, string url, string user, RemoteEditField field)
     {
         var id = await AddAsync("1");

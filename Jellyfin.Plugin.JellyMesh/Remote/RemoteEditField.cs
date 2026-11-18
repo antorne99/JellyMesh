@@ -21,5 +21,8 @@ public enum RemoteEditField
     Password,
 
     /// <summary>The libraries to import.</summary>
-    LibraryIds
+    LibraryIds,
+
+    /// <summary>The library mode of the server.</summary>
+    LibraryMode
 }

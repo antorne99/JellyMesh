@@ -21,7 +21,7 @@ public sealed class ServerEditRequest
     public string? Url { get; init; }
 
     /// <summary>
-    /// Gets the dedicated user name.
+    /// Gets the dedicated user name. Empty keeps the saved one, which the page never gets back.
     /// </summary>
     public string? Username { get; init; }
 
@@ -34,6 +34,11 @@ public sealed class ServerEditRequest
     /// Gets the remote libraries to import. Null keeps the saved ones.
     /// </summary>
     public IReadOnlyList<string>? LibraryIds { get; init; }
+
+    /// <summary>
+    /// Gets the library mode of the server (section 3.8). Null keeps the saved one.
+    /// </summary>
+    public LibraryMode? LibraryMode { get; init; }
 
     /// <summary>
     /// Builds the edit the registry checks or saves.

@@ -793,11 +793,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Url);
         }
 
-        if (string.IsNullOrEmpty(edit.Username))
-        {
-            return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Username);
-        }
-
         var row = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
             ? (Saved: new SavedServer(server.Name, server.Url, server.JellyfinServerId, server.ImportedLibraryIds.ToList()), Encrypted: server.EncryptedCredentials)
             : default);
@@ -806,8 +801,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None);
         }
 
-        // Credentials that no longer decrypt are entered again here, so the password is then required (row 434).
+        // Credentials that no longer decrypt are entered again here, so the user and the password are then required (row 434).
         var stored = UnprotectOrNull(serverId, row.Encrypted);
+        var username = string.IsNullOrEmpty(edit.Username) ? stored?.Username : edit.Username;
+        if (string.IsNullOrEmpty(username))
+        {
+            return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Username);
+        }
+
         var keepsPassword = string.IsNullOrEmpty(edit.Password);
         if (keepsPassword && stored is null)
         {
@@ -818,12 +819,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var changes = RemoteEditChanges.None;
         changes |= name == saved.Name ? RemoteEditChanges.None : RemoteEditChanges.Name;
         changes |= url == saved.Url ? RemoteEditChanges.None : RemoteEditChanges.Url;
-        changes |= stored is not null && stored.Username == edit.Username ? RemoteEditChanges.None : RemoteEditChanges.User;
+        changes |= stored is not null && stored.Username == username ? RemoteEditChanges.None : RemoteEditChanges.User;
         changes |= keepsPassword || stored?.Password == edit.Password ? RemoteEditChanges.None : RemoteEditChanges.Password;
         var requested = edit.LibraryIds?.Distinct(StringComparer.Ordinal).ToList();
         changes |= requested is null || SameLibraries(requested, saved.LibraryIds) ? RemoteEditChanges.None : RemoteEditChanges.Libraries;
 
-        var credentials = new RemoteCredentials { Username = edit.Username, Password = keepsPassword ? stored!.Password : edit.Password! };
+        var credentials = new RemoteCredentials { Username = username, Password = keepsPassword ? stored!.Password : edit.Password! };
         return (new EditPlan(serverId, name, url, credentials, changes, saved, requested) { Stored = stored }, RemoteResult.Fail<RemoteEditReport>(RemoteFailure.None));
     }
 
