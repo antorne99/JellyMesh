@@ -211,7 +211,7 @@ public class ServerRemovalLogoutTests
         using var fixture = new RegistryFixture(Remote());
         var logger = new CapturingLogger<RemoteServerRegistry>();
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
-        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromMilliseconds(300) };
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromSeconds(1) };
         var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
         bool? overlapped = null;
         var watch = Stopwatch.StartNew();
