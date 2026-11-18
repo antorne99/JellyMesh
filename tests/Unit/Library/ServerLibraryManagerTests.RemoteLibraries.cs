@@ -116,6 +116,21 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_with_type_folders_left_by_a_new_federated_folder_is_released_by_name()
+    {
+        var fixture = new Fixture();
+        HoldsFilms(fixture, _filmsFolder);
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(fixture.Server.AutomaticLibraryRegistry, record => record.Kind == ServerLibraryKind.Movies);
+        Assert.Contains("Casa - Film", fixture.Server.ReleasedAutomaticLibraries);
+        Assert.Empty(fixture.Libraries.AddedPaths);
+    }
+
+    [Fact]
     public async Task A_library_that_lost_the_server_folder_is_released_even_with_its_type_folders()
     {
         var fixture = new Fixture();
