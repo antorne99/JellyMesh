@@ -616,8 +616,9 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     continue;
                 }
 
-                // A library of the admin with exactly the paths and type is adopted; one partly on them blocks it (D4, D30).
-                var adoption = LibraryAdoption.Classify(planned, TypeOf(planned.Kind), Unclaimed(folders));
+                // A library of the admin with exactly the paths and type is adopted; one partly on them blocks it (D4, D30),
+                // unless it also holds folders of other servers, as by row 77.
+                var adoption = LibraryAdoption.Classify(planned, TypeOf(planned.Kind), Unclaimed(folders), root, serverId);
                 conflicts.AddRange(adoption.Conflicts);
                 if (adoption.Adopt is { } adopted)
                 {

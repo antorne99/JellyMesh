@@ -34,6 +34,20 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(state.Conflicts);
     }
 
+    [Fact]
+    public async Task An_admin_library_that_also_holds_folders_of_other_servers_does_not_block_the_server_library()
+    {
+        var fixture = OnTypeFolders();
+        var other = Absolute(FederatedPaths.TypeFolderOf(Guid.NewGuid(), TestLibraries.Films, TypeFolder.Movies));
+        fixture.Libraries.Add("Tutti i film", CollectionTypeOptions.movies, [Absolute(_filmsFolder), other]);
+
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Created.Select(call => call.Name).Order());
+        Assert.Empty(fixture.Manager.GetState(_serverId).Conflicts);
+        Assert.DoesNotContain(fixture.Server.AutomaticLibraryRegistry, record => record.Adopted);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("/media/\0film")]
