@@ -198,4 +198,18 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Equal(["Mare - Film", "Mare - Film 4K", "Mare - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name).Order(StringComparer.Ordinal));
     }
+
+    [Fact]
+    public async Task A_remote_library_name_too_long_for_a_folder_is_cut_without_splitting_a_character()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.RemoteLibraries.Single(library => library.Id == TestLibraries.FilmsB).Name = "Film " + string.Concat(Enumerable.Repeat("é🎬", 200));
+
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+
+        var name = fixture.Libraries.Created.Select(call => call.Name).Single(name => name.StartsWith("Casa - Film é", StringComparison.Ordinal));
+        Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(name), 100, 200);
+        Assert.DoesNotContain('\uFFFD', name);
+        Assert.False(char.IsHighSurrogate(name[^1]));
+    }
 }

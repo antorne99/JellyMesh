@@ -22,6 +22,9 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed partial class ServerLibraryManager : IServerLibraryManager, IDisposable
 {
+    // A remote library name in a library name, in UTF-8 bytes: the library folder name stays far from 255 bytes.
+    private const int MaxSuffixBytes = 120;
+
     /// <summary>
     /// The longest a sync waits for the libraries to be ready before it starts (decision 213).
     /// </summary>
@@ -788,8 +791,30 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     }
 
     // The names a library of the server may take, as the server stores them.
-    private List<string> NamesFor(string serverName, Guid serverId, string suffix) =>
-        [.. new[] { $"{serverName} - {suffix}", $"{serverName} {FederatedPaths.GuidStart(serverId)} - {suffix}" }.Select(candidate => _fileSystem.GetValidFilename(candidate).Trim())];
+    private List<string> NamesFor(string serverName, Guid serverId, string suffix)
+    {
+        var cut = CutToBytes(suffix, MaxSuffixBytes);
+        return [.. new[] { $"{serverName} - {cut}", $"{serverName} {FederatedPaths.GuidStart(serverId)} - {cut}" }.Select(candidate => _fileSystem.GetValidFilename(candidate).Trim())];
+    }
+
+    // The longest start of the text that fits in the UTF-8 bytes given, without splitting a character.
+    private static string CutToBytes(string text, int maxBytes)
+    {
+        var bytes = 0;
+        var length = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            bytes += rune.Utf8SequenceLength;
+            if (bytes > maxBytes)
+            {
+                return text[..length].TrimEnd();
+            }
+
+            length += rune.Utf16SequenceLength;
+        }
+
+        return text;
+    }
 
     // Renames each library of the registry that passes, after a follow on a fresh read, and records it in the same job.
     // Also tells whether a library folder moved.
