@@ -614,6 +614,9 @@ public sealed class WatchStateKeeperTests : IDisposable
         await manager.DeleteRemovedServerLibraries();
 
         Assert.Single(created);
+        Assert.Equal(
+            [FederatedPaths.Resolve(_fixture.Root, FederatedPaths.TypeFolderOf(a.Id, TestLibraries.Films, TypeFolder.Movies))],
+            libraries.Created.Single().Options.PathInfos.Select(info => info.Path));
         Assert.Empty(libraries.Removed);
         Assert.Single(_fixture.Registry.State.Stubs);
 
