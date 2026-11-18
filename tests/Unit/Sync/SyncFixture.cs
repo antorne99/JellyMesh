@@ -24,7 +24,7 @@ internal sealed class SyncFixture : IDisposable
         KeySource = new FixedKeySource(key);
         Vault = new CredentialVault(KeySource, Store);
         Registry = new RemoteServerRegistry(Store, Vault, Client, new CapturingLogger<RemoteServerRegistry>());
-        Reader = new RemoteCatalogReader(Registry, Client, ReaderLogger);
+        Reader = new RemoteCatalogReader(Registry, Client, Store, ReaderLogger);
         Database = new TestDatabase(_folder);
         Index = new FederationIndex(Database, new CapturingLogger<FederationIndex>());
         Stubs = new StubRegistry(Database, Store, new CapturingLogger<StubRegistry>());

@@ -471,6 +471,47 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task AReadRemembersTheNameAndTypeOfEachImportedLibrary()
+    {
+        _fixture.Client.Libraries.Add(new RemoteLibrary("other", "Musica", "music"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Shows, TestLibraries.Films);
+
+        await ReadAsync(server);
+
+        Assert.Equal(
+            [(TestLibraries.Films, "Film", "movies"), (TestLibraries.Shows, "Serie", "tvshows")],
+            _fixture.Store.Configuration.Servers.Single().RemoteLibraries.Select(library => (library.Id, library.Name, library.CollectionType)));
+    }
+
+    [Fact]
+    public async Task ALibraryRenamedOnTheRemoteIsRememberedWithItsNewNameAndAReadWithoutChangesSavesNothing()
+    {
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        await ReadAsync(server);
+        var saves = _fixture.Store.Saves;
+        await ReadAsync(server);
+        var unchanged = _fixture.Store.Saves;
+        _fixture.Client.Libraries[0] = new RemoteLibrary(TestLibraries.Films, "Film 4K", "movies");
+
+        await ReadAsync(server);
+
+        Assert.Equal(saves, unchanged);
+        Assert.Equal("Film 4K", Assert.Single(_fixture.Store.Configuration.Servers.Single().RemoteLibraries).Name);
+    }
+
+    [Fact]
+    public async Task AFailedReadOfTheLibrariesKeepsTheOnesRemembered()
+    {
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        await ReadAsync(server);
+        _fixture.Client.Libraries.Clear();
+
+        await ReadAsync(server);
+
+        Assert.Equal(TestLibraries.Films, Assert.Single(_fixture.Store.Configuration.Servers.Single().RemoteLibraries).Id);
+    }
+
+    [Fact]
     public async Task AChosenLibraryThatIsGoneFailsTheRead()
     {
         var server = await _fixture.AddServerAsync("A", TestLibraries.Films, "deleted");
