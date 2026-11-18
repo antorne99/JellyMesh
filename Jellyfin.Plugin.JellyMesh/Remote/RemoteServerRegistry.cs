@@ -34,6 +34,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private readonly ConcurrentDictionary<Guid, ServerRuntime> _runtimes = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _editGates = new();
     private readonly Lock _removingLock = new();
+    private readonly SemaphoreSlim _nameGate = new(1, 1);
     private readonly Dictionary<Guid, int> _removing = [];
 
     /// <summary>
@@ -446,6 +447,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<IDisposable> EnterNameChangeAsync(CancellationToken cancellationToken)
+    {
+        await _nameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return new Release(() => _nameGate.Release());
+    }
+
+    /// <inheritdoc />
     public async Task<IDisposable> BeginRemovalAsync(Guid serverId, CancellationToken cancellationToken)
     {
         lock (_removingLock)
@@ -710,6 +718,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             gate.Dispose();
         }
+
+        _nameGate.Dispose();
     }
 
     // The libraries of the server are deleted after it, including those a switch-on still running adds (140).

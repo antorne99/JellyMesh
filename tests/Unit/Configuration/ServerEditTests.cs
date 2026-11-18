@@ -41,6 +41,8 @@ public sealed partial class ServerEditTests : IDisposable
     private string _token = TestValues.Token;
     private HttpStatusCode _logout = HttpStatusCode.NoContent;
     private bool _offline;
+    private ManualResetEventSlim? _loginHold;
+    private TaskCompletionSource _loginHeld = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private string? PublicId => _publicSet ? _publicOverride : _serverId;
 
@@ -63,12 +65,24 @@ public sealed partial class ServerEditTests : IDisposable
 
     private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => _offline ? throw new System.Net.Http.HttpRequestException("offline") : request.RequestUri!.AbsolutePath switch
     {
-        "/Users/AuthenticateByName" => _login == HttpStatusCode.OK ? StubHandler.Json(LoginAnswer) : StubHandler.Status(_login),
+        "/Users/AuthenticateByName" => Held(_login == HttpStatusCode.OK ? StubHandler.Json(LoginAnswer) : StubHandler.Status(_login)),
         "/UserViews" => StubHandler.Json(_views),
         "/System/Info/Public" => StubHandler.Json(PublicInfo),
         "/Sessions/Logout" => Step("logout", StubHandler.Status(_logout)),
         _ => StubHandler.Status(HttpStatusCode.NotFound)
     };
+
+    // Holds a login while the test keeps the gate shut, and tells when one waits there.
+    private T Held<T>(T value)
+    {
+        if (_loginHold is { } hold)
+        {
+            _loginHeld.TrySetResult();
+            hold.Wait(TimeSpan.FromSeconds(10));
+        }
+
+        return value;
+    }
 
     private T Step<T>(string step, T value)
     {

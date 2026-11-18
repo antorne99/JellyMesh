@@ -139,6 +139,34 @@ public sealed partial class ServerEditTests
         await removal;
     }
 
+    // Two servers renamed at once to the same name: the second sees the first and is refused.
+    [Fact]
+    public async Task Two_servers_saved_at_once_with_the_same_name_cannot_both_take_it()
+    {
+        var first = await AddAsync("1");
+        var second = Guid.NewGuid();
+        _fixture.Store.Update(config => config.Servers.Add(new RemoteServerConfig
+        {
+            Id = second,
+            Name = "Other",
+            Url = "http://second.invalid:8096",
+            EncryptedCredentials = _fixture.Vault.Protect(second, TestValues.Credentials)!
+        }));
+        using var hold = new ManualResetEventSlim(false);
+        _loginHold = hold;
+
+        var firstSave = Task.Run(() => Controller().SaveServerEdit(first, Edit(name: "Casa"), CancellationToken.None));
+        await _loginHeld.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var secondSave = Task.Run(() => Controller().SaveServerEdit(second, Edit(name: "Casa", url: "http://second.invalid:8096"), CancellationToken.None));
+        await Task.Delay(200);
+        hold.Set();
+        var results = await Task.WhenAll(firstSave, secondSave);
+
+        Assert.Single(_fixture.Store.Configuration.Servers, server => server.Name == "Casa");
+        Assert.Equal("Casa", Assert.IsType<ServerStatus>(results[0].Value).Name);
+        Assert.Equal(RemoteFailure.NameTaken, Refusal(results[1]).Failure.Failure);
+    }
+
     [Fact]
     public async Task A_removal_that_ended_lets_the_server_be_edited_again()
     {

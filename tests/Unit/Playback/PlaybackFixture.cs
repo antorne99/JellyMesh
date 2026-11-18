@@ -100,6 +100,9 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
     public Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken)
         => Task.FromResult<IDisposable?>(new CancellationTokenSource());
 
+    public Task<IDisposable> EnterNameChangeAsync(CancellationToken cancellationToken)
+        => Task.FromResult<IDisposable>(new CancellationTokenSource());
+
     public Task<IDisposable> BeginRemovalAsync(Guid serverId, CancellationToken cancellationToken)
         => Task.FromResult<IDisposable>(new CancellationTokenSource());
 

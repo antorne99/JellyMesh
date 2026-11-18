@@ -832,6 +832,9 @@ public class FederationAdminController : ControllerBase
     // Saves an edit after refusing a taken name, then sets off its effects (row 434). The caller holds the edit lock.
     private async Task<ActionResult<ServerStatus>> SaveEditCoreAsync(Guid serverId, ServerEditRequest request, CancellationToken cancellationToken)
     {
+        // A new name is checked and saved as one across servers, so that two servers cannot take it.
+        var renames = _registry.GetServers().FirstOrDefault(server => server.Id == serverId) is { } saved && saved.Name != request.Name?.Trim();
+        using var names = renames ? await _registry.EnterNameChangeAsync(cancellationToken).ConfigureAwait(false) : null;
         if (RefuseName(serverId, request.Name) is { } refusedName)
         {
             return refusedName;
