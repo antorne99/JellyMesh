@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
@@ -82,6 +83,29 @@ public class PlaybackSweeperTests
         Assert.DoesNotContain(logger.Lines, line => line.Contains(FailingOnceStore.Secret, StringComparison.Ordinal));
     }
 
+    // The store logs once that it cannot read; a sweep every few seconds must not repeat it.
+    [Fact]
+    public async Task While_the_settings_cannot_be_read_the_sweeps_wait_without_logging()
+    {
+        var clock = new HandClock();
+        var store = new FailingOnceStore(_fixture.Store, always: true);
+        var logger = new CapturingLogger<PlaybackSweeper>();
+        using var sweeper = new PlaybackSweeper(_fixture.Coordinator, _sessionManager.Object, _fixture.Sessions, store, clock, logger);
+        using var stop = new CancellationTokenSource();
+        await sweeper.StartAsync(stop.Token);
+        for (var waited = 0; waited < 200 && store.Reads < 2; waited++)
+        {
+            clock.Tick();
+            await Task.Delay(10);
+        }
+
+        await stop.CancelAsync();
+        await sweeper.StopAsync(CancellationToken.None);
+
+        Assert.True(store.Reads >= 2, store.Reads.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Empty(logger.Lines);
+    }
+
     [Fact]
     public async Task A_session_whose_source_dropped_gets_its_remote_transcode_closed_at_the_next_check()
     {
@@ -147,7 +171,8 @@ public class PlaybackSweeperTests
     }
 
     // Throws on its first read, with a remote address and a token in the message.
-    private sealed class FailingOnceStore(IPluginConfigurationStore inner) : IPluginConfigurationStore
+    // Fails its first read, or with always every read as a store whose database was never read.
+    private sealed class FailingOnceStore(IPluginConfigurationStore inner, bool always = false) : IPluginConfigurationStore
     {
         public const string Secret = "http://10.9.8.7:8096?api_key=sweeper-secret";
 
@@ -163,9 +188,14 @@ public class PlaybackSweeperTests
 
         public T Read<T>(Func<PluginConfiguration, T> read)
         {
-            if (Interlocked.Increment(ref _reads) == 1)
+            if (Interlocked.Increment(ref _reads) == 1 && !always)
             {
                 throw new InvalidOperationException(Secret);
+            }
+
+            if (always)
+            {
+                throw new StoreSuspendedException("never read");
             }
 
             return inner.Read(read);
