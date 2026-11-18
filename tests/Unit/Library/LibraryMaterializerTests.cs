@@ -45,9 +45,9 @@ public sealed class LibraryMaterializerTests : IDisposable
 
     private void AddSeasonedShow()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss1", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, Season("ss1", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" });
     }
 
     private static Dictionary<string, string> AllArt(string prefix) => new()
@@ -61,8 +61,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AFilmBecomesStrmNfoAndImages()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -89,8 +89,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AFilmGetsItsLogoBannerAndThumbUnderTheNamesJellyfinReads()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -106,9 +106,9 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ASeriesGetsItsLogoBannerAndThumbAndAnEpisodeKeepsOneImage()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { ImageTags = AllArt("e") });
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { ImageTags = AllArt("e") });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -128,13 +128,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ANewLogoReachesAnIndexedFilm()
     {
         var film = FilmWithArt();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p1", ["Logo"] = "l1" } };
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = film with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p1", ["Logo"] = "l1" } };
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -144,8 +144,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ALogoBannerAndThumbTheRemoteRemovesLeaveTheDiskAndTheItem()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var folder = _fixture.Path_(a, "Film", "Film (2020)");
         var path = Path.Combine(folder, "Film (2020) - A.strm");
@@ -156,7 +156,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         }
 
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = FilmWithArt() with { ImageTags = new Dictionary<string, string> { ["Primary"] = "fp" } };
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = FilmWithArt() with { ImageTags = new Dictionary<string, string> { ["Primary"] = "fp" } };
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -171,14 +171,14 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AnImageTheAdminSetElsewhereStaysOnTheItem()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
         item.AddImage(new ItemImageInfo { Path = "/config/metadata/logo.png", Type = ImageType.Logo });
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = FilmWithArt() with { ImageTags = new Dictionary<string, string> { ["Primary"] = "fp" } };
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = FilmWithArt() with { ImageTags = new Dictionary<string, string> { ["Primary"] = "fp" } };
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -191,10 +191,10 @@ public sealed class LibraryMaterializerTests : IDisposable
     [InlineData(RemoteFailure.ServerError)]
     public async Task ARemoteThatDoesNotAnswerRemovesNoImage(RemoteFailure failure)
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt() with { ImageTags = AllArt("f") });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = FilmWithArt();
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = FilmWithArt();
         _fixture.Sync.Client.OnPage = (_, _) => failure;
 
         await _fixture.SyncAndMaterializeAsync();
@@ -208,18 +208,18 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task APosterTheRemoteRemovesLeavesTheDisk()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss1", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1", ImageTags = AllArt("e") });
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s") with { ImageTags = AllArt("s") });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, Season("ss1", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1", ImageTags = AllArt("e") });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var season = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01");
         var item = new Season { Id = Guid.NewGuid(), Path = season, Name = "Season 1", IndexNumber = 1 };
         item.AddImage(new ItemImageInfo { Path = Path.Combine(season, "poster.jpg"), Type = ImageType.Primary });
         _fixture.Library.Setup(library => library.FindByPath(season, true)).Returns(item);
-        _fixture.Sync.Client.Items[("shows", RemoteItemType.Series)][0] = TestItems.Series("s") with { ImageTags = new Dictionary<string, string> { ["Logo"] = "sl" } };
-        _fixture.Sync.Client.Items[("shows", RemoteItemType.Season)][0] = Season("ss1", 1) with { ImageTags = new Dictionary<string, string>() };
-        _fixture.Sync.Client.Items[("shows", RemoteItemType.Episode)][0] = TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" };
+        _fixture.Sync.Client.Items[(TestLibraries.Shows, RemoteItemType.Series)][0] = TestItems.Series("s") with { ImageTags = new Dictionary<string, string> { ["Logo"] = "sl" } };
+        _fixture.Sync.Client.Items[(TestLibraries.Shows, RemoteItemType.Season)][0] = Season("ss1", 1) with { ImageTags = new Dictionary<string, string>() };
+        _fixture.Sync.Client.Items[(TestLibraries.Shows, RemoteItemType.Episode)][0] = TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" };
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -233,7 +233,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ASeasonGetsItsNfoAndPosterInItsFolder()
     {
         AddSeasonedShow();
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -254,7 +254,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     {
         _fixture.Sync.Store.Configuration.MetadataProtection = false;
         AddSeasonedShow();
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -268,8 +268,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ASeasonWithoutEpisodesGetsNoFolder()
     {
         AddSeasonedShow();
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss2", 2));
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, Season("ss2", 2));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -280,10 +280,10 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AnEpisodeWithoutItsSeasonIdFindsTheSeasonOfItsSeriesByNumber()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss1", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, Season("ss1", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -293,9 +293,9 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ASeasonTheIndexDoesNotHaveGetsNoNfo()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "missing" });
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "missing" });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -307,7 +307,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ASecondRunLeavesTheSeasonAlone()
     {
         AddSeasonedShow();
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var nfo = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo");
         var written = File.GetLastWriteTimeUtc(nfo);
@@ -324,7 +324,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ALostSeasonNfoIsWrittenAgain()
     {
         AddSeasonedShow();
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var nfo = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo");
         File.Delete(nfo);
@@ -338,12 +338,12 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AChangedSeasonReachesItsIndexedItem()
     {
         AddSeasonedShow();
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var folder = _fixture.Path_(a, "Serie", "Show (2020)", "Season 01");
         var item = new Season { Id = Guid.NewGuid(), Path = folder, Name = "Season 1", IndexNumber = 1 };
         _fixture.Library.Setup(library => library.FindByPath(folder, true)).Returns(item);
-        _fixture.Sync.Client.Items[("shows", RemoteItemType.Season)][0] = Season("ss1", 1) with
+        _fixture.Sync.Client.Items[(TestLibraries.Shows, RemoteItemType.Season)][0] = Season("ss1", 1) with
         {
             Name = "New Name",
             Overview = "New plot",
@@ -363,7 +363,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AnIndexedSeasonGetsItsNameAndPosterOnTheFirstRunThatKnowsIt()
     {
         AddSeasonedShow();
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var series = Assert.Single(_fixture.Registry.State.Series);
         await _fixture.Registry.EnterAsync(CancellationToken.None);
@@ -390,13 +390,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ASeasonThatGoesAndComesBackGetsItsFilesAgain()
     {
         AddSeasonedShow();
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, Season("ss2", 2) with { Name = "Second" });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e2", "s", 2, 1) with { SeasonId = "ss2" });
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, Season("ss2", 2) with { Name = "Second" });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e2", "s", 2, 1) with { SeasonId = "ss2" });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var second = _fixture.Path_(a, "Serie", "Show (2020)", "Season 02");
         Assert.True(File.Exists(Path.Combine(second, "season.nfo")));
-        var episodes = _fixture.Sync.Client.Items[("shows", RemoteItemType.Episode)];
+        var episodes = _fixture.Sync.Client.Items[(TestLibraries.Shows, RemoteItemType.Episode)];
         var gone = episodes[1];
         episodes.RemoveAt(1);
 
@@ -419,7 +419,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         _fixture.Sync.Client.Add("shows-b", RemoteItemType.Series, TestItems.Series("sb"));
         _fixture.Sync.Client.Add("shows-b", RemoteItemType.Season, Season("sb1", 1, "sb") with { Name = "Name on B" });
         _fixture.Sync.Client.Add("shows-b", RemoteItemType.Episode, TestItems.Episode("eb", "sb", 1, 2) with { SeasonId = "sb1" });
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         var b = await _fixture.Sync.AddServerAsync("B", "shows-b");
 
         await _fixture.SyncAndMaterializeAsync();
@@ -432,7 +432,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AServerWithNothingSelectedStillGetsItsFolders()
     {
         var a = await _fixture.Sync.AddServerAsync("A");
-        var b = await _fixture.Sync.AddServerAsync("B", "films");
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -493,8 +493,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AServerRemovedWhileARunPlansLeavesThatRunWhole()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var before = _fixture.Files;
         var stubs = _fixture.Registry.State.Stubs.Select(stub => stub.Id).ToList();
@@ -511,8 +511,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task NoFileHoldsATokenOrARemoteAddress()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -532,8 +532,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AHostileTitleStaysInsideTheFolder()
     {
         var film = TestItems.Movie("m", "../../../../etc/cron.d/evil", 2020);
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -545,8 +545,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ASecondRunChangesNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var written = File.GetLastWriteTimeUtc(_fixture.Path_(a, "Film", "Film (2020)", "movie.nfo"));
         var images = _fixture.Sync.Client.ImageReads.Count;
@@ -562,10 +562,10 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ARunWithNothingChangedLooksUpNoItem()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
-        var a = await _fixture.Sync.AddServerAsync("A", "films", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         _fixture.Library.Invocations.Clear();
 
@@ -578,8 +578,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AFullReconciliationLooksUpEveryStubAgain()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var strm = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var url = StubFixture.Text(strm);
@@ -598,8 +598,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task NoFolderMeansNothingIsWritten()
     {
         _fixture.Sync.Store.Configuration.FederatedFolderPath = string.Empty;
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
 
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
@@ -612,8 +612,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ALostStrmIsWrittenAgain()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         File.Delete(_fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm"));
 
@@ -625,8 +625,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ImagesThatCouldNotBeReadAreTriedAgain()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         _fixture.Sync.Client.ImageFailure = RemoteFailure.ServerError;
         await _fixture.SyncAndMaterializeAsync();
         Assert.DoesNotContain(_fixture.Files, file => file.EndsWith(".jpg", StringComparison.Ordinal));
@@ -641,8 +641,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task TheReportSaysWhatTheRunLeftForTheNextOne()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         _fixture.Sync.Client.ImageFailure = RemoteFailure.ServerError;
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
 
@@ -660,8 +660,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AnUnreachableServerIsAskedForOneImageOnly()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), FilmWithArt("b", "2") with { Name = "Other" });
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"), FilmWithArt("b", "2") with { Name = "Other" });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         _fixture.Sync.Client.ImageFailure = RemoteFailure.Unreachable;
 
         await _fixture.SyncAndMaterializeAsync();
@@ -673,8 +673,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ImagesAreReadAFewAtATime()
     {
         var films = Enumerable.Range(1, 6).Select(number => FilmWithArt("m" + number, number.ToString(System.Globalization.CultureInfo.InvariantCulture)) with { Name = "Film " + number }).ToArray();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, films);
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, films);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         _fixture.Sync.Client.BeforeImage = token => Task.Delay(50, token);
 
         await _fixture.SyncAndMaterializeAsync();
@@ -688,13 +688,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AChangeOnAnIndexedItemIsAppliedToTheItem()
     {
         var film = FilmWithArt();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film", ShortcutPath = StubFixture.Text(path) };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { Overview = "New plot", Genres = ["New"] };
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = film with { Overview = "New plot", Genres = ["New"] };
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -712,20 +712,20 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ANewTrailerReachesAnIndexedItemAndAGoneOneLeavesIt()
     {
         var film = FilmWithArt();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film", ShortcutPath = StubFixture.Text(path) };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { RemoteTrailers = [new RemoteMediaUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")] };
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = film with { RemoteTrailers = [new RemoteMediaUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")] };
 
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Equal(["https://www.youtube.com/watch?v=dQw4w9WgXcQ"], item.RemoteTrailers.Select(trailer => trailer.Url));
         Assert.Contains("plugin://plugin.video.youtube/play/?video_id=dQw4w9WgXcQ", StubFixture.Text(_fixture.Path_(a, "Film", "Film (2020)", "movie.nfo")), StringComparison.Ordinal);
 
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film;
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = film;
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Empty(item.RemoteTrailers);
@@ -735,13 +735,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ANewRuntimeReachesAnIndexedItem()
     {
         var film = FilmWithArt() with { RunTimeTicks = 100, Etag = "1" };
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { RunTimeTicks = 72_000_000_000, Etag = "2" };
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = film with { RunTimeTicks = 72_000_000_000, Etag = "2" };
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -753,13 +753,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task ChangedImagesReachAnIndexedItem()
     {
         var film = FilmWithArt();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path, Name = "Film" };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p2" } };
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = film with { ImageTags = new Dictionary<string, string> { ["Primary"] = "p2" } };
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -769,13 +769,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ATitleGoneFromACompleteReadIsRemovedWithItsRow()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
 
         var before = _fixture.Files.Length;
         await _fixture.SyncAndMaterializeAsync();
@@ -790,8 +790,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ARemovedStubLeavesItsVersionGroupBeforeItsRowIsDeleted()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var item = new Movie { Id = Guid.NewGuid(), Path = path };
@@ -801,7 +801,7 @@ public sealed class LibraryMaterializerTests : IDisposable
             .Callback((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => steps.Add("detach " + string.Join(",", stubs.Select(stub => Path.GetFileName(stub.RelativePath)))))
             .ReturnsAsync([]);
         _fixture.Library.Setup(library => library.DeleteItem(item, It.IsAny<DeleteOptions>())).Callback(() => steps.Add("delete"));
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -813,15 +813,15 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ARemovedStubWithAPendingRenameDetachesItsOldItemToo()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var oldPath = await PendingRenameAsync(a, "Film (2020)");
         var detached = new List<string>();
         _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
             .Callback((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => detached.AddRange(stubs.Select(stub => Path.GetFileName(stub.RelativePath))))
             .ReturnsAsync([]);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -833,13 +833,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ARemovedStubWhoseOldItemCannotLeaveItsGroupStaysUntilTheNextRound()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var oldPath = await PendingRenameAsync(a, "Film (2020)");
         _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.Where(stub => stub.RelativePath == oldPath).ToList());
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
 
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
@@ -862,14 +862,14 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AStubWhoseDetachFailedStaysUntilTheNextRound()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"), TestItems.Movie("c", "Third", 2022, "3"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"), TestItems.Movie("c", "Third", 2022, "3"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var film = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var third = _fixture.Path_(a, "Film", "Third (2022)", "Third (2022) - A.strm");
         _fixture.Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyCollection<StubEntry> stubs, CancellationToken _) => stubs.Where(stub => stub.RelativePath.Contains("Film (2020)", StringComparison.Ordinal)).ToList());
-        var items = _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)];
+        var items = _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)];
         items.RemoveAll(item => item.Id is "a" or "c");
 
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
@@ -894,9 +894,9 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task TheReportCountsTheStubsOfEachServer()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
-        var b = await _fixture.Sync.AddServerAsync("B", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"), TestItems.Movie("b", "Other", 2021, "2"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films);
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
 
         var first = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
@@ -904,7 +904,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(new StubCounts(2, 0, 0, 0), first.ByServer[a.Id]);
         Assert.Equal(new StubCounts(2, 0, 0, 0), first.ByServer[b.Id]);
 
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
 
         var second = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
@@ -917,11 +917,11 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task RemovingAServerDeletesItsStubsAndLeavesThoseOfTheOther()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("extra", "Extra", "movies"));
         _fixture.Sync.Client.Add("extra", RemoteItemType.Movie, TestItems.Movie("b", "Other", 2021, "2"));
-        var removed = await _fixture.Sync.AddServerAsync("A", "films", "extra");
-        var kept = await _fixture.Sync.AddServerAsync("B", "films");
+        var removed = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, "extra");
+        var kept = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(removed, "Film", "Other (2021)", "Other (2021) - A.strm");
         Assert.True(File.Exists(path));
@@ -947,7 +947,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task RemovingTheLastServerDeletesItsFolderAndItsSeries()
     {
         AddSeasonedShow();
-        var removed = await _fixture.Sync.AddServerAsync("A", "shows");
+        var removed = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         Assert.Single(_fixture.Registry.State.Series);
         using var sync = SyncWithMaterializer();
@@ -964,8 +964,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ARemovedServerWhoseStubCannotGoKeepsItsFolderUntilItDoes()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var removed = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var removed = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(removed, "Film", "Film (2020)", "Film (2020) - A.strm");
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Throws(new IOException("busy"));
@@ -987,8 +987,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AServerMissingFromAResetConfigurationKeepsItsFolder()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         using var sync = SyncWithMaterializer();
 
@@ -1004,15 +1004,15 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AServerAddedBackIsANewServerAndTakesTheFreedLabel()
     {
         _fixture.Sync.Client.ServerId = RemoteServerId;
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var first = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var first = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         using var sync = SyncWithMaterializer();
         await sync.RemoveServerAsync(first.Id, () => _fixture.Sync.Registry.RemoveAsync(first.Id), CancellationToken.None);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
         Assert.False(Directory.Exists(_fixture.Path_(first)));
 
-        var again = await _fixture.Sync.AddServerAsync("A", "films");
+        var again = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.NotEqual(first.Id, again.Id);
@@ -1026,13 +1026,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task AServerAddedBackBeforeTheCleanupLeavesTheOldFolderToGo()
     {
         _fixture.Sync.Client.ServerId = RemoteServerId;
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var first = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var first = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         using var sync = SyncWithMaterializer();
         await sync.RemoveServerAsync(first.Id, () => _fixture.Sync.Registry.RemoveAsync(first.Id), CancellationToken.None);
 
-        var again = await _fixture.Sync.AddServerAsync("A", "films");
+        var again = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
         await _fixture.SyncAndMaterializeAsync();
 
@@ -1047,14 +1047,14 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task TheLabelOfAServerMissingFromTheSettingsStaysTaken()
     {
         _fixture.Sync.Client.ServerId = RemoteServerId;
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var first = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var first = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         using var sync = SyncWithMaterializer();
         await sync.RunAsync(CancellationToken.None);
         await _fixture.Sync.Registry.RemoveAsync(first.Id);
         _fixture.Sync.Client.ServerId = "1a2b3c4d5e6f40718293a4b5c6d7e8f9";
 
-        var other = await _fixture.Sync.AddServerAsync("A", "films");
+        var other = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await sync.RunAsync(CancellationToken.None);
 
         var stub = Path.GetFileName(Assert.Single(Directory.GetFiles(_fixture.Path_(other, "Film", "Film (2020)"), "*.strm")));
@@ -1066,8 +1066,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task RemovingAServerDeletesItsContentWhileTheKeyIsBroken()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var removed = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var removed = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         using var sync = SyncWithMaterializer();
 
@@ -1082,8 +1082,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AServerMissingFromAResetConfigurationKeepsItsStubsAndCatalog()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         using var sync = SyncWithMaterializer();
         await sync.RunAsync(CancellationToken.None);
         var before = _fixture.Files;
@@ -1101,8 +1101,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ASyncThatFindsNothingNewWritesNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         using var sync = SyncWithMaterializer();
         await sync.RunAsync(CancellationToken.None);
         Assert.Single(_fixture.Registry.State.Stubs);
@@ -1116,8 +1116,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AfterRowsThatDoNotReadTheNextRunTellsTheTitlesOfEachServerAgain()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var other = Guid.NewGuid();
         await _fixture.Sync.Database.WriteAsync((connection, transaction) =>
@@ -1139,8 +1139,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ARemovalIsRememberedAcrossARestart()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
-        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         using var sync = SyncWithMaterializer();
         await sync.RunAsync(CancellationToken.None);
 
@@ -1153,10 +1153,10 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AFailedSyncRemovesNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].Clear();
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].Clear();
         _fixture.Sync.Client.OnPage = (_, _) => RemoteFailure.Unreachable;
 
         await _fixture.SyncAndMaterializeAsync();
@@ -1169,8 +1169,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [InlineData(false, true)]
     public async Task ANewLocalFilmIsRefreshedAndItsCaseWaits(bool awaitsRefresh, bool logged)
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         var local = Guid.NewGuid();
         _fixture.LocalCatalog.Items.Add(new CatalogItem
         {
@@ -1193,10 +1193,10 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ACompleteReadOfAnEmptyLibraryHoldsTheStubsAndSaysSo()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].Clear();
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].Clear();
 
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
@@ -1209,8 +1209,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ALocalCopyDoesNotRemoveTheStubHere()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = Guid.NewGuid().ToString("N"), Kind = ContentKind.Movie, Ids = new ContentIds("1") });
 
@@ -1226,9 +1226,9 @@ public sealed class LibraryMaterializerTests : IDisposable
         var local = Guid.NewGuid();
         _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = local.ToString("N"), Kind = ContentKind.Movie, Ids = new ContentIds("1") });
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, FilmWithArt("mb"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         var b = await _fixture.Sync.AddServerAsync("B", "films-b");
 
         await _fixture.SyncAndMaterializeAsync();
@@ -1242,8 +1242,8 @@ public sealed class LibraryMaterializerTests : IDisposable
 
     private async Task<(string Path, string Signed, Movie Item)> AnIndexedStubHoldingAsync(Func<string, string> url)
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var signed = StubFixture.Text(path);
@@ -1300,8 +1300,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AnEntryFromAnOlderVersionGetsItsItemMovedOnce()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
         var signed = StubFixture.Text(path);
@@ -1334,8 +1334,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AStubOfTheFlatLayoutIsLeftInPlaceAndSigned()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var own = Assert.Single(_fixture.Registry.State.Stubs);
         var flat = new StubEntry
@@ -1366,8 +1366,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AStrmHoldsNothingButTheEndpointAndTheLocalSignature()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -1382,9 +1382,9 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ASeriesGetsItsFoldersAndLockedFields()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -1399,9 +1399,9 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ADoubleEpisodeGetsOneStubWithItsRange()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { IndexNumberEnd = 3 });
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { IndexNumberEnd = 3 });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -1417,11 +1417,11 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task EachServerGetsTheTvshowNfoOfItsOwnSeriesEvenWithALocalOne()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-b", "Serie B", "tvshows"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { Overview = "Plot of A" });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s") with { Overview = "Plot of A" });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
         _fixture.Sync.Client.Add("shows-b", RemoteItemType.Series, TestItems.Series("sb") with { Overview = "Plot of B" });
         _fixture.Sync.Client.Add("shows-b", RemoteItemType.Episode, TestItems.Episode("eb", "sb", 1, 2));
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         var b = await _fixture.Sync.AddServerAsync("B", "shows-b");
         var localSeries = new Series
         {
@@ -1461,8 +1461,8 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task ASyncMaterializesAndShowsWhatIsHeld()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt());
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         using var sync = new CatalogSyncService(
             _fixture.Sync.Registry,
             _fixture.Sync.Reader,
@@ -1475,7 +1475,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         await sync.RunAsync(CancellationToken.None);
         Assert.Single(_fixture.Registry.State.Stubs);
 
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].Clear();
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].Clear();
         await sync.RunAsync(CancellationToken.None);
 
         Assert.Single(sync.GetStatus().HeldLibraries);
@@ -1486,7 +1486,7 @@ public sealed class LibraryMaterializerTests : IDisposable
     {
         var materializer = new Mock<ILibraryMaterializer>();
         materializer.Setup(item => item.MaterializeAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException(TestValues.Host));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         using var sync = new CatalogSyncService(
             _fixture.Sync.Registry,
             _fixture.Sync.Reader,

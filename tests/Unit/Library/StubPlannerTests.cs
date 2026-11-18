@@ -13,7 +13,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
 public class StubPlannerTests
 {
-    private const string Library = "films";
+    private const string Library = TestLibraries.Films;
 
     private static readonly Guid _serverA = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
     private static readonly Guid _serverB = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000000");
@@ -37,7 +37,7 @@ public class StubPlannerTests
     {
         ItemId = id,
         Kind = IndexedItemKind.Series,
-        LibraryId = "shows",
+        LibraryId = TestLibraries.Shows,
         LastSeenUtc = _now,
         Name = name,
         ProductionYear = 2020,
@@ -48,7 +48,7 @@ public class StubPlannerTests
     {
         ItemId = id,
         Kind = IndexedItemKind.Episode,
-        LibraryId = "shows",
+        LibraryId = TestLibraries.Shows,
         LastSeenUtc = _now,
         Name = "Episode",
         SeriesId = seriesId,
@@ -97,7 +97,7 @@ public class StubPlannerTests
         Kind = StubKind.Episode,
         RelativePath = path,
         IdentityKey = key,
-        Sources = [new StubSource(_serverA, itemId, itemId) { LibraryId = "shows" }],
+        Sources = [new StubSource(_serverA, itemId, itemId) { LibraryId = TestLibraries.Shows }],
         SeasonNumber = 1,
         EpisodeNumber = number,
         EpisodeNumberEnd = end,
@@ -130,7 +130,7 @@ public class StubPlannerTests
             new FederationView(health, 0, contents, []),
             snapshot,
             state ?? StubState.Empty,
-            servers ?? [Server(_serverA, Library, "shows"), Server(_serverB, Library, "shows")],
+            servers ?? [Server(_serverA, Library, TestLibraries.Shows), Server(_serverB, Library, TestLibraries.Shows)],
             isProtected,
             url ?? (id => "http://127.0.0.1:8096/JellyMesh/Play/" + id),
             localSeries ?? (_ => null)));
@@ -484,7 +484,7 @@ public class StubPlannerTests
             [],
             [Catalog(_serverA, ServerSyncState.Complete)],
             new StubState { Stubs = [ExistingStub("s1", "k1", _serverA, "m1")] },
-            [Server(_serverA, "shows")]);
+            [Server(_serverA, TestLibraries.Shows)]);
 
         Assert.Single(plan.Removals);
         Assert.Empty(plan.Held);
@@ -707,7 +707,7 @@ public class StubPlannerTests
                 Catalog(_serverB, ServerSyncState.Complete, SeriesItem("t"), EpisodeItem("d", "t", 1, 1) with { IndexNumberEnd = 2 })
             ],
             new StubState { Stubs = [first, second] },
-            [Server(_serverA, "shows"), Server(_serverB, "shows")]);
+            [Server(_serverA, TestLibraries.Shows), Server(_serverB, TestLibraries.Shows)]);
 
         var stub = Assert.Single(plan.Stubs);
         Assert.Equal("stub1", stub.Entry.Id);
@@ -777,7 +777,7 @@ public class StubPlannerTests
         {
             ItemId = "ss1",
             Kind = IndexedItemKind.Season,
-            LibraryId = "shows",
+            LibraryId = TestLibraries.Shows,
             LastSeenUtc = _now,
             Name = "Remote Season",
             SeriesId = "s",

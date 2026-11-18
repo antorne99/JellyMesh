@@ -20,7 +20,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Index;
 /// </summary>
 public sealed class MergeForecastTests : IDisposable
 {
-    private const string Library = "films";
+    private const string Library = TestLibraries.Films;
 
     private readonly SyncFixture _fixture = new();
     private readonly List<CatalogItem> _local = [];
@@ -190,9 +190,9 @@ public sealed class MergeForecastTests : IDisposable
     {
         // The same title with IDs that differ: two works that only the administrator can join (decision 51).
         RemoteItem Show(string id, string tmdb) => TestItems.Series(id) with { ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = tmdb } };
-        _fixture.Client.Add("shows", RemoteItemType.Series, Show("s1", "1"), Show("s2", "2"));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s1", 1, 1), TestItems.Episode("e2", "s2", 1, 2));
-        await _fixture.AddServerAsync("Friend", "shows");
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, Show("s1", "1"), Show("s2", "2"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "s1", 1, 1), TestItems.Episode("e2", "s2", 1, 2));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Shows);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         var service = Service();
 

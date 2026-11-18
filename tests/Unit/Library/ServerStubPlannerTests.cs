@@ -12,8 +12,8 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
 public class ServerStubPlannerTests
 {
-    private const string Library = "films";
-    private const string Shows = "shows";
+    private const string Library = TestLibraries.Films;
+    private const string Shows = TestLibraries.Shows;
 
     private static readonly Guid _serverA = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
     private static readonly Guid _serverB = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000000");

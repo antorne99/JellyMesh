@@ -43,8 +43,8 @@ public sealed class IndexLeakTests : IDisposable
     public async Task TheIndexTablesHoldNoTokenNoAddressAndNoPath()
     {
         var item = JsonSerializer.Deserialize<RemoteItem>(HostileItem, _options)!;
-        _fixture.Client.Add("films", RemoteItemType.Movie, item);
-        await _fixture.AddServerAsync("Friend", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, item);
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 

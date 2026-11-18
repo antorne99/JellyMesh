@@ -59,8 +59,8 @@ public sealed class LocalTitleLinkerTests : IDisposable
     [Fact]
     public async Task ARefreshedFilmJoinsItsStubAtOnce()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var files = _fixture.Files;
         var local = AddLocalFilm();
@@ -78,9 +78,9 @@ public sealed class LocalTitleLinkerTests : IDisposable
     public async Task TheGroupOfTwoServersKeepsItsId()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("mb"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.AddServerAsync("B", "films-b");
         await _fixture.SyncAndMaterializeAsync();
         var before = Assert.Single(_fixture.Registry.State.Groups);
@@ -97,10 +97,10 @@ public sealed class LocalTitleLinkerTests : IDisposable
     [Fact]
     public async Task OtherTitlesWaitForTheNextSync()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("n", "Altro", 2021, "2"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("n", "Altro", 2021, "2"));
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         var files = _fixture.Files;
         var local = AddLocalFilm();
@@ -115,8 +115,8 @@ public sealed class LocalTitleLinkerTests : IDisposable
     [Fact]
     public async Task AFilmThatMatchesNoStubLinksNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var local = AddLocalFilm("9");
 
@@ -130,9 +130,9 @@ public sealed class LocalTitleLinkerTests : IDisposable
     public async Task ATitleWhoseGroupNeedsAStubNotWrittenYetWaitsForTheSync()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("mb"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         await _fixture.Sync.AddServerAsync("B", "films-b");
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
@@ -148,10 +148,10 @@ public sealed class LocalTitleLinkerTests : IDisposable
     [Fact]
     public async Task ARefreshedSeriesJoinsByItsEpisodes()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" });
-        await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2) with { SeasonId = "ss1" });
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var series = new Series { Id = Guid.NewGuid(), Name = "Show" };
         var episode = new Episode { Id = Guid.NewGuid(), SeriesId = series.Id };

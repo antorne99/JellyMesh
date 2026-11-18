@@ -74,8 +74,8 @@ public sealed class StubCleanupTaskTests : IDisposable
 
     private async Task<(Movie Stub, Movie Local)> FilmWithLocalCopyAsync()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m", "Film", 2020, "1"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m", "Film", 2020, "1"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
 
         var path = _fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm");
@@ -109,9 +109,9 @@ public sealed class StubCleanupTaskTests : IDisposable
     public async Task TheStubsOfTwoServersWithTheSameFilmBothStay()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("b", "Film", 2020, "1"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.AddServerAsync("B", "films-b");
         await _fixture.SyncAndMaterializeAsync();
         GiveEveryStubAnItem();
@@ -127,8 +127,8 @@ public sealed class StubCleanupTaskTests : IDisposable
     [Fact]
     public async Task ARegistryThatCannotBeReadLeavesTheFolderAlone()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         GiveEveryStubAnItem();
         var files = _fixture.Files;
@@ -195,14 +195,14 @@ public sealed class StubCleanupTaskTests : IDisposable
         var byTmdb = TestItems.Movie("a", "Film", 2020, "1");
         var byImdb = TestItems.Movie("b", "Film", 2020, "2") with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } };
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, byTmdb);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, byTmdb);
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, byImdb);
-        await _fixture.Sync.AddServerAsync("A", "films", "films-b");
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, "films-b");
         await _fixture.SyncAndMaterializeAsync();
         Assert.Equal(2, _fixture.Registry.State.Stubs.Count(stub => stub.Sources.Any(source => source.ItemId is "a" or "b")));
 
         var both = TestItems.Movie("c", "Film", 2020, "1") with { ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = "1", ["Imdb"] = "tt1" } };
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, both);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, both);
         await _fixture.SyncAndMaterializeAsync();
         var own = _fixture.Registry.State.Stubs.Where(stub => stub.Sources.Any(source => source.ItemId is "a" or "b" or "c")).ToList();
         Assert.Equal(2, own.Count);
@@ -556,8 +556,8 @@ public sealed class StubCleanupTaskTests : IDisposable
     [Fact]
     public async Task WithoutALocalCopyNothingHappens()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
 
         await RunAsync();
@@ -569,9 +569,9 @@ public sealed class StubCleanupTaskTests : IDisposable
     [Fact]
     public async Task LocalEpisodesLeaveTheStubsTheirFoldersAndTheSeries()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1), TestItems.Episode("e2", "s", 1, 2) with { IndexNumberEnd = 3 });
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1), TestItems.Episode("e2", "s", 1, 2) with { IndexNumberEnd = 3 });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
         var seriesRow = new Series { Id = Guid.NewGuid(), Path = _fixture.Path_(a, "Serie", "Show (2020)") };
         _fixture.Library.Setup(library => library.FindByPath(seriesRow.Path, true)).Returns(seriesRow);
@@ -609,9 +609,9 @@ public sealed class StubCleanupTaskTests : IDisposable
     [Fact]
     public async Task ANewStubSeriesGetsItsRefreshAfterTheScanOnce()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 1));
-        var a = await _fixture.Sync.AddServerAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 1));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
         await _fixture.SyncAndMaterializeAsync();
 
         await RunAsync();

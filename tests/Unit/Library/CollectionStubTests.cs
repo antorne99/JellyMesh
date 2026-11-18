@@ -25,9 +25,9 @@ public sealed class CollectionStubTests : IDisposable
     {
         _fixture.Sync.Store.Configuration.FederateCollections = true;
         _fixture.Sync.Store.Configuration.MetadataProtection = isProtected;
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("m", "Film", 2020));
-        Remote.AddCollection("films", "box", "Saga & Co", "m");
-        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m", "Film", 2020));
+        Remote.AddCollection(TestLibraries.Films, "box", "Saga & Co", "m");
+        var server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
 
         var path = _fixture.Path_(server, "Film", "Film (2020)", "Film (2020) - A.strm");
@@ -42,7 +42,7 @@ public sealed class CollectionStubTests : IDisposable
     private void Rename(string name, params string[] films)
     {
         Remote.Collections.Clear();
-        Remote.AddCollection("films", "box", name, films);
+        Remote.AddCollection(TestLibraries.Films, "box", name, films);
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class CollectionStubTests : IDisposable
     {
         var (_, item) = await SyncedFilmInSagaAsync();
         Remote.Collections.Clear();
-        Remote.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = "1241" } }, ["m"]));
+        Remote.Collections.Add((TestLibraries.Films, new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = "1241" } }, ["m"]));
 
         await _fixture.SyncAndMaterializeAsync();
 

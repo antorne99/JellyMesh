@@ -32,7 +32,7 @@ public class SyncActivityTests
     public async Task Each_completed_sync_writes_one_entry()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
         var activity = new RecordingActivityWriter();
         using var sync = NewSync(fixture, activity);
 
@@ -62,8 +62,8 @@ public class SyncActivityTests
     public async Task A_failing_server_is_written_once_and_named_in_each_completed_sync()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
-        await fixture.AddServerAsync("Other", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
+        await fixture.AddServerAsync("Other", TestLibraries.Films);
         var activity = new RecordingActivityWriter();
         using var sync = NewSync(fixture, activity);
         fixture.Client.ClockFailure = RemoteFailure.Unreachable;
@@ -91,7 +91,7 @@ public class SyncActivityTests
     public async Task A_server_that_fails_again_after_a_good_sync_is_written_again()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
         var activity = new RecordingActivityWriter();
         using var sync = NewSync(fixture, activity);
 
@@ -109,7 +109,7 @@ public class SyncActivityTests
     public async Task A_failure_stored_before_a_restart_is_not_written_again()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
         fixture.Client.ClockFailure = RemoteFailure.Unreachable;
         using (var before = NewSync(fixture, new RecordingActivityWriter()))
         {
@@ -139,7 +139,7 @@ public class SyncActivityTests
     public async Task No_entry_holds_the_address_or_the_token()
     {
         using var fixture = new SyncFixture();
-        await fixture.AddServerAsync("Friend", "films");
+        await fixture.AddServerAsync("Friend", TestLibraries.Films);
         var activity = new RecordingActivityWriter();
         using var sync = NewSync(fixture, activity);
 

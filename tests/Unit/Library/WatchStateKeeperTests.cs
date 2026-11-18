@@ -208,8 +208,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AFilmWithoutIdsGetsItsStateBackWhenItsServerIsAddedAgain()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Resume(_bruno, old, 9_000_000_000);
@@ -222,7 +222,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Equal(2, kept.Users.Count);
 
         // Added again it is a new server (row 408), and its stub has no item until the scan.
-        var again = await AddAndMaterializeAsync("A", "films");
+        var again = await AddAndMaterializeAsync("A", TestLibraries.Films);
         await _keeper.RestoreAsync(CancellationToken.None);
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
 
@@ -240,9 +240,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheStateGoesRightAwayToAServerThatAlreadyHasTheContent()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
-        var b = await AddAndMaterializeAsync("B", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var old = FilmItem(a);
         var other = FilmItem(b);
         Watch(_anna, old);
@@ -256,13 +256,13 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task EveryServerThatHasTheContentGetsTheState()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
-        var a = await _fixture.Sync.AddServerAsync("A", "films", "shows");
-        var b = await _fixture.Sync.AddServerAsync("B", "films", "shows");
-        var c = await _fixture.Sync.AddServerAsync("C", "films", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films, TestLibraries.Shows);
+        var c = await _fixture.Sync.AddServerAsync("C", TestLibraries.Films, TestLibraries.Shows);
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         await _materializer.MaterializeAsync(CancellationToken.None);
         var old = FilmItem(a, "Film");
@@ -284,9 +284,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheRecordsOfTwoRemovedServersBothComeBack()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
-        var b = await AddAndMaterializeAsync("B", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         Watch(_anna, FilmItem(a), 1, _watched);
         Row(_bruno, FilmItem(b)).IsFavorite = true;
         using (var sync = SyncWith(_materializer))
@@ -298,7 +298,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.Equal(2, (await _kept.ReadAsync(CancellationToken.None)).Count);
 
-        var c = await AddAndMaterializeAsync("C", "films");
+        var c = await AddAndMaterializeAsync("C", TestLibraries.Films);
         var fresh = FilmItem(c);
         await _keeper.RestoreAsync(CancellationToken.None);
 
@@ -310,14 +310,14 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AFilmWithoutIdsWhoseMetadataDiffersGetsNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         await RemoveAsync(a);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].Clear();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds("other", NinetyMinutes * 2));
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].Clear();
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds("other", NinetyMinutes * 2));
 
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var other = FilmItem(b, NinetyMinutes * 2);
         await _keeper.RestoreAsync(CancellationToken.None);
 
@@ -328,13 +328,13 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ANewerStateOnTheNewCopyWinsAndAFavoriteIsAdded()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Row(_anna, old).IsFavorite = true;
         await RemoveAsync(a);
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var fresh = FilmItem(b);
         Row(_anna, fresh).PlaybackPositionTicks = 5;
         Row(_anna, fresh).LastPlayedDate = _watched.AddDays(1);
@@ -350,13 +350,13 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AUserWhoDoesNotSeeTheNewCopyKeepsTheRecord()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Watch(_bruno, old);
         await RemoveAsync(a);
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var fresh = FilmItem(b);
         _hidden.Add((_bruno.Id, fresh.Id));
 
@@ -370,11 +370,11 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ARowThatCannotBeSavedStaysForALaterRun()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         await RemoveAsync(a);
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var fresh = FilmItem(b);
         _failingSaves.Add(fresh.Id);
 
@@ -393,8 +393,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ARecordNobodyUsedGoesAfter90Days()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         await RemoveAsync(a);
 
@@ -410,8 +410,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheRowsOfAUserWhoIsGoneAreForgotten()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Watch(_bruno, old);
@@ -426,8 +426,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task WithoutUsersTheStubsOfARemovedServerStayUntilTheirStateIsSaved()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         var path = old.Path;
@@ -451,8 +451,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AStoreThatFailsHoldsTheRemovalAndTheServerFolder()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         var failing = new Mock<IKeptWatchStateStore>();
         failing.Setup(store => store.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/secret"));
@@ -469,8 +469,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AHeldRemovalIsListedByNameUntilTheSaveSucceeds()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("Casa di <b>Anna</b>", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("Casa di <b>Anna</b>", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         var fails = true;
         var store = new Mock<IKeptWatchStateStore>();
@@ -503,8 +503,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ARemovalHeldForUsersThatCannotBeReadIsListedToo()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         _everyone = [];
 
@@ -522,8 +522,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AServerThatRemovesWithNoTroubleIsNeverListed()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
 
         await RemoveAsync(a);
@@ -585,8 +585,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AStoreThatFailsHoldsTheAutomaticLibrariesOfTheRemovedServer()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         var fails = true;
         var store = new Mock<IKeptWatchStateStore>();
@@ -629,8 +629,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheStubOfTheRemovedServerItselfGetsNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         await _kept.SaveAsync(
             [new KeptTitle { OldItemId = Guid.NewGuid(), Kind = KeptTitleKind.Movie, Title = "Sonda Senza ID", Year = 2026, RunTimeTicks = NinetyMinutes, SavedUtc = _fixture.Sync.Clock.Now.UtcDateTime, Users = [new KeptUserState(_anna.Id, true, 1, 0, _watched, false, null)] }],
@@ -647,8 +647,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TitlesNobodyWatchedAreNotKept()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         FilmItem(a);
 
         await RemoveAsync(a);
@@ -659,8 +659,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AServerThatNeverRemovedOneWritesNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        await AddAndMaterializeAsync("A", TestLibraries.Films);
         var writes = _fixture.Database.Writes;
 
         await _keeper.RestoreAsync(CancellationToken.None);
@@ -671,10 +671,10 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ASeriesWithoutIdsGetsItsEpisodesAndItsFavoriteBack()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
-        var a = await AddAndMaterializeAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Shows);
         var (oldSeries, oldEpisode) = ShowItems(a);
         Row(_anna, oldSeries).IsFavorite = true;
         Watch(_anna, oldEpisode, 1);
@@ -685,7 +685,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(_fixture.Registry.State.Series);
         Assert.Equal(2, (await _kept.ReadAsync(CancellationToken.None)).Count);
 
-        var again = await AddAndMaterializeAsync("A", "shows");
+        var again = await AddAndMaterializeAsync("A", TestLibraries.Shows);
         var (series, episode) = ShowItems(again);
         await _keeper.RestoreAsync(CancellationToken.None);
 
@@ -700,9 +700,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     public async Task AMergedTitleGetsTheKeptStateOfEachOfItsIdentities()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
         _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
-        var a = await AddAndMaterializeAsync("A", "films");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var c = await AddAndMaterializeAsync("C", "films-c");
         await MergeAsync((a, "x", "1"), (c, "y", null));
         var alfa = FilmItem(a);
@@ -721,9 +721,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     public async Task AStubOfTwoFilmsMergedByHandGetsTheKeptStateOfEach()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
         _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
-        var a = await _fixture.Sync.AddServerAsync("A", "films", "films-c");
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, "films-c");
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         await MergeAsync((a, "x", "1"), (a, "y", null));
         var film = FilmItem(a);
@@ -741,9 +741,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     public async Task TheCopyOfARemovedServerFindsEveryCopyOfAMergedTitle()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
         _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
-        var a = await AddAndMaterializeAsync("A", "films");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var b = await AddAndMaterializeAsync("B", "films-c");
         var c = await AddAndMaterializeAsync("C", "films-c");
         await MergeAsync((a, "x", "1"), (c, "y", null));
@@ -769,9 +769,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     public async Task TheKeptStateOfAMergedCopyOnTheRemovedServerFindsTheCopyLeft()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
         _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
-        var a = await AddAndMaterializeAsync("A", "films");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var c = await AddAndMaterializeAsync("C", "films-c");
         await MergeAsync((a, "x", "1"), (c, "y", null));
         var alfa = FilmItem(a);
@@ -796,10 +796,10 @@ public sealed class WatchStateKeeperTests : IDisposable
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "B", "movies"));
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
         _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("z", "Zeta", 2024) with { ProviderIds = new Dictionary<string, string?>(), RunTimeTicks = NinetyMinutes });
         _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
-        var a = await AddAndMaterializeAsync("A", "films");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var b = await AddAndMaterializeAsync("B", "films-b");
         var c = await AddAndMaterializeAsync("C", "films-c");
         await MergeAsync((a, "x", "1"), (b, "z", null), (c, "y", null));
@@ -819,8 +819,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task WhileTheMergesCannotBeReadTheTitlesOfARemovedServerAreHeld()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         var damaged = new Mock<IManualMergeStore>();
         damaged.Setup(merges => merges.IsDamaged).Returns(true);
@@ -839,13 +839,13 @@ public sealed class WatchStateKeeperTests : IDisposable
     public async Task TheKeptStateOfAMergedSeriesOnTheRemovedServerFindsTheSeriesLeft()
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-c", "C", "tvshows"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
         _fixture.Sync.Client.Add("shows-c", RemoteItemType.Series, TestItems.Series("t", "Altra Serie", 2025) with { ProviderIds = new Dictionary<string, string?>() });
         _fixture.Sync.Client.Add("shows-c", RemoteItemType.Season, TestItems.Season("ts1", "t", 1));
         _fixture.Sync.Client.Add("shows-c", RemoteItemType.Episode, TestItems.Episode("f", "t", 1, 2, "Altra Serie") with { SeasonId = "ts1" });
-        var a = await AddAndMaterializeAsync("A", "shows");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Shows);
         var c = await AddAndMaterializeAsync("C", "shows-c");
         var merge = new ManualMerge
         {
@@ -895,8 +895,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task WhileTheMergesCannotBeReadTheRecordsWait()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var alfa = FilmItem(a);
         await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna)], CancellationToken.None);
         var damaged = new Mock<IManualMergeStore>();

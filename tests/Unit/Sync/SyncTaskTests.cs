@@ -83,11 +83,11 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task TheIncrementalTaskReadsChanges()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.Queries.Clear();
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("b"));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("b"));
         _fixture.Client.SavedUtc["b"] = SyncFixture.Start;
 
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
@@ -99,10 +99,10 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task TheReconciliationTaskRemovesWhatIsGone()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"), TestItems.Movie("b"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"), TestItems.Movie("b"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
-        _fixture.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        _fixture.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
 
         await Reconciliation().ExecuteAsync(NoProgress, CancellationToken.None);
 
@@ -115,8 +115,8 @@ public sealed class SyncTaskTests : IDisposable
     [InlineData(TestValues.OtherKey)]
     public async Task WithAnUnusableKeyBothTasksAreSuspended(string? key)
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         var before = _fixture.Index.Snapshot;
         var logins = _fixture.Client.Logins;
@@ -139,8 +139,8 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task WithTheKeyBackTheTasksResume()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         _fixture.KeySource.Key = null;
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
         Assert.Null(_fixture.Index.Snapshot.Find(server.Id));
@@ -214,8 +214,8 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task TheLogsOfTheTasksHoldNoSecretAndNoAddress()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        await _fixture.AddServerAsync("Friend", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
         _fixture.Client.ClockFailure = RemoteFailure.Unreachable;
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
