@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Net;
@@ -31,7 +32,7 @@ internal sealed class StubFixture : IDisposable
         Sync = new SyncFixture(stubFolder: Path.Combine(_data, "plugin"));
         Sync.Store.Configuration.FederatedFolderPath = Root;
         Registry = Sync.Stubs;
-        Merges = new ManualMergeStore(Path.Combine(_data, "plugin"), new CapturingLogger<ManualMergeStore>());
+        Merges = new ManualMergeStore(Database, new CapturingLogger<ManualMergeStore>());
         Resolver = new FederationResolver(Sync.Index, LocalCatalog, Sync.Registry, Merges);
         Hooked = new HookedResolver(Resolver, () => AfterResolve?.Invoke());
 
@@ -82,6 +83,8 @@ internal sealed class StubFixture : IDisposable
 
     public StrmSigner Signer { get; }
 
+    public TestDatabase Database { get; } = new();
+
     public ManualMergeStore Merges { get; }
 
     public FederationResolver Resolver { get; }
@@ -130,6 +133,8 @@ internal sealed class StubFixture : IDisposable
     {
         Registry.Dispose();
         Sync.Dispose();
+        Merges.Dispose();
+        Database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);

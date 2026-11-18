@@ -1,30 +1,21 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Index;
 
 public sealed class ManualMergeStoreTests : IDisposable
 {
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "jellymesh-merges-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database = new();
 
-    private string FilePath => Path.Combine(_folder, ManualMergeStore.FileName);
+    public void Dispose() => _database.Dispose();
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_folder))
-        {
-            Directory.Delete(_folder, true);
-        }
-    }
-
-    private ManualMergeStore Store() => new(_folder, new CapturingLogger<ManualMergeStore>());
+    private ManualMergeStore Store() => new(_database, new CapturingLogger<ManualMergeStore>());
 
     private static ManualMerge Merge() => new()
     {
@@ -38,7 +29,7 @@ public sealed class ManualMergeStoreTests : IDisposable
     };
 
     [Fact]
-    public void AMissingFileMeansNoMerges()
+    public void AnEmptyDatabaseMeansNoMerges()
     {
         using var store = Store();
 
@@ -64,7 +55,7 @@ public sealed class ManualMergeStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ASeriesCopyKeepsItsKindAndTvdb_AndAnOlderCopyReadsAsAFilm()
+    public async Task ASeriesCopyKeepsItsKindAndTvdb()
     {
         var series = new MergedCopy { ServerId = "a", ItemId = "s", Kind = ContentKind.Episode, Tvdb = "71", Title = "Show" };
         using (var store = Store())
@@ -72,56 +63,44 @@ public sealed class ManualMergeStoreTests : IDisposable
             await store.UpdateAsync(_ => [Merge() with { Copies = [series, Merge().Copies[0]] }], CancellationToken.None);
         }
 
-        var text = await File.ReadAllTextAsync(FilePath);
-        Assert.Contains("\"Kind\": \"Movie\",", text, StringComparison.Ordinal);
-        await File.WriteAllTextAsync(FilePath, text.Replace("\"Kind\": \"Movie\",", string.Empty, StringComparison.Ordinal));
         using var reloaded = Store();
 
         var copies = Assert.Single(reloaded.Merges).Copies;
-        Assert.Contains("\"Kind\": \"Episode\"", text, StringComparison.Ordinal);
         Assert.Equal(series, copies[0]);
         Assert.Equal(ContentKind.Movie, copies[1].Kind);
-        Assert.Null(copies[1].Tvdb);
     }
 
     [Fact]
-    public async Task NoTemporaryFileStays()
+    public async Task EachMergeIsARowWithACopyPerRow_AndAnUndoTakesThemAway()
     {
+        var kept = Merge();
+        var undone = Merge();
         using var store = Store();
+        await store.UpdateAsync(_ => [kept, undone], CancellationToken.None);
+        Assert.Equal(2, _database.Count("manual_merges"));
+        Assert.Equal(4, _database.Count("manual_merge_copies"));
 
-        await store.UpdateAsync(_ => [Merge()], CancellationToken.None);
+        await store.UpdateAsync(current => [.. current], CancellationToken.None);
+        await store.UpdateAsync(current => [current[0] with { Copies = [.. current[0].Copies, new MergedCopy { ServerId = "b", ItemId = "3" }] }], CancellationToken.None);
 
-        Assert.Equal([ManualMergeStore.FileName], Directory.GetFiles(_folder).Select(Path.GetFileName));
-    }
-
-    [Theory]
-    [InlineData("not json")]
-    [InlineData("{\"Version\":99,\"Merges\":[]}")]
-    [InlineData("{\"Version\":1}")]
-    [InlineData("{\"Version\":1,\"Merges\":[{\"Id\":\"00000000-0000-0000-0000-000000000001\"}]}")]
-    public void ABadFileIsSetAsideAndReported(string content)
-    {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(FilePath, content);
-
-        using var store = Store();
-
-        Assert.Empty(store.Merges);
-        Assert.True(store.IsDamaged);
-        Assert.Equal(content, File.ReadAllText(FilePath + ".damaged"));
+        Assert.Equal(1, _database.Count("manual_merges"));
+        Assert.Equal(3, _database.Count("manual_merge_copies"));
+        using var reloaded = Store();
+        Assert.Equal(3, Assert.Single(reloaded.Merges).Copies.Count);
     }
 
     [Fact]
-    public async Task ASaveClearsTheWarning_AndTheDamagedCopyStays()
+    public async Task AChangeStartsFromTheTable_NotFromAnOlderCopy()
     {
-        Directory.CreateDirectory(_folder);
-        await File.WriteAllTextAsync(FilePath, "not json");
-        using var store = Store();
+        using var first = Store();
+        using var second = Store();
+        Assert.Empty(second.Merges);
+        await first.UpdateAsync(_ => [Merge()], CancellationToken.None);
 
-        await store.UpdateAsync(_ => [Merge()], CancellationToken.None);
+        await second.UpdateAsync(current => [.. current, Merge()], CancellationToken.None);
 
-        Assert.False(store.IsDamaged);
-        Assert.True(File.Exists(FilePath + ".damaged"));
+        Assert.Equal(2, second.Merges.Count);
+        Assert.Equal(2, _database.Count("manual_merges"));
     }
 
     [Fact]
@@ -134,16 +113,28 @@ public sealed class ManualMergeStoreTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpdateAsync(_ => throw new InvalidOperationException(), CancellationToken.None));
 
         Assert.Same(merge, Assert.Single(store.Merges));
+        Assert.Equal(1, _database.Count("manual_merges"));
     }
 
     [Fact]
-    public async Task TheFileHoldsNoAddress()
+    public async Task WhileTheDatabaseIsSuspended_TheMergesAreNotApplied_NotSaved_AndReadAgainLater()
     {
-        using var store = Store();
+        using (var earlier = Store())
+        {
+            await earlier.UpdateAsync(_ => [Merge()], CancellationToken.None);
+        }
 
-        await store.UpdateAsync(_ => [Merge()], CancellationToken.None);
+        _database.Suspended = true;
+        var logger = new CapturingLogger<ManualMergeStore>();
+        using var store = new ManualMergeStore(_database, logger);
 
-        var text = await File.ReadAllTextAsync(FilePath);
-        Assert.DoesNotContain("http", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(store.Merges);
+        Assert.True(store.IsDamaged);
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => store.UpdateAsync(_ => [], CancellationToken.None));
+        Assert.Single(logger.Lines);
+
+        _database.Suspended = false;
+        Assert.Single(store.Merges);
+        Assert.False(store.IsDamaged);
     }
 }
