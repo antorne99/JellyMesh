@@ -3301,7 +3301,7 @@ def edit_locks(s, width):
     check(name + " an offline remote says so", until(page, lambda: "does not answer" in form.inner_text()), form.inner_text())
     check(name + " an offline remote leaves the name", not form.get_by_label("Name", exact=True).evaluate("node => node.readOnly"))
     check(name + " an offline remote leaves the mode", form.get_by_label(u.MODE_LABEL, exact=True).is_enabled())
-    check(name + " an offline remote locks the URL", form.get_by_label("Server URL", exact=True).evaluate("node => node.readOnly"))
+    check(name + " an offline remote leaves the URL", not form.get_by_label("Server URL", exact=True).evaluate("node => node.readOnly"))
     check(name + " an offline remote locks the login", form.get_by_label("User", exact=True).is_disabled() and form.get_by_label("Password", exact=True).is_disabled())
     check(name + " an offline remote lists no library", peer.locator(u.LIBRARY).count() == 0)
     healthy(page, name)

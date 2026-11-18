@@ -1626,7 +1626,7 @@
                     "Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library for them. Take them out of {library}, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} con un altro tipo di contenuto, quindi JellyMesh non ha né creato né adottato una libreria per questi percorsi. Toglili da {library}, oppure imposta su Nessuna la modalità delle librerie di questo server.",
                     "{library} (adopted)": "{library} (adottata)",
                     "{server} answered with a problem ({problem}). The edit can still be saved.": "{server} ha risposto con un problema ({problem}). La modifica si può salvare comunque.",
-                    "{server} does not answer. Until it does, only the name and the library mode can change, and the libraries stay as they are.": "{server} non risponde. Finché non risponde si possono cambiare solo il nome e la modalità delle librerie, e le librerie restano come sono.",
+                    "{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.": "{server} non risponde. Finché non risponde, l'accesso e le librerie restano come sono. Un nuovo URL si salva solo se il server risponde a quell'indirizzo.",
                     "Add the folders of each server to the libraries": "Aggiungi alle librerie le cartelle di ogni server",
                     "The federated folder now has a folder for each server. Until these folders are in the libraries and scanned, the old titles stay as they are.": "La cartella federata ora ha una cartella per ogni server. Finché queste cartelle non sono nelle librerie e analizzate, i vecchi titoli restano come sono.",
                     "Moving the watch state to the folders of each server": "Spostamento dello stato di visione nelle cartelle di ogni server",
@@ -3188,11 +3188,10 @@
                     var ready = api('POST', 'Servers/' + server.Id + '/Edit/Check', { Name: server.Name, Url: server.Url, Username: '', Password: '' }).then(function (check) {
                         libraries.textContent = '';
                         if (check.RemoteOffline) {
-                            // With the remote offline only the name and the mode change (D28).
-                            fields.Url.readOnly = true;
+                            // With the remote offline the login and the libraries stay; a new URL is checked on save (D28).
                             fields.Username.disabled = true;
                             fields.Password.disabled = true;
-                            addFormNote(notes, t('{server} does not answer. Until it does, only the name and the library mode can change, and the libraries stay as they are.', { server: server.Name }), true);
+                            addFormNote(notes, t('{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.', { server: server.Name }), true);
                             return;
                         }
 

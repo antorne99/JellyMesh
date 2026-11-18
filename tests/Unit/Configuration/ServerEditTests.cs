@@ -42,6 +42,7 @@ public sealed partial class ServerEditTests : IDisposable
     private string _token = TestValues.Token;
     private HttpStatusCode _logout = HttpStatusCode.NoContent;
     private bool _offline;
+    private string? _downHost;
     private ManualResetEventSlim? _loginHold;
     private SemaphoreSlim _loginsHeld = new(0);
 
@@ -68,7 +69,7 @@ public sealed partial class ServerEditTests : IDisposable
 
     private StubHandler.RecordedRequest[] Requests => _fixture.Handler.Requests.ToArray();
 
-    private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => _offline ? throw new System.Net.Http.HttpRequestException("offline") : request.RequestUri!.AbsolutePath switch
+    private System.Net.Http.HttpResponseMessage Respond(System.Net.Http.HttpRequestMessage request) => _offline || request.RequestUri!.Host == _downHost ? throw new System.Net.Http.HttpRequestException("offline") : request.RequestUri!.AbsolutePath switch
     {
         "/Users/AuthenticateByName" => Held(_login == HttpStatusCode.OK ? StubHandler.Json(ForHost(request, LoginAnswer)) : StubHandler.Status(_login)),
         "/UserViews" => StubHandler.Json(_views),

@@ -564,6 +564,22 @@ public sealed partial class ServerEditTests
         Assert.Equal(before, Snapshot());
     }
 
+    // D28: the fix for a server that no longer answers is often a new address that does.
+    [Fact]
+    public async Task With_the_saved_address_down_a_new_address_that_answers_passes_the_check_and_the_save()
+    {
+        var id = await AddAsync("1");
+        _downHost = new Uri(TestValues.Url).Host;
+        var edit = Edit(url: OtherUrl);
+
+        var check = await Controller().CheckServerEdit(id, edit, CancellationToken.None);
+        var save = await Controller().SaveServerEdit(id, edit, CancellationToken.None);
+
+        Assert.IsType<ServerEditCheck>(check.Value);
+        Assert.Equal(OtherUrl, Assert.IsType<ServerStatus>(save.Value).Url);
+        Assert.Equal(OtherUrl, Assert.Single(_fixture.Store.Configuration.Servers).Url);
+    }
+
     [Fact]
     public async Task After_a_save_the_old_user_is_logged_out_then_the_server_renamed_then_its_folders_written_then_synced()
     {
