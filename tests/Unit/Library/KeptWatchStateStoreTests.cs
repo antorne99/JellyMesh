@@ -1,14 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Library;
-using Jellyfin.Plugin.JellyMesh.Security;
-using Microsoft.Data.Sqlite;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -19,25 +17,11 @@ public sealed class KeptWatchStateStoreTests : IDisposable
     private static readonly Guid _anna = Guid.NewGuid();
     private static readonly Guid _bruno = Guid.NewGuid();
 
-    private readonly string _folder = Path.Combine(Path.GetTempPath(), "jellymesh-kept-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database = new();
 
-    public KeptWatchStateStoreTests() => Directory.CreateDirectory(_folder);
+    public void Dispose() => _database.Dispose();
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_folder))
-        {
-            Directory.Delete(_folder, true);
-        }
-    }
-
-    private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-
-    private const UnixFileMode Shared = OwnerOnly | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
-
-    private string DatabasePath => Path.Combine(_folder, KeptWatchStateStore.FileName);
-
-    private KeptWatchStateStore Store() => new(_folder, new CapturingLogger<KeptWatchStateStore>());
+    private KeptWatchStateStore Store() => new(_database);
 
     private static KeptTitle Film(Guid oldItem, string title = "Film", params KeptUserState[] users) => new()
     {
@@ -175,163 +159,33 @@ public sealed class KeptWatchStateStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ADamagedFileIsSetAsideAndANewOneMade()
+    public async Task NothingKeptMeansNoTitles()
     {
-        await File.WriteAllTextAsync(Path.Combine(_folder, KeptWatchStateStore.FileName), new string('x', 4096));
-
-        var store = Store();
-        await store.SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None);
-
-        Assert.Single(await store.ReadAsync(CancellationToken.None));
-        Assert.Single(Directory.GetFiles(_folder, KeptWatchStateStore.FileName + ".damaged-*"));
-    }
-
-    [Fact]
-    public async Task TheFileIsInTheGivenFolder()
-    {
-        await Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None);
-
-        Assert.True(File.Exists(Path.Combine(_folder, KeptWatchStateStore.FileName)));
-    }
-
-    // Row 417: the database and its side files are readable and writable by the owner only, as the key file (decision 42).
-    [Fact]
-    public async Task ANewFileIsOwnerOnly()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
+        Assert.False(await Store().HasTitlesAsync(CancellationToken.None));
 
         await Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None);
 
-        Assert.Equal(OwnerOnly, File.GetUnixFileMode(DatabasePath));
+        Assert.True(await Store().HasTitlesAsync(CancellationToken.None));
     }
 
     [Fact]
-    public async Task AFileOfAnEarlierBuildIsMadeOwnerOnly()
+    public async Task ATitleIsKeptInTheTablesOfThePluginDatabase()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
+        await Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna), Watched(_bruno))], CancellationToken.None);
 
-        await Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None);
-        File.SetUnixFileMode(DatabasePath, Shared);
-
-        Assert.Single(await Store().ReadAsync(CancellationToken.None));
-
-        Assert.Equal(OwnerOnly, File.GetUnixFileMode(DatabasePath));
-    }
-
-    // Checked by the guard right after it acts, since SQLite may drop a side file once it opens the database.
-    [Fact]
-    public async Task TheSideFilesOfAnEarlierBuildAreMadeOwnerOnly()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        await Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None);
-        var sides = new[] { "-journal", "-wal", "-shm" }.Select(suffix => DatabasePath + suffix).Append(DatabasePath + ".damaged-20260101000000").ToList();
-        foreach (var side in sides)
-        {
-            await File.WriteAllBytesAsync(side, []);
-            File.SetUnixFileMode(side, Shared);
-        }
-
-        var guard = new CheckingGuard();
-        await new KeptWatchStateStore(_folder, new CapturingLogger<KeptWatchStateStore>(), guard).ReadAsync(CancellationToken.None);
-
-        foreach (var side in sides)
-        {
-            Assert.Equal(OwnerOnly, guard.Modes.GetValueOrDefault(side));
-        }
-
-        Assert.Equal(OwnerOnly, guard.Modes.GetValueOrDefault(DatabasePath));
-    }
-
-    // The store keeps SQLite's default rollback journal, which SQLite makes with the mode of the database.
-    [Fact]
-    public async Task TheJournalOfAWriteIsOwnerOnly()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        await Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None);
-
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DatabasePath, Pooling = false }.ToString());
-        await connection.OpenAsync();
-        await using var mode = connection.CreateCommand();
-        mode.CommandText = "PRAGMA journal_mode;";
-        Assert.Equal("delete", await mode.ExecuteScalarAsync());
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
-        await using var write = connection.CreateCommand();
-        write.Transaction = transaction;
-        write.CommandText = "DELETE FROM UserStates;";
-        await write.ExecuteNonQueryAsync();
-
-        Assert.Equal(OwnerOnly, File.GetUnixFileMode(DatabasePath + "-journal"));
-        await transaction.RollbackAsync();
+        Assert.Equal(1, _database.Count("kept_titles"));
+        Assert.Equal(2, _database.Count("kept_user_states"));
+        Assert.Equal(1, _database.Count("kept_titles WHERE kind = 'Movie'"));
     }
 
     [Fact]
-    public async Task ADamagedFileIsSetAsideOwnerOnly()
+    public async Task WhileTheDatabaseIsSuspendedNothingIsReadOrWritten()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
+        _database.Suspended = true;
 
-        await File.WriteAllTextAsync(DatabasePath, new string('x', 4096));
-        File.SetUnixFileMode(DatabasePath, Shared);
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None));
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => Store().ReadAsync(CancellationToken.None));
 
-        await Store().SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None);
-
-        Assert.Equal(OwnerOnly, File.GetUnixFileMode(Assert.Single(Directory.GetFiles(_folder, KeptWatchStateStore.FileName + ".damaged-*"))));
-        Assert.Equal(OwnerOnly, File.GetUnixFileMode(DatabasePath));
-    }
-
-    // As with the key file, a database that cannot be kept private is not used: the save fails and the removal waits.
-    [Fact]
-    public async Task AFileThatCannotBeMadePrivateIsNotUsed()
-    {
-        var store = new KeptWatchStateStore(_folder, new CapturingLogger<KeptWatchStateStore>(), new RefusingGuard());
-
-        await Assert.ThrowsAsync<IOException>(() => store.SaveAsync([Film(Guid.NewGuid(), "Film", Watched(_anna))], CancellationToken.None));
-
-        Assert.False(File.Exists(DatabasePath));
-    }
-
-    // The guard of this system, noting the mode each file has right after it.
-    [UnsupportedOSPlatform("windows")]
-    private sealed class CheckingGuard : IKeyFileGuard
-    {
-        private readonly IKeyFileGuard _inner = new UnixKeyFileGuard();
-
-        public Dictionary<string, UnixFileMode> Modes { get; } = new(StringComparer.Ordinal);
-
-        public FileStream CreatePrivate(string path)
-        {
-            var stream = _inner.CreatePrivate(path);
-            Modes[path] = File.GetUnixFileMode(path);
-            return stream;
-        }
-
-        public void KeepPrivate(string path)
-        {
-            _inner.KeepPrivate(path);
-            Modes[path] = File.GetUnixFileMode(path);
-        }
-    }
-
-    private sealed class RefusingGuard : IKeyFileGuard
-    {
-        public FileStream CreatePrivate(string path) => throw new IOException("/secret");
-
-        public void KeepPrivate(string path) => throw new IOException("/secret");
+        Assert.Equal(0, _database.Count("kept_titles"));
     }
 }

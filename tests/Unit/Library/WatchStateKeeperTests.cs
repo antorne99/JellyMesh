@@ -85,7 +85,7 @@ public sealed class WatchStateKeeperTests : IDisposable
                 _byPath.Remove(item.Path);
             });
 
-        _kept = new KeptWatchStateStore(_data, new CapturingLogger<KeptWatchStateStore>());
+        _kept = new KeptWatchStateStore(_fixture.Database);
         _keeper = Keeper(_kept);
         _materializer = MaterializerWith(_keeper);
     }
@@ -93,7 +93,6 @@ public sealed class WatchStateKeeperTests : IDisposable
     public void Dispose()
     {
         _keeper.Dispose();
-        _kept.Dispose();
         _fixture.Dispose();
         if (Directory.Exists(_data))
         {
@@ -435,7 +434,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.True(File.Exists(path));
         Assert.Single(_fixture.Registry.State.Stubs);
-        Assert.False(File.Exists(Path.Combine(_data, KeptWatchStateStore.FileName)));
+        Assert.Equal(0, _fixture.Database.Count("kept_titles"));
 
         _everyone = [_anna, _bruno];
         using var sync = SyncWith(_materializer);
@@ -653,14 +652,15 @@ public sealed class WatchStateKeeperTests : IDisposable
     }
 
     [Fact]
-    public async Task AServerThatNeverRemovedOneMakesNoFile()
+    public async Task AServerThatNeverRemovedOneWritesNothing()
     {
         _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
         await AddAndMaterializeAsync("A", "films");
+        var writes = _fixture.Database.Writes;
 
         await _keeper.RestoreAsync(CancellationToken.None);
 
-        Assert.False(File.Exists(Path.Combine(_data, KeptWatchStateStore.FileName)));
+        Assert.Equal(writes, _fixture.Database.Writes);
     }
 
     [Fact]

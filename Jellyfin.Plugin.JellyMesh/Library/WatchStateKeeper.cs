@@ -128,14 +128,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     /// <inheritdoc />
     public async Task RestoreAsync(CancellationToken cancellationToken)
     {
-        if (!_kept.Exists)
-        {
-            return;
-        }
-
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!await _kept.HasTitlesAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
             var users = _users.GetUsers().ToList();
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var pruned = await _kept.PruneAsync(now - _keptFor, users.Select(user => user.Id).ToHashSet(), cancellationToken).ConfigureAwait(false);

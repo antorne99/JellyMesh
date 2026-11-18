@@ -1,174 +1,113 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
-using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
-using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Data.Sqlite;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// <see cref="IKeptWatchStateStore"/> over a SQLite file in the plugin data folder, through the Microsoft.Data.Sqlite that
-/// Jellyfin itself loads (Q414). Every value goes in as a parameter. A damaged file is set aside and a new one made.
+/// <see cref="IKeptWatchStateStore"/> over the tables <c>kept_titles</c> and <c>kept_user_states</c> of the plugin
+/// database. Every value goes in as a parameter; each call is one short transaction.
 /// </summary>
-public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
+public sealed class KeptWatchStateStore : IKeptWatchStateStore
 {
-    /// <summary>The file name.</summary>
+    /// <summary>The file of 0.5, which the data migration reads once.</summary>
     public const string FileName = "watch-state.db";
 
-    private const int SchemaVersion = 1;
+    private const string SelectAnyTitle = "SELECT EXISTS (SELECT 1 FROM kept_titles);";
 
-    // SQLITE_CORRUPT and SQLITE_NOTADB: the file is not a database Jellyfin's SQLite can read.
-    private const int Corrupt = 11;
-    private const int NotADatabase = 26;
-
-    private const string Schema = """
-        CREATE TABLE IF NOT EXISTS Titles (
-            Id INTEGER PRIMARY KEY,
-            OldItemId TEXT NOT NULL UNIQUE,
-            Kind INTEGER NOT NULL,
-            Title TEXT,
-            Year INTEGER,
-            Tmdb TEXT,
-            Imdb TEXT,
-            Tvdb TEXT,
-            OriginalTitle TEXT,
-            RunTimeTicks INTEGER,
-            Overview TEXT,
-            Genres TEXT NOT NULL,
-            Studios TEXT NOT NULL,
-            People TEXT NOT NULL,
-            SeasonNumber INTEGER,
-            EpisodeNumber INTEGER,
-            EpisodeNumberEnd INTEGER,
-            SavedUtc INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS UserStates (
-            TitleId INTEGER NOT NULL,
-            UserId TEXT NOT NULL,
-            Played INTEGER NOT NULL,
-            PlayCount INTEGER NOT NULL,
-            PlaybackPositionTicks INTEGER NOT NULL,
-            LastPlayedUtc INTEGER,
-            IsFavorite INTEGER NOT NULL,
-            Rating REAL,
-            PRIMARY KEY (TitleId, UserId));
-        PRAGMA user_version = 1;
-        """;
-
-    private const string SelectSavedOfOldItem = "SELECT SavedUtc FROM Titles WHERE OldItemId = $old;";
+    private const string SelectSavedOfOldItem = "SELECT saved_utc FROM kept_titles WHERE old_item_id = $old;";
 
     private const string DeleteTitleOfOldItem = """
-        DELETE FROM UserStates WHERE TitleId IN (SELECT Id FROM Titles WHERE OldItemId = $old);
-        DELETE FROM Titles WHERE OldItemId = $old;
+        DELETE FROM kept_user_states WHERE title_id IN (SELECT id FROM kept_titles WHERE old_item_id = $old);
+        DELETE FROM kept_titles WHERE old_item_id = $old;
         """;
 
     private const string InsertTitle = """
-        INSERT INTO Titles (OldItemId, Kind, Title, Year, Tmdb, Imdb, Tvdb, OriginalTitle, RunTimeTicks, Overview, Genres, Studios,
-            People, SeasonNumber, EpisodeNumber, EpisodeNumberEnd, SavedUtc)
+        INSERT INTO kept_titles (old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres,
+            studios, people, season_number, episode_number, episode_number_end, saved_utc)
         VALUES ($old, $kind, $title, $year, $tmdb, $imdb, $tvdb, $original, $runtime, $overview, $genres, $studios, $people, $season,
             $episode, $episodeEnd, $saved)
-        RETURNING Id;
+        RETURNING id;
         """;
 
     private const string InsertUser = """
-        INSERT INTO UserStates (TitleId, UserId, Played, PlayCount, PlaybackPositionTicks, LastPlayedUtc, IsFavorite, Rating)
+        INSERT INTO kept_user_states (title_id, user_id, played, play_count, playback_position_ticks, last_played_utc, is_favorite,
+            rating)
         VALUES ($title, $user, $played, $count, $position, $last, $favorite, $rating);
         """;
 
     private const string SelectTitles = """
-        SELECT Id, OldItemId, Kind, Title, Year, Tmdb, Imdb, Tvdb, OriginalTitle, RunTimeTicks, Overview, Genres, Studios, People,
-            SeasonNumber, EpisodeNumber, EpisodeNumberEnd, SavedUtc
-        FROM Titles ORDER BY Id;
+        SELECT id, old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres, studios, people,
+            season_number, episode_number, episode_number_end, saved_utc
+        FROM kept_titles ORDER BY id;
         """;
 
     private const string SelectUsers = """
-        SELECT TitleId, UserId, Played, PlayCount, PlaybackPositionTicks, LastPlayedUtc, IsFavorite, Rating FROM UserStates;
+        SELECT title_id, user_id, played, play_count, playback_position_ticks, last_played_utc, is_favorite, rating
+        FROM kept_user_states;
         """;
 
-    private const string DeleteUserRow = "DELETE FROM UserStates WHERE TitleId = $title AND UserId = $user;";
+    private const string DeleteUserRow = "DELETE FROM kept_user_states WHERE title_id = $title AND user_id = $user;";
 
-    private const string DeleteUser = "DELETE FROM UserStates WHERE UserId = $user;";
+    private const string DeleteUser = "DELETE FROM kept_user_states WHERE user_id = $user;";
 
-    private const string SelectUserIds = "SELECT DISTINCT UserId FROM UserStates;";
+    private const string SelectUserIds = "SELECT DISTINCT user_id FROM kept_user_states;";
 
-    private const string DeleteUsersSavedBefore = "DELETE FROM UserStates WHERE TitleId IN (SELECT Id FROM Titles WHERE SavedUtc < $before);";
+    private const string DeleteUsersSavedBefore = "DELETE FROM kept_user_states WHERE title_id IN (SELECT id FROM kept_titles WHERE saved_utc < $before);";
 
-    private const string DeleteTitlesSavedBefore = "DELETE FROM Titles WHERE SavedUtc < $before;";
+    private const string DeleteTitlesSavedBefore = "DELETE FROM kept_titles WHERE saved_utc < $before;";
 
-    private const string DeleteEmptyTitles = "DELETE FROM Titles WHERE NOT EXISTS (SELECT 1 FROM UserStates WHERE UserStates.TitleId = Titles.Id);";
+    private const string DeleteEmptyTitles = """
+        DELETE FROM kept_titles WHERE NOT EXISTS (SELECT 1 FROM kept_user_states WHERE kept_user_states.title_id = kept_titles.id);
+        """;
 
-    // The side files SQLite may make next to the database: the rollback journal this store uses, and those of WAL mode.
-    private static readonly string[] _sideFiles = ["-journal", "-wal", "-shm"];
-
-    private readonly string _path;
-    private readonly string _connectionString;
-    private readonly ILogger<KeptWatchStateStore> _logger;
-    private readonly IKeyFileGuard _guard;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private bool _ready;
+    private readonly IPluginDatabase _database;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="KeptWatchStateStore"/> class.
     /// </summary>
-    /// <param name="folder">The plugin data folder.</param>
-    /// <param name="logger">The logger.</param>
-    public KeptWatchStateStore(string folder, ILogger<KeptWatchStateStore> logger)
-        : this(folder, logger, KeyFileGuards.ForThisSystem())
+    /// <param name="database">The plugin database.</param>
+    public KeptWatchStateStore(IPluginDatabase database)
     {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="KeptWatchStateStore"/> class with the given way of keeping its files private.
-    /// </summary>
-    /// <param name="folder">The plugin data folder.</param>
-    /// <param name="logger">The logger.</param>
-    /// <param name="guard">Keeps the files private.</param>
-    internal KeptWatchStateStore(string folder, ILogger<KeptWatchStateStore> logger, IKeyFileGuard guard)
-    {
-        _path = Path.Combine(folder, FileName);
-        _logger = logger;
-        _guard = guard;
-
-        // No pool: the server shares this assembly, and a pooled handle would keep the file open after each call.
-        _connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = _path,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Pooling = false
-        }.ToString();
+        _database = database;
     }
 
     /// <inheritdoc />
-    public bool Exists => File.Exists(_path);
+    public Task<bool> HasTitlesAsync(CancellationToken cancellationToken) => _database.ReadAsync(
+        (connection, transaction) =>
+        {
+            using var command = StoreSql.Command(connection, transaction, SelectAnyTitle);
+            return (long)command.ExecuteScalar()! != 0;
+        },
+        cancellationToken);
 
     /// <inheritdoc />
     public Task SaveAsync(IReadOnlyCollection<KeptTitle> titles, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(titles);
-        return titles.Count == 0 ? Task.CompletedTask : RunAsync(
+        return titles.Count == 0 ? Task.CompletedTask : _database.WriteAsync(
             (connection, transaction) =>
             {
                 foreach (var title in titles)
                 {
                     // A record saved again keeps its first date, so its 90 days are not reset.
                     var saved = SavedOf(connection, transaction, title.OldItemId) ?? ToUtc(title.SavedUtc).Ticks;
-                    Execute(connection, transaction, DeleteTitleOfOldItem, ("$old", Text(title.OldItemId)));
+                    StoreSql.Execute(connection, transaction, DeleteTitleOfOldItem, ("$old", StoreSql.Text(title.OldItemId)));
                     var id = InsertTitleRow(connection, transaction, title, saved);
                     foreach (var user in title.Users)
                     {
-                        Execute(
+                        StoreSql.Execute(
                             connection,
                             transaction,
                             InsertUser,
                             ("$title", id),
-                            ("$user", Text(user.UserId)),
+                            ("$user", StoreSql.Text(user.UserId)),
                             ("$played", user.Played),
                             ("$count", user.PlayCount),
                             ("$position", user.PlaybackPositionTicks),
@@ -177,18 +116,16 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
                             ("$rating", user.Rating));
                     }
                 }
-
-                return 0;
             },
             cancellationToken);
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<KeptTitle>> ReadAsync(CancellationToken cancellationToken) => RunAsync(
+    public Task<IReadOnlyList<KeptTitle>> ReadAsync(CancellationToken cancellationToken) => _database.ReadAsync(
         (connection, transaction) =>
         {
             var users = new Dictionary<long, List<KeptUserState>>();
-            using (var command = Command(connection, transaction, SelectUsers))
+            using (var command = StoreSql.Command(connection, transaction, SelectUsers))
             using (var reader = command.ExecuteReader())
             {
                 while (reader.Read())
@@ -204,7 +141,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
             }
 
             var titles = new List<KeptTitle>();
-            using (var command = Command(connection, transaction, SelectTitles))
+            using (var command = StoreSql.Command(connection, transaction, SelectTitles))
             using (var reader = command.ExecuteReader())
             {
                 while (reader.Read())
@@ -221,15 +158,15 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
     public Task ForgetAsync(IReadOnlyCollection<(long TitleId, Guid UserId)> rows, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rows);
-        return rows.Count == 0 ? Task.CompletedTask : RunAsync(
+        return rows.Count == 0 ? Task.CompletedTask : _database.WriteAsync(
             (connection, transaction) =>
             {
                 foreach (var (titleId, userId) in rows)
                 {
-                    Execute(connection, transaction, DeleteUserRow, ("$title", titleId), ("$user", Text(userId)));
+                    StoreSql.Execute(connection, transaction, DeleteUserRow, ("$title", titleId), ("$user", StoreSql.Text(userId)));
                 }
 
-                return Execute(connection, transaction, DeleteEmptyTitles);
+                StoreSql.Execute(connection, transaction, DeleteEmptyTitles);
             },
             cancellationToken);
     }
@@ -238,30 +175,25 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
     public Task<int> PruneAsync(DateTime savedBeforeUtc, IReadOnlySet<Guid> users, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(users);
-        return RunAsync(
+        return _database.WriteAsync(
             (connection, transaction) =>
             {
                 // The user rows of old titles go first, so the count is of titles only.
                 var before = ("$before", (object?)ToUtc(savedBeforeUtc).Ticks);
-                Execute(connection, transaction, DeleteUsersSavedBefore, before);
-                var removed = Execute(connection, transaction, DeleteTitlesSavedBefore, before);
+                StoreSql.Execute(connection, transaction, DeleteUsersSavedBefore, before);
+                var removed = StoreSql.Execute(connection, transaction, DeleteTitlesSavedBefore, before);
                 if (users.Count > 0)
                 {
                     foreach (var gone in UserIds(connection, transaction).Where(user => !users.Contains(user)))
                     {
-                        Execute(connection, transaction, DeleteUser, ("$user", Text(gone)));
+                        StoreSql.Execute(connection, transaction, DeleteUser, ("$user", StoreSql.Text(gone)));
                     }
                 }
 
-                return removed + Execute(connection, transaction, DeleteEmptyTitles);
+                return removed + StoreSql.Execute(connection, transaction, DeleteEmptyTitles);
             },
             cancellationToken);
     }
-
-    /// <inheritdoc />
-    public void Dispose() => _gate.Dispose();
-
-    private static string Text(Guid id) => id.ToString("N", CultureInfo.InvariantCulture);
 
     private static DateTime ToUtc(DateTime date) => date.Kind switch
     {
@@ -274,40 +206,20 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
 
     private static List<string> List(string json) => JsonSerializer.Deserialize<List<string>>(json) ?? [];
 
-    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "Every command text is a constant of this class; values go in as parameters.")]
-    private static SqliteCommand Command(SqliteConnection connection, SqliteTransaction? transaction, string text)
-    {
-        var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = text;
-        return command;
-    }
-
-    private static int Execute(SqliteConnection connection, SqliteTransaction transaction, string text, params (string Name, object? Value)[] parameters)
-    {
-        using var command = Command(connection, transaction, text);
-        foreach (var (name, value) in parameters)
-        {
-            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-        }
-
-        return command.ExecuteNonQuery();
-    }
-
     private static long? SavedOf(SqliteConnection connection, SqliteTransaction transaction, Guid oldItemId)
     {
-        using var command = Command(connection, transaction, SelectSavedOfOldItem);
-        command.Parameters.AddWithValue("$old", Text(oldItemId));
+        using var command = StoreSql.Command(connection, transaction, SelectSavedOfOldItem, ("$old", StoreSql.Text(oldItemId)));
         return command.ExecuteScalar() is long ticks ? ticks : null;
     }
 
     private static long InsertTitleRow(SqliteConnection connection, SqliteTransaction transaction, KeptTitle title, long savedTicks)
     {
-        using var command = Command(connection, transaction, InsertTitle);
-        foreach (var (name, value) in new (string, object?)[]
-        {
-            ("$old", Text(title.OldItemId)),
-            ("$kind", (int)title.Kind),
+        using var command = StoreSql.Command(
+            connection,
+            transaction,
+            InsertTitle,
+            ("$old", StoreSql.Text(title.OldItemId)),
+            ("$kind", title.Kind.ToString()),
             ("$title", title.Title),
             ("$year", title.Year),
             ("$tmdb", title.Ids.Tmdb),
@@ -322,146 +234,54 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore, IDisposable
             ("$season", title.SeasonNumber),
             ("$episode", title.EpisodeNumber),
             ("$episodeEnd", title.EpisodeNumberEnd),
-            ("$saved", savedTicks)
-        })
-        {
-            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-        }
-
+            ("$saved", savedTicks));
         return (long)command.ExecuteScalar()!;
     }
 
     private static List<Guid> UserIds(SqliteConnection connection, SqliteTransaction transaction)
     {
         var ids = new List<Guid>();
-        using var command = Command(connection, transaction, SelectUserIds);
+        using var command = StoreSql.Command(connection, transaction, SelectUserIds);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            ids.Add(Guid.Parse(reader.GetString(0)));
+            ids.Add(Guid.ParseExact(reader.GetString(0), "N"));
         }
 
         return ids;
     }
 
     private static KeptUserState ReadUser(SqliteDataReader reader) => new(
-        Guid.Parse(reader.GetString(1)),
+        Guid.ParseExact(reader.GetString(1), "N"),
         reader.GetInt64(2) != 0,
         reader.GetInt32(3),
         reader.GetInt64(4),
-        reader.IsDBNull(5) ? null : new DateTime(reader.GetInt64(5), DateTimeKind.Utc),
+        StoreSql.LongOrNull(reader, 5) is { } last ? new DateTime(last, DateTimeKind.Utc) : null,
         reader.GetInt64(6) != 0,
         reader.IsDBNull(7) ? null : reader.GetDouble(7));
 
     private static KeptTitle ReadTitle(SqliteDataReader reader, Dictionary<long, List<KeptUserState>> users)
     {
-        string? TextOrNull(int column) => reader.IsDBNull(column) ? null : reader.GetString(column);
-        int? IntOrNull(int column) => reader.IsDBNull(column) ? null : reader.GetInt32(column);
-
         var id = reader.GetInt64(0);
         return new KeptTitle
         {
             Id = id,
-            OldItemId = Guid.Parse(reader.GetString(1)),
-            Kind = (KeptTitleKind)reader.GetInt32(2),
-            Title = TextOrNull(3),
-            Year = IntOrNull(4),
-            Ids = new ContentIds(TextOrNull(5), TextOrNull(6), TextOrNull(7)),
-            OriginalTitle = TextOrNull(8),
-            RunTimeTicks = reader.IsDBNull(9) ? null : reader.GetInt64(9),
-            Overview = TextOrNull(10),
+            OldItemId = Guid.ParseExact(reader.GetString(1), "N"),
+            Kind = Enum.Parse<KeptTitleKind>(reader.GetString(2)),
+            Title = StoreSql.TextOrNull(reader, 3),
+            Year = StoreSql.IntOrNull(reader, 4),
+            Ids = new ContentIds(StoreSql.TextOrNull(reader, 5), StoreSql.TextOrNull(reader, 6), StoreSql.TextOrNull(reader, 7)),
+            OriginalTitle = StoreSql.TextOrNull(reader, 8),
+            RunTimeTicks = StoreSql.LongOrNull(reader, 9),
+            Overview = StoreSql.TextOrNull(reader, 10),
             Genres = List(reader.GetString(11)),
             Studios = List(reader.GetString(12)),
             People = List(reader.GetString(13)),
-            SeasonNumber = IntOrNull(14),
-            EpisodeNumber = IntOrNull(15),
-            EpisodeNumberEnd = IntOrNull(16),
+            SeasonNumber = StoreSql.IntOrNull(reader, 14),
+            EpisodeNumber = StoreSql.IntOrNull(reader, 15),
+            EpisodeNumberEnd = StoreSql.IntOrNull(reader, 16),
             SavedUtc = new DateTime(reader.GetInt64(17), DateTimeKind.Utc),
             Users = users.GetValueOrDefault(id) ?? []
         };
-    }
-
-    // One connection and one transaction per call, one call at a time; the schema is made on first use.
-    private async Task<T> RunAsync<T>(Func<SqliteConnection, SqliteTransaction, T> work, CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return Run(work);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    private T Run<T>(Func<SqliteConnection, SqliteTransaction, T> work)
-    {
-        if (!_ready)
-        {
-            EnsureSchema();
-            _ready = true;
-        }
-
-        using var connection = new SqliteConnection(_connectionString);
-        connection.Open();
-        using var transaction = connection.BeginTransaction();
-        var result = work(connection, transaction);
-        transaction.Commit();
-        return result;
-    }
-
-    // The files are private before SQLite opens them; one that cannot be kept private throws, so nothing is saved (row 417).
-    private void EnsureSchema()
-    {
-        KeepPrivate();
-        try
-        {
-            CreateSchema();
-        }
-        catch (SqliteException exception) when (exception.SqliteErrorCode is Corrupt or NotADatabase)
-        {
-            var aside = _path + ".damaged-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
-            File.Move(_path, aside);
-            _logger.LogWarning("The file of the watch state kept for removed servers was damaged. It was set aside and a new one made");
-            KeepPrivate();
-            CreateSchema();
-        }
-    }
-
-    // Makes the database empty and private if it is missing, as SQLite reads an empty file as a new database. An existing
-    // one, its side files and the copies set aside, maybe left by an earlier build, become private.
-    private void KeepPrivate()
-    {
-        if (File.Exists(_path))
-        {
-            _guard.KeepPrivate(_path);
-        }
-        else
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            _guard.CreatePrivate(_path).Dispose();
-        }
-
-        var sides = _sideFiles.Select(suffix => _path + suffix).Where(File.Exists)
-            .Concat(Directory.EnumerateFiles(Path.GetDirectoryName(_path)!, FileName + ".damaged-*"));
-        foreach (var side in sides)
-        {
-            _guard.KeepPrivate(side);
-        }
-    }
-
-    private void CreateSchema()
-    {
-        using var connection = new SqliteConnection(_connectionString);
-        connection.Open();
-        using var version = Command(connection, null, "PRAGMA user_version;");
-        if (Convert.ToInt32(version.ExecuteScalar(), CultureInfo.InvariantCulture) > SchemaVersion)
-        {
-            throw new InvalidDataException("The file of the watch state kept for removed servers is of a newer version.");
-        }
-
-        using var create = Command(connection, null, Schema);
-        create.ExecuteNonQuery();
     }
 }

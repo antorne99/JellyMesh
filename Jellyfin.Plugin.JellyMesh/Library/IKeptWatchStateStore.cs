@@ -6,14 +6,16 @@ using System.Threading.Tasks;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// The watch state of the titles of removed servers, in a SQLite database in the plugin data folder (Q412, Q414).
+/// The watch state of the titles of removed servers, in the plugin database (Q412, Q414).
 /// </summary>
 public interface IKeptWatchStateStore
 {
     /// <summary>
-    /// Gets a value indicating whether the file exists, so that a server that never removed one makes none.
+    /// Tells whether any title is kept, so that a server that never removed one writes nothing for it.
     /// </summary>
-    bool Exists { get; }
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether a title is kept.</returns>
+    Task<bool> HasTitlesAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Saves the titles in one transaction, each replacing the record of the same old item but keeping its first saved date.
