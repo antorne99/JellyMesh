@@ -84,10 +84,11 @@ internal static class LibraryPlan
     /// <returns>The type folder.</returns>
     public static TypeFolder TypeOf(ServerLibraryKind kind) => kind == ServerLibraryKind.Series ? TypeFolder.Series : TypeFolder.Movies;
 
-    // The imported libraries the plugin read, in the order of the remote, with the kind of their type; others wait for a sync.
+    // The imported libraries the plugin read, in the order of the remote, with the kind of their type and an id safe as a
+    // folder name; others wait for a sync.
     private static List<ImportedLibrary> Imported(RemoteServerConfig server)
         => [.. server.RemoteLibraries
-            .Where(library => server.ImportedLibraryIds.Contains(library.Id, StringComparer.OrdinalIgnoreCase))
+            .Where(library => FederatedPaths.IsLibraryId(library.Id) && server.ImportedLibraryIds.Contains(library.Id, StringComparer.OrdinalIgnoreCase))
             .Select(library => KindOf(library.CollectionType) is { } kind ? new ImportedLibrary(library.Id, library.Name, kind) : null)
             .OfType<ImportedLibrary>()];
 

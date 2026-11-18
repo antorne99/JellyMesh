@@ -121,4 +121,14 @@ public sealed class LibraryPlanTests
             [$"{_serverId:D}/{Films}/Film", $"{_serverId:D}/{Shows}/Serie"],
             LibraryPlan.TypeFolders(Server(LibraryMode.None, (Films, "Film", "movies"), (Shows, "Serie TV", "tvshows"))));
     }
+
+    [Fact]
+    public void ALibraryIdThatIsNotAJellyfinIdNeverBecomesAFolder()
+    {
+        var server = Server(LibraryMode.ByRemoteLibrary, (Films, "Film", "movies"), ("../escape", "Altro", "movies"));
+
+        Assert.Equal([Films], LibraryPlan.For(server, Root, olderLayout: false).Select(planned => planned.RemoteLibraryId));
+        Assert.Single(LibraryPlan.TypeFolders(server));
+        Assert.Single(LibraryPlan.ManualPaths(server, Root, olderLayout: false));
+    }
 }
