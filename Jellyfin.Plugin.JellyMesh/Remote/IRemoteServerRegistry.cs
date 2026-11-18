@@ -93,6 +93,16 @@ public interface IRemoteServerRegistry
     Task<bool> RemoveAsync(Guid serverId);
 
     /// <summary>
+    /// Removes a server as <see cref="RemoveAsync(Guid)"/> does, stopping its streams from before the save and while its
+    /// login ends, all within one limit (row 434). The stop calls keep the login the server had.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="stopStreams">Stops what plays from the server; null when nothing needs stopping.</param>
+    /// <returns>Whether the server existed.</returns>
+    /// <exception cref="System.Exception">The configuration could not be saved. The server stays, its streams stopped.</exception>
+    Task<bool> RemoveAsync(Guid serverId, Func<Task>? stopStreams);
+
+    /// <summary>
     /// Renames a server. Its ID, and so its folder, stay the same (Q5, Q38).
     /// </summary>
     /// <param name="serverId">The server.</param>

@@ -203,6 +203,67 @@ public class ServerRemovalLogoutTests
         AssertClean(logger);
     }
 
+    // Decision 413 with row 434: the streams stop and the login ends together, within one limit.
+    [Fact]
+    public async Task TheStreamsStopAndTheLoginEndsTogetherWithinTheLimit()
+    {
+        using var handler = new HeldLogoutHandler(StubHandler.StockServer_Respond);
+        using var fixture = new RegistryFixture(Remote());
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromMilliseconds(300) };
+        var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+        bool? overlapped = null;
+        var watch = Stopwatch.StartNew();
+
+        // The stop waits for the logout to start and sees it still running: in sequence, either way, it would not.
+        Assert.True(await registry.RemoveAsync(added.Value!.Id, async () =>
+        {
+            await handler.LogoutStarted.WaitAsync(TimeSpan.FromSeconds(5));
+            overlapped = !handler.LogoutEnded.IsCompleted;
+        }));
+
+        Assert.True(overlapped);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), watch.Elapsed.ToString());
+        Assert.Empty(registry.GetServers());
+        AssertClean(logger);
+    }
+
+    // The stop calls of a removal still reach the remote with the login it had, and never log in again.
+    [Fact]
+    public async Task TheStopCallsOfARemovalUseTheLoginItHad()
+    {
+        var logins = 0;
+        using var handler = new HeldLogoutHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == LoginPath)
+            {
+                Interlocked.Increment(ref logins);
+            }
+
+            return StubHandler.StockServer_Respond(request);
+        });
+        using var fixture = new RegistryFixture(Remote());
+        var client = new JellyfinRemoteClient(new StubHttpClientFactory(handler)) { Delay = (_, _) => Task.CompletedTask };
+        using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, new CapturingLogger<RemoteServerRegistry>()) { LogoutLimit = TimeSpan.FromMilliseconds(300) };
+        var added = await registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+        var id = added.Value!.Id;
+        await PingAsync(registry, id);
+        var before = Volatile.Read(ref logins);
+        RemoteResult<string>? stop = null;
+
+        // Called once the logout runs, so after the save took the server out.
+        Assert.True(await registry.RemoveAsync(id, async () =>
+        {
+            await handler.LogoutStarted.WaitAsync(TimeSpan.FromSeconds(5));
+            stop = await registry.RunPlaybackCallAsync(id, (_, session, _) => Task.FromResult(RemoteResult.Success(session.AccessToken)), CancellationToken.None);
+        }));
+
+        Assert.Equal(TestValues.Token, stop!.Value);
+        Assert.Equal(RemoteFailure.UnknownServer, (await PingAsync(registry, id)).Failure);
+        Assert.Equal(before, Volatile.Read(ref logins));
+    }
+
     [Fact]
     public async Task ALoginRunningDuringTheRemovalIsLoggedOutWhenItEnds()
     {

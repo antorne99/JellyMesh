@@ -166,17 +166,13 @@ public class FederationAdminControllerTests
         stream.Value!.Dispose();
     }
 
-    // Decision 413: what plays from the server ends first, then its login on the remote.
+    // Decision 413 with row 434: what plays from the server ends while its login on the remote ends.
     [Fact]
-    public async Task Removing_a_server_ends_its_streams_then_its_login_on_the_remote()
+    public async Task Removing_a_server_ends_its_streams_and_its_login_on_the_remote()
     {
         using var fixture = new RegistryFixture();
         var server = await fixture.AddServerAsync();
         var playback = new CoordinatorFixture();
-        var loggedOutAtClose = true;
-        playback.Transcodes.Setup(manager => manager.KillTranscodingJobs(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<Func<string, bool>>()))
-            .Callback(() => loggedOutAtClose = fixture.Handler.Requests.Any(request => request.Uri.AbsolutePath == "/Sessions/Logout"))
-            .Returns(Task.CompletedTask);
         playback.Coordinator.RecordLocalPlaySession(Guid.NewGuid(), Guid.NewGuid(), "local", ["device"]);
         playback.Coordinator.RecordLocalTranscode("local", new StubSource(server.Id, "item", "item-ms"));
         var controller = new FederationAdminController(
@@ -193,7 +189,6 @@ public class FederationAdminControllerTests
 
         Assert.IsType<NoContentResult>(await controller.RemoveServer(server.Id, CancellationToken.None));
 
-        Assert.False(loggedOutAtClose);
         playback.Transcodes.Verify(manager => manager.KillTranscodingJobs(string.Empty, "local", It.IsAny<Func<string, bool>>()), Times.Once);
         Assert.Single(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
     }

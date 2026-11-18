@@ -30,6 +30,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private readonly IActivityWriter? _activity;
     private readonly ConcurrentDictionary<Guid, ServerRuntime> _runtimes = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _editGates = new();
+    private readonly ConcurrentDictionary<Guid, ClosingServer> _closing = new();
     private readonly Lock _removingLock = new();
     private readonly Dictionary<Guid, int> _removing = [];
 
@@ -471,7 +472,27 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<bool> RemoveAsync(Guid serverId)
+    public Task<bool> RemoveAsync(Guid serverId) => RemoveAsync(serverId, null);
+
+    /// <inheritdoc />
+    public async Task<bool> RemoveAsync(Guid serverId, Func<Task>? stopStreams)
+    {
+        // Started before the save, so that a failed save still means the streams were stopped.
+        var name = LogText.Clean(_store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == serverId)?.Name));
+        var stop = StopStreamsAsync(name, stopStreams, "being removed");
+        try
+        {
+            return await RemoveCoreAsync(serverId, stop).ConfigureAwait(false);
+        }
+        catch
+        {
+            await stop.ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    // Saves the removal, then ends the login while the streams stop, with the login they had (row 434).
+    private async Task<bool> RemoveCoreAsync(Guid serverId, Task stop)
     {
         RemoteServerConfig? removed = null;
         var position = -1;
@@ -499,6 +520,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         if (removed is null)
         {
+            await stop.ConfigureAwait(false);
             return false;
         }
 
@@ -506,11 +528,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var session = _runtimes.TryRemove(serverId, out var runtime) ? runtime.Forget() : null;
         if (session is null)
         {
-            await EndDeviceWithoutLiveLoginAsync(removed, runtime).ConfigureAwait(false);
+            await Task.WhenAll(stop, EndDeviceWithoutLiveLoginAsync(removed, runtime)).ConfigureAwait(false);
+            return true;
         }
-        else
+
+        _closing[serverId] = new ClosingServer(removed.Url, session);
+        try
         {
-            await EndRemovedSessionAsync(removed, session).ConfigureAwait(false);
+            await Task.WhenAll(stop, EndRemovedSessionAsync(removed, session)).ConfigureAwait(false);
+        }
+        finally
+        {
+            _closing.TryRemove(serverId, out _);
         }
 
         return true;
@@ -661,7 +690,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             .FirstOrDefault());
         if (server is null)
         {
-            return RemoteResult.Fail<T>(RemoteFailure.UnknownServer);
+            // A server being removed lets its streams stop with the login it had, never with a new one.
+            return _closing.TryGetValue(serverId, out var closing)
+                ? await call(EndpointOf(serverId, closing.Url), closing.Session, cancellationToken).ConfigureAwait(false)
+                : RemoteResult.Fail<T>(RemoteFailure.UnknownServer);
         }
 
         var runtime = RuntimeOf(serverId);
@@ -922,11 +954,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         // Together, so that both end within one limit (row 434).
         var name = LogText.Clean(plan.Name);
-        await Task.WhenAll(StopStreamsAsync(name, stopStreams), LogOutOldUserAsync(plan, name, replaced)).ConfigureAwait(false);
+        await Task.WhenAll(StopStreamsAsync(name, stopStreams, "after its user changed"), LogOutOldUserAsync(plan, name, replaced)).ConfigureAwait(false);
     }
 
-    // Never throws: the edit is saved, so it must not fail now.
-    private async Task StopStreamsAsync(string? name, Func<Task>? stopStreams)
+    // Never throws: what follows must run whatever the stop did.
+    private async Task StopStreamsAsync(string? name, Func<Task>? stopStreams, string when)
     {
         if (stopStreams is null)
         {
@@ -940,7 +972,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         catch (Exception exception)
         {
             // The type only: a message could hold an address.
-            _logger.LogWarning("Could not stop the streams of remote server {ServerName} after its user changed: {Error}", name, exception.GetType().Name);
+            _logger.LogWarning("Could not stop the streams of remote server {ServerName} {When}: {Error}", name, when, exception.GetType().Name);
         }
     }
 
@@ -1559,6 +1591,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     // The credentials are not copied: a login reads them under the login gate.
     private sealed record StoredServer(Guid Id, string Name, string Url);
+
+    // The address and login a removed server keeps while its streams stop.
+    private sealed record ClosingServer(string Url, RemoteSession Session);
 
     private sealed record SessionAttempt<T>(RemoteResult<T> Attempt, RemoteSession? Session);
 

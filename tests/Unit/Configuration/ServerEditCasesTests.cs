@@ -524,23 +524,4 @@ public sealed partial class ServerEditTests
             .Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
         return renamer;
     }
-
-    // Answers as the remote of the form, except a logout, which never answers.
-    private sealed class HeldLogoutHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
-    {
-        private readonly TaskCompletionSource _logout = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public Task LogoutStarted => _logout.Task;
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            if (request.RequestUri!.AbsolutePath == "/Sessions/Logout")
-            {
-                _logout.TrySetResult();
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            }
-
-            return respond(request);
-        }
-    }
 }

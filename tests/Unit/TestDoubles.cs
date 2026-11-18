@@ -243,3 +243,32 @@ internal sealed class RegistryFixture : IDisposable
 
     public void Dispose() => Registry.Dispose();
 }
+
+// Answers as the given remote, except a logout, which never answers.
+internal sealed class HeldLogoutHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+{
+    private readonly TaskCompletionSource _logout = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _logoutEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task LogoutStarted => _logout.Task;
+
+    public Task LogoutEnded => _logoutEnded.Task;
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.RequestUri!.AbsolutePath == "/Sessions/Logout")
+        {
+            _logout.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            finally
+            {
+                _logoutEnded.TrySetResult();
+            }
+        }
+
+        return respond(request);
+    }
+}
