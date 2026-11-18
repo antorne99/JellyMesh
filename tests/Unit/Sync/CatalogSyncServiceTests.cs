@@ -193,6 +193,25 @@ public sealed class CatalogSyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task WhileTheDatabaseIsSuspendedNothingStartsAndNothingChanges()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.AddServerAsync("A", "films");
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        var before = _fixture.Index.Snapshot;
+        _fixture.Client.Queries.Clear();
+        _fixture.Database.Suspended = true;
+
+        Assert.Equal(SyncStartResult.Suspended, _fixture.Sync.TryStart());
+        Assert.Equal(SyncStartResult.Suspended, await _fixture.Sync.RunIncrementalAsync(CancellationToken.None));
+
+        Assert.Same(before, _fixture.Index.Snapshot);
+        Assert.Empty(_fixture.Client.Queries);
+        _fixture.Database.Suspended = false;
+        Assert.Equal(SyncStartResult.Started, await _fixture.Sync.RunAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ASecondSyncIsRefusedWhileOneRuns()
     {
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));

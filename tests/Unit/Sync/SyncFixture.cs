@@ -28,7 +28,7 @@ internal sealed class SyncFixture : IDisposable
         Database = new TestDatabase(_folder);
         Index = new FederationIndex(Database, new CapturingLogger<FederationIndex>());
         Stubs = new StubRegistry(Database, Store, new CapturingLogger<StubRegistry>());
-        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs, store: Store);
+        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs, store: Store, database: Database);
     }
 
     public string Folder => _folder;
