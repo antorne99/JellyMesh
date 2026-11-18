@@ -13,6 +13,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -23,6 +24,7 @@ public sealed class ServerStubRenamerTests : IDisposable
     private static readonly Guid _other = Guid.Parse("5e6f7a8b-0000-4000-8000-000000000002");
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-rename-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
@@ -42,7 +44,8 @@ public sealed class ServerStubRenamerTests : IDisposable
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
         _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _server, Name = "Casa" });
         _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _other, Name = "Altro" });
-        _registry = new StubRegistry(Path.Combine(_data, "plugin"), _store, new CapturingLogger<StubRegistry>());
+        _database = new TestDatabase(Path.Combine(_data, "plugin"));
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
         _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), It.IsAny<Type>())).Returns((string key, Type type) => IdOf(key, type));
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _carrier.Setup(carrier => carrier.CarryAsync(It.IsAny<IReadOnlyList<WatchStateMove>>(), It.IsAny<CancellationToken>()))
@@ -79,6 +82,7 @@ public sealed class ServerStubRenamerTests : IDisposable
     public void Dispose()
     {
         _registry.Dispose();
+        _database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);

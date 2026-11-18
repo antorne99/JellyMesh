@@ -13,6 +13,7 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
@@ -27,6 +28,7 @@ public sealed class VersionCheckCostTests : IDisposable
     private const int Checked = 100;
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-cost-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IFederationIndex> _index = new();
@@ -37,7 +39,8 @@ public sealed class VersionCheckCostTests : IDisposable
     public VersionCheckCostTests()
     {
         _store.Configuration.FederatedFolderPath = "/federata";
-        _registry = new StubRegistry(_data, _store, new CapturingLogger<StubRegistry>());
+        _database = new TestDatabase(_data);
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>())).Returns((Guid id, User _) => _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
@@ -47,6 +50,7 @@ public sealed class VersionCheckCostTests : IDisposable
     public void Dispose()
     {
         _registry.Dispose();
+        _database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);

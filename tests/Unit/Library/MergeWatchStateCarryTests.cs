@@ -14,6 +14,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
@@ -30,6 +31,7 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     private static readonly Guid _otherFilms = Guid.NewGuid();
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-merge-carry-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly StubRegistry _registry;
     private readonly WatchStateCarryLog _log;
@@ -47,7 +49,8 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     public MergeWatchStateCarryTests()
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
-        _registry = new StubRegistry(Path.Combine(_data, "registry"), _store, new CapturingLogger<StubRegistry>());
+        _database = new TestDatabase(Path.Combine(_data, "registry"));
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
         _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
@@ -77,6 +80,7 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     public void Dispose()
     {
         _registry.Dispose();
+        _database.Dispose();
         _log.Dispose();
         if (Directory.Exists(_data))
         {

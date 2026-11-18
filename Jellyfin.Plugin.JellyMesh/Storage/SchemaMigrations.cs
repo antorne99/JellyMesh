@@ -19,6 +19,7 @@ public static class SchemaMigrations
         new(2, static (connection, transaction) =>
         {
             Index.IndexTables.Create(connection, transaction);
+            Library.StubTables.Create(connection, transaction);
         })
     ];
 

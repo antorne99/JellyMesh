@@ -3,50 +3,51 @@ using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// <see cref="IStubRegistry"/> over a file in the plugin data folder. A change is saved first and only then made visible,
-/// and a write replaces the file in one step. If the file is lost the stubs are minted again on the same paths, so the
-/// Jellyfin items and their watch state stay.
+/// <see cref="IStubRegistry"/> in memory, with the tables of the plugin database as its durable copy. A change is
+/// written first, in one transaction, and only then made visible. If the rows are lost the stubs are minted again on
+/// the same paths, so the Jellyfin items and their watch state stay.
 /// </summary>
 public sealed class StubRegistry : IStubRegistry, IDisposable
 {
-    /// <summary>The file name.</summary>
-    public const string FileName = "federated-stubs.json";
-
-    private static readonly JsonSerializerOptions _options = new()
-    {
-        Converters = { new JsonStringEnumConverter() },
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
-    private readonly string _path;
+    private readonly IPluginDatabase _database;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<StubRegistry> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile Lookup _lookup;
     private long _generation;
 
+    // False while the database could not be read: memory is then not its copy, and nothing is saved over it.
+    private bool _loaded;
+
+    // What the tables hold, to write only what changed; null when that is not known, so the next save writes it all.
+    private StubState? _stored;
+
     /// <summary>
-    /// Initializes a new instance of the <see cref="StubRegistry"/> class.
+    /// Initializes a new instance of the <see cref="StubRegistry"/> class, reading the registry from the database.
     /// </summary>
-    /// <param name="folder">The folder of the file.</param>
+    /// <param name="database">The plugin database.</param>
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
-    public StubRegistry(string folder, IPluginConfigurationStore store, ILogger<StubRegistry> logger)
+    public StubRegistry(IPluginDatabase database, IPluginConfigurationStore store, ILogger<StubRegistry> logger)
     {
-        _path = Path.Combine(folder, FileName);
+        ArgumentNullException.ThrowIfNull(database);
+
+        _database = database;
         _store = store;
         _logger = logger;
-        _lookup = new Lookup(Load());
+
+        // Built once at startup, before any request; the read runs on a pool thread of its own, so the wait cannot deadlock.
+        _lookup = new Lookup(LoadAsync(CancellationToken.None).GetAwaiter().GetResult() ?? StubState.Empty);
     }
 
     /// <summary>
@@ -108,11 +109,32 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     }
 
     /// <summary>
-    /// Takes the lock that materialization and cleanup share: both rewrite the state and the folder.
+    /// Takes the lock that materialization and cleanup share: both rewrite the state and the folder. A registry that could
+    /// not be read is read again first, so the holder starts from what the database holds.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
-    public Task EnterAsync(CancellationToken cancellationToken) => _gate.WaitAsync(cancellationToken);
+    public async Task EnterAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (_loaded)
+        {
+            return;
+        }
+
+        try
+        {
+            if (await LoadAsync(cancellationToken).ConfigureAwait(false) is { } state)
+            {
+                _lookup = new Lookup(state);
+            }
+        }
+        catch
+        {
+            _gate.Release();
+            throw;
+        }
+    }
 
     /// <summary>
     /// Releases the lock.
@@ -125,27 +147,29 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <param name="state">The state.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
-    /// <exception cref="IOException">The file could not be written. The current state stays.</exception>
+    /// <exception cref="IOException">The database could not be read or written. The current state stays.</exception>
     public async Task SaveAsync(StubState state, CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        ArgumentNullException.ThrowIfNull(state);
 
-        var temporary = _path + ".tmp";
-        try
+        if (!_loaded)
         {
-            var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous);
-            await using (stream.ConfigureAwait(false))
+            throw new IOException("The stub registry could not be read from the database, so it is not saved over.");
+        }
+
+        // A state equal to what the tables hold writes nothing, but still counts as a save.
+        if (StubTables.Plan(_stored, state) is { } write)
+        {
+            try
             {
-                await JsonSerializer.SerializeAsync(stream, state, _options, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                RandomAccess.FlushToDisk(stream.SafeFileHandle);
+                await _database.WriteAsync((connection, transaction) => StubTables.Write(connection, transaction, write), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
+            {
+                throw new IOException("The stub registry could not be saved: " + exception.GetType().Name, exception);
             }
 
-            File.Move(temporary, _path, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporary);
+            _stored = state;
         }
 
         _lookup = new Lookup(state);
@@ -249,35 +273,27 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
     }
 
-    private StubState Load()
+    // Null when the database is suspended or cannot be read, to be tried again at the next lock. Rows that do not read give
+    // an empty registry, whose stubs are minted again and written whole at the next save.
+    private async Task<StubState?> LoadAsync(CancellationToken cancellationToken)
     {
-        if (!File.Exists(_path))
-        {
-            return StubState.Empty;
-        }
-
         try
         {
-            using var stream = File.OpenRead(_path);
-            var state = JsonSerializer.Deserialize<StubState>(stream, _options);
-            if (state?.Version == StubState.CurrentVersion)
-            {
-                return state;
-            }
-
-            if (state?.Version == StubState.FlatLayoutVersion)
-            {
-                return state with { Version = StubState.CurrentVersion };
-            }
-
-            _logger.LogError("The stub registry has an unsupported format. Stubs are minted again at the next sync");
+            var state = await _database.ReadAsync(StubTables.Load, cancellationToken).ConfigureAwait(false);
+            (_loaded, _stored) = (true, state);
+            return state;
         }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
+        catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogError("Cannot read the stub registry: {Error}. Stubs are minted again at the next sync", exception.GetType().Name);
+            _logger.LogError("Cannot read the stub registry from the database: {Error}. It is empty until the database can be read", exception.GetType().Name);
+            return null;
         }
-
-        return StubState.Empty;
+        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException)
+        {
+            _logger.LogError("The stub registry in the database is damaged: {Error}. Stubs are minted again at the next sync", exception.GetType().Name);
+            (_loaded, _stored) = (true, null);
+            return StubState.Empty;
+        }
     }
 
     private sealed class Lookup

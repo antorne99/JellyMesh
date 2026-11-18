@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Security;
@@ -93,6 +96,46 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
             },
             cancellationToken);
     }
+
+    /// <summary>Reads every value of every row of the tables whose name starts with a prefix, as text.</summary>
+    /// <param name="prefix">The prefix of the table names.</param>
+    /// <returns>The values, one per line.</returns>
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "The table names come from the schema of a test database.")]
+    public Task<string> DumpAsync(string prefix) => _inner.ReadAsync(
+        (connection, transaction) =>
+        {
+            var tables = new List<string>();
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, length($prefix)) = $prefix ORDER BY name;";
+                command.Parameters.AddWithValue("$prefix", prefix);
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    tables.Add(reader.GetString(0));
+                }
+            }
+
+            var text = new StringBuilder();
+            foreach (var table in tables)
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "SELECT * FROM \"" + table + "\";";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    for (var column = 0; column < reader.FieldCount; column++)
+                    {
+                        text.Append(reader.GetValue(column)).Append('\n');
+                    }
+                }
+            }
+
+            return text.ToString();
+        },
+        CancellationToken.None);
 
     public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => _inner.TruncateWalAsync(cancellationToken);
 

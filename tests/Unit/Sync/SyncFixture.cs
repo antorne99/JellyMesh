@@ -19,7 +19,7 @@ internal sealed class SyncFixture : IDisposable
 
     private readonly string _folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jellymesh-tests-" + Guid.NewGuid().ToString("N"));
 
-    public SyncFixture(string? key = TestValues.Key, string? stubFolder = null)
+    public SyncFixture(string? key = TestValues.Key)
     {
         KeySource = new FixedKeySource(key);
         Vault = new CredentialVault(KeySource, Store);
@@ -27,7 +27,7 @@ internal sealed class SyncFixture : IDisposable
         Reader = new RemoteCatalogReader(Registry, Client, ReaderLogger);
         Database = new TestDatabase(_folder);
         Index = new FederationIndex(Database, new CapturingLogger<FederationIndex>());
-        Stubs = new StubRegistry(stubFolder ?? System.IO.Path.Combine(_folder, "plugin"), Store, new CapturingLogger<StubRegistry>());
+        Stubs = new StubRegistry(Database, Store, new CapturingLogger<StubRegistry>());
         Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs, store: Store);
     }
 
