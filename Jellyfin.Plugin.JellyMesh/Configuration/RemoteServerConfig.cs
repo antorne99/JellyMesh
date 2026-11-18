@@ -5,7 +5,7 @@ using Jellyfin.Plugin.JellyMesh.Remote;
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
 /// <summary>
-/// A remote server as persisted in the plugin XML. A mutable class because XmlSerializer requires it.
+/// A remote server as kept in the servers table of the plugin database.
 /// </summary>
 public class RemoteServerConfig
 {
@@ -30,7 +30,8 @@ public class RemoteServerConfig
     public string Url { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the credentials as encrypted by <see cref="Security.ICredentialVault"/>.
+    /// Gets or sets the user and password as encrypted by <see cref="Security.ICredentialVault"/>, bound to <see cref="Id"/>,
+    /// with the key file of the data folder, which never enters the database.
     /// </summary>
     public string EncryptedCredentials { get; set; } = string.Empty;
 
