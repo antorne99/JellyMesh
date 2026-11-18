@@ -139,10 +139,21 @@ add_remote() { # add_remote <consumer> <name> <url> <user> -> server id
   post "$1" /JellyMesh/Admin/Servers "$(jq -n --arg n "$2" --arg u "$3" --arg x "$4" '{Name:$n,Url:$u,Username:$x,Password:"jellymesh-test"}')" | jq -r .Id
 }
 
-import_all() { # import_all <consumer> <server id>
-  local ids
-  ids=$(get "$1" "/JellyMesh/Admin/Servers/$2/Libraries" | jq -c '{LibraryIds: map(.Id)}')
-  post "$1" "/JellyMesh/Admin/Servers/$2/Libraries" "$ids" >/dev/null
+# server_form <consumer> <server id> [json]: the edit form of a server with those fields changed. An empty user and
+# password keep the saved ones.
+server_form() {
+  local changes=${3:-'{}'}
+  get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" --argjson c "$changes" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""} + $c'
+}
+# save_server / check_server <consumer> <server id> [json]: saves or checks that form. The status goes to $WORK/status.
+save_server() { req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(server_form "$1" "$2" "${3:-}")"; }
+check_server() { req "$1" POST "/JellyMesh/Admin/Servers/$2/Edit/Check" "$(server_form "$1" "$2" "${3:-}")"; }
+
+import_all() { # import_all <consumer> <server id>: every library the remote user sees, saved with the edit form
+  local form ids
+  form=$(get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+  ids=$(post "$1" "/JellyMesh/Admin/Servers/$2/Edit/Check" "$form" | jq -c '[.Libraries[].Id]')
+  req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" >/dev/null
 }
 
 # item <server> <title substring> [item type]: the id of an item whose path has that substring and is a stub or not.

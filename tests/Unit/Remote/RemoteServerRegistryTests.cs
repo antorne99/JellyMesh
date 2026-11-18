@@ -384,18 +384,6 @@ public class RemoteServerRegistryTests
     }
 
     [Fact]
-    public async Task ImportedLibrariesAreStoredPerServer()
-    {
-        using var fixture = new RegistryFixture();
-        var server = await fixture.AddServerAsync();
-
-        Assert.True(fixture.Registry.SetImportedLibraries(server.Id, ["1", "2", "1"]));
-
-        Assert.Equal(["1", "2"], fixture.Registry.GetServers().Single().ImportedLibraryIds);
-        Assert.False(fixture.Registry.SetImportedLibraries(Guid.NewGuid(), ["1"]));
-    }
-
-    [Fact]
     public async Task RenameChangesOnlyTheNameOfAKnownServer()
     {
         using var fixture = new RegistryFixture();
@@ -433,7 +421,7 @@ public class RemoteServerRegistryTests
         Assert.True(Assert.Single(fixture.Registry.GetServers()).NeedsPassword);
         Assert.Equal(KeyState.Wrong, fixture.Vault.GetKeyState());
 
-        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var result = await fixture.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.True(result.IsSuccess, result.Failure.ToString());
         Assert.False(Assert.Single(fixture.Registry.GetServers()).NeedsPassword);
@@ -452,7 +440,7 @@ public class RemoteServerRegistryTests
         fixture.KeySource.Key = TestValues.OtherKey;
         refuse = true;
 
-        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var result = await fixture.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.AuthenticationFailed, result.Failure);
         Assert.Equal(stored, fixture.Store.Configuration.Servers.Single().EncryptedCredentials);
@@ -465,7 +453,7 @@ public class RemoteServerRegistryTests
         var server = await fixture.AddServerAsync();
         fixture.KeySource.Key = null;
 
-        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var result = await fixture.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.Suspended, result.Failure);
     }
@@ -475,7 +463,7 @@ public class RemoteServerRegistryTests
     {
         using var fixture = new RegistryFixture();
 
-        var result = await fixture.Registry.UpdateCredentialsAsync(Guid.NewGuid(), TestValues.Credentials, CancellationToken.None);
+        var result = await fixture.Registry.EnterCredentialsAsync(Guid.NewGuid(), TestValues.Credentials, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.UnknownServer, result.Failure);
     }

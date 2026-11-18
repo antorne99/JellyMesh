@@ -29,6 +29,8 @@ start fresh
 flat_paths_off fresh
 install_plugin fresh
 configure fresh true
+# The servers keep the folders of 0.5 in the admin's libraries, so JellyMesh makes no library for them.
+req fresh PUT /JellyMesh/Admin/Settings '{"NewServerLibraryMode":"None"}' >/dev/null
 add_remote fresh stock "http://$(container_of stock):8096" >"$WORK/id-fresh-stock"
 add_remote fresh peer "http://$(container_of peer):8096" >"$WORK/id-fresh-peer"
 sync_and_scan fresh
@@ -50,6 +52,7 @@ check "the peer is JellyMesh" JellyMesh "$(jq -r --arg i "$(cat "$WORK/id-fresh-
 check "the catalog is synced" true "$(get fresh /JellyMesh/Admin/Sync | jq '[.Servers[].Movies > 0] | all')"
 check "there are doubtful films" true "$(list fresh | jq '.Cases | length > 0')"
 check "the folders of each server are linked" Linked "$(jq -r .FederatedFolder.Link <<<"$status")"
+check "the servers have no library of their own" '["None","None"]' "$(jq -c '[.Servers[].AutomaticLibraries.Mode]' <<<"$status")"
 check "there is no migration to do" null "$(jq -c .FederatedFolder.Migration <<<"$status")"
 check "a server is connected" jellymesh "$(get fresh /JellyMesh/Admin/Peers | jq -r '.[0].UserName')"
 check "the first server has no servers" 0 "$(get first /JellyMesh/Admin/Status | jq '.Servers | length')"

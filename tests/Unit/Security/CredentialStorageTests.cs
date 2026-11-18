@@ -11,6 +11,7 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Tests.Remote;
 using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -89,7 +90,7 @@ public sealed class CredentialStorageTests : IDisposable
         var server = await plugin.AddAsync();
         var first = await StoredCiphertextAsync(server.Id);
 
-        var changed = await plugin.Registry.UpdateCredentialsAsync(server.Id, new RemoteCredentials { Username = TestValues.Username, Password = "n3w-pa55-sentinel" }, CancellationToken.None);
+        var changed = await plugin.Registry.EnterCredentialsAsync(server, new RemoteCredentials { Username = TestValues.Username, Password = "n3w-pa55-sentinel" }, CancellationToken.None);
         Assert.True(changed.IsSuccess, changed.Failure.ToString());
         var second = await StoredCiphertextAsync(server.Id);
 
@@ -110,7 +111,7 @@ public sealed class CredentialStorageTests : IDisposable
         var stored = await StoredCiphertextAsync(server.Id);
         _database.InterruptNextWrite();
 
-        await Assert.ThrowsAsync<SqliteException>(() => plugin.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None));
+        await Assert.ThrowsAsync<SqliteException>(() => plugin.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None));
 
         Assert.Equal([TestValues.Token + "2"], _handler.LoggedOut);
         Assert.Equal(stored, await StoredCiphertextAsync(server.Id));
@@ -139,7 +140,7 @@ public sealed class CredentialStorageTests : IDisposable
         Assert.Equal(KeyState.Wrong, restarted.Vault.GetKeyState());
         Assert.True(Assert.Single(restarted.Registry.GetServers()).NeedsPassword);
 
-        var entered = await restarted.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var entered = await restarted.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.True(entered.IsSuccess, entered.Failure.ToString());
         Assert.Equal(KeyState.Ok, restarted.Vault.GetKeyState());

@@ -129,8 +129,8 @@ def normal(s, width):
     check(name + " shows its stream limit", connected.locator(u.NUMBER).input_value() == "4")
     check(name + " shows what it shares", connected.locator(u.CHECKBOX + ":checked").count() == 2)
     for row in [stock, peer]:
-        own = row.get_by_label(u.OWN_LIBRARIES, exact=True)
-        check(f"{name} offers the automatic libraries of {row.locator('h4').inner_text()}, off", own.count() == 1 and not own.is_checked(), own.count())
+        mode = u.card_fact(row, u.MODE_LABEL)
+        check(f"{name} shows the library mode of {row.locator('h4').inner_text()}", mode == "None", mode)
     check(name + " offers the free user", page.locator(u.PEERS + " select").locator("option", has_text="friend").count() == 1)
     settings_match(page, "fresh", name)
     healthy(page, name)
@@ -248,17 +248,18 @@ def keyboard(s, width):
             if focus == "checkbox" and u.has_focus(pair):
                 page.keyboard.press("Space")
 
-    for action in [u.BUTTON["test"], u.BUTTON["libraries"], u.BUTTON["remove"], u.BUTTON["merge"], u.BUTTON["connect"], u.BUTTON["save"],
+    for action in [u.BUTTON["test"], u.BUTTON["edit"], u.BUTTON["remove"], u.BUTTON["merge"], u.BUTTON["connect"], u.BUTTON["save"],
                    u.SYNC_NOW[1:], u.ADD_SUBMIT[1:], u.SYNC_INTERVAL[1:], u.ADD_FIELDS["name"][1:], u.METADATA_PROTECTION[1:]]:
         check(f"{name} reaches {action}", action in reached, reached)
     check(name + " reaches a settings Save", u.SAVE_SETTINGS[1:] in reached, reached)
     check(name + " reaches the title checkboxes", reached.count("checkbox") >= 5, reached)
 
-    libraries = u.button(u.server_row(page, "stock"), "libraries")
-    libraries.focus()
+    edit = u.button(u.server_row(page, "stock"), "edit")
+    edit.focus()
     page.keyboard.press("Enter")
     page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
-    check(name + " Enter opens the libraries", u.server_row(page, "stock").locator(u.LIBRARY).count() == 2)
+    check(name + " Enter opens the edit form with the libraries", u.server_row(page, "stock").locator(u.LIBRARY).count() == 2)
+    check(name + " the edit form takes the focus", u.has_focus(u.server_row(page, "stock").get_by_label("Name", exact=True)))
     box = u.merge_case(page, CHAIN).locator(u.CHECKBOX).first
     box.focus()
     page.keyboard.press("Space")
@@ -348,11 +349,12 @@ def actions(s, width):
 
     u.clear_message(page)
     stock = u.server_row(page, "stock")
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
-    check(name + " the libraries show what is imported", stock.locator(u.LIBRARY + ":checked").count() == 2)
-    u.button(stock, "save_libraries").click()
-    check(name + " the libraries save", "saved" in u.wait_message(page))
+    u.open_edit(page, stock)
+    check(name + " the edit form shows what is imported", stock.locator(u.LIBRARY + ":checked").count() == 2)
+    u.button(stock, "save").click()
+    shown = u.wait_message(page)
+    check(name + " an edit with no change saves with no question", "Saved stock." in shown and page.locator(u.CONFIRM).count() == 0, shown)
+    check(name + " a saved edit closes its form", until(page, lambda: stock.locator(u.EDIT_FORM).count() == 0))
 
     u.clear_message(page)
     connected = u.peer_row(page, "jellymesh")
@@ -435,8 +437,7 @@ def edits(s, width):
     stock = u.server_row(page, "stock")
     connected = u.peer_row(page, "jellymesh")
     new_peer = u.peer_row(page, u.NEW_PEER)
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.open_edit(page, stock)
     u.tick(stock.locator(u.LIBRARY).first, False)
     connected.locator(u.NUMBER).fill("9")
     u.tick(connected.locator(u.CHECKBOX).first, False)
@@ -477,14 +478,20 @@ def edits(s, width):
     kept("a value typed during a refresh", "7")
 
     u.clear_message(page)
-    u.button(stock, "save_libraries").click()
+    u.button(stock, "save").click()
+    u.answer_confirm(page, True)
     u.wait_message(page)
-    kept("saved libraries", "7")
-    check(name + " saved libraries update their row", u.card_fact(stock, "Libraries to import") == "1", stock.inner_text())
-    u.tick(stock.locator(u.LIBRARY).first)
+    check(name + " a saved edit keeps the unsaved limit", connected.locator(u.NUMBER).input_value() == "7", connected.locator(u.NUMBER).input_value())
+    check(name + " a saved edit keeps the unchecked peer box", connected.locator(u.CHECKBOX + ":checked").count() == 1)
+    check(name + " a saved edit updates its row", until(page, lambda: u.card_fact(stock, "Libraries to import") == "1"), stock.inner_text())
+    u.open_edit(page, stock)
+    check(name + " the edit form opens on what was saved", stock.locator(u.LIBRARY + ":checked").count() == 1)
+    for box in stock.locator(u.LIBRARY).all():
+        u.tick(box)
     u.clear_message(page)
-    u.button(stock, "save_libraries").click()
+    u.button(stock, "save").click()
     u.wait_message(page)
+    check(name + " adding a library back saves with no question", until(page, lambda: u.card_fact(stock, "Libraries to import") == "2"), stock.inner_text())
 
     new_peer.locator(u.NUMBER).fill("5")
     u.tick(new_peer.locator(u.CHECKBOX).first)
@@ -524,10 +531,10 @@ def edits(s, width):
     page.context.close()
 
 
-def fake(page, path, change):
-    """Rewrites the reads of an admin path with change, which sees the decoded answer."""
+def fake(page, path, change, method="GET"):
+    """Rewrites the answers of an admin path to one method with change, which sees the decoded answer."""
     def answer(route):
-        if route.request.method != "GET":
+        if route.request.method != method:
             route.continue_()
             return
         response = route.fetch()
@@ -909,10 +916,10 @@ def outcomes_shown(page, name):
     outcome(page, name + " a refused merge", "Error", "at least two")
     page.unroute("**/JellyMesh/Admin/Merges")
     error = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
-    u.button(u.server_row(page, "stock"), "libraries").click()
+    u.button(u.server_row(page, "stock"), "edit").click()
     u.wait_idle(page)
     page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
-    check(name + " opening the libraries clears the old error", u.message(page) == "", u.message(page))
+    check(name + " opening the edit form clears the old error", u.message(page) == "", u.message(page))
 
     u.button(u.server_row(page, "stock"), "test").click()
     outcome(page, name + " a connection test", "Done", "connected")
@@ -1155,7 +1162,7 @@ def control_themes(s, width):
         stock = u.server_row(page, "stock")
         connected = u.peer_row(page, "jellymesh")
         new_peer = u.peer_row(page, u.NEW_PEER)
-        u.button(stock, "libraries").click()
+        u.button(stock, "edit").click()
         page.wait_for_selector(u.SERVER + " " + u.LIBRARY_MARK, state="attached", timeout=15000)
         page.mouse.move(0, 0)
 
@@ -1221,14 +1228,14 @@ def controls(s, width):
     extra = [{"Id": "jm-long", "Name": LONG_NAME, "CollectionType": "movies"}, {"Id": "jm-hostile", "Name": HOSTILE, "CollectionType": "movies"}]
 
     def odd(context):
-        fake(context, "Servers/*/Libraries", lambda data: data.extend(dict(item, Selected=False) for item in extra))
+        fake(context, "Servers/*/Edit/Check", lambda data: data["Libraries"].extend(dict(item, Selected=False) for item in extra), "POST")
         fake(context, "Peers/Options", lambda data: (data["Users"].append({"Id": SECOND_USER, "Name": "second"}), data["Libraries"].extend(extra)))
 
     page = s.open("fresh", width, route=odd)
     stock = u.server_row(page, "stock")
     connected = u.peer_row(page, "jellymesh")
     new_peer = u.peer_row(page, u.NEW_PEER)
-    u.button(stock, "libraries").click()
+    u.button(stock, "edit").click()
     page.wait_for_selector(u.SERVER + " " + u.LIBRARY_MARK, state="attached", timeout=15000)
 
     select = new_peer.get_by_label(u.USER_LABEL, exact=True)
@@ -2082,8 +2089,7 @@ def tabs_keep_edits(s, width):
     connected = u.peer_row(page, "jellymesh")
     case = u.merge_case(page, PAIR)
     page.locator(u.ADD_FIELDS["name"]).fill("kept name")
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.open_edit(page, stock)
     u.tick(stock.locator(u.LIBRARY).first, False)
     connected.locator(u.NUMBER).fill("9")
     u.tick(connected.locator(u.CHECKBOX).first, False)
@@ -2273,7 +2279,7 @@ def cards_faults(s, width):
     u.shot(page, f"card-login-refused-{width}")
 
     fault("NotChecked", "LibraryUnavailable")
-    shows("a sync failure after a restart", "A chosen library is gone", "Last sync failed (a chosen library is gone)", "Open Libraries")
+    shows("a sync failure after a restart", "A chosen library is gone", "Last sync failed (a chosen library is gone)", "Open Edit")
 
     fault("Online", "ServerError")
     shows("a sync failure on a working connection", "Online, last sync failed", "Last sync failed (server error)", "log of that server")
@@ -2312,8 +2318,7 @@ def cards_in_place(s, width):
     page = s.open("fresh", width)
     stock = u.server_row(page, "stock")
     connected = u.peer_row(page, "jellymesh")
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.open_edit(page, stock)
     u.tick(stock.locator(u.LIBRARY).first, False)
     box = stock.locator(u.LIBRARY).last
     box.focus()
@@ -2406,8 +2411,7 @@ def cards(s, width):
         name = f"{width} {theme} cards"
         page = s.open("fresh", width, theme=theme)
         cards_online(page, name)
-        u.button(u.server_row(page, "stock"), "libraries").click()
-        page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+        u.open_edit(page, u.server_row(page, "stock"))
         healthy(page, name)
         u.show_tab(page, "servers")
         u.shot(page, f"cards-servers-{theme}-{width}")
@@ -2466,9 +2470,10 @@ def cards_nokey(s, width):
     for server in ["stock", "peer"]:
         row = u.server_row(page, server)
         check(f"{name} {server} asks for its password", u.state_of(row) == "Password needed", u.state_of(row))
-        check(f"{name} {server} says why", "Enter the login again below" in u.cause_of(row), u.cause_of(row))
-        check(f"{name} {server} is open on the form", row.evaluate("node => node.open") and u.button(row, "save_login").is_visible())
-        check(f"{name} {server} has a user and a password field", row.locator("input[type=text]").count() == 1 and row.locator("input[type=password]").count() == 1)
+        check(f"{name} {server} says why", "Enter the login again in the edit form below" in u.cause_of(row), u.cause_of(row))
+        check(f"{name} {server} is open on the edit form", row.evaluate("node => node.open") and u.button(row, "save").is_visible())
+        check(f"{name} {server} asks for a user and a password", row.get_by_label("User", exact=True).input_value() == "" and row.locator("input[type=password]").count() == 1)
+        check(f"{name} {server} says the login no longer decrypts", "no longer decrypts" in row.locator(u.EDIT_FORM).inner_text())
         check(f"{name} {server} keeps the counts", "films" in u.card_fact(row, "Catalog"), u.card_fact(row, "Catalog"))
         check(f"{name} {server} can still be removed", u.button(row, "remove").is_enabled())
     check(name + " is never not checked", "Not checked yet" not in text(page, u.SERVERS), text(page, u.SERVERS))
@@ -2848,20 +2853,21 @@ def relogin(s, width):
     page = s.open("fresh", width)
     u.show_tab(page, "servers")
     row = u.server_row(page, "stock")
-    row.locator("input[type=text]").fill("jellymesh")
+    row.get_by_label("User", exact=True).fill("jellymesh")
     row.locator("input[type=password]").fill("wrong")
-    u.button(row, "save_login").click()
+    u.button(row, "save").click()
     outcome(page, name + " a wrong password", "Error", "refused the login")
-    check(name + " a wrong password keeps the form", u.state_of(row) == "Password needed", u.state_of(row))
+    check(name + " a wrong password keeps the form", u.state_of(row) == "Password needed" and row.locator(u.EDIT_FORM).count() == 1, u.state_of(row))
     empty = u.server_row(page, "peer")
-    u.button(empty, "save_login").click()
+    u.button(empty, "save").click()
     check(name + " an empty user is marked", until(page, lambda: empty.locator("input[aria-invalid=true]").count() == 1))
+    check(name + " the empty user is the field marked", empty.get_by_label("User", exact=True).get_attribute("aria-invalid") == "true")
     for server in ["stock", "peer"]:
         row = u.server_row(page, server)
-        row.locator("input[type=text]").fill("jellymesh")
+        row.get_by_label("User", exact=True).fill("jellymesh")
         row.locator("input[type=password]").fill("jellymesh-test")
-        u.button(row, "save_login").click()
-        outcome(page, f"{name} {server}", "Done", server + ": login saved.")
+        u.button(row, "save").click()
+        outcome(page, f"{name} {server}", "Done", "Saved " + server + ".")
     check(name + " the warning goes", until(page, lambda: not page.locator(u.WARNING).is_visible(), 20))
     for server in ["stock", "peer"]:
         row = u.server_row(page, server)
@@ -2925,7 +2931,7 @@ def connect_flow(s, width):
     healthy(page, name)
 
     u.tick(row.locator(u.LIBRARY).first)
-    u.button(row, "save_libraries").click()
+    u.button(row, "save").click()
     check(name + " saves the choice", until(page, lambda: len(u.api("first", "GET", "/JellyMesh/Admin/Status")[1]["Servers"][0]["ImportedLibraryIds"]) == 1))
     check(name + " the prompt goes", until(page, lambda: u.cause_of(row) == ""), u.cause_of(row))
     healthy(page, name)
@@ -2939,7 +2945,7 @@ def connect_failure(s, width):
     forget_servers("first")
 
     def refuse(context):
-        context.route("**/JellyMesh/Admin/Servers/*/Libraries", lambda route: route.abort())
+        context.route("**/JellyMesh/Admin/Servers/*/Edit/Check", lambda route: route.abort())
 
     page = s.open("first", width, tab="servers", route=refuse)
     page.locator(u.ADD_FIELDS["name"]).fill("stock")
@@ -2947,7 +2953,7 @@ def connect_failure(s, width):
     page.locator(u.ADD_FIELDS["user"]).fill("jellymesh")
     page.locator(u.ADD_FIELDS["password"]).fill("jellymesh-test")
     page.locator(u.ADD_SUBMIT).click()
-    outcome(page, name, "Error", "Open Libraries on its card")
+    outcome(page, name, "Error", "Open Edit on its card")
     check(name + " the server stays", u.server_row(page, "stock").count() == 1)
     page.context.close()
     forget_servers("first")
@@ -3187,6 +3193,182 @@ def save_bar(s, width):
     u.close(page)
 
 
+def edit_form(s, width):
+    """The edit form of a server: its fields, a refusal shown on its field, and a confirmation listing only what happens."""
+    name = width + " edit form"
+    viewport = u.VIEWPORTS[width]
+    names = lambda: [server["Name"] for server in u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]["Servers"]]
+    saved = of_server(u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1], "stock")
+    page = s.open("fresh", width, tab="servers")
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    field = lambda label: form.get_by_label(label, exact=True)
+    check(name + " fills the name", field("Name").input_value() == "stock", field("Name").input_value())
+    check(name + " fills the URL", field("Server URL").input_value() == saved["Url"], field("Server URL").input_value())
+    check(name + " keeps the login unless one is typed", field("User").input_value() == "" and field("User").get_attribute("placeholder") == "Unchanged"
+          and field("Password").get_attribute("placeholder") == "Unchanged")
+    mode = field(u.MODE_LABEL)
+    check(name + " shows the saved mode", mode.input_value() == "None", mode.input_value())
+    options = mode.locator("option").all_inner_texts()
+    check(name + " offers the three modes", options == ["By type", "By remote library", "None"], options)
+    check(name + " ticks the imported libraries", stock.locator(u.LIBRARY + ":checked").count() == 2)
+    healthy(page, name)
+    u.shot(page, f"edit-form-{width}")
+
+    field("Name").fill("peer")
+    u.button(stock, "save").click()
+    outcome(page, name + " a taken name", "Error", "Another server already has this name")
+    check(name + " a taken name marks the name", field("Name").get_attribute("aria-invalid") == "true")
+    check(name + " a taken name moves the focus there", u.has_focus(field("Name")))
+    check(name + " a taken name saves nothing", sorted(names()) == ["peer", "stock"], names())
+
+    field("Name").fill(HOSTILE)
+    u.tick(stock.locator(u.LIBRARY).first, False)
+    u.button(stock, "save").click()
+    check(name + " a new name clears the old mark", field("Name").get_attribute("aria-invalid") != "true")
+    confirm_shows(page, name + " a rename and a library less", "Save these changes?", [
+        "stock becomes " + HOSTILE, "watch state of each user", "scanned twice", "leave the import"], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " says nothing that does not happen", "library mode" not in shown and "streams" not in shown, shown)
+    u.shot(page, f"edit-confirm-{width}", full_page=False)
+    confirm_keeps(page, name + " a rename", lambda: sorted(names()) == ["peer", "stock"] and form.count() == 1)
+
+    field("Name").fill("stock")
+    u.tick(stock.locator(u.LIBRARY).first)
+    mode.select_option("ByType")
+    u.button(stock, "save").click()
+    confirm_shows(page, name + " a mode change", "Save these changes?", ["The library mode becomes By type", "makes or adopts the libraries"], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " a mode change alone says no rename", "becomes stock" not in shown and "scanned twice" not in shown, shown)
+    confirm_keeps(page, name + " a mode change", lambda: of_server(u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1], "stock")["AutomaticLibraries"]["Mode"] == "None")
+
+    u.button(stock, "close").click()
+    check(name + " Close drops the form", form.count() == 0)
+    healthy(page, name)
+    u.close(page)
+
+
+def edit_locks(s, width):
+    """The edit form locks what a case does not let change, and says why: an unfinished rename, a remote that does not
+    answer, one that answers with a problem."""
+    name = width + " edit locks"
+    status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
+    ids = {server["Name"]: server["Id"] for server in status["Servers"]}
+
+    def check_answer(data, url):
+        if ids["peer"] in url:
+            data.update(RemoteOffline=True, Libraries=[])
+        else:
+            data.update(RemoteWarning="Timeout")
+
+    def cases(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(Rename={"Busy": False, "Pending": True, "Failed": False, "Stuck": False}))
+
+        def answer(route):
+            if route.request.method != "POST":
+                route.continue_()
+                return
+            response = route.fetch()
+            data = response.json()
+            check_answer(data, route.request.url)
+            route.fulfill(response=response, json=data)
+
+        context.route("**/JellyMesh/Admin/Servers/*/Edit/Check", answer)
+
+    page = s.open("fresh", width, tab="servers", route=cases)
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    check(name + " a pending rename locks the name", form.get_by_label("Name", exact=True).evaluate("node => node.readOnly"))
+    check(name + " a pending rename says why", "The name cannot change now" in form.inner_text() and "next library scan" in form.inner_text(), form.inner_text())
+    check(name + " a locked name looks locked", form.get_by_label("Name", exact=True).evaluate("node => getComputedStyle(node).borderTopStyle") == "dashed")
+    check(name + " the card does not repeat the rename", not stock.locator(".jmRenameCancel").is_visible() and not stock.locator(".jmRenameNote").is_visible())
+    check(name + " a pending rename leaves the URL", not form.get_by_label("Server URL", exact=True).evaluate("node => node.readOnly"))
+    check(name + " a problem on the remote is a warning", "answered with a problem" in form.inner_text(), form.inner_text())
+    check(name + " a problem on the remote still lists the libraries", stock.locator(u.LIBRARY).count() == 2)
+    cancel = form.get_by_role("button", name="Cancel the pending rename", exact=True)
+    check(name + " a pending rename can be cancelled from the form", cancel.is_visible())
+    cancel.click()
+    confirm_shows(page, name + " cancel the rename", "Cancel the pending rename?", ["keep the new name", "watch state not yet carried"], u.VIEWPORTS[width])
+    u.answer_confirm(page, False)
+    healthy(page, name)
+    u.shot(page, f"edit-rename-lock-{width}")
+
+    peer = u.server_row(page, "peer")
+    u.button(peer, "edit").click()
+    form = peer.locator(u.EDIT_FORM)
+    check(name + " an offline remote says so", until(page, lambda: "does not answer" in form.inner_text()), form.inner_text())
+    check(name + " an offline remote leaves the name", not form.get_by_label("Name", exact=True).evaluate("node => node.readOnly"))
+    check(name + " an offline remote leaves the mode", form.get_by_label(u.MODE_LABEL, exact=True).is_enabled())
+    check(name + " an offline remote leaves the URL", not form.get_by_label("Server URL", exact=True).evaluate("node => node.readOnly"))
+    check(name + " an offline remote locks the login", form.get_by_label("User", exact=True).is_disabled() and form.get_by_label("Password", exact=True).is_disabled())
+    check(name + " an offline remote lists no library", peer.locator(u.LIBRARY).count() == 0)
+    healthy(page, name)
+    u.shot(page, f"edit-offline-lock-{width}")
+    u.close(page)
+
+
+def recreate(s, width):
+    """Recreate missing libraries sends the mode saved at the click alone: no name or URL, so no failed rename runs again."""
+    name = width + " recreate"
+    mode = ["ByType"]
+    sent = []
+
+    def missing(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(
+            Rename={"Busy": False, "Pending": False, "Failed": True, "Stuck": False},
+            AutomaticLibraries={"Enabled": True, "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "ManualPaths": [],
+                                "Libraries": [], "Conflicts": []}))
+
+        def save(route):
+            if route.request.method != "PUT":
+                route.continue_()
+                return
+            sent.append(route.request.post_data_json)
+            route.fulfill(status=200, json={})
+
+        context.route("**/JellyMesh/Admin/Servers/*", save)
+
+    page = s.open("fresh", width, tab="servers", route=missing)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    recreate_button = stock.get_by_role("button", name="Recreate missing libraries", exact=True)
+    check(name + " offers to recreate", until(page, lambda: recreate_button.is_visible()))
+    mode[0] = "ByRemoteLibrary"
+    recreate_button.click()
+    check(name + " sends one save", until(page, lambda: len(sent) == 1), sent)
+    body = sent[0] if sent else {}
+    check(name + " sends the mode read at the click", body.get("LibraryMode") == "ByRemoteLibrary", body)
+    check(name + " sends no name or URL", "Name" not in body and "Url" not in body, body)
+    healthy(page, name)
+    u.close(page)
+
+
+def adopted(s, width):
+    """A library JellyMesh adopted is marked, and a library of the admin in the way says what to do, as text."""
+    name = width + " adopted"
+
+    def libraries(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(AutomaticLibraries={
+            "Enabled": True, "Busy": False, "Mode": "ByType", "Error": "None", "Released": [], "ManualPaths": [],
+            "Libraries": [{"Kind": "Movies", "Name": "Film miei", "Adopted": True, "Disabled": False}],
+            "Conflicts": [{"Library": HOSTILE, "Reason": "OtherPaths", "Kind": "Series", "RemoteLibraryId": "x", "Paths": ["/federata/x/Serie"]}]}))
+
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    check(name + " marks the adopted library", until(page, lambda: u.card_fact(stock, "Server libraries") == "Film miei (adopted)"), u.card_fact(stock, "Server libraries"))
+    check(name + " shows the mode", u.card_fact(stock, u.MODE_LABEL) == "By type", u.card_fact(stock, u.MODE_LABEL))
+    conflict = stock.locator(u.ALERT, has_text="together with other folders")
+    check(name + " says what is in the way", conflict.count() == 1 and HOSTILE in conflict.inner_text(), stock.inner_text())
+    check(name + " says what to do", "set the library mode of this server to None" in conflict.inner_text(), conflict.inner_text())
+    check(name + " a library name renders no markup", stock.locator("b").count() == 0)
+    healthy(page, name)
+    u.shot(page, f"adopted-{width}")
+    u.close(page)
+
+
 SCENARIOS = {
     "tabs": (tabs, WIDTHS),
     "overview": (overview, WIDTHS),
@@ -3231,6 +3413,10 @@ SCENARIOS = {
     "cards-nokey": (cards_nokey, WIDTHS),
     "relogin": (relogin, ["390"]),
     "cards-restart": (cards_restart, WIDTHS),
+    "edit-form": (edit_form, WIDTHS),
+    "edit-locks": (edit_locks, WIDTHS),
+    "adopted": (adopted, WIDTHS),
+    "recreate": (recreate, ["1280"]),
 }
 
 with u.Session() as session:

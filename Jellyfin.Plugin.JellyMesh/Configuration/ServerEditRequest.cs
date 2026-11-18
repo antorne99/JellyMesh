@@ -6,22 +6,22 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 /// <summary>
 /// The edit form of a server, for its check and its save (row 432). A class rather than a record, so that no generated
 /// <see cref="object.ToString"/> can print the password. Fields are optional here so that an empty one is refused on its
-/// field by the registry, not by model validation.
+/// field by the registry, not by model validation; a null name or address keeps the saved one.
 /// </summary>
 public sealed class ServerEditRequest
 {
     /// <summary>
-    /// Gets the display name.
+    /// Gets the display name. Null keeps the saved one and runs no failed rename again.
     /// </summary>
     public string? Name { get; init; }
 
     /// <summary>
-    /// Gets the base URL of the remote, as the administrator entered it.
+    /// Gets the base URL of the remote, as the administrator entered it. Null keeps the saved one.
     /// </summary>
     public string? Url { get; init; }
 
     /// <summary>
-    /// Gets the dedicated user name.
+    /// Gets the dedicated user name. Empty keeps the saved one, which the page never gets back.
     /// </summary>
     public string? Username { get; init; }
 
@@ -34,6 +34,11 @@ public sealed class ServerEditRequest
     /// Gets the remote libraries to import. Null keeps the saved ones.
     /// </summary>
     public IReadOnlyList<string>? LibraryIds { get; init; }
+
+    /// <summary>
+    /// Gets the library mode of the server (section 3.8). Null keeps the saved one.
+    /// </summary>
+    public LibraryMode? LibraryMode { get; init; }
 
     /// <summary>
     /// Builds the edit the registry checks or saves.

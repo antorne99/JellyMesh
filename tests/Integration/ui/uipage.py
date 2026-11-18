@@ -123,15 +123,14 @@ SETTINGS = {
 }
 BUTTON = {
     "test": "Test connection",
-    "libraries": "Libraries",
+    "edit": "Edit",
+    "close": "Close",
     "remove": "Remove",
     "disconnect": "Disconnect",
-    "save_libraries": "Save libraries",
     "merge": "Merge selected",
     "undo": "Undo merge",
     "save": "Save",
     "connect": "Connect",
-    "save_login": "Save login",
 }
 READABLE = ", ".join(["h2, h3, h4, p, label, dt, dd, .fieldDescription", STATE, MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING, SUMMARY_TEXT])
 FAILURE = {
@@ -143,7 +142,8 @@ FAILURE = {
     "settings": "#jmSettingsFailure",
 }
 NEW_PEER = "Connect a server"
-OWN_LIBRARIES = "Create a Film and a Serie library for this server"
+EDIT_FORM = ".jmLibraries .jmServerForm"
+MODE_LABEL = "Library mode"
 ALERT = ".jmAlert"
 ALERTS_WITH_DATA = [WARNING, "#jmIndexWarning", "#jmMergeWarning"]
 SELECT = "select"
@@ -390,6 +390,12 @@ def refresh_merges(page):
 def button(scope, name):
     """Finds an action by its role in a part of the page."""
     return scope.get_by_role("button", name=BUTTON[name], exact=True, include_hidden=True)
+
+
+def open_edit(page, row):
+    """Opens the edit form of a server card and waits for the libraries it reads."""
+    button(row, "edit").click()
+    page.wait_for_selector(SERVER + " " + LIBRARY, state="attached", timeout=15000)
 
 
 def tick(box, on=True):

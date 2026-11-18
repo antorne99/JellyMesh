@@ -947,6 +947,44 @@
                 outline: none;
             }
 
+            .jmServerForm > .jmLibrariesTitle {
+                margin-bottom: 0.75em;
+            }
+
+            .jmFormNotes .jmAlert,
+            .jmFormNotes .jmActions {
+                margin: 0 0 1em;
+            }
+
+            .jmServerForm .selectContainer {
+                max-width: 36em;
+            }
+
+            .jmFormLibraries {
+                margin-bottom: 1.25em;
+            }
+
+            .jmFormLibraries:focus {
+                outline: none;
+            }
+
+            .jmFormLibraries .jmLibrariesTitle {
+                margin-bottom: 0.5em;
+            }
+
+            .jmServerForm > .jmActions {
+                margin-top: 0.5em;
+            }
+
+            #JellyMeshConfigPage .jmServerForm .emby-input[readonly],
+            #JellyMeshConfigPage .jmServerForm .emby-input:disabled {
+                border-style: dashed;
+                border-color: var(--jm-muted);
+                background: transparent;
+                color: var(--jm-muted);
+                cursor: not-allowed;
+            }
+
             #jmPeerNew {
                 margin-top: 1.25em;
             }
@@ -1140,6 +1178,12 @@
             }
 
             .jmRenameCancel[hidden] {
+                display: none;
+            }
+
+            /* The open edit form says where the rename stands and offers to cancel it, so the card does not repeat it. */
+            .jmServer:has(.jmServerForm) .jmRenameNote,
+            .jmServer:has(.jmServerForm) .jmRenameCancel {
                 display: none;
             }
 
@@ -1345,33 +1389,8 @@
                             <h3 class="sectionTitle">Add a server</h3>
                             <span class="material-icons expand_more jmChevron" aria-hidden="true"></span>
                         </summary>
-                        <form id="jmAddServerForm" autocomplete="off">
-                            <p>JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.</p>
-                            <div class="jmFormGrid">
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="jmServerName">Name</label>
-                                    <input id="jmServerName" type="text" is="emby-input" required />
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="jmServerUrl">Server URL</label>
-                                    <input id="jmServerUrl" type="url" is="emby-input" required placeholder="http://server:8096" />
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="jmServerUser">User</label>
-                                    <input id="jmServerUser" type="text" is="emby-input" required autocomplete="off" />
-                                    <div class="fieldDescription">A dedicated non-admin user on the remote. API keys are not used.</div>
-                                </div>
-                                <div class="inputContainer">
-                                    <label class="inputLabel inputLabelUnfocused" for="jmServerPassword">Password</label>
-                                    <input id="jmServerPassword" type="password" is="emby-input" autocomplete="new-password" />
-                                    <div class="fieldDescription">Stored encrypted and never shown again.</div>
-                                </div>
-                            </div>
-                            <button id="jmAddServer" is="emby-button" type="submit" class="raised button-submit emby-button">
-                                <span>Connect and choose libraries</span>
-                            </button>
-                            <p id="jmAddBlocked" class="fieldDescription" hidden>Connecting a server waits until the stored logins can be used. The Overview says what to do.</p>
-                        </form>
+                        <div id="jmAddServerBox"></div>
+                        <p id="jmAddBlocked" class="fieldDescription" hidden>Connecting a server waits until the stored logins can be used. The Overview says what to do.</p>
                     </details>
                 </section>
 
@@ -1564,6 +1583,50 @@
         <script type="application/json" id="jmTranslations">
             {
                 "it": {
+                    "A library JellyMesh renamed keeps its old ID until Jellyfin restarts. Restart Jellyfin when you can.": "Una libreria rinominata da JellyMesh mantiene il vecchio ID finché Jellyfin non si riavvia. Riavvia Jellyfin appena puoi.",
+                    "A rename of this server has not finished. Wait for it, or save the edit without changing the name.": "Una rinomina di questo server non è finita. Attendila, oppure salva la modifica senza cambiare il nome.",
+                    "Another server already has this name.": "Un altro server ha già questo nome.",
+                    "Another server answers at this address. To use it, remove this one and add it as a new server.": "A questo indirizzo risponde un altro server. Per usarlo, rimuovi questo e aggiungilo come nuovo server.",
+                    "By remote library": "Per libreria remota",
+                    "By type": "Per tipo",
+                    "Choose a library mode.": "Scegli una modalità delle librerie.",
+                    "Close": "Chiudi",
+                    "Edit": "Modifica",
+                    "Edit {server}": "Modifica {server}",
+                    "Enter an http or https URL with no credentials, query or fragment.": "Inserisci un URL http o https senza credenziali, query o frammento.",
+                    "Enter the URL of the server.": "Inserisci l'URL del server.",
+                    "Enter the dedicated user: the saved one can no longer be read.": "Inserisci l'utente dedicato: quello salvato non si può più leggere.",
+                    "Enter the password of the dedicated user: the saved one can no longer be read.": "Inserisci la password dell'utente dedicato: quella salvata non si può più leggere.",
+                    "Imported libraries the user no longer sees leave the import: {count}. Their titles leave at the next sync.": "Escono dall'importazione le librerie importate che l'utente non vede più: {count}. I loro titoli escono alla prossima sincronizzazione.",
+                    "JellyMesh makes no library: you add the folders of this server to your libraries in the Dashboard.": "JellyMesh non crea librerie: aggiungi tu le cartelle di questo server alle tue librerie nel Pannello di controllo.",
+                    "JellyMesh makes one library for each library imported from this server.": "JellyMesh crea una libreria per ogni libreria importata da questo server.",
+                    "JellyMesh makes one library for the films and one for the series of this server.": "JellyMesh crea una libreria per i film e una per le serie di questo server.",
+                    "Library mode": "Modalità delle librerie",
+                    "None|mode": "Nessuna",
+                    "Save these changes?": "Salvare queste modifiche?",
+                    "Saved {server}.": "{server} salvato.",
+                    "Saved {server}. It does not answer now ({problem}).": "{server} salvato. Ora non risponde ({problem}).",
+                    "The libraries are read once the login is saved.": "Le librerie si leggono dopo aver salvato l'accesso.",
+                    "The libraries could not be read, so they stay as they are. {reason}": "Non è stato possibile leggere le librerie, quindi restano come sono. {reason}",
+                    "The library mode becomes {mode}: JellyMesh makes no library for this server, and you add its folders to your libraries by hand.": "La modalità delle librerie diventa {mode}: JellyMesh non crea librerie per questo server e aggiungi tu a mano le sue cartelle alle tue librerie.",
+                    "The library mode becomes {mode}: JellyMesh makes or adopts the libraries of this server, then scans them.": "La modalità delle librerie diventa {mode}: JellyMesh crea o adotta le librerie di questo server, poi le analizza.",
+                    "The library mode changes from {from} to {to}: JellyMesh makes the new libraries first, then deletes its old ones.": "La modalità delle librerie passa da {from} a {to}: JellyMesh crea prima le nuove librerie, poi elimina le sue vecchie.",
+                    "The name cannot change now. {state}": "Ora il nome non si può cambiare. {state}",
+                    "The rename of {server} that did not finish runs again.": "La rinomina di {server} che non era finita riparte.",
+                    "The saved login no longer decrypts. Enter the user and the password again: JellyMesh logs in with them before saving them.": "L'accesso salvato non si decifra più. Inserisci di nuovo utente e password: JellyMesh accede con questi prima di salvarli.",
+                    "The user changes, so the streams from this server stop now: {count}. The old user is logged out.": "L'utente cambia, quindi le riproduzioni da questo server si fermano ora: {count}. Il vecchio utente viene disconnesso.",
+                    "These adopted libraries stay, and JellyMesh no longer manages them: {names}.": "Queste librerie adottate restano e JellyMesh non le gestisce più: {names}.",
+                    "These libraries leave the import, and their titles leave at the next sync: {names}.": "Queste librerie escono dall'importazione e i loro titoli escono alla prossima sincronizzazione: {names}.",
+                    "This server is being removed.": "Questo server è in corso di rimozione.",
+                    "This user sees no film or series libraries. Give it access on that server, then open Edit again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Modifica.",
+                    "Unchanged": "Invariato",
+                    "Your library {library} already holds exactly {paths}, so JellyMesh made no other library for them.": "La tua libreria {library} contiene già esattamente {paths}, quindi JellyMesh non ha creato un'altra libreria per questi percorsi.",
+                    "Your library {library} holds a folder above {paths}, so JellyMesh neither made nor adopted a library for them. Take that folder out of {library}, or set the library mode of this server to None.": "La tua libreria {library} contiene una cartella sopra {paths}, quindi JellyMesh non ha né creato né adottato una libreria per questi percorsi. Togli quella cartella da {library}, oppure imposta su Nessuna la modalità delle librerie di questo server.",
+                    "Your library {library} holds {paths} together with other folders, so JellyMesh neither made nor adopted it. Take the other folders out of it for JellyMesh to adopt it, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} insieme ad altre cartelle, quindi JellyMesh non l'ha né creata né adottata. Togli le altre cartelle perché JellyMesh la adotti, oppure imposta su Nessuna la modalità delle librerie di questo server.",
+                    "Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library for them. Take them out of {library}, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} con un altro tipo di contenuto, quindi JellyMesh non ha né creato né adottato una libreria per questi percorsi. Toglili da {library}, oppure imposta su Nessuna la modalità delle librerie di questo server.",
+                    "{library} (adopted)": "{library} (adottata)",
+                    "{server} answered with a problem ({problem}). The edit can still be saved.": "{server} ha risposto con un problema ({problem}). La modifica si può salvare comunque.",
+                    "{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.": "{server} non risponde. Finché non risponde, l'accesso e le librerie restano come sono. Un nuovo URL si salva solo se il server risponde a quell'indirizzo.",
                     "Add the folders of each server to the libraries": "Aggiungi alle librerie le cartelle di ogni server",
                     "The federated folder now has a folder for each server. Until these folders are in the libraries and scanned, the old titles stay as they are.": "La cartella federata ora ha una cartella per ogni server. Finché queste cartelle non sono nelle librerie e analizzate, i vecchi titoli restano come sono.",
                     "Moving the watch state to the folders of each server": "Spostamento dello stato di visione nelle cartelle di ogni server",
@@ -1604,7 +1667,7 @@
                     "The watch state of each user stays with the titles: if the same titles appear again within 90 days, from this server added back or from another one, it comes back.": "Lo stato di visione di ogni utente resta legato ai titoli: se gli stessi titoli ricompaiono entro 90 giorni, da questo server aggiunto di nuovo o da un altro, viene ripristinato.",
                     "The watch state of each user stays with the titles: if the same titles appear again within 90 days, from those servers added back or from another one, it comes back.": "Lo stato di visione di ogni utente resta legato ai titoli: se gli stessi titoli ricompaiono entro 90 giorni, da quei server aggiunti di nuovo o da un altro, viene ripristinato.",
                     "The watch state has moved to the new titles and the old folders are empty.": "Lo stato di visione è passato ai nuovi titoli e le vecchie cartelle sono vuote.",
-                    "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Librerie e salva di nuovo la selezione.",
+                    "A chosen library is no longer visible to the dedicated user. Open Edit and save the libraries again.": "Una libreria scelta non è più visibile all'utente dedicato. Apri Modifica e salva di nuovo le librerie.",
                     "A complete read of a library of {server} came back empty. Its {count} titles are kept until it has items again. If it is really empty, deselect it.": "Una lettura completa di una libreria di {server} è risultata vuota. I suoi {count} titoli restano finché non avrà di nuovo elementi. Se è davvero vuota, deselezionala.",
                     "A dedicated non-admin user on the remote. API keys are not used.": "Un utente dedicato non amministratore sul remoto. Le chiavi API non vengono usate.",
                     "A folder on this server that Jellyfin can write to. JellyMesh writes only inside it.": "Una cartella di questo server in cui Jellyfin può scrivere. JellyMesh scrive solo lì dentro.",
@@ -1622,9 +1685,9 @@
                     "Add a remote server": "Aggiungi un server remoto",
                     "Add a server": "Aggiungi un server",
                     "Add the Film folder of each server to a film library and its Serie folder to a series library in Dashboard > Libraries, or turn on the automatic libraries of the server on the Servers tab.": "Aggiungi la cartella Film di ogni server a una libreria di film e la sua cartella Serie a una libreria di serie nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server nella scheda Server.",
-                    "Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Librerie nella sua scheda per riprovare.",
+                    "Added {server}, but its libraries could not be read. {reason} Open Edit on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Modifica nella sua scheda per riprovare.",
                     "Added {server}. Choose its libraries.": "{server} è stato aggiunto. Scegli le sue librerie.",
-                    "Added {server}. Open Libraries on its card to choose what to import.": "{server} è stato aggiunto. Apri Librerie nella sua scheda per scegliere cosa importare.",
+                    "Added {server}. Open Edit on its card to choose what to import.": "{server} è stato aggiunto. Apri Modifica nella sua scheda per scegliere cosa importare.",
                     "Advanced playback times": "Tempi di riproduzione avanzati",
                     "Already merged.": "Già uniti.",
                     "Another JellyMesh server logs in here with a dedicated non-admin user of this server. Choose that user, what it may read and how many streams it may hold at once. Such a user can reach nothing else on this server.": "Un altro server JellyMesh accede qui con un utente dedicato non amministratore di questo server. Scegli quell'utente, cosa può leggere e quanti stream può tenere insieme. Un utente così non può raggiungere nient'altro su questo server.",
@@ -1659,11 +1722,8 @@
                     "Copy: {label}": "Copia: {label}",
                     "Could not read {what}. {next} Reason: {reason}": "Impossibile leggere {what}. {next} Motivo: {reason}",
                     "Could not tell which copy would play. {reason}": "Impossibile dire quale copia verrebbe riprodotta. {reason}",
-                    "Create a Film and a Serie library for this server": "Crea una libreria Film e una Serie per questo server",
                     "Create a non-admin user for the other server first.": "Prima crea un utente non amministratore per l'altro server.",
                     "Creating the libraries of {server}. JellyMesh then scans them.": "Creazione delle librerie di {server} in corso. Poi JellyMesh le analizza.",
-                    "Delete the libraries of this server?": "Eliminare le librerie di questo server?",
-                    "Deleting the libraries of {server}.": "Eliminazione delle librerie di {server} in corso.",
                     "Disconnect": "Disconnetti",
                     "Disconnect this server?": "Disconnettere questo server?",
                     "Disconnected {name}.": "{name} è stato disconnesso.",
@@ -1727,12 +1787,9 @@
                     "Last sync failed ({failure}): these entries are kept as they were.": "L'ultima sincronizzazione non è riuscita ({failure}): questi elementi restano com'erano.",
                     "Last sync: {date}.": "Ultima sincronizzazione: {date}.",
                     "Length": "Durata",
-                    "Libraries": "Librerie",
                     "Libraries changed on the federated folder since the last sync, which links the versions again.": "Dall'ultima sincronizzazione sono cambiate librerie sulla cartella federata; la prossima collega di nuovo le versioni.",
                     "Libraries no longer offered are no longer shared with this server.": "Le librerie non più offerte non sono più condivise con questo server.",
-                    "Libraries saved for {server}. The next sync reads them.": "Librerie salvate per {server}. La prossima sincronizzazione le legge.",
                     "Libraries to import": "Librerie da importare",
-                    "Libraries to import from {server}": "Librerie da importare da {server}",
                     "Link the folders of each server": "Collega le cartelle di ogni server",
                     "Linked": "Collegata",
                     "Locks federated items, so metadata fetchers and \"Replace all metadata\" leave them alone. When off, fetchers complete the metadata, and titles without provider IDs can be matched to the wrong film.": "Blocca gli elementi federati, così i recuperi di metadati e \"Sostituisci tutti i metadati\" non li toccano. Se disattivata, i recuperi completano i metadati e i titoli senza ID provider possono essere abbinati al film sbagliato.",
@@ -1780,7 +1837,7 @@
                     "Nothing is imported from a server until you choose its libraries. Still to choose: {servers}.": "Da un server non si importa nulla finché non scegli le sue librerie. Ancora da scegliere: {servers}.",
                     "Nothing is imported from this server until you choose its libraries and save.": "Da questo server non si importa nulla finché non scegli le sue librerie e salvi.",
                     "Nothing merged.": "Nessuna unione.",
-                    "Open Libraries and save the selection again.": "Apri Librerie e salva di nuovo la selezione.",
+                    "Open Edit and save the libraries again.": "Apri Modifica e salva di nuovo le librerie.",
                     "Open {tab}": "Apri {tab}",
                     "Other version: {quality}": "Altra versione: {quality}",
                     "Outcome": "Esito",
@@ -1812,7 +1869,6 @@
                     "Run the first sync": "Esegui la prima sincronizzazione",
                     "Running now": "In corso",
                     "Save": "Salva",
-                    "Save libraries": "Salva le librerie",
                     "Saved {name}.": "{name} è stato salvato.",
                     "Seasons": "Stagioni",
                     "season": "stagione",
@@ -1855,26 +1911,21 @@
                     "The federated folder could not be updated.": "Non è stato possibile aggiornare la cartella federata.",
                     "The federation index could not be saved.": "Non è stato possibile salvare l'indice della federazione.",
                     "The file of the sync history could not be read, so earlier syncs are not shown. A copy of the file is kept next to it.": "Non è stato possibile leggere il file dello storico delle sincronizzazioni, quindi le sincronizzazioni precedenti non sono mostrate. Una copia del file è conservata accanto.",
-                    "The files in the federated folder stay, and nothing changes on {server}.": "I file nella cartella federata restano e su {server} non cambia nulla.",
                     "The folders of every server are linked.": "Le cartelle di ogni server sono collegate.",
                     "The last 50 syncs and the last 7 reconciliations, newest first. For each server: the catalog entries read, and the titles created, updated and removed in its folder, then the totals of the whole folder.": "Le ultime 50 sincronizzazioni e le ultime 7 riconciliazioni, dalla più recente. Per ogni server: gli elementi del catalogo letti, e i titoli creati, aggiornati e rimossi nella sua cartella, poi i totali di tutta la cartella.",
                     "The libraries of this server are being updated. Try again when it is done.": "Le librerie di questo server sono in aggiornamento. Riprova quando ha finito.",
                     "The library mode of this server cannot be changed here.": "La modalità delle librerie di questo server non si può cambiare qui.",
-                    "The server refused to rename a library. Rename this server again with the same name to retry.": "Il server ha rifiutato di rinominare una libreria. Rinomina di nuovo questo server con lo stesso nome per riprovare.",
+                    "The server refused to rename a library. Save the edit of this server with the same name to retry.": "Il server ha rifiutato di rinominare una libreria. Salva la modifica di questo server con lo stesso nome per riprovare.",
                     "Being renamed. The libraries are scanned twice before it is done.": "Rinomina in corso. Le librerie vengono analizzate due volte prima che finisca.",
                     "The rename finishes with the next library scan. Until then the titles of this server may show twice among the versions.": "La rinomina finisce con la prossima analisi delle librerie. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
-                    "The rename did not finish. Rename this server again with the same name to finish it.": "La rinomina non è finita. Rinomina di nuovo questo server con lo stesso nome per completarla.",
+                    "The rename did not finish. Save the edit of this server with the same name to finish it.": "La rinomina non è finita. Salva la modifica di questo server con lo stesso nome per completarla.",
                     "The rename is held up: an old title of this server cannot leave the versions it was grouped with. JellyMesh tries again after every library scan. Until then the server cannot be renamed again, and its titles may show twice among the versions.": "La rinomina è bloccata: un vecchio titolo di questo server non riesce a uscire dalle versioni con cui era raggruppato. JellyMesh riprova dopo ogni analisi delle librerie. Fino ad allora il server non si può rinominare di nuovo e i suoi titoli possono comparire due volte tra le versioni.",
                     "{server}: its rename is held up because an old title cannot leave the versions it was grouped with. JellyMesh tries again after every library scan.": "{server}: la sua rinomina è bloccata perché un vecchio titolo non riesce a uscire dalle versioni con cui era raggruppato. JellyMesh riprova dopo ogni analisi delle librerie.",
-                    "Rename {server}": "Rinomina {server}",
                     "The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.": "Il nome compare nell'elenco delle versioni e nei nomi delle sue librerie automatiche. La sua cartella resta la stessa.",
-                    "Rename": "Rinomina",
                     "Enter a name.": "Inserisci un nome.",
                     "{server} becomes {name}. Its titles move to the new name, with the watch state of each user.": "{server} diventa {name}. I suoi titoli passano al nuovo nome, con lo stato di visione di ogni utente.",
                     "Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.": "Vengono rinominate anche le sue librerie automatiche: {names}. Ognuna si svuota e si riempie di nuovo, e ordinamento e vista ripartono da capo.",
                     "The libraries are scanned twice. Until then the titles of this server may show twice among the versions.": "Le librerie vengono analizzate due volte. Fino ad allora i titoli di questo server possono comparire due volte tra le versioni.",
-                    "Rename this server?": "Rinominare questo server?",
-                    "Renaming {server} to {name}.": "Rinomina di {server} in {name} in corso.",
                     "A library JellyMesh renamed keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.": "Una libreria rinominata da JellyMesh tiene il suo vecchio ID fino al riavvio di Jellyfin: fino ad allora, gli utenti che la aprono con quell'ID ricevono un errore. Riavvia Jellyfin appena puoi.",
                     "This server is being renamed, or its titles wait for a library scan. Try again when it is done.": "Questo server è in fase di rinomina, oppure i suoi titoli aspettano un'analisi delle librerie. Riprova quando ha finito.",
                     "Confirm to rename this server.": "Conferma per rinominare questo server.",
@@ -1898,11 +1949,8 @@
                     "the sync history": "lo storico delle sincronizzazioni",
                     "These libraries are deleted now: {names}.": "Queste librerie vengono eliminate ora: {names}.",
                     "password needed": "password da inserire",
-                    "The stored password no longer decrypts. Enter the login again below. {problem}": "La password salvata non si decifra più. Inserisci di nuovo l'accesso qui sotto. {problem}",
+                    "The stored password no longer decrypts. Enter the login again in the edit form below. {problem}": "La password salvata non si decifra più. Inserisci di nuovo l'accesso nel modulo di modifica qui sotto. {problem}",
                     "Sync and remote playback are suspended until the stored logins can be used. {problem}": "Sincronizzazione e riproduzione remota sono sospese finché gli accessi salvati non si possono usare. {problem}",
-                    "Enter the login of {server} again": "Inserisci di nuovo l'accesso di {server}",
-                    "JellyMesh logs in with it before saving it, encrypted with the new key file.": "JellyMesh accede con questo prima di salvarlo, cifrato con il nuovo file della chiave.",
-                    "Save login": "Salva l'accesso",
                     "Enter the user JellyMesh logs in with.": "Inserisci l'utente con cui JellyMesh accede.",
                     "Titles not written or removed: {count}.": "Titoli non scritti o non rimossi: {count}.",
                     "Remote libraries gone, no longer imported: {names}.": "Librerie remote sparite, non più importate: {names}.",
@@ -1917,7 +1965,6 @@
                     "{minutes} min {seconds} s": "{minutes} min {seconds} s",
                     "{problems} Fix this by hand in Dashboard > Libraries, or turn on the automatic libraries of the server.": "{problems} Sistemalo a mano nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server.",
                     "{seconds} s": "{seconds} s",
-                    "{server}: login saved.": "{server}: accesso salvato.",
                     "JELLYMESH_SECRET_KEY is no longer used: the key is now a file in the plugin data folder. You can remove the variable from the environment of Jellyfin.": "JELLYMESH_SECRET_KEY non si usa più: ora la chiave è un file nella cartella dati del plugin. Puoi togliere la variabile dall'ambiente di Jellyfin.",
                     "{server}: enter its login again.": "{server}: inserisci di nuovo il suo accesso.",
                     "The plugin cannot keep its key file in its data folder. Remote credentials cannot be saved or used, and sync and remote playback are suspended.": "Il plugin non riesce a tenere il file della chiave nella sua cartella dati. Le credenziali dei remoti non si possono salvare né usare, e sincronizzazione e riproduzione remota sono sospese.",
@@ -1977,7 +2024,6 @@
                     "This server is already configured.": "Questo server è già configurato.",
                     "This server is at its stream limit on that remote.": "Questo server ha raggiunto il suo limite di stream su quel remoto.",
                     "This server is not configured.": "Questo server non è configurato.",
-                    "This user sees no film or series libraries. Give it access on that server, then open Libraries again.": "Questo utente non vede librerie di film o serie. Dagli accesso su quel server, poi apri di nuovo Librerie.",
                     "The folders of this server are deleted now: its titles leave the libraries, with their images. The same titles from another server stay. Doubtful titles involving this server leave the list now. Nothing changes on that server, and local files are not touched.": "Le cartelle di questo server vengono eliminate ora: i suoi titoli escono dalle librerie, con le loro immagini. Gli stessi titoli di un altro server restano. I titoli dubbi che coinvolgono questo server escono subito dall'elenco. Su quel server non cambia nulla, e i file locali non vengono toccati.",
                     "To do": "Da fare",
                     "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.": "Due film locali non si possono unire: JellyMesh non modifica i file locali. Seleziona al massimo un titolo con una copia locale.",
@@ -2112,13 +2158,20 @@
                     ServerError: t('Check the log of that server, then test the connection.'),
                     InvalidResponse: t('Check that the URL leads to a Jellyfin server. If it does not, remove this server and add it again.'),
                     ResponseTooLarge: t('Check that the URL leads to a Jellyfin server, then test the connection.'),
-                    LibraryUnavailable: t('Open Libraries and save the selection again.'),
+                    LibraryUnavailable: t('Open Edit and save the libraries again.'),
                     CatalogChanged: t('The next sync tries again.')
                 };
                 var unknownProblem = t('unknown problem');
                 var unknownProblemStep = t('Test the connection to see what is wrong.');
                 var libraryKinds = { movies: t('films'), tvshows: t('series') };
                 var modeLabels = { Unknown: t('mode not known yet'), Standard: t('standard Jellyfin server'), JellyMesh: t('JellyMesh server') };
+                var libraryModes = ['ByType', 'ByRemoteLibrary', 'None'];
+                var libraryModeLabels = { ByType: t('By type'), ByRemoteLibrary: t('By remote library'), None: t('None|mode') };
+                var libraryModeNotes = {
+                    ByType: t('JellyMesh makes one library for the films and one for the series of this server.'),
+                    ByRemoteLibrary: t('JellyMesh makes one library for each library imported from this server.'),
+                    None: t('JellyMesh makes no library: you add the folders of this server to your libraries in the Dashboard.')
+                };
                 var defaultStreamLimit = 2;
                 var mergeReasons = {
                     ConflictingProviderIds: t('These titles are linked by shared provider IDs, but some of those IDs contradict each other.'),
@@ -2133,6 +2186,7 @@
                 var readTimeoutMilliseconds = 15000;
                 var keepsTrying = t('What is shown here may be out of date, and the page keeps trying.');
                 var suspended = false;
+                var addForm = null;
                 var keyState = 'Ok';
                 var syncRunning = false;
                 var lastFinished;
@@ -2663,43 +2717,6 @@
                     return library.Name + ' (' + (libraryKinds[library.CollectionType] || library.CollectionType) + ')';
                 }
 
-                function renderLibraries(container, server, libraries) {
-                    container.textContent = '';
-                    var title = create('p', t('Libraries to import from {server}', { server: server.Name }));
-                    title.className = 'jmLibrariesTitle';
-                    container.appendChild(title);
-                    var note = create('p', libraries.length === 0
-                        ? t('This user sees no film or series libraries. Give it access on that server, then open Libraries again.')
-                        : t('Nothing is imported from this server until you choose its libraries and save.'));
-                    note.className = 'jmLibrariesNote';
-                    note.tabIndex = -1;
-                    container.appendChild(note);
-                    if (libraries.length === 0) {
-                        return;
-                    }
-
-                    var list = create('div');
-                    list.className = 'checkboxList';
-                    container.appendChild(list);
-                    var boxes = libraries.map(function (library) {
-                        var box = addCheckbox(list, library.Id, libraryLabel(library));
-                        box.checked = library.Selected;
-                        return box;
-                    });
-
-                    container.appendChild(button(t('Save libraries'), function () {
-                        var ids = boxes.filter(function (box) {
-                            return box.checked;
-                        }).map(function (box) {
-                            return box.value;
-                        });
-                        act(api('POST', 'Servers/' + server.Id + '/Libraries', { LibraryIds: ids }).then(function () {
-                            showMessage(t('Libraries saved for {server}. The next sync reads them.', { server: server.Name }));
-                            return loadStatus();
-                        }));
-                    }));
-                }
-
                 function connectionLabel(value) {
                     return connectionLabels[value] || unknownProblem;
                 }
@@ -2759,55 +2776,6 @@
                     return keyState === 'Wrong' && server.NeedsPassword;
                 }
 
-                // Asks for the login of a server again, and saves it once the server accepts it.
-                function renderPassword(container, server) {
-                    container.textContent = '';
-                    var form = create('form');
-                    form.autocomplete = 'off';
-                    form.noValidate = true;
-                    var title = create('p', t('Enter the login of {server} again', { server: server.Name }));
-                    title.className = 'jmLibrariesTitle';
-                    form.appendChild(title);
-                    var note = create('p', t('JellyMesh logs in with it before saving it, encrypted with the new key file.'));
-                    note.className = 'jmLibrariesNote';
-                    form.appendChild(note);
-                    var grid = create('div');
-                    grid.className = 'jmFormGrid';
-                    var user = create('input');
-                    user.setAttribute('is', 'emby-input');
-                    user.setAttribute('label', t('User'));
-                    user.type = 'text';
-                    user.required = true;
-                    user.autocomplete = 'off';
-                    var password = create('input');
-                    password.setAttribute('is', 'emby-input');
-                    password.setAttribute('label', t('Password'));
-                    password.type = 'password';
-                    password.autocomplete = 'new-password';
-                    grid.appendChild(fieldBox('inputContainer', user));
-                    grid.appendChild(fieldBox('inputContainer', password));
-                    form.appendChild(grid);
-                    var save = button(t('Save login'), function () {});
-                    save.type = 'submit';
-                    form.appendChild(save);
-                    form.addEventListener('submit', function (e) {
-                        e.preventDefault();
-                        clearField(user);
-                        if (!user.value.trim()) {
-                            markField(user, t('Enter the user JellyMesh logs in with.'));
-                            focusField(user);
-                            return;
-                        }
-
-                        act(api('POST', 'Servers/' + server.Id + '/Credentials', { Username: user.value.trim(), Password: password.value }).then(function () {
-                            password.value = '';
-                            showMessage(t('{server}: login saved.', { server: server.Name }));
-                            return loadStatus();
-                        }));
-                    });
-                    container.appendChild(form);
-                }
-
                 // Works out the state of a server in words, with its look, its cause and the next step.
                 function serverHealth(server, report) {
                     var problem = report ? syncProblem(report) : '';
@@ -2816,7 +2784,7 @@
                             state: t('password needed'),
                             tone: 'jmStateBad',
                             icon: 'key',
-                            cause: t('The stored password no longer decrypts. Enter the login again below. {problem}', { problem: problem || t('These entries are kept as they were.') }),
+                            cause: t('The stored password no longer decrypts. Enter the login again in the edit form below. {problem}', { problem: problem || t('These entries are kept as they were.') }),
                             needsPassword: true
                         };
                     }
@@ -2877,63 +2845,369 @@
                         return t('The rename finishes with the next library scan. Until then the titles of this server may show twice among the versions.');
                     }
 
-                    return state.Failed ? t('The rename did not finish. Rename this server again with the same name to finish it.') : '';
+                    return state.Failed ? t('The rename did not finish. Save the edit of this server with the same name to finish it.') : '';
                 }
 
-                // Shows the form that renames a server, then asks for the confirmation of Q38.
-                function renderRename(container, server) {
-                    container.textContent = '';
-                    var form = create('form');
-                    form.autocomplete = 'off';
-                    form.noValidate = true;
-                    var title = create('p', t('Rename {server}', { server: server.Name }));
-                    title.className = 'jmLibrariesTitle';
-                    form.appendChild(title);
-                    var note = create('p', t('The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.'));
-                    note.className = 'jmLibrariesNote';
-                    form.appendChild(note);
-                    var name = create('input');
-                    name.setAttribute('is', 'emby-input');
-                    name.setAttribute('label', t('Name'));
-                    name.type = 'text';
-                    name.required = true;
-                    name.value = server.Name;
-                    form.appendChild(fieldBox('inputContainer', name));
-                    var save = button(t('Rename'), function () {});
-                    save.type = 'submit';
-                    form.appendChild(save);
-                    form.addEventListener('submit', function (e) {
-                        e.preventDefault();
-                        clearField(name);
-                        var wanted = name.value.trim();
-                        if (!wanted) {
-                            markField(name, t('Enter a name.'));
-                            focusField(name);
-                            return;
-                        }
+                // Adds a Jellyfin input with its label and an optional description to a grid, and returns the input.
+                function addInput(grid, label, type, description) {
+                    var input = create('input');
+                    input.setAttribute('is', 'emby-input');
+                    input.setAttribute('label', label);
+                    input.type = type;
+                    input.autocomplete = type === 'password' ? 'new-password' : 'off';
+                    var box = fieldBox('inputContainer', input);
+                    if (description) {
+                        var note = create('div', description);
+                        note.className = 'fieldDescription';
+                        box.appendChild(note);
+                    }
 
-                        // The same name runs the steps again, which finishes a rename that stopped halfway.
-                        var paragraphs = [
-                            t('{server} becomes {name}. Its titles move to the new name, with the watch state of each user.', { server: escapeHtml(server.Name), name: escapeHtml(wanted) })
-                        ];
-                        var names = ownState(server).Libraries.map(function (library) {
-                            return library.Name;
-                        });
-                        if (names.length > 0) {
-                            paragraphs.push(t('Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.', { names: escapeHtml(names.join(', ')) }));
+                    grid.appendChild(box);
+                    return input;
+                }
+
+                // Adds a note to a part of a form, as a warning when asked, and returns it.
+                function addFormNote(part, text, warning) {
+                    var note = create('p', text);
+                    note.className = warning ? 'jmAlert' : 'jmLibrariesNote';
+                    part.appendChild(note);
+                    return note;
+                }
+
+                function libraryModeLabel(value) {
+                    return libraryModeLabels[value] || value;
+                }
+
+                // Asks to cancel the rename that waits for a library scan, then reads the state again.
+                function cancelRename(server) {
+                    confirmAction(t('Cancel the pending rename?'), [
+                        t('The titles of {server} keep the new name. Their old files are deleted now, and the watch state not yet carried to the new name is lost.', { server: escapeHtml(server.Name) })
+                    ], function () {
+                        act(api('POST', 'Servers/' + server.Id + '/Rename/Cancel').then(function () {
+                            showMessage(t('The pending rename of {server} is cancelled.', { server: server.Name }));
+                            return loadStatus();
+                        }));
+                    });
+                }
+
+                // Lists what saving an edit does beyond its fields, escaped for the confirmation, or nothing (920 Passi).
+                function editConsequences(consequences) {
+                    var paragraphs = [];
+                    var rename = consequences.Rename;
+                    if (rename) {
+                        paragraphs.push(rename.OldName === rename.NewName
+                            ? t('The rename of {server} that did not finish runs again.', { server: escapeHtml(rename.OldName) })
+                            : t('{server} becomes {name}. Its titles move to the new name, with the watch state of each user.', { server: escapeHtml(rename.OldName), name: escapeHtml(rename.NewName) }));
+                        if (rename.Libraries.length > 0) {
+                            paragraphs.push(t('Its automatic libraries are renamed too: {names}. Each one empties and fills again, and its sort order and view start over.', { names: escapeHtml(rename.Libraries.join(', ')) }));
                         }
 
                         paragraphs.push(t('The libraries are scanned twice. Until then the titles of this server may show twice among the versions.'));
-                        confirmAction(t('Rename this server?'), paragraphs, function () {
-                            act(api('POST', 'Servers/' + server.Id + '/Rename', { Name: wanted, Confirmed: true }).then(function () {
-                                container.textContent = '';
-                                showMessage(t('Renaming {server} to {name}.', { server: server.Name, name: wanted }));
-                                return loadStatus();
-                            }));
-                        });
+                    }
+
+                    var named = consequences.RemovedLibraries.filter(function (library) {
+                        return library.Name;
+                    }).map(function (library) {
+                        return library.Name;
                     });
+                    if (named.length > 0) {
+                        paragraphs.push(t('These libraries leave the import, and their titles leave at the next sync: {names}.', { names: escapeHtml(named.join(', ')) }));
+                    }
+
+                    var hidden = consequences.RemovedLibraries.length - named.length;
+                    if (hidden > 0) {
+                        paragraphs.push(t('Imported libraries the user no longer sees leave the import: {count}. Their titles leave at the next sync.', { count: hidden }));
+                    }
+
+                    if (consequences.StoppedStreams > 0) {
+                        paragraphs.push(t('The user changes, so the streams from this server stop now: {count}. The old user is logged out.', { count: consequences.StoppedStreams }));
+                    }
+
+                    var change = consequences.ModeChange;
+                    if (change) {
+                        var to = escapeHtml(libraryModeLabel(change.To));
+                        if (change.To === 'None') {
+                            paragraphs.push(t('The library mode becomes {mode}: JellyMesh makes no library for this server, and you add its folders to your libraries by hand.', { mode: to }));
+                        } else if (change.From === 'None') {
+                            paragraphs.push(t('The library mode becomes {mode}: JellyMesh makes or adopts the libraries of this server, then scans them.', { mode: to }));
+                        } else {
+                            paragraphs.push(t('The library mode changes from {from} to {to}: JellyMesh makes the new libraries first, then deletes its old ones.', { from: escapeHtml(libraryModeLabel(change.From)), to: to }));
+                        }
+
+                        if (change.Deleted.length > 0) {
+                            paragraphs.push(t('These libraries are deleted now: {names}.', { names: escapeHtml(change.Deleted.join(', ')) }));
+                        }
+
+                        if (change.Released.length > 0) {
+                            paragraphs.push(t('These adopted libraries stay, and JellyMesh no longer manages them: {names}.', { names: escapeHtml(change.Released.join(', ')) }));
+                        }
+                    }
+
+                    return paragraphs;
+                }
+
+                // Builds the form that adds a server, when server is null, or edits one with its fields locked as the case
+                // asks (920 Casi). Returns the field to focus, and the read of the libraries, which gives its error if any.
+                function serverForm(container, server, done) {
+                    container.textContent = '';
+                    var editing = !!server;
+                    var form = create('form');
+                    form.className = 'jmServerForm';
+                    form.autocomplete = 'off';
+                    form.noValidate = true;
+                    if (editing) {
+                        var title = create('p', t('Edit {server}', { server: server.Name }));
+                        title.className = 'jmLibrariesTitle';
+                        form.appendChild(title);
+                    } else {
+                        form.appendChild(create('p', t('JellyMesh logs in with this user, then lists the libraries that user can see, so that you can choose what to import.')));
+                    }
+
+                    var notes = create('div');
+                    notes.className = 'jmFormNotes';
+                    form.appendChild(notes);
+                    var grid = create('div');
+                    grid.className = 'jmFormGrid';
+                    form.appendChild(grid);
+                    var fields = {
+                        Name: addInput(grid, t('Name'), 'text', editing ? t('The name shows in the version list and in the names of its automatic libraries. Its folder stays the same.') : ''),
+                        Url: addInput(grid, t('Server URL'), 'url'),
+                        Username: addInput(grid, t('User'), 'text', t('A dedicated non-admin user on the remote. API keys are not used.')),
+                        Password: addInput(grid, t('Password'), 'password', t('Stored encrypted and never shown again.'))
+                    };
+                    fields.Url.placeholder = 'http://server:8096';
+                    var mode = create('select');
+                    mode.setAttribute('is', 'emby-select');
+                    mode.setAttribute('label', t('Library mode'));
+                    libraryModes.forEach(function (value) {
+                        var option = create('option', libraryModeLabel(value));
+                        option.value = value;
+                        mode.appendChild(option);
+                    });
+                    var modeBox = fieldBox('selectContainer', mode);
+                    var modeNote = create('div');
+                    modeNote.className = 'fieldDescription';
+                    modeBox.appendChild(modeNote);
+                    form.appendChild(modeBox);
+                    fields.LibraryMode = mode;
+                    var libraries = create('div');
+                    libraries.className = 'jmFormLibraries';
+                    libraries.tabIndex = -1;
+                    form.appendChild(libraries);
+                    fields.LibraryIds = libraries;
+                    var actions = actionRow();
+                    var submit = button(editing ? t('Save') : t('Connect and choose libraries'), function () {});
+                    submit.type = 'submit';
+                    actions.appendChild(submit);
+                    form.appendChild(actions);
                     container.appendChild(form);
-                    focusField(name);
+                    var boxes = null;
+                    var savedMode = editing ? ownState(server).Mode || 'None' : null;
+                    var login = editing && needsPassword(server);
+
+                    function showModeNote() {
+                        setText(modeNote, libraryModeNotes[mode.value] || '');
+                    }
+
+                    mode.addEventListener('change', function () {
+                        mode.jmTouched = true;
+                        showModeNote();
+                    });
+
+                    // The mode of new servers in the settings, until the admin picks another one (section 3.8).
+                    form.jmPresetMode = function (value) {
+                        if (!editing && !mode.jmTouched && libraryModeNotes[value]) {
+                            mode.value = value;
+                            showModeNote();
+                        }
+                    };
+
+                    // Shows the libraries the user sees, with those imported now ticked.
+                    function showLibraries(check) {
+                        libraries.textContent = '';
+                        var heading = create('p', t('Libraries to import'));
+                        heading.className = 'jmLibrariesTitle';
+                        libraries.appendChild(heading);
+                        boxes = [];
+                        if (check.Libraries.length === 0) {
+                            addFormNote(libraries, t('This user sees no film or series libraries. Give it access on that server, then open Edit again.'));
+                            return;
+                        }
+
+                        var list = create('div');
+                        list.className = 'checkboxList';
+                        libraries.appendChild(list);
+                        boxes = check.Libraries.map(function (library) {
+                            var box = addCheckbox(list, library.Id, libraryLabel(library));
+                            box.checked = library.Selected;
+                            return box;
+                        });
+                        if (!check.Libraries.some(function (library) {
+                            return library.Selected;
+                        })) {
+                            addFormNote(libraries, t('Nothing is imported from this server until you choose its libraries and save.'));
+                        }
+                    }
+
+                    // The fields to send: an empty user or password keeps the saved one, and libraries not read stay.
+                    function collect() {
+                        var request = { Name: fields.Name.value.trim(), Url: fields.Url.value.trim(), Username: fields.Username.value.trim(), Password: fields.Password.value };
+                        if (boxes) {
+                            request.LibraryIds = boxes.filter(function (box) {
+                                return box.checked;
+                            }).map(function (box) {
+                                return box.value;
+                            });
+                        }
+
+                        if (mode.value !== savedMode) {
+                            request.LibraryMode = mode.value;
+                        }
+
+                        return request;
+                    }
+
+                    // Names the first empty field the form needs, with what to enter there.
+                    function missingField(request) {
+                        if (!request.Name) {
+                            return { field: 'Name', text: t('Enter a name.') };
+                        }
+
+                        if (!request.Url) {
+                            return { field: 'Url', text: t('Enter the URL of the server.') };
+                        }
+
+                        if ((!editing || login) && !request.Username) {
+                            return { field: 'Username', text: t('Enter the user JellyMesh logs in with.') };
+                        }
+
+                        return login && !request.Password ? { field: 'Password', text: t('Enter the password of the dedicated user: the saved one can no longer be read.') } : null;
+                    }
+
+                    // Shows a refusal on the field it is about, then passes it on to the outcome (row 432).
+                    function refused(error) {
+                        if (error.failure === 'AlreadyConfigured' && error.serverName) {
+                            error.message = t('This server is already configured as “{server}”.', { server: error.serverName });
+                        }
+
+                        var input = error.field && fields[error.field];
+                        if (input) {
+                            markField(input, error.message);
+                            focusField(input);
+                        }
+
+                        throw error;
+                    }
+
+                    function save(request) {
+                        return api('PUT', 'Servers/' + server.Id, request).then(function (saved) {
+                            container.textContent = '';
+                            return done(saved);
+                        }, refused);
+                    }
+
+                    form.addEventListener('submit', function (e) {
+                        e.preventDefault();
+                        Object.keys(fields).forEach(function (key) {
+                            clearField(fields[key]);
+                        });
+                        var request = collect();
+                        var missing = missingField(request);
+                        if (missing) {
+                            markField(fields[missing.field], missing.text);
+                            focusField(fields[missing.field]);
+                            return;
+                        }
+
+                        fields.Password.value = '';
+                        if (!editing) {
+                            act(api('POST', 'Servers', request).then(done, refused));
+                            return;
+                        }
+
+                        act(api('POST', 'Servers/' + server.Id + '/Edit/Check', request).then(function (check) {
+                            var paragraphs = editConsequences(check.Consequences);
+                            if (paragraphs.length === 0) {
+                                return save(request);
+                            }
+
+                            confirmAction(t('Save these changes?'), paragraphs, function () {
+                                act(save(request));
+                            });
+                        }, refused));
+                    });
+
+                    mode.value = editing ? savedMode : 'ByType';
+                    form.jmPresetMode(settingsSection.data && settingsSection.data.NewServerLibraryMode);
+                    showModeNote();
+                    if (!editing) {
+                        // The add form is the only one of its kind, so its parts keep the ids the page had for them.
+                        form.id = 'jmAddServerForm';
+                        fields.Name.id = 'jmServerName';
+                        fields.Url.id = 'jmServerUrl';
+                        fields.Username.id = 'jmServerUser';
+                        fields.Password.id = 'jmServerPassword';
+                        mode.id = 'jmServerLibraryMode';
+                        submit.id = 'jmAddServer';
+                        submit.disabled = suspended;
+                        return { form: form, ready: Promise.resolve(), focus: fields.Name };
+                    }
+
+                    actions.appendChild(button(t('Close'), function () {
+                        container.textContent = '';
+                    }));
+                    fields.Name.value = server.Name;
+                    fields.Url.value = server.Url;
+                    var rename = renameState(server);
+                    var restart = !!(statusSection.data && statusSection.data.RenamedLibrariesNeedRestart);
+                    if (rename.Busy || rename.Pending || rename.Failed || restart) {
+                        // An unfinished rename locks the name; a failed one runs again when the form is saved (920 Casi).
+                        fields.Name.readOnly = true;
+                        addFormNote(notes, t('The name cannot change now. {state}', {
+                            state: renameProblem(rename) || t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts. Restart Jellyfin when you can.')
+                        }), true);
+                        if (rename.Pending && !rename.Busy) {
+                            var cancelRow = actionRow();
+                            cancelRow.appendChild(button(t('Cancel the pending rename'), function () {
+                                cancelRename(server);
+                            }));
+                            notes.appendChild(cancelRow);
+                        }
+                    }
+
+                    var focus = fields.Name.readOnly ? fields.Url : fields.Name;
+                    if (login) {
+                        // Credentials that no longer decrypt are entered again here, so the user and password are required.
+                        addFormNote(notes, t('The saved login no longer decrypts. Enter the user and the password again: JellyMesh logs in with them before saving them.'), true);
+                        addFormNote(libraries, t('The libraries are read once the login is saved.'));
+                        return { form: form, ready: Promise.resolve(), focus: fields.Username };
+                    }
+
+                    fields.Username.placeholder = t('Unchanged');
+                    fields.Password.placeholder = t('Unchanged');
+                    addFormNote(libraries, reading);
+                    var ready = api('POST', 'Servers/' + server.Id + '/Edit/Check', { Name: server.Name, Url: server.Url, Username: '', Password: '' }).then(function (check) {
+                        libraries.textContent = '';
+                        if (check.RemoteOffline) {
+                            // With the remote offline the login and the libraries stay; a new URL is checked on save (D28).
+                            fields.Username.disabled = true;
+                            fields.Password.disabled = true;
+                            addFormNote(notes, t('{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.', { server: server.Name }), true);
+                            return;
+                        }
+
+                        showLibraries(check);
+                        if (check.RemoteWarning) {
+                            addFormNote(notes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: server.Name, problem: connectionLabel(check.RemoteWarning) }), true);
+                        }
+
+                        return null;
+                    }, function (error) {
+                        libraries.textContent = '';
+                        addFormNote(libraries, t('The libraries could not be read, so they stay as they are. {reason}', { reason: error.message }), true);
+                        return error;
+                    });
+                    return { form: form, ready: ready, focus: focus };
                 }
 
                 function renderServer(server, report) {
@@ -2959,36 +3233,25 @@
                     var catalog = addFact(facts, t('Catalog'));
                     var checked = addFact(facts, t('Last check'));
                     var synced = addFact(facts, t('Last complete sync'));
+                    var libraryMode = addFact(facts, t('Library mode'));
                     var own = addFact(facts, t('Server libraries'));
                     body.appendChild(facts);
-                    var ownSwitch = create('div');
-                    ownSwitch.className = 'checkboxList';
-                    var ownBox = addCheckbox(ownSwitch, server.Id, t('Create a Film and a Serie library for this server'));
-                    body.appendChild(ownSwitch);
                     var ownNotes = create('div');
                     ownNotes.className = 'jmOwnNotes';
                     body.appendChild(ownNotes);
                     var renameNote = create('p');
-                    renameNote.className = 'jmLibrariesNote';
+                    renameNote.className = 'jmLibrariesNote jmRenameNote';
                     body.appendChild(renameNote);
                     var renameCancel = button(t('Cancel the pending rename'), function () {
-                        confirmAction(t('Cancel the pending rename?'), [
-                            t('The titles of {server} keep the new name. Their old files are deleted now, and the watch state not yet carried to the new name is lost.', { server: escapeHtml(server.Name) })
-                        ], function () {
-                            act(api('POST', 'Servers/' + server.Id + '/Rename/Cancel').then(function () {
-                                showMessage(t('The pending rename of {server} is cancelled.', { server: server.Name }));
-                                return loadStatus();
-                            }));
-                        });
+                        cancelRename(server);
                     }, 'jmRenameCancel');
                     body.appendChild(renameCancel);
-                    var ownPending = false;
                     var ownErrors = {
                         NameTaken: t('A library name was taken, so a library was not created.'),
                         CreateFailed: t('The server refused to create a library.'),
                         RemoveFailed: t('The server refused to delete a library. Try again.'),
                         ReadFailed: t('The list of libraries could not be read. Try again.'),
-                        RenameFailed: t('The server refused to rename a library. Rename this server again with the same name to retry.'),
+                        RenameFailed: t('The server refused to rename a library. Save the edit of this server with the same name to retry.'),
                         Failed: t('The change failed. Try again.')
                     };
                     var problemShown = '';
@@ -3021,18 +3284,27 @@
                         setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : t('Not since this server started'));
                         setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : t('Not read yet'));
                         var ownCurrent = ownState(server);
-                        if (!ownPending && !ownCurrent.Busy) {
-                            ownBox.checked = ownCurrent.Enabled;
-                        }
-
-                        ownBox.disabled = ownPending || ownCurrent.Busy;
+                        setText(libraryMode, libraryModeLabel(ownCurrent.Mode || 'None'));
                         var ownNames = ownCurrent.Libraries.map(function (library) {
-                            return library.Name;
+                            return library.Adopted ? t('{library} (adopted)', { library: library.Name }) : library.Name;
                         }).join(', ');
                         var ownError = ownErrors[ownCurrent.Error] || '';
                         setText(own, ownCurrent.Busy ? t('Being updated') : ((ownNames || t('None')) + (ownError ? ' ' + ownError : '')));
-                        renderOwnNotes(ownNotes, ownCurrent, ownPending, function () {
-                            switchOwn(true, false);
+                        renderOwnNotes(ownNotes, ownCurrent, function () {
+                            // The saved mode, read again, sent alone makes the missing libraries again; with no name it
+                            // renames nothing and runs no unfinished rename.
+                            act(statusSection.request().then(function (data) {
+                                adopt(statusSection, data);
+                                var saved = ownState(server).Mode;
+                                if (!row.isConnected || !saved || saved === 'None') {
+                                    return null;
+                                }
+
+                                return api('PUT', 'Servers/' + server.Id, { Username: '', Password: '', LibraryMode: saved }).then(function () {
+                                    showMessage(t('Creating the libraries of {server}. JellyMesh then scans them.', { server: server.Name }));
+                                    return loadStatus();
+                                });
+                            }));
                         });
                         var renameCurrent = renameState(server);
                         var renameText = renameProblem(renameCurrent);
@@ -3042,66 +3314,49 @@
                     };
                     row.jmUpdate(server, report);
 
-                    // Turns the libraries of the server on or off, then reads the state again.
-                    function switchOwn(enabled, confirmed) {
-                        ownPending = true;
-                        ownBox.disabled = true;
-                        return act(api('POST', 'Servers/' + server.Id + '/AutomaticLibraries', { Enabled: enabled, Confirmed: confirmed }).then(function () {
-                            showMessage(enabled
-                                ? t('Creating the libraries of {server}. JellyMesh then scans them.', { server: server.Name })
-                                : t('Deleting the libraries of {server}.', { server: server.Name }));
-                        })).then(function () {
-                            ownPending = false;
+                    var edit = create('div');
+                    edit.className = 'jmLibraries';
+
+                    // Opens the edit form, focused on its first field, or on the libraries once read when asked. Gives the
+                    // error of that read, if any.
+                    row.jmEdit = function (toLibraries, quiet) {
+                        row.open = true;
+                        var opened = serverForm(edit, server, function (saved) {
+                            showMessage(saved.RemoteWarning
+                                ? t('Saved {server}. It does not answer now ({problem}).', { server: saved.Name, problem: connectionLabel(saved.RemoteWarning) })
+                                : t('Saved {server}.', { server: saved.Name }));
                             return loadStatus();
                         });
-                    }
-
-                    ownBox.addEventListener('change', function () {
-                        if (ownBox.checked) {
-                            switchOwn(true, false);
-                            return;
+                        if (!toLibraries && !quiet) {
+                            focusField(opened.focus);
                         }
 
-                        var names = ownState(server).Libraries.map(function (library) {
-                            return library.Name;
-                        });
-                        if (names.length === 0) {
-                            switchOwn(false, false);
-                            return;
-                        }
+                        return opened.ready.then(function (failure) {
+                            var target = edit.querySelector('.jmFormLibraries input') || edit.querySelector('.jmFormLibraries');
+                            if (toLibraries && target) {
+                                target.focus({ preventScroll: true });
+                                target.scrollIntoView({ block: 'center' });
+                            }
 
-                        ownBox.checked = true;
-                        confirmAction(t('Delete the libraries of this server?'), [
-                            t('These libraries are deleted now: {names}.', { names: escapeHtml(names.join(', ')) }),
-                            t('The files in the federated folder stay, and nothing changes on {server}.', { server: escapeHtml(server.Name) })
-                        ], function () {
-                            switchOwn(false, true);
+                            return failure;
                         });
-                    });
+                    };
 
-                    var login = create('div');
-                    login.className = 'jmLibraries';
+                    // The saved login no longer decrypts, so the edit form opens to enter it again (920 Casi).
                     var loginShown = false;
                     row.jmShowLogin = function (current) {
                         var wanted = needsPassword(current);
-                        if (wanted !== loginShown) {
-                            loginShown = wanted;
-                            if (wanted) {
-                                renderPassword(login, current);
-                            } else {
-                                login.textContent = '';
-                            }
+                        if (wanted && !loginShown && !edit.firstChild) {
+                            row.jmEdit(false, true);
                         }
+
+                        loginShown = wanted;
                     };
 
-                    var libraries = create('div');
-                    libraries.className = 'jmLibraries';
-                    row.jmShowLibraries = function () {
-                        return api('GET', 'Servers/' + server.Id + '/Libraries').then(function (result) {
-                            renderLibraries(libraries, server, result);
-                        });
-                    };
                     var actions = actionRow();
+                    actions.appendChild(button(t('Edit'), function () {
+                        act(row.jmEdit());
+                    }));
                     actions.appendChild(button(t('Test connection'), function () {
                         act(api('POST', 'Servers/' + server.Id + '/Test').then(function (result) {
                             showMessage(t('{server}: connected, {mode}, importable libraries: {count}.', {
@@ -3111,14 +3366,6 @@
                             }));
                             return loadStatus();
                         }));
-                    }));
-                    actions.appendChild(button(t('Libraries'), function () {
-                        act(row.jmShowLibraries());
-                    }));
-                    var renameBox = create('div');
-                    renameBox.className = 'jmLibraries';
-                    actions.appendChild(button(t('Rename'), function () {
-                        renderRename(renameBox, server);
                     }));
                     actions.appendChild(button(t('Remove'), function () {
                         var paragraphs = [
@@ -3157,10 +3404,8 @@
                             }));
                         });
                     }, 'jmDanger'));
-                    body.appendChild(login);
                     body.appendChild(actions);
-                    body.appendChild(renameBox);
-                    body.appendChild(libraries);
+                    body.appendChild(edit);
                     var update = row.jmUpdate;
                     row.jmUpdate = function (current, currentReport) {
                         update(current, currentReport);
@@ -3170,10 +3415,26 @@
                     return row;
                 }
 
-                // Shows the notes under the switch of the automatic libraries, and rebuilds them only when they change.
-                function renderOwnNotes(container, own, pending, recreate) {
-                    var missing = own.Enabled && !own.Busy && !pending && own.Libraries.length < 2;
-                    var key = JSON.stringify([own.Enabled, own.Released, missing]);
+                // Says why a library of the admin keeps JellyMesh from making or adopting one, and what to do (D4, D30).
+                function conflictText(conflict) {
+                    var values = { library: conflict.Library, paths: conflict.Paths.join(', ') };
+                    switch (conflict.Reason) {
+                        case 'ParentPath':
+                            return t('Your library {library} holds a folder above {paths}, so JellyMesh neither made nor adopted a library for them. Take that folder out of {library}, or set the library mode of this server to None.', values);
+                        case 'OtherType':
+                            return t('Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library for them. Take them out of {library}, or set the library mode of this server to None.', values);
+                        case 'OtherPaths':
+                            return t('Your library {library} holds {paths} together with other folders, so JellyMesh neither made nor adopted it. Take the other folders out of it for JellyMesh to adopt it, or set the library mode of this server to None.', values);
+                        default:
+                            return t('Your library {library} already holds exactly {paths}, so JellyMesh made no other library for them.', values);
+                    }
+                }
+
+                // Shows the notes about the libraries of a server, and rebuilds them only when they change.
+                function renderOwnNotes(container, own, recreate) {
+                    var missing = own.Enabled && !own.Busy && own.Libraries.length < 2;
+                    var conflicts = own.Conflicts || [];
+                    var key = JSON.stringify([own.Enabled, own.Mode, own.Released, missing, conflicts]);
                     if (container.jmKey === key) {
                         return;
                     }
@@ -3187,6 +3448,13 @@
                     if (own.Released.length > 0) {
                         container.appendChild(create('p', t('JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.', { libraries: own.Released.join(', ') })));
                     }
+
+                    // A library of the admin in the way of one JellyMesh wants: neither made nor adopted, and what to do (D4, D30).
+                    conflicts.forEach(function (conflict) {
+                        var note = create('p', conflictText(conflict));
+                        note.className = 'jmAlert';
+                        container.appendChild(note);
+                    });
 
                     if (missing) {
                         var actions = actionRow();
@@ -3527,16 +3795,16 @@
                 function chooseLibraries(server) {
                     var row = (el('#jmServers').jmRows || {})[server.Id];
                     if (!row) {
-                        showMessage(t('Added {server}. Open Libraries on its card to choose what to import.', { server: server.Name }));
+                        showMessage(t('Added {server}. Open Edit on its card to choose what to import.', { server: server.Name }));
                         return Promise.resolve();
                     }
 
-                    row.open = true;
-                    return row.jmShowLibraries().then(function () {
+                    return row.jmEdit(true).then(function (failure) {
+                        if (failure) {
+                            throw failure;
+                        }
+
                         showMessage(t('Added {server}. Choose its libraries.', { server: server.Name }));
-                        var target = row.querySelector('.jmLibraries input') || row.querySelector('.jmLibrariesNote');
-                        target.focus({ preventScroll: true });
-                        target.scrollIntoView({ block: 'center' });
                     });
                 }
 
@@ -4464,6 +4732,10 @@
                 }
 
                 function renderSettings(config) {
+                    if (addForm) {
+                        addForm.form.jmPresetMode(config.NewServerLibraryMode);
+                    }
+
                     el('#jmSyncInterval').value = config.SyncIntervalSeconds;
                     el('#jmReconciliationTime').value = config.ReconciliationTime;
                     el('#jmFederatedFolder').value = config.FederatedFolderPath;
@@ -5351,32 +5623,18 @@
                     }));
                 });
 
-                el('#jmAddServerForm').addEventListener('submit', function (e) {
-                    e.preventDefault();
-                    var password = el('#jmServerPassword');
-                    var request = {
-                        Name: el('#jmServerName').value,
-                        Url: el('#jmServerUrl').value,
-                        Username: el('#jmServerUser').value,
-                        Password: password.value
-                    };
-                    password.value = '';
-                    act(api('POST', 'Servers', request).catch(function (error) {
-                        if (error.failure === 'AlreadyConfigured' && error.serverName) {
-                            throw new Error(t('This server is already configured as “{server}”.', { server: error.serverName }));
-                        }
+                // Shows the empty form again after a server is added, then opens the card of that server on its libraries.
+                function serverAdded(server) {
+                    addForm = serverForm(el('#jmAddServerBox'), null, serverAdded);
+                    el('#jmAddServerPart').open = false;
+                    return Promise.all([loadStatus(), loadSync()]).then(function () {
+                        return chooseLibraries(server);
+                    }).catch(function (error) {
+                        throw new Error(t('Added {server}, but its libraries could not be read. {reason} Open Edit on its card to try again.', { server: server.Name, reason: error.message }));
+                    });
+                }
 
-                        throw error;
-                    }).then(function (server) {
-                        el('#jmAddServerForm').reset();
-                        el('#jmAddServerPart').open = false;
-                        return Promise.all([loadStatus(), loadSync()]).then(function () {
-                            return chooseLibraries(server);
-                        }).catch(function (error) {
-                            throw new Error(t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
-                        });
-                    }));
-                });
+                addForm = serverForm(el('#jmAddServerBox'), null, serverAdded);
 
                 el('#jmChooseFolder').addEventListener('click', function () {
                     var picker = new Dashboard.DirectoryBrowser();

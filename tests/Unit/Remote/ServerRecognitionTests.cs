@@ -144,7 +144,7 @@ public class ServerRecognitionTests
         var server = await fixture.AddServerAsync();
         fixture.Store.Configuration.Servers.Single().JellyfinServerId = string.Empty;
 
-        await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        await fixture.Registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
     }
@@ -224,7 +224,7 @@ public class ServerRecognitionTests
         fixture.Handler.Requests.Clear();
         var saves = fixture.Store.Saves;
 
-        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, new Jellyfin.Plugin.JellyMesh.Security.RemoteCredentials { Username = "other", Password = "x" }, CancellationToken.None);
+        var result = await fixture.Registry.EnterCredentialsAsync(server, new Jellyfin.Plugin.JellyMesh.Security.RemoteCredentials { Username = "other", Password = "x" }, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.OtherServer, result.Failure);
         Assert.Equal(saves, fixture.Store.Saves);
@@ -268,18 +268,6 @@ public class ServerRecognitionTests
         var result = await restarted.RunWithSessionAsync(late, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        AssertKeptOutAndLogged(fixture, late);
-    }
-
-    [Fact]
-    public async Task AnIdHeldByAnotherServerIsNotStoredWhenTheLoginIsEnteredAgain()
-    {
-        var (fixture, late) = await TwoServersOneWithoutItsIdAsync();
-        using var owned = fixture;
-
-        var result = await fixture.Registry.UpdateCredentialsAsync(late, TestValues.Credentials, CancellationToken.None);
-
-        Assert.True(result.IsSuccess, result.Failure.ToString());
         AssertKeptOutAndLogged(fixture, late);
     }
 
