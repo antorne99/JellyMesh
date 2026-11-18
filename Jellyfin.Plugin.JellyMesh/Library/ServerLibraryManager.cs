@@ -324,8 +324,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     private static RemoteServerConfig? Find(PluginConfiguration config, Guid serverId) => config.Servers.FirstOrDefault(server => server.Id == serverId);
 
-    // What tells a library apart among those of its server: its remote library, or its kind.
-    private static string KeyOf(AutomaticLibraryConfig record) => record.RemoteLibraryId.Length > 0 ? record.RemoteLibraryId : record.Kind.ToString();
+    private static string KeyOf(AutomaticLibraryConfig record) => record.KeyOf();
 
     // The server only while it is still the instance a job started for.
     private static RemoteServerConfig? Owned(PluginConfiguration config, RemoteServerConfig owner) =>

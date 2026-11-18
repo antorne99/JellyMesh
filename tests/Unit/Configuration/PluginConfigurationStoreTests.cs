@@ -76,6 +76,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = "library-2", Name = "Cartoni", CollectionType = "tvshows" });
             server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = "library-1", Name = "Film 4K", CollectionType = "movies" });
             server.CreatedLibraryKeys.Add("library-2");
+            server.CreatedLibraryKeys.Add("Movies");
             server.ImportedLibraryIds.Add("library-2");
             server.ImportedLibraryIds.Add("library-1");
             server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0", RemoteLibraryId = "library-2" });
@@ -125,7 +126,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal(
             [("library-2", "Cartoni", "tvshows"), ("library-1", "Film 4K", "movies")],
             casa.RemoteLibraries.Select(library => (library.Id, library.Name, library.CollectionType)));
-        Assert.Equal(["library-2"], casa.CreatedLibraryKeys);
+        Assert.Equal(["library-2", "Movies"], casa.CreatedLibraryKeys);
         Assert.Equal(
             [(ServerLibraryKind.Series, "Casa - Serie", "0f1e2d3c4b5a69788796a5b4c3d2e1f0", "library-2"), (ServerLibraryKind.Movies, "Casa - Film", string.Empty, string.Empty)],
             casa.AutomaticLibraryRegistry.Select(library => (library.Kind, library.Name, library.ItemId, library.RemoteLibraryId)));
@@ -181,6 +182,36 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal([true, false], loaded.Servers.Select(server => server.AutomaticLibraries));
         Assert.Equal(("Casa - Film", string.Empty), Assert.Single(loaded.Servers[0].AutomaticLibraryRegistry) is var library ? (library.Name, library.RemoteLibraryId) : default);
         Assert.Equal(LibraryMode.ByType, loaded.NewServerLibraryMode);
+    }
+
+    [Fact]
+    public async Task AnAutomaticLibraryKeptBeforeTheLibraryModesCountsAsMadeSoItIsNeverMadeAgain()
+    {
+        var on = Guid.NewGuid();
+        var before = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All.Take(4).ToList(), 1);
+        await before.WriteAsync(
+            (connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"""
+                    INSERT INTO servers VALUES ('{on:D}', 0, '', 'Casa', 'http://casa.invalid', '', 'Unknown', 0, 1, 0, 0);
+                    INSERT INTO server_automatic_libraries VALUES ('{on:D}', 0, 'Movies', 'Casa - Film', 'item-1');
+                    INSERT INTO server_automatic_libraries VALUES ('{on:D}', 1, 'Series', 'Casa - Serie', 'item-2');
+                    """;
+                command.ExecuteNonQuery();
+            },
+            CancellationToken.None);
+        before.Dispose();
+        SqliteConnection.ClearAllPools();
+        var store = Store();
+
+        Assert.Equal(["Movies", "Series"], store.Read(config => config.Servers[0].CreatedLibraryKeys.ToList()));
+
+        // Once a follow drops the record of a deleted library, the key stays.
+        store.Update(config => config.Servers[0].AutomaticLibraryRegistry.RemoveAt(0));
+        SqliteConnection.ClearAllPools();
+        Assert.Equal(["Movies", "Series"], Store().Read(config => config.Servers[0].CreatedLibraryKeys.ToList()));
     }
 
     [Fact]

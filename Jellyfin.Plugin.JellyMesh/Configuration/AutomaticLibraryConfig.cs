@@ -24,4 +24,10 @@ public class AutomaticLibraryConfig
     /// Gets or sets the library id as last seen, empty while not known.
     /// </summary>
     public string ItemId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets what tells the library apart among those of its server: its remote library, or its kind.
+    /// </summary>
+    /// <returns>The key, as kept in <see cref="RemoteServerConfig.CreatedLibraryKeys"/>.</returns>
+    public string KeyOf() => RemoteLibraryId.Length > 0 ? RemoteLibraryId : Kind.ToString();
 }

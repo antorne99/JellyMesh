@@ -200,6 +200,16 @@ internal sealed class ConfigurationRows
             Fill(server.ReleasedAutomaticLibraries, serverValues, id, ReleasedLibrary);
             Fill(server.CreatedLibraryKeys, serverValues, id, CreatedLibrary);
             Fill(server.AutomaticLibraryRegistry, automatic, id);
+
+            // A library kept by an older version, or by its imported files, counts as made, so one deleted is never made again.
+            foreach (var key in server.AutomaticLibraryRegistry.Select(record => record.KeyOf()).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
+            {
+                if (!server.CreatedLibraryKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+                {
+                    server.CreatedLibraryKeys.Add(key);
+                }
+            }
+
             foreach (var library in remote[id].OrderBy(library => (long)library[1]))
             {
                 server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = (string)library[2], Name = (string)library[3], CollectionType = (string)library[4] });
