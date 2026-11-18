@@ -130,7 +130,7 @@ public static class StubPlanner
         var merged = new HashSet<string>(StringComparer.Ordinal);
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
 
-        var legacy = StubLayout.IsLegacy(input.State);
+        var legacy = input.KeepsOlderLayout || StubLayout.IsLegacy(input.State);
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);

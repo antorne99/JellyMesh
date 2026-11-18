@@ -62,4 +62,66 @@ public class StubLayoutTests
         Assert.Equal([shows], StubLayout.TypeFoldersOf(state, _server, TypeFolder.Series));
         Assert.Empty(StubLayout.TypeFoldersOf(state, Guid.NewGuid(), TypeFolder.Movies));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AFolderWithoutOlderStubFilesHasNone(bool anchors)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "jellymesh-layout-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            if (anchors)
+            {
+                Write(root, Path.Combine(FederatedPaths.ServerFolder(_server), "Film", ".jellymesh"));
+                Write(root, Path.Combine("Serie", ".jellymesh"));
+                Write(root, FederatedPaths.MovieStubIn(FederatedPaths.TypeFolderOf(_server, TestLibraries.Films, TypeFolder.Movies), "Film (2020)", "A"));
+            }
+
+            Assert.False(StubLayout.HasOlderStubFiles(root));
+        }
+        finally
+        {
+            Delete(root);
+        }
+    }
+
+    [Theory]
+    [InlineData("server")]
+    [InlineData("flat")]
+    [InlineData("episode")]
+    public void AStubFileOfAnOlderLayoutIsFound(string where)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "jellymesh-layout-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Write(root, where switch
+            {
+                "server" => FederatedPaths.MovieStub(_server, "Film (2020)", "A"),
+                "flat" => Path.Combine("Film", "Film (2020)", "Film (2020).strm"),
+                _ => Path.Combine(FederatedPaths.ServerFolder(_server), "Serie", "Show (2020)", "Season 01", "Show S01E01.strm")
+            });
+
+            Assert.True(StubLayout.HasOlderStubFiles(root));
+        }
+        finally
+        {
+            Delete(root);
+        }
+    }
+
+    private static void Write(string root, string relative)
+    {
+        var path = Path.Combine(root, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, string.Empty);
+    }
+
+    private static void Delete(string root)
+    {
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }

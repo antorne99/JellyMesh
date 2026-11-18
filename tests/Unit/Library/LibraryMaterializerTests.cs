@@ -530,6 +530,22 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task AFolderThatStillHoldsStubsOfTheServerFoldersKeepsThatLayoutWithAnEmptyRegistry()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+        var old = _fixture.Path_(StubFixture.InServer(a, "Film", "Old (2019)", "Old (2019) - A.strm"));
+        Directory.CreateDirectory(Path.GetDirectoryName(old)!);
+        await File.WriteAllTextAsync(old, "http://127.0.0.1/old");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(
+            StubFixture.InServer(a, "Film", "Film (2020)", "Film (2020) - A.strm"),
+            Assert.Single(_fixture.Registry.State.Stubs).RelativePath);
+    }
+
+    [Fact]
     public async Task AHostileTitleStaysInsideTheFolder()
     {
         var film = TestItems.Movie("m", "../../../../etc/cron.d/evil", 2020);

@@ -31,6 +31,32 @@ public static class StubLayout
         return IsLegacy(state.Stubs, state.Series);
     }
 
+    /// <summary>Tells whether the flat folders or the 0.5 server folders hold a <c>.strm</c> file.</summary>
+    /// <param name="root">The federated folder.</param>
+    /// <returns>True when one is there. False when there is none or the folder cannot be read.</returns>
+    public static bool HasOlderStubFiles(string root)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(root);
+        try
+        {
+            if (!Directory.Exists(root))
+            {
+                return false;
+            }
+
+            var parents = Directory.EnumerateDirectories(root)
+                .Where(folder => Guid.TryParseExact(Path.GetFileName(folder), "D", out _))
+                .Prepend(root);
+            return parents
+                .SelectMany(parent => TypeFolder.Written.Select(type => Path.Combine(parent, type.Name)))
+                .Any(folder => Directory.Exists(folder) && Directory.EnumerateFiles(folder, "*.strm", SearchOption.AllDirectories).Any());
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Gives the relative type folders of a server that hold its stubs or series of one type.</summary>
     /// <param name="state">The registry.</param>
     /// <param name="serverId">The server.</param>

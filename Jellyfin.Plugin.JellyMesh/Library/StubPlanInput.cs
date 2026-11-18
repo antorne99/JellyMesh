@@ -28,6 +28,12 @@ public sealed record StubPlanInput(
     public bool WritesCollections { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether the folder still holds stubs of an older layout that the registry does not know, as
+    /// after a damaged registry: new stubs then follow that layout too.
+    /// </summary>
+    public bool KeepsOlderLayout { get; init; }
+
+    /// <summary>
     /// Gets the local library a type folder of a remote library goes to, as a key: folders with one key hold one stub per
     /// title. By default one local library per server and type.
     /// </summary>
