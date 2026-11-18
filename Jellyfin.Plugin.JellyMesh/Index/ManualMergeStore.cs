@@ -93,7 +93,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
 
-    private static List<ManualMerge> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
+    internal static List<ManualMerge> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
     {
         var copies = new Dictionary<string, List<MergedCopy>>(StringComparer.Ordinal);
         using (var command = StoreSql.Command(connection, transaction, SelectCopies))
@@ -142,7 +142,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
     }
 
     // Deletes the merges gone or changed and inserts the new or changed ones; the others stay as they are.
-    private static void Replace(SqliteConnection connection, SqliteTransaction transaction, List<ManualMerge> current, IReadOnlyList<ManualMerge> next)
+    internal static void Replace(SqliteConnection connection, SqliteTransaction transaction, List<ManualMerge> current, IReadOnlyList<ManualMerge> next)
     {
         var before = current.ToDictionary(merge => merge.Id);
         var after = next.DistinctBy(merge => merge.Id).ToDictionary(merge => merge.Id);

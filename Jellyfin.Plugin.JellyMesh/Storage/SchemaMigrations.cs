@@ -23,7 +23,10 @@ public static class SchemaMigrations
             Library.StubTables.Create(connection, transaction);
         }),
         new(SmallStateSchema.Version, SmallStateSchema.Apply),
-        new(4, ConfigurationTables.Create)
+        new(4, ConfigurationTables.Create),
+
+        // The mark of the migration of the 0.4 and 0.5 data (F32).
+        new(LegacyImport.SchemaVersion, LegacyImport.CreateTable)
     ];
 
     /// <summary>

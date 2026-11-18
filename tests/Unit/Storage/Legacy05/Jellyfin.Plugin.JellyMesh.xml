@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <SyncIntervalSeconds>900</SyncIntervalSeconds>
+  <ReconciliationTime>03:00</ReconciliationTime>
+  <FederatedFolderPath>/federata</FederatedFolderPath>
+  <MetadataProtection>true</MetadataProtection>
+  <FederateCollections>false</FederateCollections>
+  <CloseTranscodeAtSlotExpiry>true</CloseTranscodeAtSlotExpiry>
+  <RemotePlaybackInfoTimeoutSeconds>10</RemotePlaybackInfoTimeoutSeconds>
+  <StreamOpenTimeoutSeconds>15</StreamOpenTimeoutSeconds>
+  <PlaybackIdleSeconds>90</PlaybackIdleSeconds>
+  <SessionRetentionHours>24</SessionRetentionHours>
+  <PolicyCacheMinutes>5</PolicyCacheMinutes>
+  <Servers>
+    <RemoteServerConfig>
+      <Id>8a4800ba-4770-4936-b019-94e846e237bb</Id>
+      <JellyfinServerId>869821d6c68244858377651a32124f42</JellyfinServerId>
+      <Name>remote</Name>
+      <Url>http://host.docker.internal:18531</Url>
+      <EncryptedCredentials>AQTULwxQzPHzkKaBIHjBRQbfnffaMwQLkOKhoSp1uKJ35QCnrQEYe4BgpSMbLzz6T6pUmWtFIcUOf2+bqQs1i/37eMKbj69kfxEOOQTjsGM+</EncryptedCredentials>
+      <Mode>Standard</Mode>
+      <ProtocolVersion>0</ProtocolVersion>
+      <ImportedLibraryIds>
+        <string>253bc9fc2ae4cb0a47d99e75b7e36923</string>
+        <string>ef4aec73663e35445b0ee9c6bcfdc0b1</string>
+      </ImportedLibraryIds>
+      <AutomaticLibraries>false</AutomaticLibraries>
+      <AutomaticLibraryRegistry />
+      <PreexistingLibraryIds />
+      <FollowedLibraryIds />
+      <FollowSkipped>false</FollowSkipped>
+      <RenameUnfinished>false</RenameUnfinished>
+      <ReleasedAutomaticLibraries />
+    </RemoteServerConfig>
+  </Servers>
+  <RemovedServerLibraries />
+  <Peers />
+  <LayoutMigration>
+    <Mode>None</Mode>
+    <Step>AddPaths</Step>
+    <Error>None</Error>
+    <ErrorLibrary />
+    <PlacedServers />
+  </LayoutMigration>
+</PluginConfiguration>

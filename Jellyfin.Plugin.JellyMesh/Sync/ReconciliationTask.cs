@@ -68,6 +68,7 @@ public sealed class ReconciliationTask : SyncTask
                 await BackUpAsync(cancellationToken).ConfigureAwait(false);
                 await EmptyLogAsync(cancellationToken).ConfigureAwait(false);
                 await DeleteExpiredDamagedAsync(cancellationToken).ConfigureAwait(false);
+                await DeleteExpiredMigratedAsync(cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -123,6 +124,23 @@ public sealed class ReconciliationTask : SyncTask
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogWarning("The expired damaged JellyMesh database files cannot be deleted: {Error}", exception.Message);
+        }
+    }
+
+    // The files of the older version go 30 days after the migration; if they cannot, the next night tries again (D25).
+    private async Task DeleteExpiredMigratedAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _database.DeleteExpiredMigratedAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (StoreSuspendedException)
+        {
+            _logger.LogWarning("The files of the older JellyMesh version were kept: the database is suspended");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("The files of the older JellyMesh version cannot be deleted: {Error}", exception.Message);
         }
     }
 
