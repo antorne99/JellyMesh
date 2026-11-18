@@ -153,6 +153,8 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => _inner.BackUpAsync(cancellationToken);
 
+    public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => _inner.DeleteExpiredDamagedAsync(cancellationToken);
+
     public void Dispose() => _inner.Dispose();
 
     private void ThrowIfSuspended()

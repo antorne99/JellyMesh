@@ -243,6 +243,21 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfSuspended(_health ?? SetHealth(Open()));
+            DeleteExpiredDamaged();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         // Waits a bounded time for a write in progress, so its transaction ends before the writer closes.
@@ -350,24 +365,95 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         var now = _time.GetUtcNow();
         var copy = new StoreBackup(StoreBackups.BackupPath(_folder, now), DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds()));
         var partial = StoreBackups.PartialPath(copy.FilePath);
-        StoreBackups.DeletePartials(_folder);
+        foreach (var leftover in StoreBackups.Partials(_folder))
+        {
+            TryErase(leftover, "copy cut short");
+        }
+
         _guard.CreatePrivate(partial).Dispose();
         try
         {
             using var command = Command(writer, "VACUUM INTO $path;");
             command.Parameters.AddWithValue("$path", partial);
             command.ExecuteNonQuery();
+            if (File.Exists(copy.FilePath))
+            {
+                TryErase(copy.FilePath, "copy replaced");
+            }
+
             File.Move(partial, copy.FilePath, overwrite: true);
         }
         catch
         {
-            File.Delete(partial);
+            TryErase(partial, "failed copy");
             throw;
         }
 
-        StoreBackups.Prune(_folder, copy);
+        foreach (var pruned in StoreBackups.Pruned(_folder, copy))
+        {
+            TryErase(pruned, "pruned copy");
+        }
+
         _logger.LogInformation("The JellyMesh database was copied to {Copy}", Path.GetFileName(copy.FilePath));
         return copy;
+    }
+
+    // Overwrites and deletes each damaged file and log once 30 days have passed since the date in its name (D35).
+    private void DeleteExpiredDamaged()
+    {
+        var now = _time.GetUtcNow();
+        foreach (var file in StoreBackups.ListDamaged(_folder))
+        {
+            try
+            {
+                if (now - DamagedSince(file, now) >= StoreBackups.DamagedKept)
+                {
+                    StoreBackups.Erase(file.FilePath);
+                    _logger.LogInformation("The damaged JellyMesh database file {File} was overwritten and deleted after 30 days", Path.GetFileName(file.FilePath));
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning("The damaged JellyMesh database file {File} cannot be overwritten and deleted yet: {Error}", Path.GetFileName(file.FilePath), exception.Message);
+            }
+        }
+    }
+
+    // The date in the name, or for a date ahead of the clock the file's write time, set to now the first time it is ahead too.
+    // A link is never stamped, which would write through it, so with a date ahead it goes at once.
+    private static DateTimeOffset DamagedSince(StoreBackup file, DateTimeOffset now)
+    {
+        if (file.CreatedAt <= now)
+        {
+            return file.CreatedAt;
+        }
+
+        if (new FileInfo(file.FilePath).LinkTarget is not null)
+        {
+            return DateTimeOffset.MinValue;
+        }
+
+        var written = new DateTimeOffset(File.GetLastWriteTimeUtc(file.FilePath), TimeSpan.Zero);
+        if (written <= now)
+        {
+            return written;
+        }
+
+        File.SetLastWriteTimeUtc(file.FilePath, now.UtcDateTime);
+        return now;
+    }
+
+    // Overwrites and deletes a file of the plugin's own; one that cannot go is logged and left for the next night.
+    private void TryErase(string path, string what)
+    {
+        try
+        {
+            StoreBackups.Erase(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("The JellyMesh database {What} {File} cannot be overwritten and deleted yet: {Error}", what, Path.GetFileName(path), exception.Message);
+        }
     }
 
     // The writer of a healthy store, opening it first if nothing has; called with the gate held.
