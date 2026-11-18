@@ -35,14 +35,14 @@ public sealed class PluginDatabaseTests : IDisposable
         }
     }
 
-    private PluginDatabase Open(IKeyFileGuard? guard = null, IReadOnlyList<SchemaMigration>? migrations = null)
+    private PluginDatabase Open(IKeyFileGuard? guard = null, IReadOnlyList<SchemaMigration>? migrations = null, int busyTimeoutSeconds = 1)
     {
         var database = new PluginDatabase(
             Folder,
             new CapturingLogger<PluginDatabase>(),
             guard ?? KeyFileGuards.ForThisSystem(),
             migrations ?? SchemaMigrations.All,
-            busyTimeoutSeconds: 1);
+            busyTimeoutSeconds);
         _opened.Add(database);
         return database;
     }
@@ -107,10 +107,11 @@ public sealed class PluginDatabaseTests : IDisposable
     }
 
     // A file left by a newer build, as after going back to an older one.
-    private void WriteDatabase(int version, int rows = 1)
+    private void WriteDatabase(int version, int rows = 1, string journalMode = "delete")
     {
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DatabasePath, Pooling = false }.ToString());
         connection.Open();
+        Scalar(connection, $"PRAGMA journal_mode = {journalMode};");
         Scalar(connection, "CREATE TABLE IF NOT EXISTS later (value TEXT); CREATE INDEX IF NOT EXISTS later_value ON later (value);");
         for (var row = 0; row < rows; row++)
         {
@@ -120,10 +121,12 @@ public sealed class PluginDatabaseTests : IDisposable
         Scalar(connection, $"PRAGMA user_version = {version};");
     }
 
-    [Fact]
-    public async Task ANewerSchemaLeavesTheFileUntouchedAndSuspends()
+    [Theory]
+    [InlineData("delete")]
+    [InlineData("wal")]
+    public async Task ANewerSchemaLeavesTheFileUntouchedAndSuspends(string journalMode)
     {
-        WriteDatabase(SchemaMigrations.Latest + 1);
+        WriteDatabase(SchemaMigrations.Latest + 1, journalMode: journalMode);
         var before = await File.ReadAllBytesAsync(DatabasePath);
 
         var database = Open();
@@ -132,6 +135,7 @@ public sealed class PluginDatabaseTests : IDisposable
         Assert.True(database.Health.Suspended);
         Assert.Equal(before, await File.ReadAllBytesAsync(DatabasePath));
         Assert.False(File.Exists(DatabasePath + "-wal"));
+        Assert.False(File.Exists(DatabasePath + "-shm"));
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((_, _) => { }, CancellationToken.None));
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync((_, _) => 0, CancellationToken.None));
     }
@@ -397,7 +401,7 @@ public sealed class PluginDatabaseTests : IDisposable
     [Fact]
     public async Task AWriteWaitsForAnotherWriterAndThenGoesThrough()
     {
-        var database = await WithItemsAsync(Open());
+        var database = await WithItemsAsync(Open(busyTimeoutSeconds: 5));
         await using var outside = Outside();
         await outside.OpenAsync();
         Scalar(outside, "BEGIN IMMEDIATE;");
