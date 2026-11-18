@@ -164,6 +164,22 @@ public static partial class FederatedPaths
         return Path.Combine(LibraryFolder(serverId, libraryId), type.Name);
     }
 
+    /// <summary>Gives the remote library of a relative path in the remote library layout, or null for the older layouts.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The library id, or null.</returns>
+    public static string? RemoteLibraryOf(string relativePath)
+    {
+        ArgumentNullException.ThrowIfNull(relativePath);
+        var parts = relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 4);
+        return parts.Length >= 3
+            && Guid.TryParseExact(parts[0], "D", out var server)
+            && string.Equals(parts[0], ServerFolder(server), StringComparison.Ordinal)
+            && IsLibraryId(parts[1])
+            && TypeFolder.All.Any(type => string.Equals(type.Name, parts[2], StringComparison.Ordinal))
+            ? parts[1]
+            : null;
+    }
+
     /// <summary>Builds the relative path of a film stub in a type folder, named <c>{folder} - {label}</c>.</summary>
     /// <param name="typeFolder">The relative type folder.</param>
     /// <param name="folderName">The folder name of the film.</param>

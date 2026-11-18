@@ -91,4 +91,28 @@ public class FederatedLayoutTests
         Assert.True(FederatedPaths.IsLibraryId(libraryId));
         Assert.Equal(Path.Combine(_server.ToString("D"), libraryId), FederatedPaths.LibraryFolder(_server, libraryId));
     }
+
+    [Fact]
+    public void TheRemoteLibraryOfAStubIsReadFromItsPath()
+    {
+        var films = FederatedPaths.TypeFolderOf(_server, LibraryId, TypeFolder.Movies);
+        var shows = FederatedPaths.TypeFolderOf(_server, LibraryId, TypeFolder.Series);
+
+        Assert.Equal(LibraryId, FederatedPaths.RemoteLibraryOf(FederatedPaths.MovieStubIn(films, "Film (2020)", "Casa")));
+        Assert.Equal(LibraryId, FederatedPaths.RemoteLibraryOf(Path.Combine(shows, "Serie (2020)")));
+        Assert.Equal(LibraryId, FederatedPaths.RemoteLibraryOf(FederatedPaths.EpisodeStub(Path.Combine(shows, "Serie (2020)"), "Serie", 1, 2)));
+        Assert.Equal(LibraryId, FederatedPaths.RemoteLibraryOf(Path.Combine(FederatedPaths.TypeFolderOf(_server, LibraryId, TypeFolder.Books), "Libro")));
+    }
+
+    [Fact]
+    public void AStubOfTheOlderLayoutsHasNoRemoteLibrary()
+    {
+        Assert.Null(FederatedPaths.RemoteLibraryOf(FederatedPaths.MovieStub("Film (2020)")));
+        Assert.Null(FederatedPaths.RemoteLibraryOf(FederatedPaths.MovieStub(_server, "Film (2020)", "Casa")));
+        Assert.Null(FederatedPaths.RemoteLibraryOf(Path.Combine(FederatedPaths.SeriesFolderOf(_server, "Serie (2020)"), "Season 01")));
+        Assert.Null(FederatedPaths.RemoteLibraryOf(FederatedPaths.MovieStub(_server, LibraryId, "Casa")));
+        Assert.Null(FederatedPaths.RemoteLibraryOf(Path.Combine("not-a-server", LibraryId, "Film", "Film")));
+        Assert.Null(FederatedPaths.RemoteLibraryOf(Path.Combine(_server.ToString("D"), LibraryId, "Altro", "Film")));
+        Assert.Null(FederatedPaths.RemoteLibraryOf(Path.Combine(_server.ToString("N"), LibraryId, "Film", "Film")));
+    }
 }
