@@ -382,22 +382,78 @@ public sealed class LegacyImportTests : IDisposable
         Assert.Equal([LogLevel.Warning], Logger.Levels.Where(level => level >= LogLevel.Warning));
     }
 
-    // Each move is a rename, so a start cut short after the import leaves only files without a copy, which the next start moves.
+    // Old files a move could not finish move at the next start, over any copy already there; only then is the move done.
     [Fact]
-    public async Task AnOldFileAMoveCutShortLeftInPlaceMovesAtTheNextStart()
+    public async Task OldFilesAMoveCouldNotFinishMoveAtTheNextStart()
     {
         CopyFixtures();
+        await File.WriteAllTextAsync(Migrated, "in the way");
         Open().Dispose();
         SqliteConnection.ClearAllPools();
-        File.Move(Path.Combine(Migrated, "sync-history.json"), Path.Combine(Folder, "sync-history.json"));
+        Assert.True(File.Exists(Path.Combine(Folder, "sync-history.json")));
+        File.Delete(Migrated);
+        Directory.CreateDirectory(Migrated);
+        await File.WriteAllTextAsync(Path.Combine(Migrated, "sync-history.json"), "older copy");
         Logger.Levels.Clear();
 
         var database = Open();
 
         Assert.Equal(2, await CountAsync(database, "sync_runs"));
         Assert.False(File.Exists(Path.Combine(Folder, "sync-history.json")));
-        Assert.True(File.Exists(Path.Combine(Migrated, "sync-history.json")));
+        Assert.Equal(await File.ReadAllBytesAsync(Fixture("sync-history.json")), await File.ReadAllBytesAsync(Path.Combine(Migrated, "sync-history.json")));
         Assert.DoesNotContain(LogLevel.Warning, Logger.Levels);
+    }
+
+    // A file that comes back after the move is left in place even when the folder holds no copy of it.
+    [Fact]
+    public async Task ANewOldFileAfterTheMoveStaysWhereItIs()
+    {
+        CopyFixtures();
+        Open().Dispose();
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllTextAsync(Path.Combine(Folder, "manual-merges.json"), """{"Version":1,"Merges":[]}""");
+        Logger.Levels.Clear();
+
+        Open();
+
+        Assert.True(File.Exists(Path.Combine(Folder, "manual-merges.json")));
+        Assert.False(File.Exists(Path.Combine(Migrated, "manual-merges.json")));
+        Assert.Equal([LogLevel.Warning], Logger.Levels.Where(level => level >= LogLevel.Warning));
+    }
+
+    // A database made again over a kept folder imports the files once more and moves them over the older copies.
+    [Fact]
+    public void AnImportOverAFolderThatAlreadyHoldsCopiesMovesTheFilesOverThem()
+    {
+        CopyFixtures();
+        Directory.CreateDirectory(Migrated);
+        File.Copy(Fixture("federation-index.json"), Path.Combine(Migrated, "federation-index.json"));
+
+        Open();
+
+        Assert.DoesNotContain(Directory.EnumerateFiles(Folder), path => _jsonFiles.Contains(Path.GetFileName(path)));
+        Assert.False(File.Exists(ConfigurationFile));
+    }
+
+    // An old file that is a link moves as a link and is never made private through it.
+    [Fact]
+    public async Task AnOldFileThatIsALinkMovesWithoutChangingWhatItPointsTo()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var outside = Path.Combine(Root, "outside.json");
+        await File.WriteAllTextAsync(outside, """{"Version":1,"Merges":[]}""");
+        var shared = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
+        File.SetUnixFileMode(outside, shared);
+        File.CreateSymbolicLink(Path.Combine(Folder, "manual-merges.json"), outside);
+
+        Open();
+
+        Assert.NotNull(new FileInfo(Path.Combine(Migrated, "manual-merges.json")).LinkTarget);
+        Assert.Equal(shared, File.GetUnixFileMode(outside));
     }
 
     // Once the folder is erased, files that come back are left alone instead of filling a folder the next night would erase.

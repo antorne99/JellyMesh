@@ -51,9 +51,11 @@ public sealed class LegacyImport
     private const int Corrupt = 11;
     private const int NotADatabase = 26;
 
-    private const string SelectMark = "SELECT migrated_utc, deleted_utc FROM legacy_import WHERE id = 1;";
+    private const string SelectMark = "SELECT migrated_utc, moved_utc FROM legacy_import WHERE id = 1;";
 
     private const string InsertMark = "INSERT INTO legacy_import (id, migrated_utc, damaged_files) VALUES (1, $migrated, $damaged);";
+
+    private const string MarkMoved = "UPDATE legacy_import SET moved_utc = $moved WHERE id = 1;";
 
     private const string MarkDeleted = "UPDATE legacy_import SET deleted_utc = $deleted WHERE id = 1;";
 
@@ -161,12 +163,13 @@ public sealed class LegacyImport
             id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
             migrated_utc INTEGER NOT NULL,
             damaged_files TEXT NOT NULL,
+            moved_utc INTEGER,
             deleted_utc INTEGER);
         """);
 
     /// <summary>
     /// Imports the old files and marks the migration, the first time; then moves the old files away, which a later open
-    /// finishes if it was cut short. Files that come back later are left in place. Called with the database gate held.
+    /// finishes if it was cut short. Files that come back after the move are left in place. Called with the database gate held.
     /// </summary>
     /// <param name="writer">The writer connection of the database.</param>
     /// <param name="now">The time of the migration.</param>
@@ -196,22 +199,21 @@ public sealed class LegacyImport
                 _logger.LogInformation("The data of the older JellyMesh version moved into the plugin database. The old files are kept in {Folder} for 30 days", FolderName);
             }
         }
-        else
+        else if (mark.Value.Moved)
         {
-            // Each move is a rename, so a start cut short leaves only files without a copy; any other file came back later.
-            var returned = mark.Value.DeletedUtc is null
-                ? files.Where(file => File.Exists(Path.Combine(MigratedFolder, Path.GetFileName(file)))).ToList()
-                : files;
-            if (returned.Count > 0)
+            if (files.Count > 0)
             {
-                _logger.LogWarning("Files of the older JellyMesh version came back after the migration and are neither read nor moved: {Files}", string.Join(", ", returned.Select(Path.GetFileName)));
-                files = files.Except(returned).ToList();
+                _logger.LogWarning("Files of the older JellyMesh version came back after the migration and are neither read nor moved: {Files}", string.Join(", ", files.Select(Path.GetFileName)));
             }
+
+            return;
         }
 
-        if (files.Count > 0)
+        if (files.Count == 0 || Move(files))
         {
-            Move(files);
+            using var transaction = writer.BeginTransaction(deferred: false);
+            StoreSql.Execute(writer, transaction, MarkMoved, ("$moved", now.UtcTicks));
+            transaction.Commit();
         }
     }
 
@@ -299,13 +301,13 @@ public sealed class LegacyImport
         return Convert.ToString(check.ExecuteScalar(), CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
-    private static (DateTimeOffset MigratedUtc, DateTimeOffset? DeletedUtc)? ReadMark(SqliteConnection writer)
+    private static (DateTimeOffset MigratedUtc, bool Moved)? ReadMark(SqliteConnection writer)
     {
         using var command = writer.CreateCommand();
         command.CommandText = SelectMark;
         using var reader = command.ExecuteReader();
         return reader.Read()
-            ? (new DateTimeOffset(reader.GetInt64(0), TimeSpan.Zero), reader.IsDBNull(1) ? null : new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero))
+            ? (new DateTimeOffset(reader.GetInt64(0), TimeSpan.Zero), !reader.IsDBNull(1))
             : null;
     }
 
@@ -388,15 +390,16 @@ public sealed class LegacyImport
         return files;
     }
 
-    // Moves each file into the folder, then keeps it and the folder private (row 428), never through a link.
-    private void Move(List<string> files)
+    // Moves each file over any copy a move cut short left, then keeps it and the folder private (row 428), never through
+    // a link. Returns whether every file moved.
+    private bool Move(List<string> files)
     {
         try
         {
             var target = MigratedFolder;
             if (Directory.Exists(target) && IsLinkedFolder())
             {
-                return;
+                return false;
             }
 
             if (OperatingSystem.IsWindows())
@@ -412,16 +415,19 @@ public sealed class LegacyImport
             foreach (var file in files)
             {
                 var moved = Path.Combine(target, Path.GetFileName(file));
-                File.Move(file, moved);
+                File.Move(file, moved, overwrite: true);
                 if (new FileInfo(moved).LinkTarget is null)
                 {
                     _guard.KeepPrivate(moved);
                 }
             }
+
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _logger.LogWarning("The old JellyMesh files cannot all move to {Folder} yet: {Error}. They are never read again, and the next start moves them", FolderName, exception.Message);
+            return false;
         }
     }
 
