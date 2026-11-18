@@ -42,6 +42,9 @@ public sealed class LibraryRenameJournal
     private readonly Lock _lock = new();
     private List<(long Id, LibraryRenameRecord Record)>? _records;
 
+    // The database generation the renames were read in; another one means their ids may name other rows.
+    private long _readGeneration;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="LibraryRenameJournal"/> class.
     /// </summary>
@@ -170,9 +173,11 @@ public sealed class LibraryRenameJournal
             try
             {
                 var now = DateTime.UtcNow.Ticks;
+                var generation = _readGeneration;
                 _database.WriteAsync(
                     (connection, transaction) =>
                     {
+                        ThrowIfReopened(generation);
                         foreach (var id in ids)
                         {
                             if (setAside)
@@ -197,17 +202,28 @@ public sealed class LibraryRenameJournal
         }
     }
 
+    // Refuses a change planned on ids of an earlier opening of the database, rolling it back.
+    private void ThrowIfReopened(long generation)
+    {
+        if (_database.Generation != generation)
+        {
+            throw new StoreSuspendedException("The database was opened again since the library renames were read.");
+        }
+    }
+
     // Called with the lock held: the pending renames, null while the database cannot be read for now.
     private List<(long Id, LibraryRenameRecord Record)>? Load()
     {
-        if (_records is not null)
+        if (_records is not null && _readGeneration == _database.Generation)
         {
             return _records;
         }
 
         try
         {
-            _records = _database.ReadAsync(ReadPending, CancellationToken.None).GetAwaiter().GetResult();
+            (_records, _readGeneration) = _database.ReadAsync(
+                (connection, transaction) => (ReadPending(connection, transaction), _database.Generation),
+                CancellationToken.None).GetAwaiter().GetResult();
             return _records;
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)

@@ -39,6 +39,9 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), byte> _unsaved = new();
     private readonly Lock _loadLock = new();
     private volatile bool _loaded;
+
+    // The database generation the records were read in; another one means they may be stale.
+    private long _loadedGeneration;
     private volatile bool _disposed;
     private int _reported;
 
@@ -213,29 +216,38 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         }
     }
 
-    // Reads the saved records once the database can be read; the changes made before stay.
+    // Reads the saved records once the database can be read, and again after it is opened again; the changes not written
+    // yet stay.
     private bool Load()
     {
-        if (_loaded)
+        if (IsCurrent())
         {
             return true;
         }
 
         lock (_loadLock)
         {
-            if (_loaded)
+            if (IsCurrent())
             {
                 return true;
             }
 
             try
             {
-                var rows = _database.ReadAsync(ReadAll, CancellationToken.None).GetAwaiter().GetResult();
+                var (rows, generation) = _database.ReadAsync(
+                    (connection, transaction) => (ReadAll(connection, transaction), _database.Generation),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                foreach (var key in _servers.Keys.Where(key => !_unsaved.ContainsKey(key)))
+                {
+                    _servers.TryRemove(key, out _);
+                }
+
                 foreach (var (key, serverId) in rows.Where(row => !_unsaved.ContainsKey(row.Key)))
                 {
                     _servers.TryAdd(key, serverId);
                 }
 
+                Interlocked.Exchange(ref _loadedGeneration, generation);
                 _loaded = true;
                 return true;
             }
@@ -250,4 +262,6 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
             }
         }
     }
+
+    private bool IsCurrent() => _loaded && Interlocked.Read(ref _loadedGeneration) == _database.Generation;
 }

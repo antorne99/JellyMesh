@@ -162,6 +162,18 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => _inner.BackUpAsync(cancellationToken);
 
+    /// <summary>Runs a statement in a write of its own, as a restored copy whose rows differ from those read before.</summary>
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "A statement of the test.")]
+    public Task ExecuteAsync(string sql) => _inner.WriteAsync(
+        (connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+        },
+        CancellationToken.None);
+
     /// <summary>Counts the rows of a table, with an optional condition after its name.</summary>
     [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "A table name of the test.")]
     public long Count(string table) => _inner.ReadAsync(

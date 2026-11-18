@@ -137,4 +137,18 @@ public sealed class ManualMergeStoreTests : IDisposable
         Assert.Single(store.Merges);
         Assert.False(store.IsDamaged);
     }
+
+    // A database opened again, as from a copy, may hold other merges: they are read again before use.
+    [Fact]
+    public async Task AfterTheDatabaseIsOpenedAgainTheMergesAreReadAgain()
+    {
+        using var first = Store();
+        using var second = Store();
+        Assert.Empty(second.Merges);
+        await first.UpdateAsync(_ => [Merge()], CancellationToken.None);
+
+        _database.Reopen();
+
+        Assert.Single(second.Merges);
+    }
 }

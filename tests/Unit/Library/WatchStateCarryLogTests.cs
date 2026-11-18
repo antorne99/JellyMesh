@@ -148,4 +148,17 @@ public sealed class WatchStateCarryLogTests : IDisposable
     }
 
     private WatchStateCarryLog Log(CapturingLogger<WatchStateCarryLog>? logger = null) => new(_database, logger ?? new CapturingLogger<WatchStateCarryLog>());
+
+    // A database opened again, as from a copy, may hold other carries: they are read again before use.
+    [Fact]
+    public async Task AfterTheDatabaseIsOpenedAgainTheCarriesAreReadAgain()
+    {
+        using var log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
+        log.Record(_user, _item, _date);
+        await _database.ExecuteAsync("DELETE FROM watch_state_carries;");
+
+        _database.Reopen();
+
+        Assert.False(log.TryFind(_user, _item, out _));
+    }
 }

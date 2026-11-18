@@ -220,4 +220,18 @@ public sealed class LastServedSourceStoreTests : IDisposable
 
         Assert.Equal(writes, _database.Writes);
     }
+
+    // A database opened again, as from a copy, may hold other sources: they are read again before use.
+    [Fact]
+    public async Task AfterTheDatabaseIsOpenedAgainTheSourcesAreReadAgain()
+    {
+        using var store = Store();
+        await store.RecordAsync(_user, "stub", _server, CancellationToken.None);
+        await store.FlushAsync(CancellationToken.None);
+        await _database.ExecuteAsync("DELETE FROM last_served_sources;");
+
+        _database.Reopen();
+
+        Assert.Null(store.Find(_user, "stub"));
+    }
 }

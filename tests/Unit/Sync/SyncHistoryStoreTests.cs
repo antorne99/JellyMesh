@@ -165,4 +165,17 @@ public sealed class SyncHistoryStoreTests : IDisposable
         using var reloaded = Store();
         AssertKept(reloaded, [2, 1, 0]);
     }
+
+    // A database opened again, as from a copy, may hold another history: it is read again before use.
+    [Fact]
+    public async Task AfterTheDatabaseIsOpenedAgainTheHistoryIsReadAgain()
+    {
+        using var store = Store();
+        await store.AddAsync(Run(0), CancellationToken.None);
+        await _database.ExecuteAsync("DELETE FROM sync_run_servers; DELETE FROM sync_runs;");
+
+        _database.Reopen();
+
+        Assert.Empty(store.Runs);
+    }
 }

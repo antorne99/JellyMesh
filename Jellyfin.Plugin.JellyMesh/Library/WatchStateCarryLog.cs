@@ -37,6 +37,9 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), DateTime?> _carries = new();
     private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), byte> _unsaved = new();
     private volatile bool _loaded;
+
+    // The database generation the carries were read in; another one means they may be stale.
+    private long _loadedGeneration;
     private int _reported;
 
     /// <summary>
@@ -53,7 +56,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     /// <inheritdoc />
     public bool EnsureLoaded()
     {
-        if (_loaded)
+        if (IsCurrent())
         {
             return true;
         }
@@ -61,13 +64,23 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         _gate.Wait();
         try
         {
-            if (!_loaded)
+            // Read again after the database is opened again; the changes not written yet stay.
+            if (!IsCurrent())
             {
-                foreach (var (key, lastPlayed) in _database.ReadAsync(ReadAll, CancellationToken.None).GetAwaiter().GetResult())
+                var (rows, generation) = _database.ReadAsync(
+                    (connection, transaction) => (ReadAll(connection, transaction), _database.Generation),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                foreach (var key in _carries.Keys.Where(key => !_unsaved.ContainsKey(key)))
+                {
+                    _carries.TryRemove(key, out _);
+                }
+
+                foreach (var (key, lastPlayed) in rows.Where(row => !_unsaved.ContainsKey(row.Key)))
                 {
                     _carries[key] = lastPlayed;
                 }
 
+                Interlocked.Exchange(ref _loadedGeneration, generation);
                 _loaded = true;
             }
 
@@ -145,6 +158,8 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
+
+    private bool IsCurrent() => _loaded && Interlocked.Read(ref _loadedGeneration) == _database.Generation;
 
     private static List<KeyValuePair<(Guid UserId, Guid ItemId), DateTime?>> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
     {

@@ -68,6 +68,9 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     private readonly Lock _lock = new();
     private List<SyncRun> _unsaved = [];
     private IReadOnlyList<SyncRun>? _saved;
+
+    // The database generation the saved runs were read in; another one means they may be stale.
+    private long _savedGeneration;
     private volatile IReadOnlyList<SyncRun> _runs = [];
 
     /// <summary>
@@ -115,11 +118,13 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
                 throw new StoreSuspendedException("The sync history cannot be read, so the run is not saved yet.");
             }
 
-            var saved = await _database.WriteAsync((connection, transaction) => Save(connection, transaction, unsaved), cancellationToken).ConfigureAwait(false);
+            var (saved, generation) = await _database.WriteAsync(
+                (connection, transaction) => (Save(connection, transaction, unsaved), _database.Generation),
+                cancellationToken).ConfigureAwait(false);
             lock (_lock)
             {
                 _unsaved = [];
-                _saved = saved;
+                (_saved, _savedGeneration) = (saved, generation);
                 Publish();
             }
         }
@@ -271,23 +276,33 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     // Called with the lock held: the runs not saved yet before the saved ones, within the limits.
     private void Publish() => _runs = Trim(_unsaved.Concat(_saved ?? []), run => run.Kind);
 
-    // Reads the saved runs once the database can be read, and tells whether they are known.
+    // Reads the saved runs once the database can be read, and again after it is opened again, and tells whether they are known.
     private bool Load()
     {
+        IReadOnlyList<SyncRun>? known;
         lock (_lock)
         {
-            if (_saved is not null)
+            if (_saved is not null && _savedGeneration == _database.Generation)
             {
                 return true;
             }
+
+            known = _saved;
         }
 
         try
         {
-            var saved = _database.ReadAsync(ReadAll, CancellationToken.None).GetAwaiter().GetResult();
+            var (saved, generation) = _database.ReadAsync(
+                (connection, transaction) => (ReadAll(connection, transaction), _database.Generation),
+                CancellationToken.None).GetAwaiter().GetResult();
             lock (_lock)
             {
-                _saved ??= saved;
+                // A run saved meanwhile is newer than this read.
+                if (ReferenceEquals(_saved, known))
+                {
+                    (_saved, _savedGeneration) = (saved, generation);
+                }
+
                 Publish();
             }
 

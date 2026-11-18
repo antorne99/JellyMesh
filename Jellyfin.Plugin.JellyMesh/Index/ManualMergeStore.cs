@@ -44,7 +44,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
     private readonly IPluginDatabase _database;
     private readonly ILogger<ManualMergeStore> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private IReadOnlyList<ManualMerge>? _merges;
+    private Cached? _cache;
     private int _reported;
 
     /// <summary>
@@ -79,10 +79,10 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
                     var current = ReadAll(connection, transaction);
                     var changed = change(current);
                     Replace(connection, transaction, current, changed);
-                    return changed;
+                    return new Cached(_database.Generation, changed);
                 },
                 cancellationToken).ConfigureAwait(false);
-            Volatile.Write(ref _merges, next);
+            Volatile.Write(ref _cache, next);
         }
         finally
         {
@@ -181,21 +181,25 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
         left.CreatedUtc.UtcTicks == right.CreatedUtc.UtcTicks && left.Copies.SequenceEqual(right.Copies);
 
     // The merges, read once the database can be read; null while it cannot.
+    // The merges of the current opening of the database, read again after it is opened again; null while it cannot be read.
     private IReadOnlyList<ManualMerge>? Load()
     {
-        if (Volatile.Read(ref _merges) is { } merges)
+        var cached = Volatile.Read(ref _cache);
+        if (cached is not null && cached.Generation == _database.Generation)
         {
-            return merges;
+            return cached.Merges;
         }
 
         try
         {
-            var read = _database.ReadAsync<IReadOnlyList<ManualMerge>>(ReadAll, CancellationToken.None).GetAwaiter().GetResult();
+            var read = _database.ReadAsync(
+                (connection, transaction) => new Cached(_database.Generation, ReadAll(connection, transaction)),
+                CancellationToken.None).GetAwaiter().GetResult();
 
             // A change saved meanwhile is newer than this read.
-            var loaded = Interlocked.CompareExchange(ref _merges, read, null) ?? read;
+            var loaded = Interlocked.CompareExchange(ref _cache, read, cached) == cached ? read : Volatile.Read(ref _cache)!;
             Volatile.Write(ref _reported, 0);
-            return loaded;
+            return loaded.Merges;
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
@@ -207,4 +211,6 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
             return null;
         }
     }
+
+    private sealed record Cached(long Generation, IReadOnlyList<ManualMerge> Merges);
 }
