@@ -34,7 +34,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private readonly ConcurrentDictionary<Guid, ServerRuntime> _runtimes = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _editGates = new();
     private readonly Lock _removingLock = new();
-    private readonly SemaphoreSlim _nameGate = new(1, 1);
     private readonly Dictionary<Guid, int> _removing = [];
 
     /// <summary>
@@ -90,6 +89,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.InvalidServer);
         }
 
+        // Checked again in the change that adds it, where no other save can take the name meanwhile.
+        if (_store.Read(config => NameHeldElsewhere(config, Guid.Empty, name)))
+        {
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.NameTaken);
+        }
+
         var serverId = Guid.NewGuid();
         var endpoint = EndpointOf(serverId, normalizedUrl);
 
@@ -133,6 +138,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         // Checked again in the change that adds it: another add of the same remote may have ended meanwhile.
         RemoteServerInfo? standing = null;
         var added = false;
+        var nameTaken = false;
         try
         {
             // A failed save takes the server out of memory under the same lock, so no call sees it (419).
@@ -140,7 +146,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 config =>
                 {
                     standing = remoteId is null ? null : ConfiguredAs(config, remoteId);
-                    if (standing is null)
+                    nameTaken = standing is null && NameHeldElsewhere(config, serverId, server.Name);
+                    if (standing is null && !nameTaken)
                     {
                         config.Servers.Add(server);
                         added = true;
@@ -158,6 +165,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             await EndUnsavedAddAsync(server, endpoint, login.Value!, exception).ConfigureAwait(false);
             throw;
+        }
+
+        if (nameTaken)
+        {
+            await EndSessionAsync(endpoint, login.Value!, cancellationToken).ConfigureAwait(false);
+            return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.NameTaken);
         }
 
         if (standing is not null)
@@ -392,9 +405,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return checkedEdit;
             }
 
-            if (!StoreEdit(plan, null, null, null))
+            if (StoreEdit(plan, null, null, null) is var unstored and not RemoteFailure.None)
             {
-                return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal;
+                return Refuse(unstored, FieldOf(unstored)).Refusal;
             }
 
             _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
@@ -444,13 +457,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         return new Release(() => gate.Release());
-    }
-
-    /// <inheritdoc />
-    public async Task<IDisposable> EnterNameChangeAsync(CancellationToken cancellationToken)
-    {
-        await _nameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return new Release(() => _nameGate.Release());
     }
 
     /// <inheritdoc />
@@ -545,17 +551,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        var found = false;
+        // False also for a name another server holds, checked in the same change that stores it.
+        var renamed = false;
         _store.Update(config =>
         {
-            if (config.Servers.FirstOrDefault(candidate => candidate.Id == serverId) is { } server)
+            if (config.Servers.FirstOrDefault(candidate => candidate.Id == serverId) is { } server && !NameHeldElsewhere(config, serverId, name))
             {
-                found = true;
+                renamed = true;
                 server.Name = name.Trim();
             }
         });
 
-        return found;
+        return renamed;
     }
 
     /// <inheritdoc />
@@ -718,8 +725,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             gate.Dispose();
         }
-
-        _nameGate.Dispose();
     }
 
     // The libraries of the server are deleted after it, including those a switch-on still running adds (140).
@@ -748,6 +753,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         RemoteFailure.AuthenticationFailed => RemoteEditField.Password,
         RemoteFailure.AdministratorAccount or RemoteFailure.Forbidden => RemoteEditField.Username,
         RemoteFailure.Suspended or RemoteFailure.UnknownServer => RemoteEditField.None,
+        RemoteFailure.NameTaken => RemoteEditField.Name,
         _ => RemoteEditField.Url
     };
 
@@ -840,9 +846,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Fail(read.Failure, read.Value!.Report);
             }
 
-            if (!StoreEdit(plan, null, read.Value!, session.ServerId))
+            if (StoreEdit(plan, null, read.Value!, session.ServerId) is var unstored and not RemoteFailure.None)
             {
-                return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal;
+                return Refuse(unstored, FieldOf(unstored)).Refusal;
             }
 
             Record(RuntimeOf(plan.ServerId), plan.Name, RemoteFailure.None, countsForActivity: true);
@@ -910,16 +916,24 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return (Refuse(RemoteFailure.Suspended, RemoteEditField.None).Refusal, null);
             }
 
-            bool found;
+            RemoteFailure unstored;
             try
             {
-                found = StoreEdit(plan, encrypted, read.Value!, session.ServerId);
+                unstored = StoreEdit(plan, encrypted, read.Value!, session.ServerId);
             }
             catch
             {
                 await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
                 throw;
             }
+
+            if (unstored == RemoteFailure.NameTaken)
+            {
+                await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: false).ConfigureAwait(false);
+                return (Refuse(unstored, RemoteEditField.Name).Refusal, null);
+            }
+
+            var found = unstored == RemoteFailure.None;
 
             // As in GetSessionAsync: a removal that ended meanwhile must not leave this login behind (413).
             replaced = runtime.Session;
@@ -1020,10 +1034,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Writes an edit in one save; a failed save puts every field back under the same lock (row 432). False if the server is gone.
-    private bool StoreEdit(EditPlan plan, string? encrypted, EditRead? read, string? remoteServerId)
+    // Writes an edit in one save; a failed save puts every field back under the same lock (row 432). Says why nothing was
+    // written: the server is gone, or another server took the new name meanwhile.
+    private RemoteFailure StoreEdit(EditPlan plan, string? encrypted, EditRead? read, string? remoteServerId)
     {
         var found = false;
+        var nameTaken = false;
         var heldElsewhere = false;
         RemoteServerConfig? before = null;
         string? savedId = null;
@@ -1036,6 +1052,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 }
 
                 found = true;
+                nameTaken = (plan.Changes & RemoteEditChanges.Name) != RemoteEditChanges.None && NameHeldElsewhere(config, plan.ServerId, plan.Name);
+                if (nameTaken)
+                {
+                    return;
+                }
+
                 before = new RemoteServerConfig
                 {
                     Name = server.Name,
@@ -1099,7 +1121,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             WarnServerIdHeldElsewhere(plan.Name, remoteServerId!);
         }
 
-        return found;
+        return nameTaken ? RemoteFailure.NameTaken : found ? RemoteFailure.None : RemoteFailure.UnknownServer;
     }
 
     // Reads, with no credentials, the Server Id at a new address, so that the password goes only to the saved server (row 433).
@@ -1280,6 +1302,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     // The configured server that stands for a remote with this Server Id, if any (decision 120).
+    // Tells whether a server other than this one has the name, trimmed and in any case.
+    private static bool NameHeldElsewhere(PluginConfiguration config, Guid serverId, string name)
+        => config.Servers.Any(server => server.Id != serverId && string.Equals(server.Name.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase));
+
     private RemoteServerInfo? ConfiguredAs(PluginConfiguration config, string remoteId) =>
         config.Servers.FirstOrDefault(server => server.JellyfinServerId == remoteId) is { } configured ? ToInfo(configured) : null;
 

@@ -74,13 +74,6 @@ public interface IRemoteServerRegistry
     Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Enters a change of name, so that the check that a name is free and its save run as one across all servers.
-    /// </summary>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>What leaves the change when disposed.</returns>
-    Task<IDisposable> EnterNameChangeAsync(CancellationToken cancellationToken);
-
-    /// <summary>
     /// Marks a server as being removed, so that edits entered from now on are refused, then waits for the edit in progress
     /// to end (row 434).
     /// </summary>

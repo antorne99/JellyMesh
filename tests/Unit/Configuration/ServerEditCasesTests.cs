@@ -139,32 +139,102 @@ public sealed partial class ServerEditTests
         await removal;
     }
 
-    // Two servers renamed at once to the same name: the second sees the first and is refused.
+    // Two servers renamed at once to the same name: both pass the first check, and only one is stored.
     [Fact]
     public async Task Two_servers_saved_at_once_with_the_same_name_cannot_both_take_it()
     {
         var first = await AddAsync("1");
-        var second = Guid.NewGuid();
-        _fixture.Store.Update(config => config.Servers.Add(new RemoteServerConfig
-        {
-            Id = second,
-            Name = "Other",
-            Url = "http://second.invalid:8096",
-            EncryptedCredentials = _fixture.Vault.Protect(second, TestValues.Credentials)!
-        }));
+        var second = AddSecond("Other");
         using var hold = new ManualResetEventSlim(false);
         _loginHold = hold;
 
-        var firstSave = Task.Run(() => Controller().SaveServerEdit(first, Edit(name: "Casa"), CancellationToken.None));
-        await _loginHeld.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var secondSave = Task.Run(() => Controller().SaveServerEdit(second, Edit(name: "Casa", url: "http://second.invalid:8096"), CancellationToken.None));
-        await Task.Delay(200);
+        var saves = new[]
+        {
+            Task.Run(() => Controller().SaveServerEdit(first, Edit(name: "Casa"), CancellationToken.None)),
+            Task.Run(() => Controller().SaveServerEdit(second, Edit(name: "Casa", url: "http://" + SecondHost + ":8096"), CancellationToken.None))
+        };
+        await _loginsHeld.WaitAsync(TimeSpan.FromSeconds(10));
+        await _loginsHeld.WaitAsync(TimeSpan.FromSeconds(10));
         hold.Set();
-        var results = await Task.WhenAll(firstSave, secondSave);
+        var results = await Task.WhenAll(saves);
 
         Assert.Single(_fixture.Store.Configuration.Servers, server => server.Name == "Casa");
-        Assert.Equal("Casa", Assert.IsType<ServerStatus>(results[0].Value).Name);
-        Assert.Equal(RemoteFailure.NameTaken, Refusal(results[1]).Failure.Failure);
+        Assert.Single(results, result => result.Value?.Name == "Casa");
+        Assert.Equal(RemoteFailure.NameTaken, Refusal(Assert.Single(results, result => result.Value is null)).Failure.Failure);
+    }
+
+    // The remote of one server is slow: a rename of another server does not wait for it.
+    [Fact]
+    public async Task A_slow_remote_does_not_hold_the_rename_of_another_server()
+    {
+        var first = await AddAsync("1");
+        var second = AddSecond("Other");
+        using var hold = new ManualResetEventSlim(false);
+        _loginHold = hold;
+
+        var slow = Task.Run(() => Controller().SaveServerEdit(first, Edit(name: "Casa"), CancellationToken.None));
+        await _loginsHeld.WaitAsync(TimeSpan.FromSeconds(10));
+        _loginHold = null;
+        _offline = true;
+        var quick = await Controller().SaveServerEdit(second, Edit(name: "Mare", url: "http://" + SecondHost + ":8096"), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        _offline = false;
+        hold.Set();
+        await slow;
+
+        Assert.Equal("Mare", Assert.IsType<ServerStatus>(quick.Value).Name);
+    }
+
+    [Fact]
+    public async Task The_old_rename_endpoint_refuses_the_name_of_another_server()
+    {
+        var id = await AddAsync("1");
+        AddSecond("Mare");
+        var renamer = Renamer(id);
+
+        var rename = await Controller(renamer.Object).RenameServer(id, new RenameServerRequest { Name = " mare ", Confirmed = true }, CancellationToken.None);
+
+        Assert.Equal((409, RemoteFailure.NameTaken), (Refusal(rename).Status, Refusal(rename).Failure.Failure));
+        renamer.Verify(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_rename_in_the_registry_keeps_a_name_held_by_another_server()
+    {
+        var id = await AddAsync("1");
+        AddSecond("Mare");
+
+        Assert.False(_fixture.Registry.Rename(id, "MARE"));
+        Assert.Equal("Friend", _fixture.Store.Configuration.Servers.Single(server => server.Id == id).Name);
+    }
+
+    [Fact]
+    public async Task A_new_server_with_the_name_of_another_is_refused_before_any_login()
+    {
+        await AddAsync("1");
+        _fixture.Handler.Requests.Clear();
+
+        var added = await Controller().AddServer(
+            new AddServerRequest { Name = "friend ", Url = "http://" + SecondHost + ":8096", Username = TestValues.Username, Password = TestValues.Password },
+            CancellationToken.None);
+
+        Assert.Equal((409, RemoteFailure.NameTaken), (Refusal(added).Status, Refusal(added).Failure.Failure));
+        Assert.Single(_fixture.Store.Configuration.Servers);
+        Assert.Empty(Requests);
+    }
+
+    // A second server, saved with its own Server Id at its own address.
+    private Guid AddSecond(string name)
+    {
+        var id = Guid.NewGuid();
+        _fixture.Store.Update(config => config.Servers.Add(new RemoteServerConfig
+        {
+            Id = id,
+            Name = name,
+            Url = "http://" + SecondHost + ":8096",
+            JellyfinServerId = OtherId,
+            EncryptedCredentials = _fixture.Vault.Protect(id, TestValues.Credentials)!
+        }));
+        return id;
     }
 
     [Fact]

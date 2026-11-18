@@ -523,6 +523,11 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.BeingRemoved);
         }
 
+        if (NameHeldElsewhere(_registry.GetServers(), serverId, request.Name))
+        {
+            return Failed(RemoteFailure.NameTaken);
+        }
+
         var answer = _renamer.Rename(serverId, request.Name, request.Confirmed);
         if (answer.Outcome == ServerRenameOutcome.Started)
         {
@@ -785,6 +790,11 @@ public class FederationAdminController : ControllerBase
     }
 
     // Refuses on the name a new name another server has, or one given while a rename has not finished (row 434).
+    // Tells whether a server other than this one has the name, trimmed and in any case.
+    private static bool NameHeldElsewhere(IReadOnlyList<RemoteServerInfo> servers, Guid serverId, string? name)
+        => !string.IsNullOrWhiteSpace(name)
+            && servers.Any(server => server.Id != serverId && string.Equals(server.Name.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase));
+
     private ObjectResult? RefuseName(Guid serverId, string? name)
     {
         var trimmed = name?.Trim();
@@ -794,7 +804,7 @@ public class FederationAdminController : ControllerBase
             return null;
         }
 
-        var failure = servers.Any(server => server.Id != serverId && string.Equals(server.Name.Trim(), trimmed, StringComparison.OrdinalIgnoreCase))
+        var failure = NameHeldElsewhere(servers, serverId, trimmed)
             ? RemoteFailure.NameTaken
             : RenameUnfinished(serverId) ? RemoteFailure.RenameUnfinished : RemoteFailure.None;
         return failure == RemoteFailure.None
@@ -832,9 +842,7 @@ public class FederationAdminController : ControllerBase
     // Saves an edit after refusing a taken name, then sets off its effects (row 434). The caller holds the edit lock.
     private async Task<ActionResult<ServerStatus>> SaveEditCoreAsync(Guid serverId, ServerEditRequest request, CancellationToken cancellationToken)
     {
-        // A new name is checked and saved as one across servers, so that two servers cannot take it.
-        var renames = _registry.GetServers().FirstOrDefault(server => server.Id == serverId) is { } saved && saved.Name != request.Name?.Trim();
-        using var names = renames ? await _registry.EnterNameChangeAsync(cancellationToken).ConfigureAwait(false) : null;
+        // A first check, before any remote; the registry checks the name again in the change that stores it.
         if (RefuseName(serverId, request.Name) is { } refusedName)
         {
             return refusedName;
