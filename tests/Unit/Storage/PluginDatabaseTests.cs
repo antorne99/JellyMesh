@@ -141,8 +141,11 @@ public sealed class PluginDatabaseTests : IDisposable
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync((_, _) => 0, CancellationToken.None));
     }
 
+    // The one file set aside as damaged, without its logs.
+    private string SetAside() => Assert.Single(Directory.GetFiles(Folder, PluginDatabase.FileName + ".damaged-*"), file => !file.EndsWith("-wal", StringComparison.Ordinal));
+
     [Fact]
-    public async Task AFileThatIsNotADatabaseIsDamagedAndLeftForTheRecovery()
+    public async Task AFileThatIsNotADatabaseIsSetAsideUntouched()
     {
         var garbage = new byte[8192];
         Array.Fill(garbage, (byte)'x');
@@ -150,13 +153,13 @@ public sealed class PluginDatabaseTests : IDisposable
 
         var database = Open();
 
-        Assert.Equal(StoreState.Damaged, database.Health.State);
-        Assert.True(database.Health.Suspended);
-        Assert.Equal(garbage, await File.ReadAllBytesAsync(DatabasePath));
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.NotNull(database.Recovery);
+        Assert.Equal(garbage, await File.ReadAllBytesAsync(SetAside()));
     }
 
     [Fact]
-    public async Task AFileThatFailsTheIntegrityCheckIsDamaged()
+    public async Task AFileThatFailsTheIntegrityCheckIsSetAside()
     {
         WriteDatabase(1, rows: 200);
 
@@ -167,7 +170,8 @@ public sealed class PluginDatabaseTests : IDisposable
 
         var database = Open();
 
-        Assert.Equal(StoreState.Damaged, database.Health.State);
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(SetAside()));
     }
 
     // As the key file: a database that cannot be kept private is not opened, and nothing new is made.
@@ -541,7 +545,7 @@ public sealed class PluginDatabaseTests : IDisposable
     }
 
     [Fact]
-    public async Task ADamagedFileWithAPendingLogLeavesBothFilesUntouched()
+    public async Task ADamagedFileAndItsPendingLogAreSetAsideUntouched()
     {
         LeaveDatabaseWithLog(1, connection => Scalar(connection, "INSERT INTO later VALUES ('pending');"));
 
@@ -553,10 +557,11 @@ public sealed class PluginDatabaseTests : IDisposable
 
         var store = Open();
 
-        Assert.Equal(StoreState.Damaged, store.Health.State);
+        Assert.Equal(StoreState.Healthy, store.Health.State);
         store.Dispose();
-        Assert.Equal(bytes, await File.ReadAllBytesAsync(DatabasePath));
-        Assert.Equal(log, await File.ReadAllBytesAsync(DatabasePath + "-wal"));
+        var aside = SetAside();
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(aside));
+        Assert.Equal(log, await File.ReadAllBytesAsync(aside + "-wal"));
     }
 
     // On Windows SQLite gives these the folder's access list, so the store narrows them once they exist.

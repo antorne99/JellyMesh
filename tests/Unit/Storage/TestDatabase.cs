@@ -50,7 +50,11 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     private Exception? Interrupt { get; set; }
 
+    public StoreRecovery? Recovery => _inner.Recovery;
+
     public StoreHealth Retry() => _inner.Retry();
+
+    public void DismissRecovery() => _inner.DismissRecovery();
 
     public Task<T> ReadAsync<T>(Func<SqliteConnection, SqliteTransaction, T> read, CancellationToken cancellationToken)
     {
@@ -138,6 +142,8 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
         CancellationToken.None);
 
     public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => _inner.TruncateWalAsync(cancellationToken);
+
+    public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => _inner.BackUpAsync(cancellationToken);
 
     // A sync left running by a test may still be writing: let it finish, and refuse what comes after.
     public void Dispose()

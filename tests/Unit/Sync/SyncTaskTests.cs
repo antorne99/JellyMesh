@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Model.Tasks;
 using Moq;
@@ -17,6 +20,7 @@ public sealed class SyncTaskTests : IDisposable
     private readonly SyncFixture _fixture = new();
     private readonly CapturingLogger<IncrementalSyncTask> _incrementalLogger = new();
     private readonly CapturingLogger<ReconciliationTask> _reconciliationLogger = new();
+    private readonly Mock<IPluginDatabase> _database = new();
 
     public void Dispose() => _fixture.Dispose();
 
@@ -24,7 +28,7 @@ public sealed class SyncTaskTests : IDisposable
 
     private IncrementalSyncTask Incremental(ICatalogSyncService? sync = null) => new(sync ?? _fixture.Sync, _fixture.Store, _incrementalLogger);
 
-    private ReconciliationTask Reconciliation(ICatalogSyncService? sync = null) => new(sync ?? _fixture.Sync, _fixture.Store, _reconciliationLogger);
+    private ReconciliationTask Reconciliation(ICatalogSyncService? sync = null) => new(sync ?? _fixture.Sync, _fixture.Store, _database.Object, _reconciliationLogger);
 
     [Fact]
     public void TheDefaultTriggersComeFromTheDefaultSettings()
@@ -166,7 +170,7 @@ public sealed class SyncTaskTests : IDisposable
             .ReturnsAsync(SyncStartResult.AlreadyRunning)
             .ReturnsAsync(SyncStartResult.AlreadyRunning)
             .ReturnsAsync(SyncStartResult.Started);
-        var task = new ReconciliationTask(sync.Object, _fixture.Store, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
+        var task = new ReconciliationTask(sync.Object, _fixture.Store, _database.Object, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
 
         await task.ExecuteAsync(NoProgress, CancellationToken.None);
 
@@ -179,7 +183,7 @@ public sealed class SyncTaskTests : IDisposable
         var sync = new Mock<ICatalogSyncService>();
         sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.AlreadyRunning);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(20));
-        var task = new ReconciliationTask(sync.Object, _fixture.Store, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
+        var task = new ReconciliationTask(sync.Object, _fixture.Store, _database.Object, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.ExecuteAsync(NoProgress, cancellation.Token));
     }
@@ -226,5 +230,69 @@ public sealed class SyncTaskTests : IDisposable
             Assert.DoesNotContain(TestValues.Password, line, StringComparison.Ordinal);
             Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
         });
+    }
+
+    private static readonly StoreBackup Copy = new("/data/jellymesh.db.backup-20261118030000", new DateTimeOffset(2026, 11, 18, 3, 0, 0, TimeSpan.Zero));
+
+    // The copy holds what the reconciliation brought in (row 427).
+    [Fact]
+    public async Task TheReconciliationCopiesTheDatabaseAfterTheSync()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sync")).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("copy")).ReturnsAsync(Copy);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["sync", "copy"], steps);
+    }
+
+    [Fact]
+    public async Task TheIncrementalSyncMakesNoCopy()
+    {
+        await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
+
+        _database.Verify(d => d.BackUpAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ASyncThatFailsStillLeavesACopy()
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("broken"));
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None));
+
+        _database.Verify(d => d.BackUpAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    public static TheoryData<Exception> CopyFailures => new() { new StoreSuspendedException("suspended"), new IOException("disk full") };
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task ACopyThatCannotBeMadeIsLoggedAndDoesNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+    }
+
+    [Fact]
+    public async Task ACancelledReconciliationMakesNoCopy()
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.AlreadyRunning);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(20));
+        var task = new ReconciliationTask(sync.Object, _fixture.Store, _database.Object, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.ExecuteAsync(NoProgress, cancellation.Token));
+
+        _database.Verify(d => d.BackUpAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }
