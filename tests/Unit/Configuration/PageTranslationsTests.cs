@@ -105,6 +105,7 @@ public class PageTranslationsTests
         }
 
         yield return FederationAdminController.ReleasedLibraryNotListed;
+        yield return FederationSettingsController.StoreSuspended;
         yield return "A sync is already running.";
         yield return "This merge no longer exists.";
         yield return "Select at least two titles of one group.";
