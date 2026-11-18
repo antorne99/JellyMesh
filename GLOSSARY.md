@@ -64,6 +64,6 @@ _Avoid_: stub session, plugin session (that is a playback the plugin proxies fro
 Another JellyMesh server that plays this server's titles through a dedicated user. It acts for its own users.
 _Avoid_: remote (that is a server this one reads from), client
 
-**Store**:
+**Plugin database**:
 The plugin's single database in its data folder, holding all its settings and state; the keys stay outside it.
-_Avoid_: config, XML config, state files
+_Avoid_: store, config, XML config, state files
