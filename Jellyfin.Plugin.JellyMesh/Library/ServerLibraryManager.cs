@@ -542,6 +542,14 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
 
         Follow(config => Owned(config, owner) is null ? null : LiveRegistry(config, serverId), folders);
+
+        // A library made before a crash is the plugin's, not one the admin had at switch-on.
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (root.Length > 0)
+        {
+            ResolvePending(serverId, owner, root, folders);
+        }
+
         RecordPreexisting(serverId, owner, folders);
         _materializer.PrepareServerFolders();
         await ConvergeAsync([serverId], folders, true, cancellationToken, recreate: true).ConfigureAwait(false);

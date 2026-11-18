@@ -99,4 +99,21 @@ public sealed partial class ServerLibraryManagerTests
         Assert.DoesNotContain(fixture.Server.AutomaticLibraryRegistry, record => record.Name == made.Name);
         Assert.Empty(fixture.Server.PendingLibraries);
     }
+
+    [Fact]
+    public async Task A_library_made_before_a_crash_is_recorded_at_the_next_switch_on_and_not_kept_as_the_admin_s()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Libraries.OnCreate = () => fixture.Hooks.BeforeUpdate = () => throw new InvalidOperationException("crash");
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        fixture.Libraries.OnCreate = null;
+        var made = fixture.Libraries.Find(fixture.Libraries.Created.Single().Name);
+
+        await fixture.NewManager().Enable(_serverId, LibraryMode.ByType).Job;
+
+        Assert.Equal(2, fixture.Libraries.Created.Count);
+        Assert.Single(fixture.Server.AutomaticLibraryRegistry, record => record.Name == made.Name);
+        Assert.DoesNotContain(made.ItemId, fixture.Server.PreexistingLibraryIds);
+        Assert.Empty(fixture.Server.PendingLibraries);
+    }
 }
