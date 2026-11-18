@@ -40,7 +40,7 @@ public sealed class LegacyImport
     public const string StubFileName = "federated-stubs.json";
 
     /// <summary>The schema version of the mark of the migration.</summary>
-    public const int SchemaVersion = 7;
+    public const int SchemaVersion = 5;
 
     /// <summary>How long <see cref="FolderName"/> is kept after the migration (D25).</summary>
     public static readonly TimeSpan MigratedKept = TimeSpan.FromDays(30);
