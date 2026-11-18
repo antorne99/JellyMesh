@@ -385,6 +385,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var materialized = new Materialized(null, false);
         SyncRunOutcome? stopped = null;
         var followed = false;
+
+        // Taken before anything can fail, so that a failed run does not start again for the same servers.
+        var pending = TakePending(scope);
         try
         {
             if (_libraries is not null)
@@ -394,7 +397,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             _runFailures.Clear();
             _runReads.Clear();
-            servers = TakeServers(scope);
+            var configured = _registry.GetServers();
+            servers = scope == ServerScope.Pending ? configured.Where(server => pending.Contains(server.Id)).ToList() : configured;
             foreach (var server in servers)
             {
                 await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
@@ -444,9 +448,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
     }
 
-    // Reads the servers of a run after the edits saved before it. A full read of every server also covers those waiting
-    // for a sync of their own; the incremental one does not, since it reads only changes.
-    private IReadOnlyList<RemoteServerInfo> TakeServers(ServerScope scope)
+    // Takes the servers waiting for a sync of their own. A full read of every server also covers them; the incremental one
+    // does not, since it reads only changes.
+    private HashSet<Guid> TakePending(ServerScope scope)
     {
         lock (_pendingLock)
         {
@@ -456,8 +460,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
                 _pendingServers.Clear();
             }
 
-            var servers = _registry.GetServers();
-            return scope == ServerScope.Pending ? servers.Where(server => pending.Contains(server.Id)).ToList() : servers;
+            return pending;
         }
     }
 

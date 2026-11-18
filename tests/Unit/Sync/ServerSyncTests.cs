@@ -1,8 +1,10 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Sync;
@@ -74,5 +76,21 @@ public sealed class ServerSyncTests : IDisposable
 
         // A run handed on to a waiting server sync would still show as running.
         Assert.False(_fixture.Sync.GetStatus().IsRunning);
+    }
+
+    [Fact]
+    public async Task A_server_sync_that_fails_before_reading_is_not_started_again()
+    {
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        var libraries = new Mock<IServerLibraryManager>();
+        var waits = 0;
+        libraries.Setup(manager => manager.WaitReadyAsync(It.IsAny<CancellationToken>()))
+            .Returns(() => Interlocked.Increment(ref waits) > 100 ? Task.CompletedTask : Task.FromException(new InvalidOperationException()));
+        using var sync = new CatalogSyncService(_fixture.Registry, _fixture.Reader, _fixture.Index, _fixture.Vault, _fixture.Clock, _fixture.Logger, libraries: libraries.Object, store: _fixture.Store);
+
+        Assert.Equal(SyncStartResult.Started, sync.StartServerSync(server.Id));
+        await sync.WaitIdleAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(1, waits);
     }
 }
