@@ -625,7 +625,14 @@ public class FederationAdminController : ControllerBase
     private async Task RemoveFromMergesAsync(Guid serverId)
     {
         var server = serverId.ToString("N");
-        if (!_merges.Merges.Any(merge => ManualMergeService.HasCopyOn(merge, server)))
+        var held = _merges.Merges.Where(merge => ManualMergeService.HasCopyOn(merge, server)).ToList();
+        if (held.Count == 0)
+        {
+            return;
+        }
+
+        // The kept watch state finds the other copies through these merges (D33); unsaved, the copies stay in them.
+        if (_keeper is not null && !await _keeper.KeepMergesAsync(serverId, held, CancellationToken.None).ConfigureAwait(false))
         {
             return;
         }

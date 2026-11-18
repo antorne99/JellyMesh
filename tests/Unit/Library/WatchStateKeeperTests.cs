@@ -474,6 +474,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         Watch(_anna, FilmItem(a));
         var fails = true;
         var store = new Mock<IKeptWatchStateStore>();
+        store.Setup(kept => kept.ReadMergesAsync(It.IsAny<CancellationToken>())).Returns<CancellationToken>(_kept.ReadMergesAsync);
         store.Setup(kept => kept.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>()))
             .Returns((IReadOnlyCollection<KeptTitle> titles, CancellationToken token) => fails ? throw new IOException("/secret") : _kept.SaveAsync(titles, token));
         using var keeper = Keeper(store.Object);
@@ -589,6 +590,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         Watch(_anna, FilmItem(a));
         var fails = true;
         var store = new Mock<IKeptWatchStateStore>();
+        store.Setup(kept => kept.ReadMergesAsync(It.IsAny<CancellationToken>())).Returns<CancellationToken>(_kept.ReadMergesAsync);
         store.Setup(kept => kept.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>()))
             .Returns((IReadOnlyCollection<KeptTitle> titles, CancellationToken token) => fails ? throw new IOException("/secret") : _kept.SaveAsync(titles, token));
         using var keeper = Keeper(store.Object);
@@ -761,6 +763,76 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // D33: the kept state belongs to the user on the title. A copy without IDs merged by hand sat on the removed server, so
+    // the merge loses it, and the copy left on another server still finds the state.
+    [Fact]
+    public async Task TheKeptStateOfAMergedCopyOnTheRemovedServerFindsTheCopyLeft()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", "films");
+        var c = await AddAndMaterializeAsync("C", "films-c");
+        await MergeAsync((a, "x", "1"), (c, "y", null));
+        var alfa = FilmItem(a);
+        Watch(_bruno, FilmItem(c));
+
+        using (var sync = SyncWith(_materializer))
+        {
+            await sync.RemoveServerAsync(c.Id, () => _fixture.Sync.Registry.RemoveAsync(c.Id), CancellationToken.None);
+            // As the settings page does: the merges are kept for the watch state before the copies of the server leave them.
+            Assert.True(await _keeper.KeepMergesAsync(c.Id, _fixture.Merges.Merges, CancellationToken.None));
+            await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, c.Id.ToString("N")), CancellationToken.None);
+            await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.True(Row(_bruno, alfa).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // D33 for a series: its episodes and its favorite find the series left in the merge through its series items.
+    [Fact]
+    public async Task TheKeptStateOfAMergedSeriesOnTheRemovedServerFindsTheSeriesLeft()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-c", "C", "tvshows"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        _fixture.Sync.Client.Add("shows-c", RemoteItemType.Series, TestItems.Series("t", "Altra Serie", 2025) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add("shows-c", RemoteItemType.Season, TestItems.Season("ts1", "t", 1));
+        _fixture.Sync.Client.Add("shows-c", RemoteItemType.Episode, TestItems.Episode("f", "t", 1, 2, "Altra Serie") with { SeasonId = "ts1" });
+        var a = await AddAndMaterializeAsync("A", "shows");
+        var c = await AddAndMaterializeAsync("C", "shows-c");
+        var merge = new ManualMerge
+        {
+            Id = Guid.NewGuid(),
+            CreatedUtc = SyncFixture.Start,
+            Copies =
+            [
+                new MergedCopy { ServerId = a.Id.ToString("N"), ItemId = "s", Kind = ContentKind.Episode },
+                new MergedCopy { ServerId = c.Id.ToString("N"), ItemId = "t", Kind = ContentKind.Episode }
+            ]
+        };
+        await _fixture.Merges.UpdateAsync(_ => [merge], CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var (series, episode) = ShowItems(a);
+        var (oldSeries, oldEpisode) = ShowItems(c, "Altra Serie", 2025);
+        Watch(_bruno, oldEpisode);
+        Row(_bruno, oldSeries).IsFavorite = true;
+
+        using (var sync = SyncWith(_materializer))
+        {
+            await sync.RemoveServerAsync(c.Id, () => _fixture.Sync.Registry.RemoveAsync(c.Id), CancellationToken.None);
+            Assert.True(await _keeper.KeepMergesAsync(c.Id, _fixture.Merges.Merges, CancellationToken.None));
+            await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, c.Id.ToString("N")), CancellationToken.None);
+            await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.True(Row(_bruno, episode).Played);
+        Assert.True(Row(_bruno, series).IsFavorite);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
     // A suspended database holds the records without an error on every run.
     [Fact]
     public async Task WhileTheDatabaseIsSuspendedTheRecordsWaitWithoutAnError()
@@ -819,17 +891,17 @@ public sealed class WatchStateKeeperTests : IDisposable
     };
 
     // The items a scan makes of the series stub and its one episode.
-    private (Series Series, Episode Episode) ShowItems(RemoteServerInfo server)
+    private (Series Series, Episode Episode) ShowItems(RemoteServerInfo server, string name = "Serie Senza ID", int year = 2026)
     {
         var entry = _fixture.Registry.State.Series.Single(series => series.ServerId == server.Id);
-        var series = new Series { Id = Guid.NewGuid(), Path = FederatedPaths.Resolve(_fixture.Root, entry.RelativePath), Name = "Serie Senza ID", ProductionYear = 2026 };
+        var series = new Series { Id = Guid.NewGuid(), Path = FederatedPaths.Resolve(_fixture.Root, entry.RelativePath), Name = name, ProductionYear = year };
         var episode = new Episode
         {
             Id = Guid.NewGuid(),
             Path = FederatedPaths.Resolve(_fixture.Root, _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Movie).RelativePath),
             Name = "Episode",
             SeriesId = series.Id,
-            SeriesName = "Serie Senza ID",
+            SeriesName = name,
             ParentIndexNumber = 1,
             IndexNumber = 2
         };

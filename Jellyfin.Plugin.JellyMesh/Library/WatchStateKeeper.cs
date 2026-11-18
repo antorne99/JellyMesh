@@ -130,6 +130,23 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<bool> KeepMergesAsync(Guid serverId, IReadOnlyList<ManualMerge> merges, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(merges);
+        try
+        {
+            await _kept.SaveMergesAsync(serverId, merges, _timeProvider.GetUtcNow().UtcDateTime, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogError("Cannot keep the manual merges of a removed server for its watch state, so its copies stay in them: {Error}", exception.GetType().Name);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task RestoreAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -220,6 +237,9 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         ServerId = SavedServer,
         ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
         Kind = title.Kind == KeptTitleKind.Movie ? ContentKind.Movie : ContentKind.Episode,
+
+        // Its own series, so that a merge names it like any copy.
+        SeriesId = title.Kind == KeptTitleKind.Movie ? null : title.Id.ToString(CultureInfo.InvariantCulture),
         Title = title.Title,
         Year = title.Year,
         Ids = title.Ids,
@@ -238,6 +258,34 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             }
             : ComparableMetadata.None
     };
+
+    // A kept title with the copies of its merges as one merge, so that each copy left finds it (D33).
+    private static ManualMerge? MergeOf(KeptTitle title) => title.Copies.Count == 0 ? null : new ManualMerge
+    {
+        Id = Guid.ParseExact(title.Id.ToString("x32", CultureInfo.InvariantCulture), "N"),
+        CreatedUtc = title.SavedUtc,
+        Copies =
+        [
+            new MergedCopy
+            {
+                ServerId = SavedServer,
+                ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
+                Kind = title.Kind == KeptTitleKind.Movie ? ContentKind.Movie : ContentKind.Episode
+            },
+            .. title.Copies
+        ]
+    };
+
+    // The copies of every merge holding one of these items: a film, or a series by its series items.
+    private static List<MergedCopy> CopiesOf(IEnumerable<StubSource> sources, IReadOnlyList<ManualMerge> merges)
+    {
+        var items = sources.Select(source => (source.ServerId.ToString("N"), source.ItemId)).ToHashSet();
+        return merges
+            .Where(merge => merge.Copies.Any(copy => items.Contains((copy.ServerId, copy.ItemId))))
+            .SelectMany(merge => merge.Copies)
+            .DistinctBy(copy => (copy.ServerId, copy.ItemId, copy.Kind))
+            .ToList();
+    }
 
     private KeptTitle TitleOf(BaseItem item, Dictionary<Guid, BaseItem?> parents, DateTime now)
     {
@@ -302,7 +350,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         var saved = titles.Where(title => title.Kind != KeptTitleKind.Series).Select(Saved).ToList();
         var savedSeries = titles.Where(title => title.Kind == KeptTitleKind.Series).Select(Saved).ToList();
         var done = new List<(long TitleId, Guid UserId)>();
-        var pairs = DedupEngine.Pair(saved, savedSeries, current, currentSeries, _merges.Merges);
+        var pairs = DedupEngine.Pair(saved, savedSeries, current, currentSeries, [.. _merges.Merges, .. titles.Select(MergeOf).OfType<ManualMerge>()]);
         foreach (var match in pairs.GroupBy(pair => pair.Saved.ItemId, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -443,10 +491,22 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                 return false;
             }
 
+            // Without the merges a kept title would miss the copies that find it (D33): the titles stay until they read.
+            if (_merges.IsDamaged)
+            {
+                _logger.LogWarning("The manual merges cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                return false;
+            }
+
+            IReadOnlyList<ManualMerge> merges = [.. _merges.Merges, .. await _kept.ReadMergesAsync(cancellationToken).ConfigureAwait(false)];
+            var seriesById = series.Concat(_registry.State.Series).DistinctBy(entry => entry.Id).ToDictionary(entry => entry.Id, StringComparer.Ordinal);
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var parents = new Dictionary<Guid, BaseItem?>();
             var titles = new List<KeptTitle>();
-            foreach (var path in stubs.Select(stub => (Path: stub.RelativePath, IsFolder: false)).Concat(series.Select(entry => (Path: entry.RelativePath, IsFolder: true))))
+            var entries = stubs
+                .Select(stub => (Path: stub.RelativePath, IsFolder: false, Sources: stub.SeriesStubId is { } seriesId && seriesById.TryGetValue(seriesId, out var parent) ? parent.Sources : stub.Sources))
+                .Concat(series.Select(entry => (Path: entry.RelativePath, IsFolder: true, entry.Sources)));
+            foreach (var path in entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (_library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder) is not { } item)
@@ -461,7 +521,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                     .ToList();
                 if (rows.Count > 0)
                 {
-                    titles.Add(TitleOf(item, parents, now) with { Users = rows });
+                    titles.Add(TitleOf(item, parents, now) with { Users = rows, Copies = CopiesOf(path.Sources, merges) });
                 }
             }
 
