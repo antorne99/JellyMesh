@@ -92,13 +92,41 @@ internal static class StoreBackups
     }
 
     /// <summary>
-    /// Deletes every copy but the newest <see cref="Kept"/>.
+    /// Lists the copies in the order a recovery tries them: those dated at or before <paramref name="now"/> newest first,
+    /// then those dated after it, which a clock running ahead made, nearest first, as a last resort before starting empty.
     /// </summary>
     /// <param name="folder">The plugin data folder.</param>
-    public static void Prune(string folder)
+    /// <param name="now">When the recovery runs.</param>
+    /// <returns>The copies, in the order to try them.</returns>
+    public static IReadOnlyList<StoreBackup> ForRestore(string folder, DateTimeOffset now)
     {
-        foreach (var copy in List(folder).Skip(Kept))
+        var copies = List(folder);
+        return copies.Where(copy => copy.CreatedAt <= now)
+            .Concat(copies.Where(copy => copy.CreatedAt > now).OrderBy(copy => copy.CreatedAt))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Keeps the copy just written and the newest one dated before it, <see cref="Kept"/> in all; the others go, and so do
+    /// those dated after it, which a clock running ahead made.
+    /// </summary>
+    /// <param name="folder">The plugin data folder.</param>
+    /// <param name="written">The copy just written.</param>
+    public static void Prune(string folder, StoreBackup written)
+    {
+        var earlier = 0;
+        foreach (var copy in List(folder))
         {
+            if (string.Equals(copy.FilePath, written.FilePath, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (copy.CreatedAt < written.CreatedAt && ++earlier < Kept)
+            {
+                continue;
+            }
+
             File.Delete(copy.FilePath);
         }
     }

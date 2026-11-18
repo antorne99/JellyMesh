@@ -324,7 +324,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             throw;
         }
 
-        StoreBackups.Prune(_folder);
+        StoreBackups.Prune(_folder, copy);
         _logger.LogInformation("The JellyMesh database was copied to {Copy}", Path.GetFileName(copy.FilePath));
         return copy;
     }
@@ -470,7 +470,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         {
             // What a replacement cut short may have left.
             DeleteDatabaseFiles();
-            foreach (var copy in StoreBackups.List(_folder))
+            foreach (var copy in StoreBackups.ForRestore(_folder, _time.GetUtcNow()))
             {
                 if (new FileInfo(copy.FilePath).Length == 0)
                 {

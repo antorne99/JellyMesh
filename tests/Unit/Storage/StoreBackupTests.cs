@@ -183,6 +183,23 @@ public sealed class StoreBackupTests : IDisposable
         Assert.Equal(StoreState.Healthy, database.Health.State);
     }
 
+    // A clock set back keeps the copy just written, and the copies dated after it go.
+    [Fact]
+    public async Task AClockSetBackKeepsTheNewCopyAndDropsTheCopiesDatedAfterIt()
+    {
+        var database = Open();
+        var start = _clock.Now;
+        _clock.Now = start + TimeSpan.FromDays(2);
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now = start + TimeSpan.FromDays(3);
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now = start;
+
+        await database.BackUpAsync(CancellationToken.None);
+
+        Assert.Equal(["jellymesh.db.backup-20261118030000"], Copies());
+    }
+
     [Fact]
     public async Task ASuspendedDatabaseMakesNoCopy()
     {
@@ -310,6 +327,19 @@ public sealed class StoreBackupTests : IDisposable
 
         Assert.Equal(["first"], await ItemsAsync(database));
         Assert.Equal(new DateTimeOffset(2026, 11, 18, 3, 0, 0, TimeSpan.Zero), database.Recovery?.CopyDate);
+    }
+
+    // A copy dated after the recovery comes from a clock that ran ahead, so the newest one dated before it wins.
+    [Fact]
+    public async Task ARestorePrefersTheNewestCopyNotDatedInTheFuture()
+    {
+        await DamageAfterTwoCopiesAsync();
+        File.Copy(Path.Combine(Folder, "jellymesh.db.backup-20261118030000"), Path.Combine(Folder, "jellymesh.db.backup-20261201030000"));
+
+        var database = Open();
+
+        Assert.Equal(["first", "second"], await ItemsAsync(database));
+        Assert.Equal(new DateTimeOffset(2026, 11, 19, 3, 0, 0, TimeSpan.Zero), database.Recovery?.CopyDate);
     }
 
     // A log of the damaged file must not be read into the copy that takes its place.
