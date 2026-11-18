@@ -416,6 +416,23 @@ public sealed class StoreBackupTests : IDisposable
         Assert.Equal(new StoreRecovery(_clock.Now, "jellymesh.db.damaged-20261120030000", new DateTimeOffset(2026, 11, 19, 3, 0, 0, TimeSpan.Zero)), database.Recovery);
     }
 
+    // A rollback journal left next to the path would be played into the copy that takes its place.
+    [Fact]
+    public async Task ARecoveryThatGoesOnClearsAJournalLeftOnThePath()
+    {
+        await DamageAfterTwoCopiesAsync();
+        var failed = Open(new FailingDatabaseGuard(DatabasePath));
+        Assert.Equal(StoreState.Unavailable, failed.Health.State);
+        failed.Dispose();
+        _opened.Remove(failed);
+        await File.WriteAllBytesAsync(DatabasePath + "-journal", RandomNumberGenerator.GetBytes(1024));
+
+        var database = Open(new FailingDatabaseGuard(DatabasePath));
+
+        Assert.Equal(StoreState.Unavailable, database.Health.State);
+        Assert.False(File.Exists(DatabasePath + "-journal"));
+    }
+
     // The note is what a recovery cut short goes on from, so without it the damaged file is not moved.
     [Fact]
     public async Task ANoteThatCannotBeWrittenLeavesTheDamagedFileInPlace()

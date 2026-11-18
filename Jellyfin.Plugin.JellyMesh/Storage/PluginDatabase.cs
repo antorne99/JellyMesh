@@ -33,6 +33,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     // What goes aside with a damaged file: its logs belong to it, and SQLite would read them into the file taking its place.
     private static readonly string[] _logFiles = ["-wal", "-journal"];
 
+    private static readonly string[] _sideFiles = ["-wal", "-shm", "-journal"];
+
     private readonly string _folder;
     private readonly string _path;
     private readonly string _connectionString;
@@ -593,10 +595,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         target.Flush(true);
     }
 
+    // The database with every side file SQLite reads with it, so none is played into the file that comes next.
     private void DeleteDatabaseFiles()
     {
         File.Delete(_path);
-        foreach (var suffix in _walFiles)
+        foreach (var suffix in _sideFiles)
         {
             File.Delete(_path + suffix);
         }
