@@ -167,6 +167,11 @@ check "the state names who lost titles" "$LOST" "$(own | jq -c '[.LostAccess[] |
 check "the user with only the children films sees no film" '[]' "$(sees "$CHILDREN")"
 check "the user with both film libraries keeps the films" "$BOTH_SAW" "$(sees "$BOTH")"
 check "the user blocking the HD films sees only episodes" '["Episode"]' "$(kinds "$NO_HD")"
+docker restart "$PREFIX-local" >/dev/null
+sleep 3
+wait_ready local
+login local
+check "the state still names them after a restart" "$LOST" "$(own | jq -c '[.LostAccess[] | .Users |= sort]')"
 docker start "$PREFIX-remote" >/dev/null
 wait_ready remote
 
