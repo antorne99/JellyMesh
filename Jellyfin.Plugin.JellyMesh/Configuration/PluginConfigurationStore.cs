@@ -34,6 +34,10 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
     // The database generation the rows were read in: a database opened again is read again.
     private long _loadedGeneration;
 
+    // Saves that replaced or removed a credential, and how many of them a checkpoint has since emptied from the log.
+    private long _droppedCredentials;
+    private long _emptiedCredentials;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="PluginConfigurationStore"/> class.
     /// </summary>
@@ -114,6 +118,41 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
             {
                 SettingsChanged?.Invoke(this, EventArgs.Empty);
             }
+        }
+
+        EmptyLogOfOldCredentials();
+    }
+
+    // Empties the database log while it may still hold a replaced or removed credential, outside the lock, since a reader
+    // can make it wait. The change is saved by then, so a failure is only logged and the next save tries again.
+    private void EmptyLogOfOldCredentials()
+    {
+        long dropped;
+        lock (_lock)
+        {
+            dropped = _droppedCredentials;
+            if (dropped == _emptiedCredentials)
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            if (!_database.TruncateWalAsync(CancellationToken.None).GetAwaiter().GetResult())
+            {
+                _logger.LogDebug("The JellyMesh database log was busy; replaced credentials are cleared from it at the next save");
+                return;
+            }
+
+            lock (_lock)
+            {
+                _emptiedCredentials = Math.Max(_emptiedCredentials, dropped);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "The JellyMesh database log could not be emptied of replaced credentials; the next save tries again");
         }
     }
 
@@ -210,5 +249,9 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
 
         _database.WriteAsync((connection, transaction) => ConfigurationTables.Write(connection, transaction, saved, current), CancellationToken.None).GetAwaiter().GetResult();
         _saved = current;
+        if (saved.DropsCredentialsIn(current))
+        {
+            _droppedCredentials++;
+        }
     }
 }

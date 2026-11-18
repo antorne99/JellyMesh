@@ -130,6 +130,18 @@ internal sealed class ConfigurationRows
     }
 
     /// <summary>
+    /// Tells whether a credential saved in these rows is replaced or gone in <paramref name="next"/>.
+    /// </summary>
+    /// <param name="next">The rows that follow these.</param>
+    /// <returns>Whether some ciphertext of these rows is no longer in use.</returns>
+    public bool DropsCredentialsIn(ConfigurationRows next)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+        var kept = next.Rows(ConfigurationTables.Servers).Select(Credentials).ToHashSet();
+        return Rows(ConfigurationTables.Servers).Select(Credentials).Any(entry => entry.Ciphertext.Length > 0 && !kept.Contains(entry));
+    }
+
+    /// <summary>
     /// Tells whether any table differs from <paramref name="other"/>.
     /// </summary>
     /// <param name="other">The other rows.</param>
@@ -260,6 +272,9 @@ internal sealed class ConfigurationRows
     }
 
     // Each value tagged with its type, so a text "1" and a number 1 are different rows.
+    // The server id and ciphertext of a row of the servers table.
+    private static (string Id, string Ciphertext) Credentials(object[] row) => ((string)row[0], (string)row[5]);
+
     private static string Key(object[] row) => string.Join('\u001f', row.Select(value => value switch
     {
         long number => "n" + number.ToString(CultureInfo.InvariantCulture),

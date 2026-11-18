@@ -459,11 +459,96 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal(3, database.Reads);
     }
 
+    // Old ciphertext stays readable in -wal until a TRUNCATE checkpoint, so a change or removal of credentials empties it.
+    [Fact]
+    public void ChangedOrRemovedCredentialsLeaveNoOldCiphertextOnDisk()
+    {
+        const string Old = "b2xkLWNpcGhlcnRleHQtc2VudGluZWwtMWYyZQ==";
+        const string New = "bmV3LWNpcGhlcnRleHQtc2VudGluZWwtOWE4Yg==";
+        var store = Store();
+        store.Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa", EncryptedCredentials = Old }));
+
+        store.Update(config => config.Servers[0].EncryptedCredentials = New);
+
+        Assert.DoesNotContain(Old, DatabaseText(), StringComparison.Ordinal);
+        Assert.Contains(New, DatabaseText(), StringComparison.Ordinal);
+
+        store.Update(config => config.Servers.Clear());
+
+        Assert.DoesNotContain(New, DatabaseText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OnlyAChangeThatDropsCredentialsEmptiesTheLog()
+    {
+        var database = new SpyDatabase(Open());
+        var store = Store(database);
+
+        store.Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa", EncryptedCredentials = Ciphertext }));
+        store.Update(config => config.Servers[0].Name = "Casa nuova");
+        store.Update(config => config.SyncIntervalSeconds = 1200);
+        Assert.Equal(0, database.Truncates);
+
+        store.Update(config => config.Servers[0].EncryptedCredentials = "changed");
+
+        Assert.Equal(1, database.Truncates);
+    }
+
+    // A reader can keep the checkpoint from finishing: the next save tries again, until one empties the log.
+    [Fact]
+    public void ALogThatStaysBusyIsEmptiedAtTheNextSave()
+    {
+        var database = new SpyDatabase(Open());
+        var store = Store(database);
+        store.Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa", EncryptedCredentials = Ciphertext }));
+        database.TruncateBusy = true;
+
+        store.Update(config => config.Servers[0].EncryptedCredentials = "changed");
+        database.TruncateBusy = false;
+        store.Update(config => config.SyncIntervalSeconds = 1200);
+        store.Update(config => config.SyncIntervalSeconds = 1500);
+
+        Assert.Equal(2, database.Truncates);
+    }
+
+    // The change is saved by then: a failure to empty the log must not undo it in memory, nor reach the caller.
+    [Fact]
+    public void ALogThatCannotBeEmptiedKeepsTheSavedChange()
+    {
+        var database = new SpyDatabase(Open());
+        var logger = new CapturingLogger<PluginConfigurationStore>();
+        var store = Store(database, logger: logger);
+        store.Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa", EncryptedCredentials = Ciphertext }));
+        database.TruncateFailure = new SqliteException("disk I/O error", 10);
+        var rolledBack = 0;
+
+        store.Update(config => config.Servers[0].EncryptedCredentials = "changed", _ => rolledBack++);
+
+        Assert.Equal(0, rolledBack);
+        Assert.Equal("changed", store.Read(config => config.Servers[0].EncryptedCredentials));
+        Assert.Equal("changed", Store().Read(config => config.Servers[0].EncryptedCredentials));
+        Assert.Single(logger.Lines);
+    }
+
     private PluginDatabase Open()
     {
         var database = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1);
         _opened.Add(database);
         return database;
+    }
+
+    // The database file and its log as bytes on disk, which a copy of the data folder would hold.
+    private string DatabaseText()
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var path in new[] { PluginDatabase.FileName, PluginDatabase.FileName + "-wal" }.Select(name => Path.Combine(Folder, name)).Where(File.Exists))
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, System.Text.Encoding.Latin1);
+            text.Append(reader.ReadToEnd());
+        }
+
+        return text.ToString();
     }
 
     private PluginConfigurationStore Store(IPluginDatabase? database = null, string? root = null, CapturingLogger<PluginConfigurationStore>? logger = null, TimeProvider? clock = null)
@@ -526,7 +611,23 @@ public sealed class PluginConfigurationStoreTests : IDisposable
                 },
                 cancellationToken);
 
-        public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => inner.TruncateWalAsync(cancellationToken);
+        public int Truncates { get; private set; }
+
+        public bool TruncateBusy { get; set; }
+
+        public Exception? TruncateFailure { get; set; }
+
+        public async Task<bool> TruncateWalAsync(CancellationToken cancellationToken)
+        {
+            Truncates++;
+            if (TruncateFailure is { } failure)
+            {
+                throw failure;
+            }
+
+            var emptied = await inner.TruncateWalAsync(cancellationToken);
+            return emptied && !TruncateBusy;
+        }
 
         public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => inner.BackUpAsync(cancellationToken);
 
