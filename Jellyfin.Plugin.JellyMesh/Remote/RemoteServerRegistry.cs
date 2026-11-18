@@ -947,7 +947,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // Ends the live login of the old user, or logs it in and out on the kept device; never throws.
     private async Task LogOutOldUserAsync(EditPlan plan, string? name, RemoteSession? replaced)
     {
-        var endpoint = EndpointOf(plan.ServerId, plan.Url);
+        // A new address is the same server only when the saved Server Id was checked there; else the old user stays where it was.
+        var endpoint = EndpointOf(plan.ServerId, plan.Saved.JellyfinServerId.Length > 0 ? plan.Url : plan.Saved.Url);
         using var limit = new CancellationTokenSource(LogoutLimit);
         RemoteFailure failure;
         try

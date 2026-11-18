@@ -284,6 +284,46 @@ public sealed partial class ServerEditTests
         Assert.Empty(Requests);
     }
 
+    // Without a saved Server Id the new address is not proven to be the same server: the old user's token or password
+    // goes only where it was used. With a verified Id the new address is that server, and the old one may be gone.
+    [Theory]
+    [InlineData(true, "", TestValues.Host)]
+    [InlineData(false, "", TestValues.Host)]
+    [InlineData(true, FirstId, "other.invalid")]
+    [InlineData(false, FirstId, "other.invalid")]
+    public async Task A_new_user_and_address_end_the_old_user_where_it_is_known_to_be(bool liveLogin, string savedId, string logoutHost)
+    {
+        var id = await AddAsync("1");
+        _fixture.Store.Configuration.Servers.Single().JellyfinServerId = savedId;
+        var registry = _fixture.Registry;
+        if (liveLogin)
+        {
+            await KeepLoginAsync(id);
+        }
+        else
+        {
+            registry.Dispose();
+            registry = new RemoteServerRegistry(_fixture.Store, _fixture.Vault, _fixture.Client, _fixture.Logger);
+        }
+
+        var controller = new FederationAdminController(
+            registry, _fixture.Vault, _fixture.Store, Mock.Of<IFederatedFolderLinkChecker>(), _playback.Coordinator,
+            new FixedFederatedRootSource(null), _sync.Object, new InMemoryMergeStore(), _libraries.Object,
+            new CapturingLogger<FederationAdminController>());
+        _token = "new-user-token";
+        Assert.IsType<ServerStatus>((await controller.SaveServerEdit(id, Edit(url: OtherUrl, user: "someone", password: "new-pass"), CancellationToken.None)).Value);
+
+        var logout = Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        Assert.Equal(logoutHost, logout.Uri.Host);
+        Assert.All(
+            Requests.Where(request => request.Body?.Contains(TestValues.Username, StringComparison.Ordinal) == true || request.Authorization?.Contains(TestValues.Token, StringComparison.Ordinal) == true),
+            request => Assert.Equal(logoutHost, request.Uri.Host));
+        if (!ReferenceEquals(registry, _fixture.Registry))
+        {
+            registry.Dispose();
+        }
+    }
+
     [Fact]
     public async Task A_new_user_without_a_live_login_ends_the_device_of_the_old_user_with_its_saved_credentials()
     {
