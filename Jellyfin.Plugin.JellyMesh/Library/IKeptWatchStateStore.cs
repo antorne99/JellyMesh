@@ -64,6 +64,6 @@ public interface IKeptWatchStateStore
     /// Reads the manual merges saved for removed servers.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The merges, each dated when it was saved.</returns>
-    Task<IReadOnlyList<ManualMerge>> ReadMergesAsync(CancellationToken cancellationToken);
+    /// <returns>The merges, each with its removed server and dated when it was saved.</returns>
+    Task<IReadOnlyList<(Guid ServerId, ManualMerge Merge)>> ReadMergesAsync(CancellationToken cancellationToken);
 }

@@ -790,6 +790,50 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // The merges kept for a removed server serve only its own titles: one undone meanwhile joins nothing for another server.
+    [Fact]
+    public async Task TheMergesKeptForARemovedServerServeOnlyItsTitles()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("z", "Zeta", 2024) with { ProviderIds = new Dictionary<string, string?>(), RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", "films");
+        var b = await AddAndMaterializeAsync("B", "films-b");
+        var c = await AddAndMaterializeAsync("C", "films-c");
+        await MergeAsync((a, "x", "1"), (b, "z", null), (c, "y", null));
+        var alfa = FilmItem(a);
+        await RemoveAsKeptAsync(c);
+        await _fixture.Merges.UpdateAsync(_ => [], CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        Watch(_anna, FilmItem(b));
+
+        await RemoveAsKeptAsync(b);
+
+        Assert.False(Row(_anna, alfa).Played);
+        Assert.Empty(Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Copies);
+    }
+
+    // The manual merges that cannot be read hold the titles of a removed server, which would miss their other copies.
+    [Fact]
+    public async Task WhileTheMergesCannotBeReadTheTitlesOfARemovedServerAreHeld()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", "films");
+        Watch(_anna, FilmItem(a));
+        var damaged = new Mock<IManualMergeStore>();
+        damaged.Setup(merges => merges.IsDamaged).Returns(true);
+        damaged.Setup(merges => merges.Merges).Returns([]);
+        using var keeper = Keeper(_kept, damaged.Object);
+
+        await RemoveAsync(a, MaterializerWith(keeper));
+
+        Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.Single(keeper.HeldRemovals);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
     // D33 for a series: its episodes and its favorite find the series left in the merge through its series items.
     [Fact]
     public async Task TheKeptStateOfAMergedSeriesOnTheRemovedServerFindsTheSeriesLeft()
@@ -864,6 +908,17 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.False(Row(_anna, alfa).Played);
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // Removes a server as the settings page does: its merges are kept for the watch state before its copies leave them.
+    private async Task RemoveAsKeptAsync(RemoteServerInfo server)
+    {
+        var id = server.Id.ToString("N");
+        using var sync = SyncWith(_materializer);
+        await sync.RemoveServerAsync(server.Id, () => _fixture.Sync.Registry.RemoveAsync(server.Id), CancellationToken.None);
+        Assert.True(await _keeper.KeepMergesAsync(server.Id, _fixture.Merges.Merges.Where(merge => ManualMergeService.HasCopyOn(merge, id)).ToList(), CancellationToken.None));
+        await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, id), CancellationToken.None);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
     }
 
     private async Task MergeAsync(params (RemoteServerInfo Server, string ItemId, string? Tmdb)[] copies)

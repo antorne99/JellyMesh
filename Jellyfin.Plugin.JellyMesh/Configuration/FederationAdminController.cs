@@ -626,13 +626,15 @@ public class FederationAdminController : ControllerBase
     {
         var server = serverId.ToString("N");
         var held = _merges.Merges.Where(merge => ManualMergeService.HasCopyOn(merge, server)).ToList();
-        if (held.Count == 0)
+
+        // The kept watch state finds the other copies through these merges (D33), in place of those of an earlier removal of
+        // the same server; unsaved, the copies stay in them.
+        if (_keeper is not null && !await _keeper.KeepMergesAsync(serverId, held, CancellationToken.None).ConfigureAwait(false))
         {
             return;
         }
 
-        // The kept watch state finds the other copies through these merges (D33); unsaved, the copies stay in them.
-        if (_keeper is not null && !await _keeper.KeepMergesAsync(serverId, held, CancellationToken.None).ConfigureAwait(false))
+        if (held.Count == 0)
         {
             return;
         }

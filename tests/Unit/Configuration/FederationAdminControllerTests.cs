@@ -378,6 +378,23 @@ public class FederationAdminControllerTests
         Assert.Same(untouched, Assert.Single(merges.Merges));
     }
 
+    // A server added back with its id and removed again replaces the merges kept the first time, even with none now.
+    [Fact]
+    public async Task Removing_a_server_without_merges_clears_those_kept_for_it_before()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.KeepMergesAsync(server.Id, It.IsAny<IReadOnlyList<ManualMerge>>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var merges = new InMemoryMergeStore();
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, merges, keeper: keeper.Object);
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        keeper.Verify(k => k.KeepMergesAsync(server.Id, It.Is<IReadOnlyList<ManualMerge>>(kept => kept.Count == 0), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(0, merges.Updates);
+    }
+
     // Merges that cannot be kept for the watch state keep the copies of the removed server, shown as not found.
     [Fact]
     public async Task Merges_that_cannot_be_kept_for_the_watch_state_keep_the_copies_of_the_removed_server()

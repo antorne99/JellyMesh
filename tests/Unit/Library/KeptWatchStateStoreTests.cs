@@ -220,8 +220,9 @@ public sealed class KeptWatchStateStoreTests : IDisposable
         await store.SaveMergesAsync(server, [merge with { Copies = [_alfa] }], _saved, CancellationToken.None);
         await store.SaveMergesAsync(server, [merge], _saved, CancellationToken.None);
 
-        var read = Assert.Single(await Store().ReadMergesAsync(CancellationToken.None));
+        var (removed, read) = Assert.Single(await Store().ReadMergesAsync(CancellationToken.None));
 
+        Assert.Equal(server, removed);
         Assert.Equal(merge.Id, read.Id);
         Assert.Equal([_alfa, _sonda], read.Copies);
         await store.PruneAsync(_saved.AddDays(-90), new HashSet<Guid>(), CancellationToken.None);

@@ -251,10 +251,11 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<ManualMerge>> ReadMergesAsync(CancellationToken cancellationToken) => _database.ReadAsync(
-        (connection, transaction) => (IReadOnlyList<ManualMerge>)ReadCopies(connection, transaction, SelectMergeCopies, reader => reader.GetString(0))
-            .Values
-            .Select(entry => new ManualMerge { Id = entry.MergeId, CreatedUtc = entry.SavedUtc, Copies = entry.Copies })
+    public Task<IReadOnlyList<(Guid ServerId, ManualMerge Merge)>> ReadMergesAsync(CancellationToken cancellationToken) => _database.ReadAsync(
+        (connection, transaction) => (IReadOnlyList<(Guid, ManualMerge)>)ReadCopies(connection, transaction, SelectMergeCopies, reader => reader.GetString(0))
+            .Select(entry => (
+                Guid.ParseExact(entry.Key.Split(':')[0], "N"),
+                new ManualMerge { Id = entry.Value.MergeId, CreatedUtc = entry.Value.SavedUtc, Copies = entry.Value.Copies }))
             .ToList(),
         cancellationToken);
 

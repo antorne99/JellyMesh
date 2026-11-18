@@ -276,12 +276,16 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         ]
     };
 
-    // The copies of every merge holding one of these items: a film, or a series by its series items.
-    private static List<MergedCopy> CopiesOf(IEnumerable<StubSource> sources, IReadOnlyList<ManualMerge> merges)
+    // The copies of every merge holding one of these items: a film, or a series by its series items. A merge kept for a
+    // removed server counts only through a copy on that server.
+    private static List<MergedCopy> CopiesOf(IEnumerable<StubSource> sources, IReadOnlyList<ManualMerge> merges, IReadOnlyList<(Guid ServerId, ManualMerge Merge)> kept)
     {
         var items = sources.Select(source => (source.ServerId.ToString("N"), source.ItemId)).ToHashSet();
         return merges
             .Where(merge => merge.Copies.Any(copy => items.Contains((copy.ServerId, copy.ItemId))))
+            .Concat(kept
+                .Where(entry => entry.Merge.Copies.Any(copy => copy.ServerId == entry.ServerId.ToString("N") && items.Contains((copy.ServerId, copy.ItemId))))
+                .Select(entry => entry.Merge))
             .SelectMany(merge => merge.Copies)
             .DistinctBy(copy => (copy.ServerId, copy.ItemId, copy.Kind))
             .ToList();
@@ -498,7 +502,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                 return false;
             }
 
-            IReadOnlyList<ManualMerge> merges = [.. _merges.Merges, .. await _kept.ReadMergesAsync(cancellationToken).ConfigureAwait(false)];
+            var merges = _merges.Merges;
+            var keptMerges = await _kept.ReadMergesAsync(cancellationToken).ConfigureAwait(false);
             var seriesById = series.Concat(_registry.State.Series).DistinctBy(entry => entry.Id).ToDictionary(entry => entry.Id, StringComparer.Ordinal);
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var parents = new Dictionary<Guid, BaseItem?>();
@@ -521,7 +526,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                     .ToList();
                 if (rows.Count > 0)
                 {
-                    titles.Add(TitleOf(item, parents, now) with { Users = rows, Copies = CopiesOf(path.Sources, merges) });
+                    titles.Add(TitleOf(item, parents, now) with { Users = rows, Copies = CopiesOf(path.Sources, merges, keptMerges) });
                 }
             }
 
