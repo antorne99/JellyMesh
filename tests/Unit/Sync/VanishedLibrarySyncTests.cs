@@ -62,6 +62,22 @@ public sealed class VanishedLibrarySyncTests : IDisposable
     }
 
     [Fact]
+    public async Task Incremental_syncs_also_drop_a_library_absent_from_two_consecutive_answers()
+    {
+        var server = await TwoLibrariesSyncedAsync();
+        RemoveOnRemote(TestLibraries.FilmsB);
+
+        for (var run = 0; run < 3; run++)
+        {
+            _fixture.Clock.Now = _fixture.Clock.Now.AddMinutes(15);
+            await _fixture.Sync.RunIncrementalAsync(CancellationToken.None);
+        }
+
+        Assert.Equal([TestLibraries.Films], ConfigOf(server).ImportedLibraryIds);
+        Assert.Equal(["m"], CatalogOf(server).Items.Select(item => item.ItemId));
+    }
+
+    [Fact]
     public async Task A_vanished_library_is_recorded_with_its_name_logged_and_written_to_the_activity_log()
     {
         var server = await TwoLibrariesSyncedAsync();
