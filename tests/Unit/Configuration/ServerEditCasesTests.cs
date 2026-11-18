@@ -3,8 +3,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.AspNetCore.Http;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
@@ -77,5 +79,120 @@ public sealed partial class ServerEditTests
         var result = await Controller().SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
 
         Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
+    }
+
+    [Fact]
+    public async Task A_new_name_is_saved_then_renamed_through_the_renamer_without_asking_again()
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(new ServerRenameState(false, false, false));
+
+        var result = await Controller(renamer.Object).SaveServerEdit(id, Edit(name: " Casa "), CancellationToken.None);
+
+        Assert.Equal("Casa", Assert.IsType<ServerStatus>(result.Value).Name);
+        renamer.Verify(service => service.Rename(id, "Casa", true), Times.Once);
+    }
+
+    [Fact]
+    public async Task An_unchanged_name_starts_no_rename()
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(new ServerRenameState(false, false, false));
+
+        await Controller(renamer.Object).SaveServerEdit(id, Edit(url: OtherUrl), CancellationToken.None);
+
+        renamer.Verify(service => service.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task A_new_name_is_refused_on_the_name_while_a_rename_has_not_finished(bool busy, bool pending, bool failed)
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(new ServerRenameState(busy, pending, failed));
+        var before = Snapshot();
+
+        var check = await Controller(renamer.Object).CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+        var save = await Controller(renamer.Object).SaveServerEdit(id, Edit(name: "Casa", url: OtherUrl), CancellationToken.None);
+
+        foreach (var (status, failure) in new[] { Refusal(check), Refusal(save) })
+        {
+            Assert.Equal(StatusCodes.Status409Conflict, status);
+            Assert.Equal(RemoteFailure.RenameUnfinished, failure.Failure);
+            Assert.Equal(RemoteEditField.Name, failure.Field);
+        }
+
+        Assert.Equal(before, Snapshot());
+        Assert.Empty(Requests);
+        renamer.Verify(service => service.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_new_name_is_refused_while_a_renamed_library_waits_for_a_restart()
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(new ServerRenameState(false, false, false));
+        renamer.SetupGet(service => service.NeedsRestart).Returns(true);
+
+        var result = await Controller(renamer.Object).SaveServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.RenameUnfinished, Refusal(result).Failure.Failure);
+    }
+
+    [Fact]
+    public async Task A_rename_that_has_not_finished_leaves_the_other_fields_editable()
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(new ServerRenameState(false, true, false));
+
+        var result = await Controller(renamer.Object).SaveServerEdit(id, Edit(url: OtherUrl), CancellationToken.None);
+
+        Assert.IsType<ServerStatus>(result.Value);
+        Assert.Equal(OtherUrl, _fixture.Store.Configuration.Servers.Single().Url);
+    }
+
+    [Theory]
+    [InlineData("Other")]
+    [InlineData(" other ")]
+    public async Task A_name_another_server_has_is_refused_on_the_name(string name)
+    {
+        var id = await AddAsync("1");
+        _fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Other", Url = OtherUrl });
+        var before = Snapshot(id);
+
+        var check = await Controller().CheckServerEdit(id, Edit(name: name), CancellationToken.None);
+        var save = await Controller().SaveServerEdit(id, Edit(name: name), CancellationToken.None);
+
+        foreach (var (status, failure) in new[] { Refusal(check), Refusal(save) })
+        {
+            Assert.Equal(StatusCodes.Status409Conflict, status);
+            Assert.Equal(RemoteFailure.NameTaken, failure.Failure);
+            Assert.Equal(RemoteEditField.Name, failure.Field);
+            Assert.Equal("Another server already has this name.", failure.Message);
+        }
+
+        Assert.Equal(before, Snapshot(id));
+    }
+
+    [Fact]
+    public async Task A_name_that_differs_only_in_case_from_the_saved_one_is_a_rename()
+    {
+        var id = await AddAsync("1");
+        var renamer = Renamer(new ServerRenameState(false, false, false));
+
+        await Controller(renamer.Object).SaveServerEdit(id, Edit(name: "FRIEND"), CancellationToken.None);
+
+        renamer.Verify(service => service.Rename(id, "FRIEND", true), Times.Once);
+    }
+
+    private static Mock<IServerRenamer> Renamer(ServerRenameState state)
+    {
+        var renamer = new Mock<IServerRenamer>();
+        renamer.Setup(service => service.GetState(It.IsAny<Guid>())).Returns(state);
+        renamer.Setup(service => service.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()))
+            .Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
+        return renamer;
     }
 }

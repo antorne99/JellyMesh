@@ -64,7 +64,7 @@ public sealed partial class ServerEditTests : IDisposable
         _ => StubHandler.Status(HttpStatusCode.NotFound)
     };
 
-    private FederationAdminController Controller() => new(
+    private FederationAdminController Controller(IServerRenamer? renamer = null) => new(
         _fixture.Registry,
         _fixture.Vault,
         _fixture.Store,
@@ -74,7 +74,8 @@ public sealed partial class ServerEditTests : IDisposable
         Mock.Of<ICatalogSyncService>(),
         new InMemoryMergeStore(),
         _libraries.Object,
-        new CapturingLogger<FederationAdminController>());
+        new CapturingLogger<FederationAdminController>(),
+        renamer: renamer);
 
     private async Task<Guid> AddAsync(params string[] libraries)
     {
@@ -98,9 +99,9 @@ public sealed partial class ServerEditTests : IDisposable
         return (refused.StatusCode!.Value, Assert.IsType<FailureResponse>(refused.Value));
     }
 
-    private string Snapshot()
+    private string Snapshot(Guid? id = null)
     {
-        var server = _fixture.Store.Configuration.Servers.Single();
+        var server = _fixture.Store.Configuration.Servers.Single(candidate => id is null || candidate.Id == id);
         return string.Join('|', server.Name, server.Url, server.EncryptedCredentials, server.JellyfinServerId, string.Join(',', server.ImportedLibraryIds));
     }
 

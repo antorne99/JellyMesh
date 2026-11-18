@@ -331,6 +331,11 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.BeingRemoved);
         }
 
+        if (RefuseName(serverId, request.Name) is { } refusedName)
+        {
+            return refusedName;
+        }
+
         var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
         return result.IsSuccess ? ToCheck(serverId, request.Name!.Trim(), result.Value!) : EditFailed(result);
     }
@@ -359,11 +364,18 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.BeingRemoved);
         }
 
+        if (RefuseName(serverId, request.Name) is { } refusedName)
+        {
+            return refusedName;
+        }
+
         var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
             return EditFailed(result);
         }
+
+        AfterSave(serverId, result.Value!.Changes, request.Name!.Trim());
 
         var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
         return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server);
@@ -722,6 +734,50 @@ public class FederationAdminController : ControllerBase
                 ServerName = string.IsNullOrEmpty(name) ? null : name,
                 Field = field == RemoteEditField.None ? null : field
             });
+    }
+
+    // Refuses on the name a new name another server has, or one given while a rename has not finished (row 434).
+    private ObjectResult? RefuseName(Guid serverId, string? name)
+    {
+        var trimmed = name?.Trim();
+        var servers = _registry.GetServers();
+        if (string.IsNullOrEmpty(trimmed) || servers.FirstOrDefault(server => server.Id == serverId) is not { } saved || saved.Name == trimmed)
+        {
+            return null;
+        }
+
+        var failure = servers.Any(server => server.Id != serverId && string.Equals(server.Name.Trim(), trimmed, StringComparison.OrdinalIgnoreCase))
+            ? RemoteFailure.NameTaken
+            : RenameUnfinished(serverId) ? RemoteFailure.RenameUnfinished : RemoteFailure.None;
+        return failure == RemoteFailure.None
+            ? null
+            : EditFailed(RemoteResult.Fail(failure, new RemoteEditReport(RemoteEditField.Name)));
+    }
+
+    // Tells whether a rename of the server runs, waits for a scan, failed, or left a library waiting for a restart.
+    private bool RenameUnfinished(Guid serverId)
+    {
+        if (_renamer is null)
+        {
+            return false;
+        }
+
+        var state = _renamer.GetState(serverId);
+        return state.Busy || state.Pending || state.Failed || _renamer.NeedsRestart;
+    }
+
+    // Runs what follows a saved edit, in order: rename (row 434).
+    private void AfterSave(Guid serverId, RemoteEditChanges changes, string name)
+    {
+        if (changes.HasFlag(RemoteEditChanges.Name) && _renamer is not null)
+        {
+            // The name is saved and was checked before the save, so the rename needs no confirmation here.
+            var answer = _renamer.Rename(serverId, name, confirmed: true);
+            if (answer.Outcome != ServerRenameOutcome.Started)
+            {
+                _logger.LogWarning("The rename after an edit of a server did not start: {Outcome}", answer.Outcome);
+            }
+        }
     }
 
     // The libraries and the consequences of an edit the remote accepted (row 432).
