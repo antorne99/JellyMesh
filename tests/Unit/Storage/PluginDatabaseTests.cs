@@ -541,6 +541,26 @@ public sealed class PluginDatabaseTests : IDisposable
         Assert.Equal(1L, await CountAsync(database));
     }
 
+    // A log left full by a crash, as when a reader kept it busy after a credential change, is emptied before first use.
+    [Fact]
+    public void AnOpenEmptiesALogLeftByACrash()
+    {
+        const string Secret = "crash-left-secret-3d7a";
+        LeaveDatabaseWithLog(SchemaMigrations.Latest, connection =>
+        {
+            Scalar(connection, "PRAGMA secure_delete = ON;");
+            Scalar(connection, $"INSERT INTO later VALUES ('{Secret}');");
+            Scalar(connection, $"DELETE FROM later WHERE value = '{Secret}';");
+        });
+        Assert.Contains(Secret, ReadText(DatabasePath + "-wal"), StringComparison.Ordinal);
+
+        var database = Open();
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(0, new FileInfo(DatabasePath + "-wal").Length);
+        Assert.DoesNotContain(Secret, ReadText(DatabasePath), StringComparison.Ordinal);
+    }
+
     private static string ReadText(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);

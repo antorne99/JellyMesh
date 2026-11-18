@@ -309,6 +309,37 @@ public sealed class SyncTaskTests : IDisposable
         Assert.Equal(["sync", "copy", "sweep"], steps);
     }
 
+    // A log a busy reader kept full after a credential change, then a crash, is emptied at least each night (§10 row 429).
+    [Fact]
+    public async Task TheReconciliationEmptiesTheDatabaseLogAfterTheCopy()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("copy")).ReturnsAsync(Copy);
+        _database.Setup(d => d.TruncateWalAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("log")).ReturnsAsync(true);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sweep")).Returns(Task.CompletedTask);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["copy", "log", "sweep"], steps);
+    }
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task ALogThatCannotBeEmptiedIsLoggedAndDoesNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.TruncateWalAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+        _database.Verify(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task ACopyThatFailsStillLeavesTheSweep()
     {
