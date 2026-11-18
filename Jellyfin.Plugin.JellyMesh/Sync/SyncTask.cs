@@ -62,7 +62,11 @@ public abstract class SyncTask : IScheduledTask
 
         if (result == SyncStartResult.Suspended)
         {
-            _logger.LogWarning("{Task} skipped: remote servers are suspended until the secret key or the plugin database is fixed", Name);
+            _logger.LogWarning("{Task} skipped: remote servers are suspended until the secret key is fixed", Name);
+        }
+        else if (result == SyncStartResult.DatabaseSuspended)
+        {
+            _logger.LogWarning("{Task} skipped: remote servers are suspended until the plugin database can be used again", Name);
         }
         else if (result == SyncStartResult.AlreadyRunning)
         {

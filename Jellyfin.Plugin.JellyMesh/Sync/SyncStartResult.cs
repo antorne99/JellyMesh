@@ -11,6 +11,9 @@ public enum SyncStartResult
     /// <summary>A sync is already running.</summary>
     AlreadyRunning,
 
-    /// <summary>The secret key or the plugin database is not usable, so remote work is suspended.</summary>
-    Suspended
+    /// <summary>The secret key is not usable, so remote work is suspended.</summary>
+    Suspended,
+
+    /// <summary>The plugin database is not usable, so remote work is suspended.</summary>
+    DatabaseSuspended
 }

@@ -283,11 +283,17 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private SyncStartResult TryClaim()
     {
-        // Without the database the index and the stubs cannot be kept, so the sync waits for it like for the key.
-        if (_vault.GetKeyState() != KeyState.Ok || _database?.Health.Suspended == true)
+        if (_vault.GetKeyState() != KeyState.Ok)
         {
             MarkLibraryFollowSkipped();
             return SyncStartResult.Suspended;
+        }
+
+        // Without the database the index and the stubs cannot be kept, so the sync waits for it like for the key.
+        if (_database?.Health.Suspended == true)
+        {
+            MarkLibraryFollowSkipped();
+            return SyncStartResult.DatabaseSuspended;
         }
 
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)

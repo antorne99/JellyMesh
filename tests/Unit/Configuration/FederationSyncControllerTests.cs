@@ -58,6 +58,19 @@ public sealed class FederationSyncControllerTests : IDisposable
     }
 
     [Fact]
+    public void WhileTheDatabaseIsSuspendedItAnswersConflictWithItsOwnMessage()
+    {
+        _fixture.Database.Suspended = true;
+
+        var result = Assert.IsType<ConflictObjectResult>(Controller().StartSync().Result);
+
+        var failure = (FailureResponse)result.Value!;
+        Assert.Equal(RemoteFailure.Suspended, failure.Failure);
+        Assert.Equal(FederationSyncController.DatabaseSuspendedMessage, failure.Message);
+        Assert.DoesNotContain("secret key", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheHistoryIsGivenNewestFirst_WithItsDamage()
     {
         var newer = new SyncRun(SyncFixture.Start.AddMinutes(15), 10, SyncRunKind.Incremental, SyncRunOutcome.Succeeded, []);
