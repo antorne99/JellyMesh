@@ -204,7 +204,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
             _logger.LogError("Cannot read the federation index from the database: {Error}. It is empty until the database can be read", exception.GetType().Name);
             return null;
         }
-        catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException)
+        catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException or InvalidOperationException or OverflowException or InvalidCastException)
         {
             _logger.LogError("The federation index in the database is damaged: {Error}. It is empty until a sync fills it again", exception.GetType().Name);
             return new IndexTables.StoredIndex(IndexSnapshot.Empty(IndexHealth.Corrupt), []);

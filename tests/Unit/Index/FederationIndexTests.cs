@@ -185,6 +185,29 @@ public sealed class FederationIndexTests : IDisposable
         Assert.Equal("c", Assert.Single(Assert.Single(restarted.Snapshot.Servers).Items).ItemId);
     }
 
+    public static TheoryData<Exception> ConversionFailures() => new()
+    {
+        new InvalidOperationException("null value"),
+        new OverflowException("too large"),
+        new InvalidCastException("wrong type"),
+    };
+
+    [Theory]
+    [MemberData(nameof(ConversionFailures))]
+    public async Task ARowThatDoesNotConvertGivesAnEmptyFlaggedIndex(Exception failure)
+    {
+        using (var index = NewIndex())
+        {
+            await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
+        }
+
+        _database.FailNextRead(failure);
+        using var damaged = NewIndex();
+
+        Assert.Equal(IndexHealth.Corrupt, damaged.Snapshot.Health);
+        Assert.Empty(damaged.Snapshot.Servers);
+    }
+
     [Fact]
     public async Task TheIndexComesBackAfterARestart()
     {

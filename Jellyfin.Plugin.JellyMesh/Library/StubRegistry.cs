@@ -301,7 +301,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             _logger.LogError("Cannot read the stub registry from the database: {Error}. It is empty until the database can be read", exception.GetType().Name);
             return null;
         }
-        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException)
+        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException or InvalidOperationException or OverflowException)
         {
             _logger.LogError("The stub registry in the database is damaged: {Error}. Stubs are minted again at the next sync", exception.GetType().Name);
             (_loaded, _stored) = (true, null);

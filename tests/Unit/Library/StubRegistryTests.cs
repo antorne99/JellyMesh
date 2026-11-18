@@ -522,6 +522,28 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Equal("abc", restarted.Find("abc")?.Id);
     }
 
+    public static TheoryData<Exception> ConversionFailures() => new()
+    {
+        new InvalidOperationException("null value"),
+        new OverflowException("too large"),
+    };
+
+    [Theory]
+    [MemberData(nameof(ConversionFailures))]
+    public async Task ARowThatDoesNotConvertGivesAnEmptyRegistry(Exception failure)
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        _database.FailNextRead(failure);
+        using var damaged = Create();
+
+        Assert.Empty(damaged.State.Stubs);
+        Assert.Contains(_logger.Lines, line => line.Contains("damaged", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task RowsThatDoNotReadGiveAnEmptyRegistryWrittenWholeAtTheNextSave()
     {

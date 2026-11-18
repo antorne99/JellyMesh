@@ -50,6 +50,12 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
 
     private Exception? Interrupt { get; set; }
 
+    private Exception? ReadFailure { get; set; }
+
+    /// <summary>Makes the next read throw from inside its transaction, as a row that does not convert would.</summary>
+    /// <param name="exception">What the read throws.</param>
+    public void FailNextRead(Exception exception) => ReadFailure = exception;
+
     public StoreRecovery? Recovery => _inner.Recovery;
 
     public StoreHealth Retry() => _inner.Retry();
@@ -59,6 +65,12 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
     public Task<T> ReadAsync<T>(Func<SqliteConnection, SqliteTransaction, T> read, CancellationToken cancellationToken)
     {
         ThrowIfSuspended();
+        if (ReadFailure is { } failure)
+        {
+            ReadFailure = null;
+            return _inner.ReadAsync<T>((_, _) => throw failure, cancellationToken);
+        }
+
         return _inner.ReadAsync(read, cancellationToken);
     }
 
