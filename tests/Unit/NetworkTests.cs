@@ -59,7 +59,8 @@ public class NetworkTests
         var names = Names();
         return texts
             .Where(text => names.Any(name => text.Text.Contains(name, StringComparison.OrdinalIgnoreCase)))
-            .Select(text => text.Where + ": " + Masked(text.Text.Length > 300 ? text.Text[..300] : text.Text, names))
+            .Select(text => (text.Where, Masked: Masked(text.Text, names)))
+            .Select(text => text.Where + ": " + (text.Masked.Length > 300 ? text.Masked[..300] : text.Masked))
             .ToArray();
     }
 
@@ -79,7 +80,9 @@ public class NetworkTests
         var resources = _plugin.GetManifestResourceNames()
             .SelectMany(name => ReadResource(name).Split('\n').Select((line, index) => (name + ":" + (index + 1), line)));
 
-        Assert.Empty(Hits(resources));
+        var hits = Hits(resources);
+
+        Assert.True(hits.Length == 0, string.Join(Environment.NewLine, hits));
     }
 
     [NetworkNamesFact]
@@ -88,7 +91,9 @@ public class NetworkTests
         var strings = new[] { _plugin, typeof(NetworkTests).Assembly }
             .SelectMany(assembly => UserStrings(assembly).Select(text => (assembly.GetName().Name!, text)));
 
-        Assert.Empty(Hits(strings));
+        var hits = Hits(strings);
+
+        Assert.True(hits.Length == 0, string.Join(Environment.NewLine, hits));
     }
 }
 
