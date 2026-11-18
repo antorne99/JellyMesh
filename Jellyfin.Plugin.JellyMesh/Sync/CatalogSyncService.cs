@@ -283,17 +283,18 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private SyncStartResult TryClaim()
     {
-        if (KeyStateOrUnreadable() != KeyState.Ok)
-        {
-            MarkLibraryFollowSkipped();
-            return SyncStartResult.Suspended;
-        }
-
-        // Without the database the index and the stubs cannot be kept, so the sync waits for it like for the key.
-        if (_database?.Health.Suspended == true)
+        // Without the database the index and the stubs cannot be kept, nor the settings read, so the sync waits for it.
+        var keyState = _database?.Health.Suspended == true ? null : KeyStateOrUnreadable();
+        if (keyState is null)
         {
             MarkLibraryFollowSkipped();
             return SyncStartResult.DatabaseSuspended;
+        }
+
+        if (keyState != KeyState.Ok)
+        {
+            MarkLibraryFollowSkipped();
+            return SyncStartResult.Suspended;
         }
 
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
@@ -813,7 +814,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     // A scheduled sync, before it claims the run, writes once each stored password that no longer decrypts (49). A missing
     // key is not that.
-    // A database that cannot be used counts as a wrong key: nothing syncs on settings it cannot read.
+    // Null while the settings cannot be read from the database.
     private KeyState? KeyStateOrUnreadable()
     {
         try

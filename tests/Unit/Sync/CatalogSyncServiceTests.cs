@@ -203,9 +203,9 @@ public sealed class CatalogSyncServiceTests : IDisposable
         _fixture.Client.Queries.Clear();
         _fixture.Store.Unavailable = true;
 
-        Assert.Equal(SyncStartResult.Suspended, _fixture.Sync.TryStart());
-        Assert.Equal(SyncStartResult.Suspended, await _fixture.Sync.RunAsync(CancellationToken.None));
-        Assert.Equal(SyncStartResult.Suspended, await _fixture.Sync.RunIncrementalAsync(CancellationToken.None));
+        Assert.Equal(SyncStartResult.DatabaseSuspended, _fixture.Sync.TryStart());
+        Assert.Equal(SyncStartResult.DatabaseSuspended, await _fixture.Sync.RunAsync(CancellationToken.None));
+        Assert.Equal(SyncStartResult.DatabaseSuspended, await _fixture.Sync.RunIncrementalAsync(CancellationToken.None));
         await Assert.ThrowsAsync<StoreSuspendedException>(() => _fixture.Sync.ForgetMissingServersAsync(CancellationToken.None));
 
         _fixture.Store.Unavailable = false;
