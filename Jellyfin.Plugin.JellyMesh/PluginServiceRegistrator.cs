@@ -45,9 +45,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<PluginDatabase>>()));
         serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
-        serviceCollection.AddSingleton(provider => new IndexFile(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<IndexFile>>()));
         serviceCollection.AddSingleton<IFederationIndex, FederationIndex>();
         serviceCollection.AddSingleton<ILocalCatalogReader, LocalCatalogReader>();
         serviceCollection.AddSingleton<IManualMergeStore>(provider => new ManualMergeStore(

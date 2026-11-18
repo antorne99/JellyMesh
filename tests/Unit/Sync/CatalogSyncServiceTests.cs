@@ -245,13 +245,12 @@ public sealed class CatalogSyncServiceTests : IDisposable
     {
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
         var server = await _fixture.AddServerAsync("A", "films");
-        await System.IO.File.WriteAllTextAsync(_fixture.Folder, "a file where the folder should be");
+        _fixture.Database.InterruptNextWrite();
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
         Assert.True(_fixture.Sync.GetStatus().IndexSaveFailed);
         Assert.Null(_fixture.Index.Snapshot.Find(server.Id));
-        System.IO.File.Delete(_fixture.Folder);
     }
 
     [Fact]

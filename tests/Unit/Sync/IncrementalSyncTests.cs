@@ -407,16 +407,14 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task AnIncrementalThatCannotBeSavedIsReported()
     {
-        await SyncedServerAsync();
+        var server = await SyncedServerAsync();
         Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
         SaveOnRemote("c");
-        var folder = _fixture.Folder;
-        System.IO.Directory.Delete(folder, recursive: true);
-        await System.IO.File.WriteAllTextAsync(folder, "a file where the folder should be");
+        _fixture.Database.InterruptNextWrite();
 
         await RunIncremental();
 
         Assert.True(_fixture.Sync.GetStatus().IndexSaveFailed);
-        System.IO.File.Delete(folder);
+        Assert.DoesNotContain(_fixture.Index.Snapshot.Find(server.Id)!.Items, item => item.ItemId == "c");
     }
 }

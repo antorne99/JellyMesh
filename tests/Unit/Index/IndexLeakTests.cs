@@ -1,5 +1,5 @@
 using System;
-using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +7,7 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Index;
@@ -41,7 +42,7 @@ public sealed class IndexLeakTests : IDisposable
         """;
 
     [Fact]
-    public async Task TheIndexFileHoldsNoTokenNoAddressAndNoPath()
+    public async Task TheIndexTablesHoldNoTokenNoAddressAndNoPath()
     {
         var item = JsonSerializer.Deserialize<RemoteItem>(HostileItem, _options)!;
         _fixture.Client.Add("films", RemoteItemType.Movie, item);
@@ -49,12 +50,34 @@ public sealed class IndexLeakTests : IDisposable
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
-        var content = await File.ReadAllTextAsync(Path.Combine(_fixture.Folder, IndexFile.FileName));
+        var content = await _fixture.Database.ReadAsync(DumpIndexTables, CancellationToken.None);
         Assert.Contains("\"source\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Token, content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Password, content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Host, content, StringComparison.Ordinal);
         Assert.DoesNotContain("/secret/path", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Friend", content, StringComparison.Ordinal);
+    }
+
+    // Every value of every row of the index tables, as text.
+    private static string DumpIndexTables(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var text = new StringBuilder();
+        foreach (var query in (string[])["SELECT * FROM index_servers;", "SELECT * FROM index_mark_libraries;", "SELECT * FROM index_items;"])
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = query;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                for (var column = 0; column < reader.FieldCount; column++)
+                {
+                    text.Append(reader.GetValue(column)).Append('\n');
+                }
+            }
+        }
+
+        return text.ToString();
     }
 }
