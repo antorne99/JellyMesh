@@ -117,5 +117,20 @@ public enum RemoteFailure
     /// The remote gave a Server Id other than the one saved for this server: another server answers at its address, so
     /// the login is refused and ended (row 433).
     /// </summary>
-    OtherServer
+    OtherServer,
+
+    /// <summary>
+    /// The server is being removed, so an edit of it is refused (row 434).
+    /// </summary>
+    BeingRemoved,
+
+    /// <summary>
+    /// Another configured server already has the name an edit gives (row 434).
+    /// </summary>
+    NameTaken,
+
+    /// <summary>
+    /// A rename of the server has not finished, so an edit cannot change its name yet (row 434).
+    /// </summary>
+    RenameUnfinished
 }

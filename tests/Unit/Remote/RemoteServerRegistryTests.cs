@@ -166,9 +166,9 @@ public class RemoteServerRegistryTests
     public async Task AServerWhoseRemovalCannotBeSavedStays(Type failure)
     {
         using var fixture = new RegistryFixture();
-        var first = await fixture.AddServerAsync();
-        var server = await fixture.AddServerAsync();
-        var last = await fixture.AddServerAsync();
+        var first = await fixture.AddServerAsync("First");
+        var server = await fixture.AddServerAsync("Middle");
+        var last = await fixture.AddServerAsync("Last");
         fixture.Store.SaveFailure = (Exception)Activator.CreateInstance(failure)!;
 
         await Assert.ThrowsAsync(failure, () => fixture.Registry.RemoveAsync(server.Id));

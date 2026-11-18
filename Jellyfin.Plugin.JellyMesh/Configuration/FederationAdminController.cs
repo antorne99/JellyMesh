@@ -234,6 +234,8 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.UnknownServer);
         }
 
+        // Edits wait for the removal and are refused, and the removal waits for the edit in progress (row 434).
+        using var removal = await _registry.BeginRemovalAsync(serverId, cancellationToken).ConfigureAwait(false);
         bool removed;
         var stopping = false;
         try
@@ -304,7 +306,8 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Enters the dedicated user of a server again, after logging in with it. This is how a lost key file is fixed.
+    /// Enters the dedicated user of a server again, as a save of the edit form with its effects. This is how a lost key
+    /// file is fixed.
     /// </summary>
     /// <param name="serverId">The server to update.</param>
     /// <param name="request">The dedicated user.</param>
@@ -320,9 +323,20 @@ public class FederationAdminController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
-        var result = await _registry.UpdateCredentialsAsync(serverId, credentials, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
+
+        // A save of the form that changes only the user and password, with the same effects (row 434).
+        if (_registry.GetServers().FirstOrDefault(server => server.Id == serverId) is not { } saved)
+        {
+            return Failed(RemoteFailure.UnknownServer);
+        }
+
+        var form = new ServerEditRequest { Name = saved.Name, Url = saved.Url, Username = request.Username, Password = request.Password };
+        return await SaveEditCoreAsync(serverId, form, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -343,13 +357,24 @@ public class FederationAdminController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
+
+        if (RefuseName(serverId, request.Name) is { } refusedName)
+        {
+            return refusedName;
+        }
+
         var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
         return result.IsSuccess ? ToCheck(serverId, request.Name!.Trim(), result.Value!) : EditFailed(result);
     }
 
     /// <summary>
-    /// Saves an edit of a server all or nothing, after the same checks as its check (row 432). What follows the save on the
-    /// libraries, the streams and the old user is not done here yet.
+    /// Saves an edit of a server all or nothing, after the same checks as its check (row 432), then stops the streams and
+    /// ends the login of an old user, renames, writes the server folders and starts a sync of the server as needed (row 434).
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The edit form.</param>
@@ -365,14 +390,13 @@ public class FederationAdminController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
-        if (!result.IsSuccess)
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
         {
-            return EditFailed(result);
+            return Failed(RemoteFailure.BeingRemoved);
         }
 
-        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
-        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server);
+        return await SaveEditCoreAsync(serverId, request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -422,13 +446,21 @@ public class FederationAdminController : ControllerBase
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The libraries.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Nothing.</returns>
     [HttpPost("Servers/{serverId:guid}/Libraries")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult SetLibraries([FromRoute] Guid serverId, [FromBody] SetLibrariesRequest request)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult> SetLibraries([FromRoute] Guid serverId, [FromBody] SetLibrariesRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
 
         return _registry.SetImportedLibraries(serverId, request.LibraryIds) ? NoContent() : Failed(RemoteFailure.UnknownServer);
     }
@@ -439,14 +471,21 @@ public class FederationAdminController : ControllerBase
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The switch and the confirmation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state, while the work runs in the background.</returns>
     [HttpPost("Servers/{serverId:guid}/AutomaticLibraries")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public ActionResult<AutomaticLibrariesState> SetAutomaticLibraries([FromRoute] Guid serverId, [FromBody] SetAutomaticLibrariesRequest request)
+    public async Task<ActionResult<AutomaticLibrariesState>> SetAutomaticLibraries([FromRoute] Guid serverId, [FromBody] SetAutomaticLibrariesRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
 
         var answer = request.Enabled ? _libraries.Enable(serverId) : _libraries.Disable(serverId, request.Confirmed);
         if (answer.Outcome == AutomaticLibrariesOutcome.Started)
@@ -463,18 +502,30 @@ public class FederationAdminController : ControllerBase
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="request">The new name and the confirmation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state, while the work runs in the background.</returns>
     [HttpPost("Servers/{serverId:guid}/Rename")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public ActionResult<ServerRenameState> RenameServer([FromRoute] Guid serverId, [FromBody] RenameServerRequest request)
+    public async Task<ActionResult<ServerRenameState>> RenameServer([FromRoute] Guid serverId, [FromBody] RenameServerRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (_renamer is null)
         {
             return NotFound();
+        }
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
+
+        if (NameHeldElsewhere(_registry.GetServers(), serverId, request.Name))
+        {
+            return Failed(RemoteFailure.NameTaken);
         }
 
         var answer = _renamer.Rename(serverId, request.Name, request.Confirmed);
@@ -496,17 +547,24 @@ public class FederationAdminController : ControllerBase
     /// Drops the stub moves of a server that wait for a scan, and deletes their old files (§10 row 288).
     /// </summary>
     /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state of the rename.</returns>
     [HttpPost("Servers/{serverId:guid}/Rename/Cancel")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId)
+    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
         if (_renamer is null)
         {
             return NotFound();
+        }
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
         }
 
         var outcome = await _renamer.CancelPendingAsync(serverId).ConfigureAwait(false);
@@ -650,6 +708,9 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
             RemoteFailure.AlreadyConfigured => "This server is already configured.",
             RemoteFailure.OtherServer => "Another server answers at this address. To use it, remove this one and add it as a new server.",
+            RemoteFailure.BeingRemoved => "This server is being removed.",
+            RemoteFailure.NameTaken => "Another server already has this name.",
+            RemoteFailure.RenameUnfinished => "A rename of this server has not finished. Wait for it, or save the edit without changing the name.",
             _ => "The operation failed."
         };
     }
@@ -700,7 +761,8 @@ public class FederationAdminController : ControllerBase
     {
         return failure switch
         {
-            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer => StatusCodes.Status409Conflict,
+            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer or RemoteFailure.BeingRemoved
+                or RemoteFailure.NameTaken or RemoteFailure.RenameUnfinished => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
@@ -727,6 +789,117 @@ public class FederationAdminController : ControllerBase
             });
     }
 
+    // Refuses on the name a new name another server has, or one given while a rename has not finished (row 434).
+    // Tells whether a server other than this one has the name, trimmed and in any case.
+    private static bool NameHeldElsewhere(IReadOnlyList<RemoteServerInfo> servers, Guid serverId, string? name)
+        => !string.IsNullOrWhiteSpace(name)
+            && servers.Any(server => server.Id != serverId && string.Equals(server.Name.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private ObjectResult? RefuseName(Guid serverId, string? name)
+    {
+        var trimmed = name?.Trim();
+        var servers = _registry.GetServers();
+        if (string.IsNullOrEmpty(trimmed) || servers.FirstOrDefault(server => server.Id == serverId) is not { } saved || saved.Name == trimmed)
+        {
+            return null;
+        }
+
+        var failure = NameHeldElsewhere(servers, serverId, trimmed)
+            ? RemoteFailure.NameTaken
+            : RenameUnfinished(serverId) ? RemoteFailure.RenameUnfinished : RemoteFailure.None;
+        return failure == RemoteFailure.None
+            ? null
+            : EditFailed(RemoteResult.Fail(failure, new RemoteEditReport(RemoteEditField.Name)));
+    }
+
+    // Tells whether a rename of the server runs, waits for a scan, failed, or left a library waiting for a restart.
+    private bool RenameUnfinished(Guid serverId)
+    {
+        if (_renamer is null)
+        {
+            return false;
+        }
+
+        var state = _renamer.GetState(serverId);
+        return state.Busy || state.Pending || state.Failed || _renamer.NeedsRestart;
+    }
+
+    // Closes the playback of a server whose user changed, then lets it play again with the new user (row 434).
+    private async Task StopStreamsAsync(Guid serverId)
+    {
+        try
+        {
+            await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
+        }
+        finally
+        {
+            _playback.ReopenServer(serverId);
+        }
+    }
+
+    // Runs what follows a saved edit, in order, after the old user was logged out by the save: rename, libraries, library
+    // mode, then the sync of the server. A step that fails is logged and leaves the save and the next steps (rows 432, 434).
+    // Saves an edit after refusing a taken name, then sets off its effects (row 434). The caller holds the edit lock.
+    private async Task<ActionResult<ServerStatus>> SaveEditCoreAsync(Guid serverId, ServerEditRequest request, CancellationToken cancellationToken)
+    {
+        // A first check, before any remote; the registry checks the name again in the change that stores it.
+        if (RefuseName(serverId, request.Name) is { } refusedName)
+        {
+            return refusedName;
+        }
+
+        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), () => StopStreamsAsync(serverId), cancellationToken).ConfigureAwait(false);
+        if (!result.IsSuccess)
+        {
+            return EditFailed(result);
+        }
+
+        AfterSave(serverId, result.Value!.Changes, request.Name!.Trim());
+
+        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
+        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server) with { RemoteWarning = result.Value.RemoteWarning };
+    }
+
+    private void AfterSave(Guid serverId, RemoteEditChanges changes, string name)
+    {
+        if (changes.HasFlag(RemoteEditChanges.Name) && _renamer is not null)
+        {
+            RunStep("rename", () =>
+            {
+                // The name is saved and was checked before the save, so the rename needs no confirmation here.
+                var answer = _renamer.Rename(serverId, name, confirmed: true);
+                if (answer.Outcome != ServerRenameOutcome.Started)
+                {
+                    _logger.LogWarning("The rename after an edit of a server did not start: {Outcome}", answer.Outcome);
+                }
+            });
+        }
+
+        if (changes.HasFlag(RemoteEditChanges.Libraries))
+        {
+            RunStep("libraries", _sync.PrepareServerFolders);
+        }
+
+        // The library mode joins the edit in F40, with its own safeguards; it comes here, before the sync.
+        if ((changes & (RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Libraries)) != RemoteEditChanges.None)
+        {
+            RunStep("sync", () => _sync.StartServerSync(serverId));
+        }
+    }
+
+    private void RunStep(string step, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception exception)
+        {
+            // The type only: a message could hold a path or an address.
+            _logger.LogError("The {Step} step after an edit of a server failed: {Error}", step, exception.GetType().Name);
+        }
+    }
+
     // The libraries and the consequences of an edit the remote accepted (row 432).
     private ServerEditCheck ToCheck(Guid serverId, string name, RemoteEditReport report)
     {
@@ -746,7 +919,11 @@ public class FederationAdminController : ControllerBase
         return new ServerEditCheck(
             report.ServerName ?? string.Empty,
             visible.Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, kept.Contains(library.Id))).ToList(),
-            new ServerEditConsequences(rename, removed, streams));
+            new ServerEditConsequences(rename, removed, streams))
+        {
+            RemoteOffline = report.RemoteOffline,
+            RemoteWarning = report.RemoteWarning
+        };
     }
 
     // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure

@@ -61,6 +61,9 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ConcurrentDictionary<Guid, int> _runReads = new();
     private readonly UnreadablePasswords _unreadablePasswords = new();
 
+    private readonly Lock _pendingLock = new();
+    private readonly HashSet<Guid> _pendingServers = [];
+
     private TimeSpan _serverReadLimit = MaxServerRead;
     private int _busy;
     private volatile TaskCompletionSource _idle = Completed();
@@ -127,6 +130,14 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _database = database;
     }
 
+    // Which servers a run reads: all of them in full, all of them for changes, or only those waiting for a sync of their own.
+    private enum ServerScope
+    {
+        All,
+        Changes,
+        Pending
+    }
+
     /// <summary>
     /// Sets the longest one server may take in a sync.
     /// </summary>
@@ -149,6 +160,31 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
+    public SyncStartResult StartServerSync(Guid serverId)
+    {
+        SyncStartResult claim;
+
+        // Claimed under the lock a run ends under, so a request never falls between its last look and its release.
+        lock (_pendingLock)
+        {
+            _pendingServers.Add(serverId);
+            claim = TryClaim();
+            if (claim is not SyncStartResult.Started and not SyncStartResult.AlreadyRunning)
+            {
+                _pendingServers.Clear();
+            }
+        }
+
+        if (claim == SyncStartResult.Started)
+        {
+            var cancellationToken = _shutdown.Token;
+            _ = Task.Run(() => RunPendingGuardedAsync(cancellationToken), CancellationToken.None);
+        }
+
+        return claim;
+    }
+
+    /// <inheritdoc />
     public async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)
     {
         ReportUnreadablePasswords();
@@ -156,7 +192,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         if (claim == SyncStartResult.Started)
         {
             // The nightly reconciliation also checks every stub's item: the safety net for an item left on an old URL.
-            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, true, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, true, ServerScope.All, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -169,7 +205,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
-            await SyncAllAsync(SyncChangesAsync, SyncRunKind.Incremental, false, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncChangesAsync, SyncRunKind.Incremental, false, ServerScope.Changes, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -307,11 +343,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         return SyncStartResult.Started;
     }
 
-    private async Task RunGuardedAsync(CancellationToken cancellationToken)
+    private Task RunGuardedAsync(CancellationToken cancellationToken) => RunGuardedAsync(ServerScope.All, cancellationToken);
+
+    private Task RunPendingGuardedAsync(CancellationToken cancellationToken) => RunGuardedAsync(ServerScope.Pending, cancellationToken);
+
+    private async Task RunGuardedAsync(ServerScope scope, CancellationToken cancellationToken)
     {
         try
         {
-            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, false, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, false, scope, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -338,13 +378,16 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         await _index.DropServersAsync(removed, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, SyncRunKind kind, bool verifyEveryStub, CancellationToken cancellationToken)
+    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, SyncRunKind kind, bool verifyEveryStub, ServerScope scope, CancellationToken cancellationToken)
     {
         var started = _run.StartedUtc ?? _timeProvider.GetUtcNow();
         IReadOnlyList<RemoteServerInfo> servers = [];
         var materialized = new Materialized(null, false);
         SyncRunOutcome? stopped = null;
         var followed = false;
+
+        // Taken before anything can fail, so that a failed run does not start again for the same servers.
+        var pending = TakePending(scope);
         try
         {
             if (_libraries is not null)
@@ -354,7 +397,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             _runFailures.Clear();
             _runReads.Clear();
-            servers = _registry.GetServers();
+            var configured = _registry.GetServers();
+            servers = scope == ServerScope.Pending ? configured.Where(server => pending.Contains(server.Id)).ToList() : configured;
             foreach (var server in servers)
             {
                 await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
@@ -400,6 +444,41 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             // Before the run shows finished: the page reads the history again when it sees a new end.
             await RecordAsync(kind, started, servers, materialized, stopped).ConfigureAwait(false);
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
+            EndRun();
+        }
+    }
+
+    // Takes the servers waiting for a sync of their own. A full read of every server also covers them; the incremental one
+    // does not, since it reads only changes.
+    private HashSet<Guid> TakePending(ServerScope scope)
+    {
+        lock (_pendingLock)
+        {
+            var pending = _pendingServers.ToHashSet();
+            if (scope != ServerScope.Changes)
+            {
+                _pendingServers.Clear();
+            }
+
+            return pending;
+        }
+    }
+
+    // Releases the claim, or keeps it for the servers waiting for a sync of their own, so no other run comes between.
+    private void EndRun()
+    {
+        lock (_pendingLock)
+        {
+            if (_pendingServers.Count > 0 && !_shutdown.IsCancellationRequested
+                && _database?.Health.Suspended != true && KeyStateOrUnreadable() == KeyState.Ok)
+            {
+                _run = _run with { IsRunning = true, IndexSaveFailed = false, StartedUtc = _timeProvider.GetUtcNow() };
+                var cancellationToken = _shutdown.Token;
+                _ = Task.Run(() => RunPendingGuardedAsync(cancellationToken), CancellationToken.None);
+                return;
+            }
+
+            _pendingServers.Clear();
             var idle = _idle;
             Interlocked.Exchange(ref _busy, 0);
             idle.TrySetResult();

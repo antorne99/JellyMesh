@@ -94,8 +94,14 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
     public Task<RemoteResult<RemoteEditReport>> CheckEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 
-    public Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
+    public Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, Func<Task>? stopStreams, CancellationToken cancellationToken)
         => throw new NotSupportedException();
+
+    public Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken)
+        => Task.FromResult<IDisposable?>(new CancellationTokenSource());
+
+    public Task<IDisposable> BeginRemovalAsync(Guid serverId, CancellationToken cancellationToken)
+        => Task.FromResult<IDisposable>(new CancellationTokenSource());
 
     private static readonly RemoteEndpoint _endpoint = new(new Uri("http://remote.invalid:8096/"), PlaybackValues.RemoteDevice);
     private static readonly RemoteSession _session = new(PlaybackValues.RemoteToken, "remote-user");
