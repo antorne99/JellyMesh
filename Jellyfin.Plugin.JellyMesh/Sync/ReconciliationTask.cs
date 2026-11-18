@@ -3,28 +3,35 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Sync;
 
 /// <summary>
-/// Reads every remote in full at the configured time, which is what catches deletions (plan §3.1).
+/// Reads every remote in full at the configured time, which is what catches deletions (plan §3.1), then copies the plugin
+/// database (row 427).
 /// </summary>
 public sealed class ReconciliationTask : SyncTask
 {
     private readonly ICatalogSyncService _sync;
+    private readonly IPluginDatabase _database;
+    private readonly ILogger<ReconciliationTask> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReconciliationTask"/> class.
     /// </summary>
     /// <param name="sync">The sync service.</param>
     /// <param name="store">The configuration store.</param>
+    /// <param name="database">The plugin database, copied after each reconciliation.</param>
     /// <param name="logger">The logger.</param>
-    public ReconciliationTask(ICatalogSyncService sync, IPluginConfigurationStore store, ILogger<ReconciliationTask> logger)
+    public ReconciliationTask(ICatalogSyncService sync, IPluginConfigurationStore store, IPluginDatabase database, ILogger<ReconciliationTask> logger)
         : base(store, logger)
     {
         _sync = sync;
+        _database = database;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -46,6 +53,39 @@ public sealed class ReconciliationTask : SyncTask
 
     /// <inheritdoc />
     protected override async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)
+    {
+        // The copy follows the sync, so it holds what the sync brought in, and is made even when the sync failed.
+        try
+        {
+            return await ReconcileAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                await BackUpAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    // A copy that cannot be made is logged and leaves the copies before it; it does not fail the reconciliation.
+    private async Task BackUpAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _database.BackUpAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (StoreSuspendedException)
+        {
+            _logger.LogWarning("The nightly copy of the JellyMesh database was skipped: the database is suspended");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("The nightly copy of the JellyMesh database failed: {Error}", exception.Message);
+        }
+    }
+
+    private async Task<SyncStartResult> ReconcileAsync(CancellationToken cancellationToken)
     {
         // It runs once a day, so unlike a poll it cannot leave it to the next turn when another sync is in the way.
         var result = await _sync.RunAsync(cancellationToken).ConfigureAwait(false);
