@@ -117,7 +117,7 @@ public class PeerGuardFilterTests
         Assert.True(ran);
     }
 
-    // Nothing outside the peers table marks a peer, so while it cannot be read every user passes to stock as a local one.
+    // Nothing outside the peers table marks a peer, so this filter lets everyone by; StoreNotLoadedFilter stops non-admins (D32).
     [Fact]
     public async Task While_the_peers_cannot_be_read_a_local_user_passes_untouched()
     {
