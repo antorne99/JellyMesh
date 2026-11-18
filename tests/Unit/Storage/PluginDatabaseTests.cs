@@ -134,8 +134,9 @@ public sealed class PluginDatabaseTests : IDisposable
         Assert.Equal(StoreState.NewerSchema, database.Health.State);
         Assert.True(database.Health.Suspended);
         Assert.Equal(before, await File.ReadAllBytesAsync(DatabasePath));
-        Assert.False(File.Exists(DatabasePath + "-wal"));
-        Assert.False(File.Exists(DatabasePath + "-shm"));
+
+        // A read-only check of a WAL file may leave an empty log next to it, never anything written.
+        Assert.True(!File.Exists(DatabasePath + "-wal") || new FileInfo(DatabasePath + "-wal").Length == 0);
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((_, _) => { }, CancellationToken.None));
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync((_, _) => 0, CancellationToken.None));
     }
@@ -491,6 +492,116 @@ public sealed class PluginDatabaseTests : IDisposable
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var reader = new StreamReader(stream, System.Text.Encoding.Latin1);
         return reader.ReadToEnd();
+    }
+
+    // Copies a WAL database and its non-empty -wal into the store folder while the connection that wrote them is open,
+    // as a crash of a newer build would leave them; changes is run after the frames stop going into the file.
+    private void LeaveDatabaseWithLog(int version, Action<SqliteConnection> changes)
+    {
+        var scratch = Path.Combine(Folder, "scratch");
+        Directory.CreateDirectory(scratch);
+        var source = Path.Combine(scratch, FileName());
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = source, Pooling = false }.ToString()))
+        {
+            connection.Open();
+            Scalar(connection, "PRAGMA journal_mode = WAL;");
+            Scalar(connection, "CREATE TABLE later (value TEXT); CREATE INDEX later_value ON later (value);");
+            for (var row = 0; row < 200; row++)
+            {
+                Scalar(connection, $"INSERT INTO later VALUES ('{new string('v', 200)}{row}');");
+            }
+
+            Scalar(connection, "PRAGMA wal_checkpoint(TRUNCATE);");
+            Scalar(connection, "PRAGMA wal_autocheckpoint = 0;");
+            changes(connection);
+            Scalar(connection, $"PRAGMA user_version = {version};");
+            File.Copy(source, DatabasePath);
+            File.Copy(source + "-wal", DatabasePath + "-wal");
+        }
+
+        Directory.Delete(scratch, true);
+        Assert.True(new FileInfo(DatabasePath + "-wal").Length > 0);
+
+        static string FileName() => PluginDatabase.FileName;
+    }
+
+    [Fact]
+    public async Task ANewerSchemaWithAPendingLogLeavesBothFilesUntouched()
+    {
+        LeaveDatabaseWithLog(SchemaMigrations.Latest + 1, connection => Scalar(connection, "INSERT INTO later VALUES ('pending');"));
+        var database = await File.ReadAllBytesAsync(DatabasePath);
+        var log = await File.ReadAllBytesAsync(DatabasePath + "-wal");
+
+        var store = Open();
+
+        Assert.Equal(StoreState.NewerSchema, store.Health.State);
+        store.Dispose();
+        Assert.Equal(database, await File.ReadAllBytesAsync(DatabasePath));
+        Assert.Equal(log, await File.ReadAllBytesAsync(DatabasePath + "-wal"));
+    }
+
+    [Fact]
+    public async Task ADamagedFileWithAPendingLogLeavesBothFilesUntouched()
+    {
+        LeaveDatabaseWithLog(1, connection => Scalar(connection, "INSERT INTO later VALUES ('pending');"));
+
+        // Overwrites the middle of the file, which the pending log does not cover.
+        var bytes = await File.ReadAllBytesAsync(DatabasePath);
+        Array.Fill(bytes, (byte)0x5A, bytes.Length / 2, 4096);
+        await File.WriteAllBytesAsync(DatabasePath, bytes);
+        var log = await File.ReadAllBytesAsync(DatabasePath + "-wal");
+
+        var store = Open();
+
+        Assert.Equal(StoreState.Damaged, store.Health.State);
+        store.Dispose();
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(DatabasePath));
+        Assert.Equal(log, await File.ReadAllBytesAsync(DatabasePath + "-wal"));
+    }
+
+    // On Windows SQLite gives these the folder's access list, so the store narrows them once they exist.
+    [Fact]
+    public void TheLogFilesOfANewDatabaseAreNarrowedOnTheFirstOpen()
+    {
+        var guard = new RecordingGuard();
+
+        Assert.Equal(StoreState.Healthy, Open(guard).Health.State);
+
+        foreach (var file in new[] { DatabasePath + "-wal", DatabasePath + "-shm" })
+        {
+            Assert.True(File.Exists(file));
+            Assert.Contains(file, guard.Narrowed);
+        }
+    }
+
+    [Fact]
+    public void TheLogFilesOfAnExistingDatabaseAreNarrowedOnOpen()
+    {
+        Open().Dispose();
+        var guard = new RecordingGuard();
+
+        Assert.Equal(StoreState.Healthy, Open(guard).Health.State);
+
+        foreach (var file in new[] { DatabasePath + "-wal", DatabasePath + "-shm" })
+        {
+            Assert.True(File.Exists(file));
+            Assert.Contains(file, guard.Narrowed);
+        }
+    }
+
+    private sealed class RecordingGuard : IKeyFileGuard
+    {
+        private readonly IKeyFileGuard _inner = KeyFileGuards.ForThisSystem();
+
+        public List<string> Narrowed { get; } = [];
+
+        public FileStream CreatePrivate(string path) => _inner.CreatePrivate(path);
+
+        public void KeepPrivate(string path)
+        {
+            _inner.KeepPrivate(path);
+            Narrowed.Add(path);
+        }
     }
 
     private sealed class RefusingGuard : IKeyFileGuard

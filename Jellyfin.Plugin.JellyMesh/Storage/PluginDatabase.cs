@@ -32,6 +32,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private readonly string _folder;
     private readonly string _path;
     private readonly string _connectionString;
+    private readonly string _readOnlyConnectionString;
     private readonly ILogger<PluginDatabase> _logger;
     private readonly IKeyFileGuard _guard;
     private readonly IReadOnlyList<SchemaMigration> _migrations;
@@ -75,14 +76,19 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _migrations = migrations;
 
         // ReadWrite, not ReadWriteCreate: the store makes a missing file private itself, and never replaces one that does not open.
-        _connectionString = new SqliteConnectionStringBuilder
+        var settings = new SqliteConnectionStringBuilder
         {
             DataSource = _path,
             Mode = SqliteOpenMode.ReadWrite,
             Cache = SqliteCacheMode.Private,
             Pooling = false,
             DefaultTimeout = busyTimeoutSeconds
-        }.ToString();
+        };
+        _connectionString = settings.ToString();
+
+        // The check before opening for writes: a read-only connection never moves a pending log into the file on close.
+        settings.Mode = SqliteOpenMode.ReadOnly;
+        _readOnlyConnectionString = settings.ToString();
     }
 
     /// <summary>
@@ -122,7 +128,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             () =>
             {
                 ThrowIfSuspended(Health);
-                using var connection = Connect();
+                using var connection = Connect(_connectionString);
                 using var transaction = connection.BeginTransaction(deferred: true);
                 return read(connection, transaction);
             },
@@ -249,14 +255,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // A connection with the settings of row 428; secure_delete is per connection, so it is set on each (F23).
-    private SqliteConnection Connect()
+    private static SqliteConnection Connect(string connectionString)
     {
-        var connection = new SqliteConnection(_connectionString);
+        var connection = new SqliteConnection(connectionString);
         try
         {
             connection.Open();
-            using var secureDelete = Command(connection, "PRAGMA secure_delete = ON;");
-            secureDelete.ExecuteNonQuery();
+            using var pragmas = Command(connection, "PRAGMA secure_delete = ON;");
+            pragmas.ExecuteNonQuery();
             return connection;
         }
         catch
@@ -266,8 +272,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Permissions, version, integrity, WAL, then the schema steps; called with the gate held. The file is changed only once
-    // its version is known and it passes the check.
+    // Permissions, then version and integrity read-only, then WAL and the schema steps on the writer; called with the gate
+    // held. The file is opened for writes only once its version is known and it passes the check.
     private StoreHealth Open()
     {
         _writer?.Dispose();
@@ -285,37 +291,41 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         SqliteConnection? writer = null;
         try
         {
-            writer = Connect();
-            var version = Convert.ToInt32(Scalar(writer, "PRAGMA user_version;"), CultureInfo.InvariantCulture);
-            if (version > Latest)
+            int version;
+            using (var probe = Connect(_readOnlyConnectionString))
             {
-                _logger.LogWarning("The JellyMesh database has schema version {Version}, newer than {Latest} of this build. It is left as it is", version, Latest);
-                return new StoreHealth(StoreState.NewerSchema, $"The database has schema version {version}; this build knows up to {Latest}.");
+                version = Convert.ToInt32(Scalar(probe, "PRAGMA user_version;"), CultureInfo.InvariantCulture);
+                if (version > Latest)
+                {
+                    _logger.LogWarning("The JellyMesh database has schema version {Version}, newer than {Latest} of this build. It is left as it is", version, Latest);
+                    return new StoreHealth(StoreState.NewerSchema, $"The database has schema version {version}; this build knows up to {Latest}.");
+                }
+
+                var check = Convert.ToString(Scalar(probe, "PRAGMA quick_check;"), CultureInfo.InvariantCulture);
+                if (!string.Equals(check, "ok", StringComparison.Ordinal))
+                {
+                    _logger.LogWarning("The JellyMesh database failed its integrity check");
+                    return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
+                }
             }
 
-            var check = Convert.ToString(Scalar(writer, "PRAGMA quick_check;"), CultureInfo.InvariantCulture);
-            if (!string.Equals(check, "ok", StringComparison.Ordinal))
-            {
-                _logger.LogWarning("The JellyMesh database failed its integrity check");
-                return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
-            }
-
+            writer = Connect(_connectionString);
             var mode = Convert.ToString(Scalar(writer, "PRAGMA journal_mode = WAL;"), CultureInfo.InvariantCulture);
             if (!string.Equals(mode, "wal", StringComparison.Ordinal))
             {
                 return Unavailable("The database cannot use write-ahead logging", null);
             }
 
-            // SQLite makes these with the mode of the database on Unix, and with the folder's access list on Windows.
+            Migrate(writer, version);
+
+            // A read in WAL mode makes the log files when nothing was written. SQLite gives them the mode of the database on
+            // Unix and the folder's access list on Windows, so they are narrowed here, before the store is healthy.
+            Scalar(writer, "SELECT count(*) FROM sqlite_master;");
             foreach (var suffix in _walFiles)
             {
-                if (File.Exists(_path + suffix))
-                {
-                    _guard.KeepPrivate(_path + suffix);
-                }
+                _guard.KeepPrivate(_path + suffix);
             }
 
-            Migrate(writer, version);
             _writer = writer;
             writer = null;
             return StoreHealth.Healthy;
