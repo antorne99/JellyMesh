@@ -457,24 +457,36 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // A server with libraries keeps its mode here; the Edit form changes it (F40).
     private AutomaticLibrariesRequest EnableIn(Guid serverId, LibraryMode? asked)
     {
-        var (outcome, owner, mode) = _store.Read<(AutomaticLibrariesOutcome, RemoteServerConfig?, LibraryMode)>(config =>
+        var (outcome, owner, mode, seen) = _store.Read<(AutomaticLibrariesOutcome, RemoteServerConfig?, LibraryMode, LibraryMode)>(config =>
         {
             if (Find(config, serverId) is not { } server)
             {
-                return (AutomaticLibrariesOutcome.UnknownServer, null, LibraryMode.None);
+                return (AutomaticLibrariesOutcome.UnknownServer, null, LibraryMode.None, LibraryMode.None);
             }
 
             var mode = asked ?? (server.AutomaticLibraries ? server.LibraryMode : LibraryMode.ByType);
             if (server.AutomaticLibraries && server.LibraryMode != mode && server.AutomaticLibraryRegistry.Count > 0)
             {
-                return (AutomaticLibrariesOutcome.ModeChangeNotAllowed, null, mode);
+                return (AutomaticLibrariesOutcome.ModeChangeNotAllowed, null, mode, server.LibraryMode);
             }
 
-            return (config.FederatedFolderPath.Length == 0 ? AutomaticLibrariesOutcome.NoFederatedFolder : AutomaticLibrariesOutcome.Started, server, mode);
+            return (config.FederatedFolderPath.Length == 0 ? AutomaticLibrariesOutcome.NoFederatedFolder : AutomaticLibrariesOutcome.Started, server, mode, server.LibraryMode);
         });
         return outcome == AutomaticLibrariesOutcome.Started && owner is not null
-            ? Start(serverId, (id, token) => EnableAsync(id, owner, mode, token))
+            ? Start(serverId, (id, token) => EnableQueuedAsync(id, owner, mode, seen, token))
             : AutomaticLibrariesRequest.Refused(outcome);
+    }
+
+    // A mode saved by the Edit form while the job waited wins over the one read at the request.
+    private async Task EnableQueuedAsync(Guid serverId, RemoteServerConfig owner, LibraryMode mode, LibraryMode seen, CancellationToken cancellationToken)
+    {
+        if (_store.Read(config => Owned(config, owner)?.LibraryMode) is { } saved && saved != seen)
+        {
+            await ApplyModeAsync(serverId, owner, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await EnableAsync(serverId, owner, mode, cancellationToken).ConfigureAwait(false);
     }
 
     private bool HasJob(Guid serverId)

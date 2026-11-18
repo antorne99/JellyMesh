@@ -314,4 +314,26 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Empty(fixture.Server.PendingLibraries);
     }
+
+    [Fact]
+    public async Task A_queued_switch_on_keeps_a_mode_the_form_saved_meanwhile()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var rename = fixture.Manager.RenameAsync(_serverId, CancellationToken.None);
+        await fixture.Scans.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var queued = fixture.Manager.Enable(_serverId);
+        fixture.Server.LibraryMode = LibraryMode.None;
+        release.SetResult();
+        await rename.WaitAsync(TimeSpan.FromSeconds(10));
+        await queued.Job.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AutomaticLibrariesOutcome.Started, queued.Outcome);
+        Assert.Equal(LibraryMode.None, fixture.Server.LibraryMode);
+        Assert.Empty(fixture.Server.AutomaticLibraryRegistry);
+    }
 }
