@@ -992,50 +992,6 @@ public class ProviderConfigurationTests
     {
         Assert.True(new PluginConfiguration().CloseTranscodeAtSlotExpiry);
     }
-
-    [Fact]
-    public void A_save_from_the_stock_endpoint_keeps_the_peers()
-    {
-        var current = new PluginConfiguration();
-        var peer = new ProviderPeerConfig { UserId = Guid.NewGuid(), MaxStreams = 2 };
-        current.Peers.Add(peer);
-        var incoming = new PluginConfiguration();
-
-        incoming.AdoptServersFrom(current);
-
-        Assert.Same(peer, Assert.Single(incoming.Peers));
-    }
-
-    [Fact]
-    public void Peers_never_go_to_the_browser_through_the_configuration()
-    {
-        var configuration = new PluginConfiguration();
-        configuration.Peers.Add(new ProviderPeerConfig { UserId = Guid.NewGuid(), MaxStreams = 2 });
-
-        var json = System.Text.Json.JsonSerializer.Serialize(configuration);
-
-        Assert.DoesNotContain("Peers", json, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Peers_survive_the_xml_of_the_configuration()
-    {
-        var configuration = new PluginConfiguration();
-        var peer = new ProviderPeerConfig { UserId = Guid.NewGuid(), MaxStreams = 3 };
-        peer.SharedLibraryIds.Add("library");
-        configuration.Peers.Add(peer);
-        var serializer = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
-
-        using var stream = new System.IO.MemoryStream();
-        serializer.Serialize(stream, configuration);
-        stream.Position = 0;
-        var read = (PluginConfiguration)serializer.Deserialize(stream)!;
-
-        var restored = Assert.Single(read.Peers);
-        Assert.Equal(peer.UserId, restored.UserId);
-        Assert.Equal(3, restored.MaxStreams);
-        Assert.Equal(["library"], restored.SharedLibraryIds);
-    }
 }
 
 public class ChangeFeedRecorderTests

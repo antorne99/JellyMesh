@@ -394,15 +394,4 @@ public class PluginConfigurationTests
     {
         new PluginConfiguration { FederatedFolderPath = path }.Validate();
     }
-
-    [Fact]
-    public void AdoptingFromItselfKeepsTheServers()
-    {
-        var config = new PluginConfiguration();
-        config.Servers.Add(new RemoteServerConfig());
-
-        config.AdoptServersFrom(config);
-
-        Assert.Single(config.Servers);
-    }
 }

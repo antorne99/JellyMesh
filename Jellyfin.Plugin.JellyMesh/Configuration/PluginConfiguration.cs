@@ -4,22 +4,16 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text.Json.Serialization;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
-using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
 /// <summary>
-/// Plugin configuration, persisted by Jellyfin as XML.
+/// Plugin configuration, kept in the plugin database by <see cref="PluginConfigurationStore"/>. Never sent to the browser
+/// whole: the page reads the settings through <c>/JellyMesh/Admin/Settings</c>.
 /// </summary>
-/// <remarks>
-/// The stock <c>/Plugins/{id}/Configuration</c> endpoints exchange this object as JSON with the
-/// browser, so <see cref="Servers"/> is excluded from JSON and survives only through
-/// <see cref="AdoptServersFrom"/>. XML serialization does not honor <see cref="JsonIgnoreAttribute"/>.
-/// </remarks>
-public class PluginConfiguration : BasePluginConfiguration
+public class PluginConfiguration
 {
     /// <summary>
     /// Format of <see cref="ReconciliationTime"/>.
@@ -107,65 +101,24 @@ public class PluginConfiguration : BasePluginConfiguration
     public int PolicyCacheMinutes { get; set; } = (int)PlaybackTimeouts.PolicyRetention.TotalMinutes;
 
     /// <summary>
-    /// Gets the configured remote servers. Never sent to the browser through this object.
+    /// Gets the configured remote servers.
     /// </summary>
-    [JsonIgnore]
     public Collection<RemoteServerConfig> Servers { get; } = [];
 
     /// <summary>
-    /// Gets the libraries of removed servers that are still to delete (decision 140). Never sent to the browser through
-    /// this object.
+    /// Gets the libraries of removed servers that are still to delete (decision 140).
     /// </summary>
-    [JsonIgnore]
     public Collection<RemovedServerLibrariesConfig> RemovedServerLibraries { get; } = [];
 
     /// <summary>
-    /// Gets the JellyMesh servers connected to this one. Never sent to the browser through this object.
+    /// Gets the JellyMesh servers connected to this one.
     /// </summary>
-    [JsonIgnore]
     public Collection<ProviderPeerConfig> Peers { get; } = [];
 
     /// <summary>
     /// Gets or sets the migration from the flat layout: the admin's choice and the step of the automatic one (Q55-Q57).
-    /// Never sent to the browser through this object.
     /// </summary>
-    [JsonIgnore]
     public LayoutMigrationConfig LayoutMigration { get; set; } = new();
-
-    /// <summary>
-    /// Replaces <see cref="Servers"/>, <see cref="RemovedServerLibraries"/>, <see cref="Peers"/> and
-    /// <see cref="LayoutMigration"/> with those of <paramref name="current"/>. The stock save
-    /// endpoint deserializes JSON that never holds them, so they would otherwise be erased.
-    /// </summary>
-    /// <param name="current">The configuration in force.</param>
-    public void AdoptServersFrom(PluginConfiguration current)
-    {
-        ArgumentNullException.ThrowIfNull(current);
-        if (ReferenceEquals(this, current))
-        {
-            return;
-        }
-
-        Servers.Clear();
-        foreach (var server in current.Servers)
-        {
-            Servers.Add(server);
-        }
-
-        RemovedServerLibraries.Clear();
-        foreach (var removed in current.RemovedServerLibraries)
-        {
-            RemovedServerLibraries.Add(removed);
-        }
-
-        Peers.Clear();
-        foreach (var peer in current.Peers)
-        {
-            Peers.Add(peer);
-        }
-
-        LayoutMigration = current.LayoutMigration;
-    }
 
     /// <summary>
     /// Keeps libraries of a server that left the configuration, so that they are deleted after it (decision 140).
@@ -249,7 +202,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Validates the user-editable settings.
     /// </summary>
-    /// <exception cref="ArgumentException">A setting is invalid. Jellyfin answers such a save with 400.</exception>
+    /// <exception cref="ArgumentException">A setting is invalid; its parameter name is the setting.</exception>
     public void Validate()
     {
         foreach (var range in _ranges)

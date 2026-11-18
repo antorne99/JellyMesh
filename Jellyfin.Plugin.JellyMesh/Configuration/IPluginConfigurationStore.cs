@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 public interface IPluginConfigurationStore
 {
     /// <summary>
-    /// Occurs after the settings were saved through the stock plugin endpoint, on the saving thread.
+    /// Occurs after a change of the settings was saved, on the saving thread; not for servers, peers or other state.
     /// </summary>
     event EventHandler? SettingsChanged;
 

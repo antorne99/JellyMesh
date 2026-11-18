@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 
 namespace Jellyfin.Plugin.JellyMesh.Storage;
 
@@ -13,7 +14,12 @@ public static class SchemaMigrations
     public static IReadOnlyList<SchemaMigration> All { get; } =
     [
         // The first version only marks the file as the plugin database; the tables come with the phases that fill them.
-        new(1, static (_, _) => { })
+        new(1, static (_, _) => { }),
+
+        // Placeholders for the steps of F28 (2) and F29 (3), replaced by theirs when the phases are merged.
+        new(2, static (_, _) => { }),
+        new(3, static (_, _) => { }),
+        new(4, ConfigurationTables.Create)
     ];
 
     /// <summary>
