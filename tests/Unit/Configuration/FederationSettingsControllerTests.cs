@@ -66,10 +66,12 @@ public sealed class FederationSettingsControllerTests
             StreamOpenTimeoutSeconds = 11,
             PlaybackIdleSeconds = 45,
             SessionRetentionHours = 3,
-            PolicyCacheMinutes = 9
+            PolicyCacheMinutes = 9,
+            NewServerLibraryMode = LibraryMode.None
         });
 
         var config = _store.Configuration;
+        Assert.Equal(LibraryMode.None, config.NewServerLibraryMode);
         Assert.Equal(
             (600, "04:30", "/federata", false, true, false, 7, 11, 45, 3, 9),
             (config.SyncIntervalSeconds, config.ReconciliationTime, config.FederatedFolderPath, config.MetadataProtection, config.FederateCollections, config.CloseTranscodeAtSlotExpiry,
@@ -118,6 +120,25 @@ public sealed class FederationSettingsControllerTests
         Assert.Contains(field, refusal.Message, StringComparison.Ordinal);
         Assert.True(_store.Configuration.MetadataProtection);
         Assert.Equal(900, _store.Configuration.SyncIntervalSeconds);
+    }
+
+    [Fact]
+    public void AnUnknownLibraryModeForNewServersIsRefusedWithItsField()
+    {
+        var request = new SettingsRequest { NewServerLibraryMode = (LibraryMode)7 };
+
+        Assert.Equal(nameof(SettingsRequest.NewServerLibraryMode), Refusal(Controller().SetSettings(request)).Field);
+        Assert.Equal(0, _store.Saves);
+    }
+
+    [Fact]
+    public void TheLibraryModeOfNewServersTravelsByName()
+    {
+        _store.Configuration.NewServerLibraryMode = LibraryMode.ByRemoteLibrary;
+
+        var json = JsonSerializer.Serialize(Controller().GetSettings().Value, JsonDefaults.Options);
+
+        Assert.Contains("\"NewServerLibraryMode\":\"ByRemoteLibrary\"", json, StringComparison.Ordinal);
     }
 
     [Theory]

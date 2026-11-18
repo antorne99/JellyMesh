@@ -26,7 +26,10 @@ public static class SchemaMigrations
         new(4, ConfigurationTables.Create),
 
         // The mark of the migration of the 0.4 and 0.5 data (F32).
-        new(LegacyImport.SchemaVersion, LegacyImport.CreateTable)
+        new(LegacyImport.SchemaVersion, LegacyImport.CreateTable),
+
+        // The library modes (F39).
+        new(6, ConfigurationTables.AddLibraryModes)
     ];
 
     /// <summary>

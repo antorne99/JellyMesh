@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -23,11 +24,20 @@ public interface IServerLibraryManager
     AutomaticLibrariesState GetState(Guid serverId);
 
     /// <summary>
-    /// Turns the switch on and creates in the background the libraries the registry lacks.
+    /// Turns the libraries of the server on, in the mode it has or else per type, and creates in the background those it lacks.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <returns>The answer.</returns>
     AutomaticLibrariesRequest Enable(Guid serverId);
+
+    /// <summary>
+    /// Gives the server a library mode other than none and creates in the background the libraries it wants. The mode of
+    /// a server that already has libraries changes only with the confirmation of the Edit form.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="mode">Per type or per remote library.</param>
+    /// <returns>The answer.</returns>
+    AutomaticLibrariesRequest Enable(Guid serverId, LibraryMode mode);
 
     /// <summary>
     /// Deletes in the background the libraries of the registry and turns the switch off, once confirmed.

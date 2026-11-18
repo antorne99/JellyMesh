@@ -174,6 +174,10 @@ public class FederationAdminController : ControllerBase
     public async Task<ActionResult<ServerStatus>> AddServer([FromBody] AddServerRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.LibraryMode is { } asked && !Enum.IsDefined(asked))
+        {
+            return BadRequest(new SettingRefusal(nameof(AddServerRequest.LibraryMode), "Choose a library mode: ByType, ByRemoteLibrary or None."));
+        }
 
         var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
         var result = await _registry.AddAsync(request.Name, request.Url, credentials, cancellationToken).ConfigureAwait(false);
@@ -190,6 +194,22 @@ public class FederationAdminController : ControllerBase
         }
 
         _sync.PrepareServerFolders();
+
+        // The mode is kept at once, so that a check makes the libraries once the folder is set and a sync read the remote ones.
+        var mode = request.LibraryMode ?? _store.Read(config => config.NewServerLibraryMode);
+        if (mode != LibraryMode.None)
+        {
+            var id = result.Value!.Id;
+            _store.Update(config =>
+            {
+                if (config.Servers.FirstOrDefault(server => server.Id == id) is { } server)
+                {
+                    server.LibraryMode = mode;
+                }
+            });
+            _libraries.Enable(id, mode);
+        }
+
         return ToStatus(result.Value!);
     }
 
@@ -642,6 +662,7 @@ public class FederationAdminController : ControllerBase
             AutomaticLibrariesOutcome.NoFederatedFolder => "Set the federated folder first.",
             AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the libraries of this server.",
             AutomaticLibrariesOutcome.Busy => "The libraries of this server are being updated. Try again when it is done.",
+            AutomaticLibrariesOutcome.ModeChangeNotAllowed => "The library mode of this server cannot be changed here.",
             _ => "The operation failed."
         };
     }

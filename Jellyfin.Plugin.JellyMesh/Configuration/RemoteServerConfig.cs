@@ -51,9 +51,25 @@ public class RemoteServerConfig
     public Collection<string> ImportedLibraryIds { get; } = [];
 
     /// <summary>
-    /// Gets or sets a value indicating whether the plugin keeps a Film and a Serie library for this server.
+    /// Gets the imported remote libraries as last read, with their names and types.
     /// </summary>
-    public bool AutomaticLibraries { get; set; }
+    public Collection<RemoteLibraryConfig> RemoteLibraries { get; } = [];
+
+    /// <summary>
+    /// Gets or sets which local libraries hold the type folders of this server. None for a server kept from before the
+    /// modes; one added later takes <see cref="PluginConfiguration.NewServerLibraryMode"/>.
+    /// </summary>
+    public LibraryMode LibraryMode { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the plugin keeps libraries for this server: setting it on keeps a mode
+    /// already chosen, or chooses one per type; setting it off chooses none.
+    /// </summary>
+    public bool AutomaticLibraries
+    {
+        get => LibraryMode != LibraryMode.None;
+        set => LibraryMode = !value ? LibraryMode.None : LibraryMode == LibraryMode.None ? LibraryMode.ByType : LibraryMode;
+    }
 
     /// <summary>
     /// Gets the libraries the plugin created for this server and still manages.
@@ -83,6 +99,17 @@ public class RemoteServerConfig
     /// after a restart too (§10 row 289).
     /// </summary>
     public bool RenameUnfinished { get; set; }
+
+    /// <summary>
+    /// Gets the keys of the libraries the plugin created for this server since its libraries were last turned on: a library
+    /// the admin deleted is not made again.
+    /// </summary>
+    public Collection<string> CreatedLibraryKeys { get; } = [];
+
+    /// <summary>
+    /// Gets the libraries asked of the server and not recorded yet: only these are taken as made by the plugin after a crash.
+    /// </summary>
+    public Collection<PendingLibraryConfig> PendingLibraries { get; } = [];
 
     /// <summary>
     /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.

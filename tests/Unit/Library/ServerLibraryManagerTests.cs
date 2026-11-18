@@ -690,7 +690,7 @@ public sealed partial class ServerLibraryManagerTests
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
         var newId = Guid.Parse("9f8e7d6c-5b4a-4321-8765-0fedcba98765");
-        var back = new RemoteServerConfig { Id = newId, Name = "Casa" };
+        var back = Fixture.WithLibraries(new RemoteServerConfig { Id = newId, Name = "Casa" });
         fixture.Store.Update(config => config.Servers.Add(back));
 
         await fixture.Manager.Enable(newId).Job;
@@ -755,7 +755,7 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Libraries.RemoveFailure = new IOException("busy");
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
-        fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = _serverId, Name = "Casa" });
+        fixture.Store.Configuration.Servers.Add(Fixture.WithLibraries(new RemoteServerConfig { Id = _serverId, Name = "Casa" }));
         fixture.Libraries.RemoveFailure = null;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
         fixture.Libraries.RemoveFailure = new IOException("busy");
@@ -941,9 +941,9 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_creation_whose_name_was_not_released_saves_nothing_more()
+    public async Task A_creation_whose_name_was_not_released_saves_nothing_more_than_its_intent()
     {
-        // Between the two creations only the record of the first one is saved.
+        // Between the two creations only the record of the first one and the intent of the second are saved.
         var fixture = new Fixture();
         var savesAtCreation = new List<int>();
         fixture.Libraries.OnCreate = () => savesAtCreation.Add(fixture.Store.Saves);
@@ -951,7 +951,7 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.Enable(_serverId).Job;
 
         Assert.Equal(2, savesAtCreation.Count);
-        Assert.Equal(1, savesAtCreation[1] - savesAtCreation[0]);
+        Assert.Equal(2, savesAtCreation[1] - savesAtCreation[0]);
     }
 
     [Fact]
@@ -1065,7 +1065,7 @@ public sealed partial class ServerLibraryManagerTests
         var fixture = new Fixture();
         await fixture.Manager.Enable(_serverId).Job;
         fixture.RemoveServer();
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
         var saves = fixture.Store.Saves;
 
@@ -1483,7 +1483,7 @@ public sealed partial class ServerLibraryManagerTests
     {
         var fixture = new Fixture();
         await fixture.Manager.Enable(_serverId).Job;
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
         await fixture.Manager.Enable(other.Id).Job;
         Assert.DoesNotContain(fixture.Libraries.IdOf("Casa - Film"), other.PreexistingLibraryIds);
@@ -1503,7 +1503,7 @@ public sealed partial class ServerLibraryManagerTests
         var fixture = new Fixture();
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         await fixture.Manager.Enable(_serverId).Job;
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
         await fixture.Manager.Enable(other.Id).Job;
 
@@ -1525,7 +1525,7 @@ public sealed partial class ServerLibraryManagerTests
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
         fixture.Libraries.RemoveFailure = null;
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
 
         await fixture.Manager.Enable(other.Id).Job;
@@ -1788,8 +1788,9 @@ public sealed partial class ServerLibraryManagerTests
     {
         public Fixture(string root = Root, string serverName = "Casa")
         {
-            Server = new RemoteServerConfig { Id = _serverId, Name = serverName };
+            Server = WithLibraries(new RemoteServerConfig { Id = _serverId, Name = serverName });
             Store.Configuration.FederatedFolderPath = root;
+            Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(true);
             Store.Configuration.Servers.Add(Server);
             var fileSystem = new Mock<IFileSystem>();
             fileSystem.Setup(system => system.GetValidFilename(It.IsAny<string>()))
@@ -1841,8 +1842,18 @@ public sealed partial class ServerLibraryManagerTests
         // A server put back with the same id, as by a settings file restored by hand.
         public RemoteServerConfig AddServerBack(string name)
         {
-            var server = new RemoteServerConfig { Id = _serverId, Name = name };
+            var server = WithLibraries(new RemoteServerConfig { Id = _serverId, Name = name });
             Store.Update(config => config.Servers.Add(server));
+            return server;
+        }
+
+        // A server whose sync imported a film and a series library.
+        public static RemoteServerConfig WithLibraries(RemoteServerConfig server)
+        {
+            server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Films, Name = "Film", CollectionType = "movies" });
+            server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Shows, Name = "Serie", CollectionType = "tvshows" });
+            server.ImportedLibraryIds.Add(TestLibraries.Films);
+            server.ImportedLibraryIds.Add(TestLibraries.Shows);
             return server;
         }
     }
@@ -1901,6 +1912,13 @@ public sealed partial class ServerLibraryManagerTests
                     folder.Locations = [.. folder.Locations, path.Path];
                     AddedPaths.Add((name, path.Path));
                 });
+            _mock.Setup(manager => manager.RemoveMediaPath(It.IsAny<string>(), It.IsAny<string>()))
+                .Callback<string, string>((name, path) =>
+                {
+                    var folder = Find(name);
+                    folder.Locations = [.. folder.Locations.Where(location => location != path)];
+                    RemovedPaths.Add((name, path));
+                });
             _mock.Setup(manager => manager.ValidateTopLibraryFolders(It.IsAny<CancellationToken>(), true))
                 .Returns(() =>
                 {
@@ -1918,6 +1936,8 @@ public sealed partial class ServerLibraryManagerTests
         public List<RemoveCall> Removed { get; } = [];
 
         public List<(string Name, string Path)> AddedPaths { get; } = [];
+
+        public List<(string Name, string Path)> RemovedPaths { get; } = [];
 
         // The library names each validation of the top folders saw.
         public List<List<string>> Validations { get; } = [];
