@@ -134,12 +134,19 @@ public sealed partial class ServerLibraryManager
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        var before = _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0);
         await DeleteAllAsync(
             config => LiveRegistry(config, serverId),
             serverId,
             (config, record) => Find(config, serverId) is { } server && Retires(server.LibraryMode, record) && ReadyToRetire(server, root, olderLayout),
             cancellationToken).ConfigureAwait(false);
         ForgetPendingInNone(serverId);
+
+        // Removing a library drops for a while the titles it shared with the new ones; a scan brings them back (F23).
+        if (!none && _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0) < before)
+        {
+            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     // The library of another mode than the one given that a planned library of that mode would take over, if any.

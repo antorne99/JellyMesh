@@ -267,4 +267,27 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Empty(fixture.Server.PendingLibraries);
     }
+
+    [Fact]
+    public async Task After_the_old_libraries_go_a_scan_brings_back_the_titles_they_shared_with_the_new_ones()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        var removedAtScan = new List<int>();
+        fixture.Scans.DuringScan = () => removedAtScan.Add(fixture.Libraries.Removed.Count);
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Equal([0, 1], removedAtScan);
+    }
+
+    [Fact]
+    public async Task To_none_needs_no_scan()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.None);
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+    }
 }
