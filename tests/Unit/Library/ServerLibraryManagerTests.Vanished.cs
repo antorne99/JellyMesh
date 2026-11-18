@@ -74,6 +74,51 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Contains("scan", fixture.Scans.Steps);
     }
 
+    // Runs a check that stops at its first wait for the scans, changes the libraries there, then lets it go on.
+    private static async Task ReconcileChangingDuringTheWaitAsync(Fixture fixture, Action change)
+    {
+        var release = new TaskCompletionSource();
+        fixture.Scans.Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Scans.Block = release.Task;
+        var check = fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Scans.Entered.Task;
+        change();
+        fixture.Scans.Block = Task.CompletedTask;
+        release.SetResult();
+        await check;
+    }
+
+    [Fact]
+    public async Task An_own_library_renamed_while_waiting_for_the_scans_is_left_until_the_next_check_deletes_it_under_its_new_name()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+
+        await ReconcileChangingDuringTheWaitAsync(fixture, () => fixture.Libraries.RenameFromDashboard("Casa - Film 4K", "Film in 4K"));
+        Assert.Empty(fixture.Libraries.Removed);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Film in 4K"], fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task An_own_library_given_a_folder_of_the_admin_while_waiting_for_the_scans_is_left_alone()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+
+        await ReconcileChangingDuringTheWaitAsync(fixture, () =>
+        {
+            var folder = fixture.Libraries.Folders.Single(folder => folder.Name == "Casa - Film 4K");
+            folder.Locations = [.. folder.Locations, "/media/miei"];
+        });
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Contains(fixture.Libraries.Folders, folder => folder.Name == "Casa - Film 4K");
+    }
+
     [Fact]
     public async Task A_by_type_library_only_loses_the_folder_of_the_vanished_remote_library()
     {

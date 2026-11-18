@@ -84,7 +84,7 @@ public sealed partial class ServerLibraryManager
 
             if (!record.Adopted && paths.Count == folder.Locations.Length)
             {
-                changed |= await DeleteVanishedLibraryAsync(serverId, record, folder, cancellationToken).ConfigureAwait(false);
+                changed |= await DeleteVanishedLibraryAsync(serverId, record, gone, root, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
@@ -103,9 +103,19 @@ public sealed partial class ServerLibraryManager
     }
 
     // Deletes the library, then forgets its record and that it was made, so a library imported later can have it again.
-    private async Task<bool> DeleteVanishedLibraryAsync(Guid serverId, AutomaticLibraryConfig record, VirtualFolderInfo folder, CancellationToken cancellationToken)
+    // Checked again on a fresh read after the scans, so that the name is the current one and a changed library is left alone.
+    private async Task<bool> DeleteVanishedLibraryAsync(Guid serverId, AutomaticLibraryConfig record, IReadOnlySet<string> gone, string root, CancellationToken cancellationToken)
     {
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
+        if (ReadFolders() is not { } folders
+            || FindRecorded(record, folders) is not { } folder
+            || record.Adopted
+            || !Holds(folder, record, root, serverId)
+            || !folder.Locations.All(location => IsVanishedFolder(location, root, serverId, gone)))
+        {
+            return false;
+        }
+
         try
         {
             await _libraries.RemoveVirtualFolder(folder.Name, false).ConfigureAwait(false);
