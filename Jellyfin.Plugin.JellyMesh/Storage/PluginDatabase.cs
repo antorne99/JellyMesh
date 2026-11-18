@@ -43,6 +43,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private readonly IKeyFileGuard _guard;
     private readonly IReadOnlyList<SchemaMigration> _migrations;
     private readonly TimeProvider _time;
+    private readonly LegacyImport? _legacy;
     private static readonly TimeSpan _disposeWait = TimeSpan.FromSeconds(10);
     private static readonly StoreHealth _closed = new(StoreState.Unavailable, "The database is closed.");
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "A call after Dispose still waits on the gate and is refused as closed; the semaphore never makes a wait handle.")]
@@ -58,8 +59,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     /// </summary>
     /// <param name="folder">The plugin data folder.</param>
     /// <param name="logger">The logger.</param>
-    public PluginDatabase(string folder, ILogger<PluginDatabase> logger)
-        : this(folder, logger, KeyFileGuards.ForThisSystem(), SchemaMigrations.All, BusyTimeoutSeconds)
+    /// <param name="legacy">The migration of the 0.4 and 0.5 data, which runs at the first healthy open; none when null.</param>
+    public PluginDatabase(string folder, ILogger<PluginDatabase> logger, LegacyImport? legacy = null)
+        : this(folder, logger, KeyFileGuards.ForThisSystem(), SchemaMigrations.All, BusyTimeoutSeconds, legacy: legacy)
     {
     }
 
@@ -72,7 +74,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     /// <param name="migrations">The schema steps, with versions 1, 2, 3 and so on.</param>
     /// <param name="busyTimeoutSeconds">How long a connection waits on another one's lock.</param>
     /// <param name="time">The clock that dates copies and damaged files; the system clock when <c>null</c>.</param>
-    internal PluginDatabase(string folder, ILogger<PluginDatabase> logger, IKeyFileGuard guard, IReadOnlyList<SchemaMigration> migrations, int busyTimeoutSeconds, TimeProvider? time = null)
+    /// <param name="legacy">The migration of the 0.4 and 0.5 data, which runs at the first healthy open; none when null.</param>
+    internal PluginDatabase(string folder, ILogger<PluginDatabase> logger, IKeyFileGuard guard, IReadOnlyList<SchemaMigration> migrations, int busyTimeoutSeconds, TimeProvider? time = null, LegacyImport? legacy = null)
     {
         ArgumentNullException.ThrowIfNull(migrations);
         for (var index = 0; index < migrations.Count; index++)
@@ -89,6 +92,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _guard = guard;
         _migrations = migrations;
         _time = time ?? TimeProvider.System;
+        _legacy = legacy;
 
         // ReadWrite, not ReadWriteCreate: the store makes a missing file private itself, and never replaces one that does not open.
         var settings = new SqliteConnectionStringBuilder
@@ -531,13 +535,40 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return Unavailable("The database files cannot be kept private", exception);
         }
 
+        StoreHealth health;
         if (note is { Restoring: true })
         {
-            return Replace(note.RecoveredAt, note.DamagedFile);
+            health = Replace(note.RecoveredAt, note.DamagedFile);
+        }
+        else
+        {
+            health = OpenFile();
+            health = health.State == StoreState.Damaged ? Recover(health) : health;
         }
 
-        var health = OpenFile();
-        return health.State == StoreState.Damaged ? Recover(health) : health;
+        return ImportLegacy(health);
+    }
+
+    // The data of 0.4 and 0.5 goes in before any service sees the store healthy; until it does, the store stays suspended
+    // and the next open tries again, with every old file where it was (row 426).
+    private StoreHealth ImportLegacy(StoreHealth health)
+    {
+        if (health.Suspended || _legacy is null || _writer is null)
+        {
+            return health;
+        }
+
+        try
+        {
+            _legacy.Run(_writer, _time.GetUtcNow());
+            return health;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _writer.Dispose();
+            _writer = null;
+            return Unavailable("The data of the older JellyMesh version cannot be moved into the database yet. Nothing was moved, and the next start tries again", exception);
+        }
     }
 
     // Version and integrity read-only, then WAL and the schema steps on the writer. The file is opened for writes only once

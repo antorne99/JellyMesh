@@ -23,7 +23,14 @@ public static class SchemaMigrations
             Library.StubTables.Create(connection, transaction);
         }),
         new(SmallStateSchema.Version, SmallStateSchema.Apply),
-        new(4, ConfigurationTables.Create)
+        new(4, ConfigurationTables.Create),
+
+        // Kept for the remote library layout (F37) and the edit form (F33), which take these numbers.
+        new(5, static (_, _) => { }),
+        new(6, static (_, _) => { }),
+
+        // The mark of the migration of the 0.4 and 0.5 data (F32).
+        new(LegacyImport.SchemaVersion, LegacyImport.CreateTable)
     ];
 
     /// <summary>
