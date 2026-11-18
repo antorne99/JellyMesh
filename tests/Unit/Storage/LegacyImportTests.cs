@@ -374,6 +374,30 @@ public sealed class LegacyImportTests : IDisposable
         Assert.False(File.Exists(Path.Combine(Folder, "sync-history.json")));
     }
 
+    // A stub file that parses but holds a null entry or path counts as damaged, so the import completes with its warning.
+    [Theory]
+    [InlineData("""{"Version":2,"Stubs":[null],"Series":[]}""")]
+    [InlineData("""{"Version":2,"Stubs":[{"Id":"a","Kind":"Movie","RelativePath":null,"Sources":[],"IdentityKey":"k"}],"Series":[]}""")]
+    [InlineData("""{"Version":2,"Stubs":[{"Id":"a","Kind":"Movie","RelativePath":"a.strm","Sources":null,"IdentityKey":"k"}],"Series":[]}""")]
+    [InlineData("""{"Version":2,"Stubs":[{"Id":"a","Kind":"Movie","RelativePath":"a.strm","Sources":[null],"IdentityKey":"k"}],"Series":[]}""")]
+    [InlineData("""{"Version":2,"Stubs":[],"Series":[null]}""")]
+    [InlineData("""{"Version":2,"Stubs":[],"Series":[{"Id":"s","RelativePath":null,"WorkKey":"w"}]}""")]
+    [InlineData("""{"Version":2,"Stubs":[],"Series":[{"Id":"s","RelativePath":"S","WorkKey":"w","Seasons":[null]}]}""")]
+    [InlineData("""{"Version":2,"Stubs":[],"Series":[],"Groups":[null]}""")]
+    [InlineData("""{"Version":2,"Stubs":[],"Series":[],"Labels":null}""")]
+    [InlineData("""{"Version":2,"Stubs":[],"Series":[],"Renames":[null]}""")]
+    public async Task AStubFileWithANullEntryCountsAsDamagedAndTheImportCompletes(string json)
+    {
+        await File.WriteAllTextAsync(Path.Combine(Folder, "federated-stubs.json"), json);
+
+        var database = Open();
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(0, await CountAsync(database, "stub_entries"));
+        Assert.Contains(Logger.Lines, line => line.Contains("federated-stubs.json", StringComparison.Ordinal));
+        Assert.True(File.Exists(Path.Combine(Migrated, "federated-stubs.json")));
+    }
+
     [Fact]
     public void ANewInstallHasNothingToMoveAndNoFolderForIt()
     {

@@ -392,7 +392,7 @@ public sealed class LegacyImport
             index = backup is null ? null : backup with { Servers = backup.Servers.Select(server => server with { State = ServerSyncState.Stale }).ToList() };
         }
 
-        var stubs = ReadJson<StubState>(StubFileName, _stubOptions, damaged, state => state.Version is StubState.CurrentVersion or StubState.FlatLayoutVersion && state.Stubs is not null && state.Series is not null);
+        var stubs = ReadJson<StubState>(StubFileName, _stubOptions, damaged, state => state.Version is StubState.CurrentVersion or StubState.FlatLayoutVersion && WholeStubs(state));
         var merges = ReadJson<MergeFile>(ManualMergeStore.FileName, _mergeOptions, damaged, file => file.Version == CurrentVersion && file.Merges.All(merge => merge is not null));
         var renames = ReadJson<RenameFile>(LibraryRenameJournal.FileName, _renameOptions, damaged, file => file.Version == CurrentVersion && file.Records.All(record => record is not null));
         var carries = ReadJson<CarryFile>(WatchStateCarryLog.FileName, _plainOptions, damaged, file => file.Version == CurrentVersion && file.Entries.All(entry => entry is not null));
@@ -417,6 +417,20 @@ public sealed class LegacyImport
             history?.Runs,
             ReadKept(damaged));
     }
+
+    // Whether every list and entry the stub tables write is there, as the older version wrote them.
+    private static bool WholeStubs(StubState state) =>
+        state.Stubs is not null && state.Series is not null && state.Groups is not null && state.Labels is not null
+        && state.RemovedServers is not null && state.ServerNames is not null && state.Renames is not null
+        && state.Stubs.All(stub => stub is { Id: not null, RelativePath: not null, IdentityKey: not null, Sources: not null } && WholeSources(stub.Sources))
+        && state.Series.All(series => series is { Id: not null, RelativePath: not null, WorkKey: not null, Sources: not null, Seasons: not null }
+            && WholeSources(series.Sources) && series.Seasons.All(season => season is { RelativePath: not null }))
+        && state.Groups.All(group => group is { Id: not null, IdentityKey: not null, StubIds: not null, LocalItemIds: not null } && group.StubIds.All(id => id is not null))
+        && state.Labels.Values.All(label => label is not null) && state.ServerNames.Values.All(name => name is not null)
+        && state.Renames.All(rename => rename is { StubId: not null, OldPath: not null });
+
+    private static bool WholeSources(IReadOnlyList<StubSource> sources) =>
+        sources.All(source => source is { ItemId: not null, MediaSourceId: not null });
 
     // Null when the file is missing or damaged; damaged files are named in the list. A file that cannot be read for now throws.
     private T? ReadJson<T>(string name, JsonSerializerOptions options, List<string> damaged, Func<T, bool> whole)
