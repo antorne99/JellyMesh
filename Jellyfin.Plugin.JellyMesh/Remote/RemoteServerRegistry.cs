@@ -1082,7 +1082,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 server.Name = plan.Name;
                 server.Url = plan.Url;
                 server.EncryptedCredentials = encrypted ?? server.EncryptedCredentials;
-                server.LibraryMode = plan.LibraryMode;
+                if (plan.Changes.HasFlag(RemoteEditChanges.LibraryMode))
+                {
+                    server.LibraryMode = plan.LibraryMode;
+                }
+
                 if (read is not null)
                 {
                     server.ImportedLibraryIds.Clear();

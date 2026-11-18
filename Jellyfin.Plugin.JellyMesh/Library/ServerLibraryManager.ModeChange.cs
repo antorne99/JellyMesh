@@ -95,6 +95,15 @@ public sealed partial class ServerLibraryManager
         await RetireAsync(serverId, scanned, cancellationToken).ConfigureAwait(false);
     }
 
+    // In "none" with no library left, a library asked before a crash is no longer the plugin's to find, as on a switch off.
+    private void ForgetPendingInNone(Guid serverId) => _store.Update(config =>
+    {
+        if (Find(config, serverId) is { LibraryMode: LibraryMode.None, AutomaticLibraryRegistry.Count: 0, PendingLibraries.Count: > 0 } server)
+        {
+            server.PendingLibraries.Clear();
+        }
+    });
+
     // Deletes the plugin libraries of the old mode and releases its adopted ones, once those of the new mode are there and
     // scanned. Called again by each check, so a change stopped halfway goes on.
     private async Task RetireAsync(Guid serverId, bool scanned, CancellationToken cancellationToken)
@@ -130,6 +139,7 @@ public sealed partial class ServerLibraryManager
             serverId,
             (config, record) => Find(config, serverId) is { } server && Retires(server.LibraryMode, record) && ReadyToRetire(server, root, olderLayout),
             cancellationToken).ConfigureAwait(false);
+        ForgetPendingInNone(serverId);
     }
 
     // The library of another mode than the one given that a planned library of that mode would take over, if any.

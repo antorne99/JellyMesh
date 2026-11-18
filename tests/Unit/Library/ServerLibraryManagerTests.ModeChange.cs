@@ -233,4 +233,38 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(LibraryMode.ByType, fixture.Server.LibraryMode);
         Assert.Empty(fixture.Libraries.Removed);
     }
+
+    [Fact]
+    public async Task A_library_on_the_same_paths_with_another_name_is_made_new_then_the_old_one_deleted()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.FilmsB);
+        foreach (var library in fixture.Server.RemoteLibraries)
+        {
+            library.Name = library.Id == TestLibraries.Shows ? "Telefilm" : library.Name + " HD";
+        }
+
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        fixture.Server.LibraryMode = LibraryMode.ByRemoteLibrary;
+        fixture.Libraries.Created.Clear();
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Equal(["Casa - Film HD", "Casa - Telefilm"], fixture.Libraries.Created.Select(call => call.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name).Order(StringComparer.Ordinal));
+        Assert.All(fixture.Server.AutomaticLibraryRegistry, record => Assert.False(record.Adopted));
+        Assert.Empty(fixture.Manager.GetState(_serverId).Conflicts);
+        Assert.Equal([Absolute(_showsFolder)], fixture.Libraries.Find("Casa - Telefilm").Locations);
+    }
+
+    [Fact]
+    public async Task A_change_to_none_forgets_the_libraries_asked_before_a_crash()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.None);
+        fixture.Server.PendingLibraries.Add(new PendingLibraryConfig { Name = "Casa - Altro", Kind = ServerLibraryKind.Movies });
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Server.PendingLibraries);
+    }
 }
