@@ -16,7 +16,7 @@ Every request is logged: method, path, User-Agent, and whether Authorization car
 """
 import http.client, http.server, re, socketserver, sys, threading, time
 LISTEN, TARGET, STATE, LOG = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
-SENTINEL = b"remote-error-body-sentinel-host.tailnet.ts.net"
+SENTINEL = b"remote-error-body-sentinel-host.invalid"
 lock = threading.Lock()
 masters = 0
 
