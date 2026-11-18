@@ -257,6 +257,27 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task An_adopted_library_is_never_written_and_who_had_no_access_to_it_is_named()
+    {
+        var (children, adults, adopted) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N"), adults.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, false);
+        _other.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N"), adopted.ToString("N")]);
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [children.ToString("N")]);
+
+        var lost = await _renamer.CarryAccessAsync([new AccessCarry("Film di casa", adopted, [[children], [adults]]) { Adopted = true }], CancellationToken.None);
+
+        var loss = Assert.Single(lost);
+        Assert.Equal("Film di casa", loss.Library);
+        Assert.Equal(["limited"], loss.Users);
+        Assert.Equal([children.ToString("N"), adults.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([children.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
+    }
+
+    [Fact]
     public void The_preview_names_who_would_lose_titles_and_changes_no_user()
     {
         var (children, adults) = (Guid.NewGuid(), Guid.NewGuid());

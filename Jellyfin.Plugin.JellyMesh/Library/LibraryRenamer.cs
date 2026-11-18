@@ -190,7 +190,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
             cancellationToken.ThrowIfCancellationRequested();
             var enabled = user.GetPreference(PreferenceKind.EnabledFolders);
             var blocked = user.GetPreference(PreferenceKind.BlockedMediaFolders);
-            var given = carries.Where(carry => carry.Id is not null).Select(carry => (Id: carry.Id!.Value, Access: AccessOf(user, carry))).ToList();
+            var given = carries.Where(carry => carry.Id is not null && !carry.Adopted).Select(carry => (Id: carry.Id!.Value, Access: AccessOf(user, carry))).ToList();
             var touched = AddIds(user, PreferenceKind.BlockedMediaFolders, given.Where(pair => pair.Access.Blocked).Select(pair => pair.Id));
             touched |= AddIds(user, PreferenceKind.EnabledFolders, given.Where(pair => pair.Access.Enabled).Select(pair => pair.Id));
             if (!touched)
@@ -236,15 +236,16 @@ public sealed class LibraryRenamer : ILibraryRenamer
             carry.Folders.Any(sources => sources.Any(blocked.Contains)));
     }
 
-    // Whether the user saw a folder of the new library through an old one and does not see the new library after the carry.
+    // Whether the user saw a folder of the new library through an old one and does not see the new library after the carry,
+    // which leaves an adopted library as the admin set it.
     private static bool Loses(User user, AccessCarry carry)
     {
         var all = user.HasPermission(PermissionKind.EnableAllFolders);
         var enabled = IdsOf(user, PreferenceKind.EnabledFolders);
         var blocked = IdsOf(user, PreferenceKind.BlockedMediaFolders);
         bool Sees(Guid id) => (all || enabled.Contains(id)) && !blocked.Contains(id);
-        var access = AccessOf(user, carry);
-        var seesAfter = !access.Blocked && (all || access.Enabled || (carry.Id is { } id && Sees(id)));
+        var access = carry.Adopted ? (Enabled: false, Blocked: false) : AccessOf(user, carry);
+        var seesAfter = !access.Blocked && (access.Enabled || (carry.Id is { } id ? Sees(id) : all));
         return !seesAfter && carry.Folders.Any(sources => sources.Any(Sees));
     }
 

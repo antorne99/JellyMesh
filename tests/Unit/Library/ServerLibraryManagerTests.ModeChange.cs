@@ -350,16 +350,70 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task The_users_who_lose_titles_stay_on_the_server_state_after_the_change()
+    public async Task The_users_who_lose_titles_stay_on_the_server_config_after_the_change_and_a_restart()
     {
         var fixture = await ChangedFrom(LibraryMode.ByRemoteLibrary, LibraryMode.ByType);
         fixture.Renamer.Lost = [new AccessLoss("Casa 1a2b3c4d - Film", ["ristretto"])];
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        var lost = Assert.Single(fixture.Manager.GetState(_serverId).LostAccess);
-        Assert.Equal("Casa 1a2b3c4d - Film", lost.Library);
-        Assert.Equal(["ristretto"], lost.Users);
+        Assert.Equal([("Casa 1a2b3c4d - Film", "ristretto")], fixture.Server.LostAccess.Select(lost => (lost.Library, lost.User)));
+        var shown = Assert.Single(fixture.NewManager().GetState(_serverId).LostAccess);
+        Assert.Equal("Casa 1a2b3c4d - Film", shown.Library);
+        Assert.Equal(["ristretto"], shown.Users);
+    }
+
+    [Fact]
+    public async Task A_new_mode_change_replaces_the_users_named_by_the_last_one()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByRemoteLibrary, LibraryMode.ByType);
+        fixture.Server.LostAccess.Add(new LostAccessConfig { Library = "Casa - Film HD", User = "vecchio" });
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Server.LostAccess);
+    }
+
+    [Fact]
+    public async Task A_change_resumed_after_a_restart_adds_to_the_users_already_named()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByRemoteLibrary, LibraryMode.ByType);
+        fixture.Renamer.CarryFailure = new InvalidOperationException("database");
+        await fixture.Manager.ApplyMode(_serverId).Job;
+        fixture.Server.LostAccess.Add(new LostAccessConfig { Library = "Casa 1a2b3c4d - Film", User = "bambini" });
+        fixture.Renamer.CarryFailure = null;
+        fixture.Renamer.Lost = [new AccessLoss("Casa 1a2b3c4d - Film", ["bambini", "noadulti"])];
+
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(
+            [("Casa 1a2b3c4d - Film", "bambini"), ("Casa 1a2b3c4d - Film", "noadulti")],
+            fixture.Server.LostAccess.Select(lost => (lost.Library, lost.User)));
+    }
+
+    [Fact]
+    public async Task A_library_the_new_mode_adopts_is_named_in_the_preview_and_given_to_nobody()
+    {
+        var fixture = OnTypeFolders();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+        var children = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
+        var adults = Guid.Parse(fixture.Libraries.Find("Casa - Film 4K").ItemId);
+        fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
+        var adopted = Guid.Parse(fixture.Libraries.Find("Film di casa").ItemId);
+        fixture.Renamer.Lost = [new AccessLoss("Film di casa", ["ristretto"])];
+
+        var change = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByType);
+        fixture.Server.LibraryMode = LibraryMode.ByType;
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        var previewed = Assert.Single(Assert.Single(fixture.Renamer.Previewed));
+        Assert.Equal(("Film di casa", (Guid?)adopted, true), (previewed.Name, previewed.Id, previewed.Adopted));
+        Assert.Equal<IReadOnlyList<Guid>>([[children], [adults]], previewed.Folders);
+        Assert.Equal(fixture.Renamer.Lost, change!.LostAccess);
+        var carried = Assert.Single(Assert.Single(fixture.Renamer.Carried));
+        Assert.Equal(("Film di casa", (Guid?)adopted, true), (carried.Name, carried.Id, carried.Adopted));
+        Assert.Equal<IReadOnlyList<Guid>>([[children], [adults]], carried.Folders);
+        Assert.Equal([("Film di casa", "ristretto")], fixture.Server.LostAccess.Select(lost => (lost.Library, lost.User)));
     }
 
     [Fact]

@@ -34,7 +34,7 @@ public interface ILibraryRenamer
     /// <summary>
     /// Keeps what each user can see when new libraries take the titles of old ones: who blocks an old one blocks the new
     /// ones that hold any of its folders, and who has by id, not through all libraries, old libraries holding every folder
-    /// of a new one gets it. Only the per-id lists change, as on a rename (§10 row 438).
+    /// of a new one gets it. Only the per-id lists change, as on a rename, and never for an adopted library (§10 rows 438, 440).
     /// </summary>
     /// <param name="carries">The new libraries, each with the old libraries that held its folders.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

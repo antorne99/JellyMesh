@@ -47,7 +47,6 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     private readonly Dictionary<Guid, Task> _jobs = [];
     private readonly ConcurrentDictionary<Guid, AutomaticLibrariesError> _errors = new();
     private readonly ConcurrentDictionary<Guid, IReadOnlyList<LibraryConflict>> _conflicts = new();
-    private readonly ConcurrentDictionary<Guid, IReadOnlyList<AccessLoss>> _lostAccess = new();
     private readonly UnreadyScanLimit _scanLimit = new(TimeProvider.System);
     private Task _cleanup = Task.CompletedTask;
     private bool _cleaning;
@@ -134,10 +133,11 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             {
                 Mode = server.LibraryMode,
                 Vanished = server.VanishedLibraries.Select(library => library.Name.Length > 0 ? library.Name : library.Id).ToList(),
+                LostAccess = LossesOf(server.LostAccess),
                 ManualPaths = config.FederatedFolderPath.Length == 0 ? [] : LibraryPlan.ManualPaths(server, config.FederatedFolderPath, olderLayout)
             }
             : new AutomaticLibrariesState(false, false, [], [], AutomaticLibrariesError.None));
-        return WithDisabled(state) with { Busy = HasJob(serverId), Error = _errors.GetValueOrDefault(serverId), Conflicts = _conflicts.GetValueOrDefault(serverId) ?? [], LostAccess = _lostAccess.GetValueOrDefault(serverId) ?? [] };
+        return WithDisabled(state) with { Busy = HasJob(serverId), Error = _errors.GetValueOrDefault(serverId), Conflicts = _conflicts.GetValueOrDefault(serverId) ?? [] };
     }
 
     /// <inheritdoc />

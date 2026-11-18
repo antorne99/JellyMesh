@@ -9,4 +9,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <param name="Name">The name of the library.</param>
 /// <param name="Id">The id of the library, or null in a preview, before it exists.</param>
 /// <param name="Folders">For each folder of the library, the ids of the old libraries that held it.</param>
-public sealed record AccessCarry(string Name, Guid? Id, IReadOnlyList<IReadOnlyList<Guid>> Folders);
+public sealed record AccessCarry(string Name, Guid? Id, IReadOnlyList<IReadOnlyList<Guid>> Folders)
+{
+    /// <summary>Gets a value indicating whether the library is the admin's, adopted: no user list ever gets its id.</summary>
+    public bool Adopted { get; init; }
+}
