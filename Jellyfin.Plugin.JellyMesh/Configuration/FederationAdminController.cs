@@ -306,7 +306,8 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Enters the dedicated user of a server again, after logging in with it. This is how a lost key file is fixed.
+    /// Enters the dedicated user of a server again, as a save of the edit form with its effects. This is how a lost key
+    /// file is fixed.
     /// </summary>
     /// <param name="serverId">The server to update.</param>
     /// <param name="request">The dedicated user.</param>
@@ -328,9 +329,14 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.BeingRemoved);
         }
 
-        var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
-        var result = await _registry.UpdateCredentialsAsync(serverId, credentials, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
+        // A save of the form that changes only the user and password, with the same effects (row 434).
+        if (_registry.GetServers().FirstOrDefault(server => server.Id == serverId) is not { } saved)
+        {
+            return Failed(RemoteFailure.UnknownServer);
+        }
+
+        var form = new ServerEditRequest { Name = saved.Name, Url = saved.Url, Username = request.Username, Password = request.Password };
+        return await SaveEditCoreAsync(serverId, form, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -390,21 +396,7 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.BeingRemoved);
         }
 
-        if (RefuseName(serverId, request.Name) is { } refusedName)
-        {
-            return refusedName;
-        }
-
-        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), () => StopStreamsAsync(serverId), cancellationToken).ConfigureAwait(false);
-        if (!result.IsSuccess)
-        {
-            return EditFailed(result);
-        }
-
-        AfterSave(serverId, result.Value!.Changes, request.Name!.Trim());
-
-        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
-        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server) with { RemoteWarning = result.Value.RemoteWarning };
+        return await SaveEditCoreAsync(serverId, request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -837,6 +829,26 @@ public class FederationAdminController : ControllerBase
 
     // Runs what follows a saved edit, in order, after the old user was logged out by the save: rename, libraries, library
     // mode, then the sync of the server. A step that fails is logged and leaves the save and the next steps (rows 432, 434).
+    // Saves an edit after refusing a taken name, then sets off its effects (row 434). The caller holds the edit lock.
+    private async Task<ActionResult<ServerStatus>> SaveEditCoreAsync(Guid serverId, ServerEditRequest request, CancellationToken cancellationToken)
+    {
+        if (RefuseName(serverId, request.Name) is { } refusedName)
+        {
+            return refusedName;
+        }
+
+        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), () => StopStreamsAsync(serverId), cancellationToken).ConfigureAwait(false);
+        if (!result.IsSuccess)
+        {
+            return EditFailed(result);
+        }
+
+        AfterSave(serverId, result.Value!.Changes, request.Name!.Trim());
+
+        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
+        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server) with { RemoteWarning = result.Value.RemoteWarning };
+    }
+
     private void AfterSave(Guid serverId, RemoteEditChanges changes, string name)
     {
         if (changes.HasFlag(RemoteEditChanges.Name) && _renamer is not null)

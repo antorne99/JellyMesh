@@ -324,6 +324,25 @@ public sealed partial class ServerEditTests
         }
     }
 
+    // Until F35 drops it, the old credentials endpoint is a save of the form with only the user and password changed.
+    [Fact]
+    public async Task A_new_user_through_the_old_credentials_endpoint_has_the_effects_of_the_form()
+    {
+        var id = await AddAsync("1");
+        await KeepLoginAsync(id);
+        await _playback.OpenAsync(PlaybackValues.Stub(new StubSource(id, "remote-item", "remote-item-ms")));
+        _token = "new-user-token";
+
+        var result = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = "someone", Password = "new-pass" }, CancellationToken.None);
+
+        Assert.Equal("Friend", Assert.IsType<ServerStatus>(result.Value).Name);
+        Assert.Equal(0, _playback.Coordinator.CountServerSessions(id));
+        var logout = Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        Assert.Contains(TestValues.Token, logout.Authorization, StringComparison.Ordinal);
+        Assert.Equal(["1"], _fixture.Store.Configuration.Servers.Single().ImportedLibraryIds);
+        _sync.Verify(sync => sync.StartServerSync(id), Times.Once);
+    }
+
     [Fact]
     public async Task A_new_user_without_a_live_login_ends_the_device_of_the_old_user_with_its_saved_credentials()
     {
