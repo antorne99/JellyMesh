@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 
@@ -70,6 +71,7 @@ internal sealed class ConfigurationRows
         var serverValues = new List<object[]>();
         var automatic = new List<object[]>();
         var remoteLibraries = new List<object[]>();
+        var pendingLibraries = new List<object[]>();
         foreach (var (server, position) in config.Servers.DistinctBy(server => server.Id).Select((server, position) => (server, position)))
         {
             var id = Id(server.Id);
@@ -81,6 +83,8 @@ internal sealed class ConfigurationRows
             serverValues.AddRange(Values(id, CreatedLibrary, server.CreatedLibraryKeys));
             automatic.AddRange(Libraries(id, server.AutomaticLibraryRegistry));
             remoteLibraries.AddRange(server.RemoteLibraries.Select((library, position) => Row(id, position, library.Id, library.Name, library.CollectionType)));
+            pendingLibraries.AddRange(server.PendingLibraries.Select((library, position)
+                => Row(id, position, library.Kind.ToString(), library.Name, library.RemoteLibraryId, JsonSerializer.Serialize(library.Paths))));
         }
 
         var removed = new List<object[]>();
@@ -106,6 +110,7 @@ internal sealed class ConfigurationRows
             [ConfigurationTables.ServerValues] = serverValues,
             [ConfigurationTables.ServerAutomaticLibraries] = automatic,
             [ConfigurationTables.ServerRemoteLibraries] = remoteLibraries,
+            [ConfigurationTables.ServerPendingLibraries] = pendingLibraries,
             [ConfigurationTables.RemovedServers] = removed,
             [ConfigurationTables.RemovedServerValues] = removedValues,
             [ConfigurationTables.RemovedServerLibraries] = removedLibraries,
@@ -176,6 +181,7 @@ internal sealed class ConfigurationRows
         var serverValues = Lists(ConfigurationTables.ServerValues);
         var automatic = LibrariesOf(ConfigurationTables.ServerAutomaticLibraries);
         var remote = LibrariesOf(ConfigurationTables.ServerRemoteLibraries);
+        var pending = LibrariesOf(ConfigurationTables.ServerPendingLibraries);
         foreach (var row in Rows(ConfigurationTables.Servers).OrderBy(row => (long)row[1]))
         {
             var id = (string)row[0];
@@ -213,6 +219,11 @@ internal sealed class ConfigurationRows
             foreach (var library in remote[id].OrderBy(library => (long)library[1]))
             {
                 server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = (string)library[2], Name = (string)library[3], CollectionType = (string)library[4] });
+            }
+
+            foreach (var library in pending[id].OrderBy(library => (long)library[1]))
+            {
+                server.PendingLibraries.Add(Pending(library));
             }
 
             config.Servers.Add(server);
@@ -258,6 +269,30 @@ internal sealed class ConfigurationRows
         }
 
         return config;
+    }
+
+    // A library asked of the server; paths that do not read back leave it with none, so it matches no library.
+    private static PendingLibraryConfig Pending(object[] row)
+    {
+        var library = new PendingLibraryConfig
+        {
+            Kind = Enum.TryParse<ServerLibraryKind>((string)row[2], out var kind) ? kind : default,
+            Name = (string)row[3],
+            RemoteLibraryId = (string)row[4]
+        };
+        try
+        {
+            foreach (var path in (JsonSerializer.Deserialize<string?[]>((string)row[5]) ?? []).OfType<string>())
+            {
+                library.Paths.Add(path);
+            }
+        }
+        catch (JsonException)
+        {
+            library.Paths.Clear();
+        }
+
+        return library;
     }
 
     private static string Id(Guid id) => id.ToString("D", CultureInfo.InvariantCulture);

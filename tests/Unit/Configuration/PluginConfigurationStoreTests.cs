@@ -77,6 +77,10 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = "library-1", Name = "Film 4K", CollectionType = "movies" });
             server.CreatedLibraryKeys.Add("library-2");
             server.CreatedLibraryKeys.Add("Movies");
+            var pending = new PendingLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Casa - Film 4K", RemoteLibraryId = "library-1" };
+            pending.Paths.Add("/federata/b/library-1/Film");
+            pending.Paths.Add("/federata/b/library-1/Film\nnuova");
+            server.PendingLibraries.Add(pending);
             server.ImportedLibraryIds.Add("library-2");
             server.ImportedLibraryIds.Add("library-1");
             server.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Casa - Serie", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0", RemoteLibraryId = "library-2" });
@@ -127,6 +131,9 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             [("library-2", "Cartoni", "tvshows"), ("library-1", "Film 4K", "movies")],
             casa.RemoteLibraries.Select(library => (library.Id, library.Name, library.CollectionType)));
         Assert.Equal(["library-2", "Movies"], casa.CreatedLibraryKeys);
+        var loadedPending = Assert.Single(casa.PendingLibraries);
+        Assert.Equal((ServerLibraryKind.Movies, "Casa - Film 4K", "library-1"), (loadedPending.Kind, loadedPending.Name, loadedPending.RemoteLibraryId));
+        Assert.Equal(["/federata/b/library-1/Film", "/federata/b/library-1/Film\nnuova"], loadedPending.Paths);
         Assert.Equal(
             [(ServerLibraryKind.Series, "Casa - Serie", "0f1e2d3c4b5a69788796a5b4c3d2e1f0", "library-2"), (ServerLibraryKind.Movies, "Casa - Film", string.Empty, string.Empty)],
             casa.AutomaticLibraryRegistry.Select(library => (library.Kind, library.Name, library.ItemId, library.RemoteLibraryId)));

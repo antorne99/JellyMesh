@@ -107,6 +107,11 @@ public class RemoteServerConfig
     public Collection<string> CreatedLibraryKeys { get; } = [];
 
     /// <summary>
+    /// Gets the libraries asked of the server and not recorded yet: only these are taken as made by the plugin after a crash.
+    /// </summary>
+    public Collection<PendingLibraryConfig> PendingLibraries { get; } = [];
+
+    /// <summary>
     /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.
     /// </summary>
     public Collection<string> ReleasedAutomaticLibraries { get; } = [];

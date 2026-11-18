@@ -573,6 +573,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 continue;
             }
 
+            changed |= ResolvePending(serverId, owner, root, folders);
+
             var (plan, records, created) = _store.Read(config => Owned(config, owner) is { } server
                 ? (LibraryPlan.For(server, root, olderLayout), server.AutomaticLibraryRegistry.Select(Copy).ToList(), server.CreatedLibraryKeys.ToHashSet(StringComparer.OrdinalIgnoreCase))
                 : ((IReadOnlyList<PlannedLibrary>)[], new List<AutomaticLibraryConfig>(), new HashSet<string>()));
@@ -693,13 +695,6 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             return false;
         }
 
-        // One made before a crash and never recorded is recorded now instead of made twice.
-        if (Unrecorded(serverId, owner, planned, root, folders) is { } left)
-        {
-            Record(serverId, owner, planned, new AutomaticLibraryConfig { Kind = planned.Kind, Name = left.Name, ItemId = left.ItemId ?? string.Empty, RemoteLibraryId = planned.RemoteLibraryId });
-            return false;
-        }
-
         var name = ChooseName(serverName, serverId, planned.Suffix, folders);
         if (name is null)
         {
@@ -708,11 +703,22 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             return false;
         }
 
-        // A released name is taken back first, so a crash before the record is saved leaves the library waiting (§10 row 403).
-        if (_store.Read(config => Owned(config, owner)?.ReleasedAutomaticLibraries.Contains(name, StringComparer.Ordinal) == true))
+        // A released name is taken back and the intent saved first, so a crash before the record is saved leaves the library
+        // waiting (§10 row 403) and recorded at the next check.
+        var intent = new PendingLibraryConfig { Kind = planned.Kind, Name = name, RemoteLibraryId = planned.RemoteLibraryId };
+        foreach (var path in planned.Paths)
         {
-            _store.Update(config => Owned(config, owner)?.ReleasedAutomaticLibraries.Remove(name));
+            intent.Paths.Add(path);
         }
+
+        _store.Update(config =>
+        {
+            if (Owned(config, owner) is { } server)
+            {
+                server.ReleasedAutomaticLibraries.Remove(name);
+                server.PendingLibraries.Add(intent);
+            }
+        });
 
         try
         {
@@ -722,20 +728,20 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         {
             _logger.LogError("Cannot create the {Kind} library of {Server}: {Error}", planned.Kind, LogText.Clean(serverName), exception.GetType().Name);
             _errors[serverId] = AutomaticLibrariesError.CreateFailed;
-            return false;
+            return ReadFolders() is { } after && Resolve(serverId, owner, intent, root, after);
         }
 
         // The server may add a number to the name, so the new library is found by its path among those not there before.
         var before = folders.Select(folder => folder.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var made = ReadFolders()?.FirstOrDefault(folder => !before.Contains(folder.Name) && Passes(folder, planned.Kind, planned.RemoteLibraryId, root, serverId));
         var record = new AutomaticLibraryConfig { Kind = planned.Kind, Name = made?.Name ?? name, ItemId = made?.ItemId ?? string.Empty, RemoteLibraryId = planned.RemoteLibraryId };
-        Record(serverId, owner, planned, record);
+        Record(serverId, owner, intent.KeyOf(), record);
         _logger.LogInformation("Created the library {Library} for {Server}", LogText.Clean(record.Name), LogText.Clean(serverName));
         return true;
     }
 
-    // Saves a library made for a server, or holds it for deletion if the server was removed meanwhile.
-    private void Record(Guid serverId, RemoteServerConfig owner, PlannedLibrary planned, AutomaticLibraryConfig record)
+    // Saves a library made for a server and drops its intent, or holds it for deletion if the server was removed meanwhile.
+    private void Record(Guid serverId, RemoteServerConfig owner, string key, AutomaticLibraryConfig record)
     {
         var held = false;
         _store.Update(config =>
@@ -744,10 +750,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             if (Owned(config, owner) is { } server)
             {
                 server.AutomaticLibraryRegistry.Add(record);
-                if (!server.CreatedLibraryKeys.Contains(planned.Key, StringComparer.OrdinalIgnoreCase))
+                if (!server.CreatedLibraryKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
                 {
-                    server.CreatedLibraryKeys.Add(planned.Key);
+                    server.CreatedLibraryKeys.Add(key);
                 }
+
+                RemovePending(server, key);
             }
             else
             {
@@ -761,27 +769,59 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
     }
 
-    // A library with one of the names the plugin would give, its folders and type, that no registry knows, the admin did not
-    // have at switch-on and was not released: one made before a crash.
-    private VirtualFolderInfo? Unrecorded(Guid serverId, RemoteServerConfig owner, PlannedLibrary planned, string root, List<VirtualFolderInfo> folders) => _store.Read(config =>
+    // Records each library a server was asked for before a crash and drops the intents of those it never made.
+    private bool ResolvePending(Guid serverId, RemoteServerConfig owner, string root, List<VirtualFolderInfo> folders)
     {
-        if (Owned(config, owner) is not { } server)
+        var pending = _store.Read(config => Owned(config, owner)?.PendingLibraries.ToList() ?? []);
+        var changed = false;
+        foreach (var intent in pending)
         {
-            return null;
+            changed |= Resolve(serverId, owner, intent, root, folders);
         }
 
-        var names = NamesFor(server.Name, serverId, planned.Suffix);
-        var known = config.Servers.SelectMany(other => other.AutomaticLibraryRegistry)
-            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
-            .Select(record => FindRecorded(record, folders))
-            .OfType<VirtualFolderInfo>()
-            .ToHashSet();
-        return folders.FirstOrDefault(folder => !known.Contains(folder)
-            && names.Contains(folder.Name, StringComparer.OrdinalIgnoreCase)
-            && !server.PreexistingLibraryIds.Contains(folder.ItemId ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-            && !server.ReleasedAutomaticLibraries.Contains(folder.Name, StringComparer.Ordinal)
-            && Passes(folder, planned.Kind, planned.RemoteLibraryId, root, serverId));
-    });
+        return changed;
+    }
+
+    // Records the library of an intent if the server has it, with its name, type and exactly its folders; drops the intent.
+    private bool Resolve(Guid serverId, RemoteServerConfig owner, PendingLibraryConfig intent, string root, List<VirtualFolderInfo> folders)
+    {
+        var made = _store.Read(config =>
+        {
+            var known = config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
+                .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+                .Select(record => FindRecorded(record, folders))
+                .OfType<VirtualFolderInfo>()
+                .ToHashSet();
+            return folders.FirstOrDefault(folder => !known.Contains(folder)
+                && string.Equals(folder.Name, intent.Name, StringComparison.OrdinalIgnoreCase)
+                && Passes(folder, intent.Kind, intent.RemoteLibraryId, root, serverId)
+                && folder.Locations.Length == intent.Paths.Count
+                && intent.Paths.All(path => folder.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))));
+        });
+        if (made is null)
+        {
+            _store.Update(config =>
+            {
+                if (Owned(config, owner) is { } server)
+                {
+                    RemovePending(server, intent.KeyOf());
+                }
+            });
+            return false;
+        }
+
+        Record(serverId, owner, intent.KeyOf(), new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty, RemoteLibraryId = intent.RemoteLibraryId });
+        _logger.LogInformation("Recorded the library {Library} made before a restart", LogText.Clean(made.Name));
+        return true;
+    }
+
+    private static void RemovePending(RemoteServerConfig server, string key)
+    {
+        foreach (var intent in server.PendingLibraries.Where(intent => string.Equals(intent.KeyOf(), key, StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            server.PendingLibraries.Remove(intent);
+        }
+    }
 
     // Like the label of a server, a taken name gets the first digits of the server GUID.
     private string? ChooseName(string serverName, Guid serverId, string suffix, IReadOnlyList<VirtualFolderInfo> folders)
@@ -941,6 +981,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             if (Find(config, serverId) is { } server)
             {
                 server.AutomaticLibraries = false;
+                server.PendingLibraries.Clear();
             }
         });
     }

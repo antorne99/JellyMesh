@@ -941,9 +941,9 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_creation_whose_name_was_not_released_saves_nothing_more()
+    public async Task A_creation_whose_name_was_not_released_saves_nothing_more_than_its_intent()
     {
-        // Between the two creations only the record of the first one is saved.
+        // Between the two creations only the record of the first one and the intent of the second are saved.
         var fixture = new Fixture();
         var savesAtCreation = new List<int>();
         fixture.Libraries.OnCreate = () => savesAtCreation.Add(fixture.Store.Saves);
@@ -951,7 +951,7 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.Enable(_serverId).Job;
 
         Assert.Equal(2, savesAtCreation.Count);
-        Assert.Equal(1, savesAtCreation[1] - savesAtCreation[0]);
+        Assert.Equal(2, savesAtCreation[1] - savesAtCreation[0]);
     }
 
     [Fact]

@@ -27,6 +27,9 @@ internal static class ConfigurationTables
     /// <summary>The imported remote libraries of each server, as last read (schema step 6).</summary>
     public const string ServerRemoteLibraries = "server_remote_libraries";
 
+    /// <summary>The libraries asked of the server for each server and not recorded yet (schema step 6).</summary>
+    public const string ServerPendingLibraries = "server_pending_libraries";
+
     /// <summary>Removed servers whose libraries are still to delete (decision 140).</summary>
     public const string RemovedServers = "removed_servers";
 
@@ -61,6 +64,7 @@ internal static class ConfigurationTables
         new(ServerValues, ["server_id", "list", "position", "value"], "server_id, list, position"),
         new(ServerAutomaticLibraries, ["server_id", "position", "kind", "name", "item_id", "remote_library_id"], "server_id, position"),
         new(ServerRemoteLibraries, ["server_id", "position", "library_id", "name", "collection_type"], "server_id, position"),
+        new(ServerPendingLibraries, ["server_id", "position", "kind", "name", "remote_library_id", "paths"], "server_id, position"),
         new(RemovedServers, ["server_id", "position", "follow_skipped"], "position"),
         new(RemovedServerValues, ["server_id", "list", "position", "value"], "server_id, list, position"),
         new(RemovedServerLibraries, ["server_id", "position", "kind", "name", "item_id", "remote_library_id"], "server_id, position"),
@@ -101,7 +105,8 @@ internal static class ConfigurationTables
 
     /// <summary>
     /// Adds the library modes, as schema step 6: the mode of each server, on per type where its switch was on and none
-    /// where it was off (§10 row 445); the remote library of a plugin library; the imported remote libraries as last read.
+    /// where it was off (§10 row 445); the remote library of a plugin library; the imported remote libraries as last read;
+    /// the libraries asked of the server and not recorded yet.
     /// </summary>
     /// <param name="connection">The writer connection.</param>
     /// <param name="transaction">The step's transaction.</param>
@@ -118,6 +123,9 @@ internal static class ConfigurationTables
             CREATE TABLE {ServerRemoteLibraries} (
                 server_id TEXT NOT NULL, position INTEGER NOT NULL, library_id TEXT NOT NULL, name TEXT NOT NULL,
                 collection_type TEXT NOT NULL, PRIMARY KEY (server_id, position)) WITHOUT ROWID;
+            CREATE TABLE {ServerPendingLibraries} (
+                server_id TEXT NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
+                remote_library_id TEXT NOT NULL, paths TEXT NOT NULL, PRIMARY KEY (server_id, position)) WITHOUT ROWID;
             """);
     }
 
