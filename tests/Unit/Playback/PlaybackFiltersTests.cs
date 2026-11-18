@@ -108,10 +108,10 @@ public class PlaybackFiltersTests
         return new(lookup, index.Object, _fixture.Registry, new StubSegmentsTests.FakeSegmentClient(), store, TimeProvider.System, NullLogger<StubSegments>.Instance);
     }
 
-    private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null, Func<string, IReadOnlyList<string>>? listFolder = null)
+    private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null, Func<string, IReadOnlyList<string>>? listFolder = null, InMemoryConfigurationStore? store = null)
     {
         return new StockRouteGuardFilter(
-            new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
+            new StubLookup(_library.Object, _stubs.Object, store ?? new InMemoryConfigurationStore()),
             _authorization.Object,
             _fixture.Coordinator,
             sessions ?? _fixture.Sessions,
@@ -1857,6 +1857,33 @@ public class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(), context));
         Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_stub_Jellyfin_has_not_refreshed_yet_never_reaches_stock(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Movie { Path = "/federata/server/Film/Film (2012)/Film (2012).strm" });
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_strm_outside_the_federated_folder_stays_with_stock()
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Movie { Path = "/media/Film (2012).strm" });
+
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
     }
 
     [Fact]
