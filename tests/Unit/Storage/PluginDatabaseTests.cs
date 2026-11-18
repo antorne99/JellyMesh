@@ -213,6 +213,24 @@ public sealed class PluginDatabaseTests : IDisposable
     }
 
     [Fact]
+    public async Task TheGenerationChangesOnlyWhenTheDatabaseIsOpenedHealthy()
+    {
+        Directory.CreateDirectory(DatabasePath);
+        var database = Open();
+        Assert.Equal(0, database.Generation);
+        Assert.True(database.Health.Suspended);
+        Assert.Equal(0, database.Generation);
+
+        Directory.Delete(DatabasePath);
+        database.Retry();
+        Assert.Equal(1, database.Generation);
+
+        database.Retry();
+        await database.WriteAsync((_, _) => { }, CancellationToken.None);
+        Assert.Equal(1, database.Generation);
+    }
+
+    [Fact]
     public async Task DisposeWaitsForTheWriteInProgressAndRefusesWhatComesAfter()
     {
         var database = Open();

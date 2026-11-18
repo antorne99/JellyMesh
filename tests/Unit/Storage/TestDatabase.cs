@@ -21,6 +21,7 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
     private readonly PluginDatabase _inner;
     private int _writes;
     private int _interruptAfter = -1;
+    private long _reopened;
 
     public TestDatabase(string folder)
     {
@@ -55,6 +56,11 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
     public void FailNextRead(Exception exception) => ReadFailure = exception;
 
     public StoreRecovery? Recovery => _inner.Recovery;
+
+    public long Generation => _inner.Generation + Interlocked.Read(ref _reopened);
+
+    /// <summary>Counts as a reopen of the database, after which the rows may not be those read before.</summary>
+    public void Reopen() => Interlocked.Increment(ref _reopened);
 
     public StoreHealth Retry() => _inner.Retry();
 

@@ -522,6 +522,39 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Equal("abc", restarted.Find("abc")?.Id);
     }
 
+    [Fact]
+    public async Task AReopenedDatabaseIsReadAgainAtTheNextLock()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("x", "x/Film/X/X.strm"), Entry("y", "x/Film/Y/Y.strm")] });
+
+        // The copy the database came back from does not hold the last stub.
+        await _database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM stub_entries WHERE id = 'y';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+        _database.Reopen();
+
+        await registry.EnterAsync(CancellationToken.None);
+        StubState saved;
+        try
+        {
+            saved = registry.State with { Stubs = [.. registry.State.Stubs, Entry("z", "x/Film/Z/Z.strm")] };
+            await registry.SaveAsync(saved, CancellationToken.None);
+        }
+        finally
+        {
+            registry.Exit();
+        }
+
+        using var restarted = Create();
+        Assert.Equal(saved.Stubs.Select(stub => stub.Id), restarted.State.Stubs.Select(stub => stub.Id));
+        Assert.Equal(["x", "z"], restarted.State.Stubs.Select(stub => stub.Id));
+    }
+
     public static TheoryData<Exception> ConversionFailures() => new()
     {
         new InvalidOperationException("null value"),

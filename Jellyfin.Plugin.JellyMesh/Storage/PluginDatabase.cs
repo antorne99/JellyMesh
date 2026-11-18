@@ -48,6 +48,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "A call after Dispose still waits on the gate and is refused as closed; the semaphore never makes a wait handle.")]
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile bool _disposed;
+    private long _generation;
     private SqliteConnection? _writer;
     private StoreHealth? _health;
     private RecoveryNote? _note;
@@ -126,6 +127,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private string RecoveryPath => Path.Combine(_folder, StoreBackups.RecoveryFileName);
 
     private int Latest => _migrations.Count;
+
+    /// <inheritdoc />
+    public long Generation => Interlocked.Read(ref _generation);
 
     /// <inheritdoc />
     public StoreHealth Retry()
@@ -294,8 +298,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
+    // Each healthy open, the first one included, counts as a new generation.
     private StoreHealth SetHealth(StoreHealth health)
     {
+        if (!health.Suspended)
+        {
+            Interlocked.Increment(ref _generation);
+        }
+
         Volatile.Write(ref _health, health);
         return health;
     }

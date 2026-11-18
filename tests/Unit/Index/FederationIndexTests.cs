@@ -209,6 +209,31 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
+    public async Task AReopenedDatabaseIsReadAgainBeforeTheNextChange()
+    {
+        using var index = NewIndex();
+        await index.ReplaceServerAsync(_first, [Item("a"), Item("b")], _now, null, CancellationToken.None);
+
+        // The copy the database came back from does not hold the last entry.
+        await _database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM index_items WHERE item_id = 'b';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+        _database.Reopen();
+
+        Assert.True(await index.MergeServerAsync(_first, [Item("c")], _now, new SyncMark(_now, ["library"]), CancellationToken.None));
+
+        using var restarted = NewIndex();
+        Assert.Equal(
+            index.Snapshot.Servers.Single().Items.Select(item => item.ItemId),
+            restarted.Snapshot.Servers.Single().Items.Select(item => item.ItemId));
+        Assert.DoesNotContain(restarted.Snapshot.Servers.Single().Items, item => item.ItemId == "b");
+    }
+
+    [Fact]
     public async Task TheIndexComesBackAfterARestart()
     {
         using (var index = NewIndex())

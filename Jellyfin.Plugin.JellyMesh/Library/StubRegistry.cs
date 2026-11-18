@@ -32,6 +32,9 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     // What the tables hold, to write only what changed; null when that is not known, so the next save writes it all.
     private StubState? _stored;
 
+    // The database generation the state was read in; another one means it may be stale.
+    private long _readGeneration;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="StubRegistry"/> class, reading the registry from the database.
     /// </summary>
@@ -118,7 +121,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     public async Task EnterAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        if (_loaded)
+        if (_loaded && _database.Generation == _readGeneration)
         {
             return;
         }
@@ -170,7 +173,19 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         {
             try
             {
-                await _database.WriteAsync((connection, transaction) => StubTables.Write(connection, transaction, write), cancellationToken).ConfigureAwait(false);
+                var generation = _readGeneration;
+                await _database.WriteAsync(
+                    (connection, transaction) =>
+                    {
+                        // A database opened again since the state was read may not hold what the plan is based on.
+                        if (_database.Generation != generation)
+                        {
+                            throw new StoreSuspendedException("The database was opened again since the stub registry was read.");
+                        }
+
+                        StubTables.Write(connection, transaction, write);
+                    },
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
             {
@@ -292,7 +307,13 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     {
         try
         {
-            var state = await _database.ReadAsync(StubTables.Load, cancellationToken).ConfigureAwait(false);
+            var state = await _database.ReadAsync(
+                (connection, transaction) =>
+                {
+                    _readGeneration = _database.Generation;
+                    return StubTables.Load(connection, transaction);
+                },
+                cancellationToken).ConfigureAwait(false);
             (_loaded, _stored) = (true, state);
             return state;
         }

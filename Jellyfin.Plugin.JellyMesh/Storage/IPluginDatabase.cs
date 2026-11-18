@@ -16,6 +16,12 @@ public interface IPluginDatabase
     StoreHealth Health { get; }
 
     /// <summary>
+    /// Gets a number that changes each time the database is opened healthy, as after a retry or a restore from a copy, so
+    /// that rows read before can be told stale. Reading it never opens the database.
+    /// </summary>
+    long Generation { get; }
+
+    /// <summary>
     /// Gets the last time a damaged database was set aside and replaced, which the page shows with the copy date until the
     /// admin dismisses it; <c>null</c> when there is none. It opens the database on the first read.
     /// </summary>

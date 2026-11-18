@@ -28,6 +28,9 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
     // True after rows that do not read: the next write drops every row, so the damage does not outlive it.
     private bool _damaged;
 
+    // The database generation the rows were read in; another one means they may be stale.
+    private long _readGeneration;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationIndex"/> class, reading the index from the database.
     /// </summary>
@@ -191,13 +194,28 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         }
     }
 
+    // Refuses a write planned on rows of an earlier opening of the database, rolling it back.
+    private void ThrowIfReopened(long generation)
+    {
+        if (_database.Generation != generation)
+        {
+            throw new StoreSuspendedException("The database was opened again since the index was read.");
+        }
+    }
+
     // Null when the store is suspended or cannot be read, to be tried again before the next change. Rows that do not read
     // give an empty index that the next write starts afresh. Either way it is empty for lack of data.
     private async Task<IndexTables.StoredIndex?> LoadAsync(CancellationToken cancellationToken)
     {
         try
         {
-            return await _database.ReadAsync(IndexTables.Load, cancellationToken).ConfigureAwait(false);
+            return await _database.ReadAsync(
+                (connection, transaction) =>
+                {
+                    _readGeneration = _database.Generation;
+                    return IndexTables.Load(connection, transaction);
+                },
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
@@ -216,8 +234,9 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Memory is not the copy of the tables until they are read: a store that came back is read before any change.
-            if (_rows is null)
+            // Memory is not the copy of the tables until they are read: a store that came back or was opened again is read
+            // before any change.
+            if (_rows is null || _database.Generation != _readGeneration)
             {
                 if (await LoadAsync(cancellationToken).ConfigureAwait(false) is not { } stored)
                 {
@@ -239,8 +258,14 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
             var writes = Plan(current, next, _rows);
             if (writes.Count > 0)
             {
-                var clear = _damaged;
-                await _database.WriteAsync((connection, transaction) => IndexTables.Write(connection, transaction, writes, clear), cancellationToken).ConfigureAwait(false);
+                var (clear, generation) = (_damaged, _readGeneration);
+                await _database.WriteAsync(
+                    (connection, transaction) =>
+                    {
+                        ThrowIfReopened(generation);
+                        IndexTables.Write(connection, transaction, writes, clear);
+                    },
+                    cancellationToken).ConfigureAwait(false);
                 Apply(_rows, writes);
                 _damaged = false;
             }
