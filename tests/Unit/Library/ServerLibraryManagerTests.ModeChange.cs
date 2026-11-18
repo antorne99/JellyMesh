@@ -316,6 +316,52 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task Users_with_access_to_an_old_library_get_the_new_ones_that_hold_its_titles_before_it_goes()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        var oldFilms = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
+        var removedAtCarry = -1;
+        fixture.Renamer.OnCarry = () => removedAtCarry = fixture.Libraries.Removed.Count;
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        var carried = Assert.Single(fixture.Renamer.Carried);
+        var (key, value) = Assert.Single(carried);
+        Assert.Equal(oldFilms, key);
+        Assert.Equal(
+            new[] { "Casa - Film 4K", "Casa 1a2b3c4d - Film" }.Select(name => Guid.Parse(fixture.Libraries.Find(name).ItemId)).Order(),
+            value.Order());
+        Assert.Equal(0, removedAtCarry);
+    }
+
+    [Fact]
+    public async Task Access_that_cannot_be_carried_keeps_the_old_libraries_until_a_later_check()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Renamer.CarryFailure = new InvalidOperationException("database");
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Libraries.Removed);
+        fixture.Renamer.CarryFailure = null;
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task Adopted_libraries_take_no_part_in_the_access_carried()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        fixture.Server.LibraryMode = LibraryMode.ByRemoteLibrary;
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Renamer.Carried);
+    }
+
+    [Fact]
     public async Task A_queued_switch_on_keeps_a_mode_the_form_saved_meanwhile()
     {
         var fixture = new Fixture();

@@ -161,6 +161,11 @@ public sealed partial class ServerLibraryManager
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        if (!none && !await CarryAccessAsync(serverId, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var before = _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0);
         await DeleteAllAsync(
             config => LiveRegistry(config, serverId),
@@ -173,6 +178,58 @@ public sealed partial class ServerLibraryManager
         if (!none && _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0) < before)
         {
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // Gives the users with access to an old plugin library access to the new plugin libraries that share a folder with it.
+    // Adopted libraries take no part. Tells whether the old libraries can go.
+    private async Task<bool> CarryAccessAsync(Guid serverId, CancellationToken cancellationToken)
+    {
+        if (ReadFolders() is not { } folders)
+        {
+            return false;
+        }
+
+        var access = _store.Read(config =>
+        {
+            var map = new Dictionary<Guid, IReadOnlyList<Guid>>();
+            if (Find(config, serverId) is not { } server)
+            {
+                return map;
+            }
+
+            var live = server.AutomaticLibraryRegistry.Where(record => !record.Adopted)
+                .Select(record => (Record: record, Folder: FindRecorded(record, folders)))
+                .Where(pair => pair.Folder is { ItemId: not null } && Guid.TryParse(pair.Folder.ItemId, out _))
+                .ToList();
+            var added = live.Where(pair => !Retires(server.LibraryMode, pair.Record)).ToList();
+            foreach (var (record, folder) in live.Where(pair => Retires(server.LibraryMode, pair.Record)))
+            {
+                var taking = added.Where(pair => pair.Folder!.Locations.Any(path => folder!.Locations.Any(other => FederatedFolderLinkChecker.IsSamePath(path, other))))
+                    .Select(pair => Guid.Parse(pair.Folder!.ItemId!))
+                    .ToList();
+                if (taking.Count > 0)
+                {
+                    map[Guid.Parse(folder!.ItemId!)] = taking;
+                }
+            }
+
+            return map;
+        });
+        if (access.Count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            await _renamer.CarryAccessAsync(access, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot give the users access to the libraries of the new library mode: {Error}", exception.GetType().Name);
+            return false;
         }
     }
 
