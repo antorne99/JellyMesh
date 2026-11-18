@@ -122,7 +122,7 @@ public sealed class LibraryRenameJournal
     public SetAsideOutcome SetAside(LibraryRenameRecord record) =>
         Change(record, setAside: true) ? SetAsideOutcome.SetAside : SetAsideOutcome.Pending;
 
-    private static long InsertRecord(SqliteConnection connection, SqliteTransaction transaction, LibraryRenameRecord record)
+    internal static long InsertRecord(SqliteConnection connection, SqliteTransaction transaction, LibraryRenameRecord record)
     {
         using var command = StoreSql.Command(
             connection,

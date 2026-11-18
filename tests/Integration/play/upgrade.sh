@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Decision 17: an upgrade signs stubs that already exist, keeping their items and watch state. Until the migration (F15)
-# the stubs of the flat layout stay and work, and the folder of the server is written beside them (Q49).
+# the stubs of the flat layout stay and work, and the folder of the server is written beside them (Q49). The old files
+# move into the plugin database first, and are kept in migrated-0.5 (§10 row 426).
 # usage: MEDIA=... upgrade.sh
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -34,6 +35,10 @@ wait_ready local
 login local
 
 check "the file stays unsigned until the next sync" "" "$(strm_text local "Tears of Steel" "$FLAT" | grep -o 'sig=' || true)"
+check "the old files left the data folder" 0 "$(docker exec "$PREFIX-local" sh -c "ls '$DATA' | grep -c '\.json' || true")"
+check "they are kept in migrated-0.5, its owner's only" "drwx------ yes" \
+  "$(docker exec "$PREFIX-local" sh -c "echo \$(ls -ld '$DATA/migrated-0.5' | cut -c1-10) \$(test -f '$DATA/migrated-0.5/federated-stubs.json' && echo yes)")"
+check "the database holds the server and the stubs" "1 yes" "$(db_query local "select (select count(*) from servers), (select count(*) > 0 from stub_entries);" | sed 's/|1$/ yes/; s/|0$/ no/')"
 sync_now local
 
 new_strm=$(strm_text local "Tears of Steel" "$FLAT")

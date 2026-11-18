@@ -24,4 +24,9 @@
     <ProjectReference Include="..\..\Jellyfin.Plugin.JellyMesh\Jellyfin.Plugin.JellyMesh.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The files a 0.5.0.1 server wrote, which the migration tests read. -->
+    <None Include="Storage/Legacy05/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

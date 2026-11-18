@@ -52,7 +52,7 @@ NUGET_VOLUME=jellymesh-nuget bash "$OLD/tests/Integration/scripts/install-plugin
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+old_settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id_a=$(add_remote local a "http://host.docker.internal:$(port_of a)" jellymesh)
 id_b=$(add_remote local b "http://host.docker.internal:$(port_of b)" jellymesh)
 import_all local "$id_a"

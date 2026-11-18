@@ -686,5 +686,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => inner.BackUpAsync(cancellationToken);
 
         public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => inner.DeleteExpiredDamagedAsync(cancellationToken);
+
+        public Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken) => inner.DeleteExpiredMigratedAsync(cancellationToken);
     }
 }

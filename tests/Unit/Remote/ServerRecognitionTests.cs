@@ -162,9 +162,9 @@ public class ServerRecognitionTests
         Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
     }
 
-    // Decision 126: a different Server Id at a later login keeps the stored one and is logged with both.
+    // Row 433: a login on which another server answers is refused and ended, with both ids in the log.
     [Fact]
-    public async Task ADifferentIdAtLoginIsLoggedWithBothIds()
+    public async Task ADifferentIdAtLoginIsRefusedEndedAndLoggedWithBothIds()
     {
         using var fixture = new RegistryFixture(Remote());
         var server = await fixture.AddServerAsync();
@@ -172,9 +172,22 @@ public class ServerRecognitionTests
         _serverId = OtherId;
         fixture.Logger.Lines.Clear();
         fixture.Logger.Levels.Clear();
+        fixture.Handler.Requests.Clear();
+        var ran = false;
 
-        await restarted.RunWithSessionAsync(server.Id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
+        var result = await restarted.RunWithSessionAsync(
+            server.Id,
+            (_, _, _) =>
+            {
+                ran = true;
+                return Task.FromResult(RemoteResult.Success(1));
+            },
+            CancellationToken.None);
 
+        Assert.Equal(RemoteFailure.OtherServer, result.Failure);
+        Assert.False(ran);
+        Assert.Contains(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
+        Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
         var index = Assert.Single(Enumerable.Range(0, fixture.Logger.Lines.Count), i => fixture.Logger.Lines[i].Contains(OtherId, StringComparison.Ordinal));
         var line = fixture.Logger.Lines[index];
         Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, fixture.Logger.Levels[index]);
@@ -185,20 +198,39 @@ public class ServerRecognitionTests
     }
 
     [Fact]
-    public async Task ADifferentIdWhenTheLoginIsEnteredAgainIsKeptOutAndLogged()
+    public async Task ARefusedLoginIsNotKeptForTheNextCall()
     {
         using var fixture = new RegistryFixture(Remote());
         var server = await fixture.AddServerAsync();
+        using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, fixture.Client, fixture.Logger);
         _serverId = OtherId;
-        fixture.Logger.Lines.Clear();
-        fixture.Logger.Levels.Clear();
+        await restarted.RunWithSessionAsync(server.Id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
+        _serverId = FirstId;
+        fixture.Handler.Requests.Clear();
 
-        await fixture.Registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var result = await restarted.RunWithSessionAsync(server.Id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
 
+        Assert.True(result.IsSuccess);
+        Assert.Contains(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+    }
+
+    [Fact]
+    public async Task ADifferentIdWhenTheLoginIsEnteredAgainIsRefusedAndNothingIsSaved()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        var credentials = fixture.Store.Configuration.Servers.Single().EncryptedCredentials;
+        _serverId = OtherId;
+        fixture.Handler.Requests.Clear();
+        var saves = fixture.Store.Saves;
+
+        var result = await fixture.Registry.UpdateCredentialsAsync(server.Id, new Jellyfin.Plugin.JellyMesh.Security.RemoteCredentials { Username = "other", Password = "x" }, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.OtherServer, result.Failure);
+        Assert.Equal(saves, fixture.Store.Saves);
+        Assert.Equal(credentials, fixture.Store.Configuration.Servers.Single().EncryptedCredentials);
         Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
-        var index = Assert.Single(Enumerable.Range(0, fixture.Logger.Lines.Count), i => fixture.Logger.Lines[i].Contains(OtherId, StringComparison.Ordinal));
-        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, fixture.Logger.Levels[index]);
-        Assert.Contains(FirstId, fixture.Logger.Lines[index], StringComparison.Ordinal);
+        Assert.Contains(fixture.Handler.Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
     }
 
     // Decision 128: a Server Id read after the add is stored only if no other configured server holds it.

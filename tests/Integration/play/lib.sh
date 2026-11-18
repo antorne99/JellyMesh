@@ -11,6 +11,7 @@ PORT=${PORT:-18430}
 WORK=${WORK:-${TMPDIR:-/tmp}/$PREFIX-run}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 PW_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-noble
+PLUGIN=28c43ea1-fb5a-4b3a-8e6e-30aa3245c653
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH="MediaBrowser Client=\"JellyMeshPlay\", Device=\"play\", DeviceId=\"$PREFIX-admin\", Version=\"0.1\""
 PROFILE_HLS='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
@@ -112,6 +113,26 @@ settings() { # settings <server> <jq filter>: changes the plugin settings, as th
   c=$(get "$1" /JellyMesh/Admin/Settings | jq -c "($2) | del(.FixedByEnvironment)")
   req "$1" PUT /JellyMesh/Admin/Settings "$c" >/dev/null
   status
+}
+
+# old_settings <server> <jq filter>: the same on a build before 0.6, which kept its settings in the stock plugin XML.
+old_settings() {
+  local c
+  c=$(get "$1" "/Plugins/$PLUGIN/Configuration" | jq -c "$2")
+  post "$1" "/Plugins/$PLUGIN/Configuration" "$c" >/dev/null
+  status
+}
+
+# Where 0.6 and later keep their data, and where the migration leaves the files of 0.4 and 0.5.
+DATA=/config/plugins/Jellyfin.Plugin.JellyMesh
+OLD_XML=/config/plugins/configurations/Jellyfin.Plugin.JellyMesh.xml
+# db_query <server> <sql>: reads the plugin database from a copy, so the running server is not disturbed.
+db_query() {
+  docker run --rm -v "$(name_of "$1")-config:/config:ro" "$PW_IMAGE" python3 -c '
+import glob, shutil, sqlite3, sys
+for f in glob.glob(sys.argv[1] + "/jellymesh.db*"): shutil.copy(f, "/tmp/")
+for row in sqlite3.connect("/tmp/jellymesh.db").execute(sys.argv[2]): print("|".join(map(str, row)))
+' "$DATA" "$2"
 }
 
 add_remote() { # add_remote <consumer> <name> <url> <user> -> server id

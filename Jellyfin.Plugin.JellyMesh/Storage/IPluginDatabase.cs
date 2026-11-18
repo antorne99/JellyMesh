@@ -94,4 +94,13 @@ public interface IPluginDatabase
     /// <returns>A task that completes when the sweep is done.</returns>
     /// <exception cref="StoreSuspendedException">The database is not healthy, so its damaged files may still be needed.</exception>
     Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Overwrites and deletes the files of the older version kept in <c>migrated-0.5/</c>, once 30 days have passed since
+    /// the migration and a fresh integrity check of the database passes (D25).
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the folder is gone, or never was.</returns>
+    /// <exception cref="StoreSuspendedException">The store is suspended.</exception>
+    Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken);
 }

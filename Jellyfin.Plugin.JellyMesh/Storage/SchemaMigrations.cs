@@ -25,8 +25,8 @@ public static class SchemaMigrations
         new(SmallStateSchema.Version, SmallStateSchema.Apply),
         new(4, ConfigurationTables.Create),
 
-        // Reserved for the data migration of F32, which takes step 5; the steps are renumbered when the phases merge.
-        new(5, static (_, _) => { }),
+        // The mark of the migration of the 0.4 and 0.5 data (F32).
+        new(LegacyImport.SchemaVersion, LegacyImport.CreateTable),
 
         // The library modes (F39).
         new(6, ConfigurationTables.AddLibraryModes)

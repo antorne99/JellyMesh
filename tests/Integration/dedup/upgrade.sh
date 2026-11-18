@@ -7,7 +7,7 @@ OLD=${OLD:?point OLD at a checkout of the build to upgrade from}
 
 start upgrade
 install_plugin upgrade "$OLD"
-configure upgrade true
+configure_old upgrade true
 add_remote upgrade stock http://jm-dedup-s:8096 >/dev/null
 add_remote upgrade peer http://jm-dedup-j:8096 >/dev/null
 sync_and_scan upgrade
@@ -31,6 +31,9 @@ install_plugin upgrade
 health=$(get upgrade /JellyMesh/Admin/Index/Decisions | jq -c '{Health, Contents: (.Contents | length)}')
 echo "$health"
 check "the old index still loads" Ok "$(echo "$health" | jq -r .Health)"
+data=/config/plugins/Jellyfin.Plugin.JellyMesh
+check "the old files moved into the database and are kept in migrated-0.5" "0 yes" \
+  "$(docker exec "$(container_of upgrade)" sh -c "echo \$(ls $data | grep -c '\.json\$' || true) \$(test -f $data/migrated-0.5/federation-index.json && test -f $data/jellymesh.db && echo yes)")"
 check "no stub went away with the upgrade" "$stubs_before" "$(stubs upgrade | wc -l | tr -d ' ')"
 check "the old stub is still the same item" "$stub3" "$(episode_id upgrade "S01E03.strm")"
 
