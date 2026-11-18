@@ -306,6 +306,28 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
+    /// Checks an edit of a server without saving anything: logs in with the new data, accepts only the saved Server Id,
+    /// reads the libraries the user sees and lists the consequences of the save (row 432, 433).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The edit form.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The libraries and the consequences, or the refusal with the field it is about.</returns>
+    [HttpPost("Servers/{serverId:guid}/Edit/Check")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<ServerEditCheck>> CheckServerEdit([FromRoute] Guid serverId, [FromBody] ServerEditRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? ToCheck(serverId, request.Name.Trim(), result.Value!) : EditFailed(result);
+    }
+
+    /// <summary>
     /// Tests the connection to a server and refreshes its capabilities.
     /// </summary>
     /// <param name="serverId">The server.</param>
@@ -543,6 +565,21 @@ public class FederationAdminController : ControllerBase
         };
     }
 
+    internal static string EditFailureMessage(RemoteFailure failure, RemoteEditField field, string? serverName)
+    {
+        return (failure, field) switch
+        {
+            (RemoteFailure.OtherServer, _) when !string.IsNullOrEmpty(serverName)
+                => $"Another server answers at this address (“{serverName}”). To use it, remove this one and add it as a new server.",
+            (RemoteFailure.AlreadyConfigured, _) when !string.IsNullOrEmpty(serverName) => $"This server is already configured as “{serverName}”.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Name) => "Enter a name.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Url) => "Enter an http or https URL with no credentials, query or fragment.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Username) => "Enter the dedicated user.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Password) => "Enter the password of the dedicated user: the saved one can no longer be read.",
+            _ => FailureMessage(failure)
+        };
+    }
+
     internal static string FailureMessage(RemoteFailure failure)
     {
         return failure switch
@@ -612,9 +649,9 @@ public class FederationAdminController : ControllerBase
         };
     }
 
-    private ObjectResult Failed(RemoteFailure failure)
+    private static int StatusOf(RemoteFailure failure)
     {
-        var status = failure switch
+        return failure switch
         {
             RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
@@ -622,8 +659,47 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status502BadGateway
         };
+    }
 
-        return StatusCode(status, new FailureResponse(failure, FailureMessage(failure)));
+    private ObjectResult Failed(RemoteFailure failure)
+    {
+        return StatusCode(StatusOf(failure), new FailureResponse(failure, FailureMessage(failure)));
+    }
+
+    // A refused edit, with the field it is about so that the page shows it there (row 432).
+    private ObjectResult EditFailed(RemoteResult<RemoteEditReport> result)
+    {
+        var field = result.Value?.Field ?? RemoteEditField.None;
+        var name = result.Value?.ServerName;
+        return StatusCode(
+            StatusOf(result.Failure),
+            new FailureResponse(result.Failure, EditFailureMessage(result.Failure, field, name))
+            {
+                ServerName = string.IsNullOrEmpty(name) ? null : name,
+                Field = field == RemoteEditField.None ? null : field
+            });
+    }
+
+    // The libraries and the consequences of an edit the remote accepted (row 432).
+    private ServerEditCheck ToCheck(Guid serverId, string name, RemoteEditReport report)
+    {
+        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
+        var visible = report.Libraries ?? [];
+        var kept = report.LibraryIds.ToHashSet(StringComparer.Ordinal);
+        var removed = (server?.ImportedLibraryIds ?? [])
+            .Where(id => !kept.Contains(id))
+            .Select(id => visible.FirstOrDefault(library => library.Id == id) is { } library
+                ? new ImportedLibraryRemoval(id, library.Name, false)
+                : new ImportedLibraryRemoval(id, null, true))
+            .ToList();
+        var rename = server is not null && report.Changes.HasFlag(RemoteEditChanges.Name)
+            ? new ServerRenameConsequence(server.Name, name, _libraries.GetState(serverId).Libraries.Select(library => library.Name).ToList())
+            : null;
+        var streams = report.Changes.HasFlag(RemoteEditChanges.User) ? _playback.CountServerSessions(serverId) : 0;
+        return new ServerEditCheck(
+            report.ServerName ?? string.Empty,
+            visible.Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, kept.Contains(library.Id))).ToList(),
+            new ServerEditConsequences(rename, removed, streams));
     }
 
     // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure

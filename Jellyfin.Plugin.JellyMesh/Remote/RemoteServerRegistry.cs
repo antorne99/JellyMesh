@@ -329,6 +329,37 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<RemoteEditReport>> CheckEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+
+        var (plan, refusal) = PlanEdit(serverId, edit);
+        if (plan is null)
+        {
+            return refusal;
+        }
+
+        var endpoint = CheckEndpointOf(serverId, plan.Url);
+        var login = await _client.AuthenticateAsync(endpoint, plan.Credentials, cancellationToken).ConfigureAwait(false);
+        if (login.Value is not { } session)
+        {
+            _logger.LogWarning("Login on remote server {ServerName} with the edited data failed: {Failure}", LogText.Clean(plan.Name), login.Failure);
+            return RemoteResult.Fail(login.Failure, new RemoteEditReport(FieldOf(login.Failure)));
+        }
+
+        try
+        {
+            var read = await ReadEditedAsync(plan, endpoint, session, cancellationToken).ConfigureAwait(false);
+            return read.IsSuccess ? RemoteResult.Success(read.Value!.Report) : RemoteResult.Fail(read.Failure, read.Value!.Report);
+        }
+        finally
+        {
+            // Not cancelled with the request: the login must not stay open on the remote (419).
+            await EndUnusedLoginAsync(endpoint, session, plan.Name, refusedIsEnded: true).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> RemoveAsync(Guid serverId)
     {
         RemoteServerConfig? removed = null;
@@ -561,6 +592,112 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private static RemoteEndpoint EndpointOf(Guid serverId, string url)
     {
         return new RemoteEndpoint(new Uri(url + "/"), $"jellymesh-{serverId:N}");
+    }
+
+    // The device of the logins that check an edit: a login on the kept device with the same user would revoke the kept one.
+    private static RemoteEndpoint CheckEndpointOf(Guid serverId, string url)
+    {
+        return new RemoteEndpoint(new Uri(url + "/"), $"jellymesh-{serverId:N}-check");
+    }
+
+    // The field of the form a failed login is about.
+    private static RemoteEditField FieldOf(RemoteFailure failure) => failure switch
+    {
+        RemoteFailure.AuthenticationFailed => RemoteEditField.Password,
+        RemoteFailure.AdministratorAccount or RemoteFailure.Forbidden => RemoteEditField.Username,
+        RemoteFailure.Suspended or RemoteFailure.UnknownServer => RemoteEditField.None,
+        _ => RemoteEditField.Url
+    };
+
+    private static (EditPlan? Plan, RemoteResult<RemoteEditReport> Refusal) Refuse(RemoteFailure failure, RemoteEditField field)
+        => (null, RemoteResult.Fail(failure, new RemoteEditReport(field)));
+
+    // Checks the fields of an edit against the saved server and finds what it changes, or why it is refused (row 432).
+    private (EditPlan? Plan, RemoteResult<RemoteEditReport> Refusal) PlanEdit(Guid serverId, RemoteServerEdit edit)
+    {
+        if (_vault.GetKeyState() == KeyState.Missing)
+        {
+            return Refuse(RemoteFailure.Suspended, RemoteEditField.None);
+        }
+
+        if (string.IsNullOrWhiteSpace(edit.Name))
+        {
+            return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Name);
+        }
+
+        if (!RemoteUrl.TryNormalize(edit.Url, out var url))
+        {
+            return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Url);
+        }
+
+        if (string.IsNullOrEmpty(edit.Username))
+        {
+            return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Username);
+        }
+
+        var row = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server
+            ? (Saved: new SavedServer(server.Name, server.Url, server.JellyfinServerId, server.ImportedLibraryIds.ToList()), Encrypted: server.EncryptedCredentials)
+            : default);
+        if (row.Saved is not { } saved)
+        {
+            return Refuse(RemoteFailure.UnknownServer, RemoteEditField.None);
+        }
+
+        // Credentials that no longer decrypt are entered again here, so the password is then required (row 434).
+        var stored = UnprotectOrNull(serverId, row.Encrypted);
+        var keepsPassword = string.IsNullOrEmpty(edit.Password);
+        if (keepsPassword && stored is null)
+        {
+            return Refuse(RemoteFailure.InvalidServer, RemoteEditField.Password);
+        }
+
+        var name = edit.Name.Trim();
+        var changes = RemoteEditChanges.None;
+        changes |= name == saved.Name ? RemoteEditChanges.None : RemoteEditChanges.Name;
+        changes |= url == saved.Url ? RemoteEditChanges.None : RemoteEditChanges.Url;
+        changes |= stored is not null && stored.Username == edit.Username ? RemoteEditChanges.None : RemoteEditChanges.User;
+        changes |= keepsPassword || stored?.Password == edit.Password ? RemoteEditChanges.None : RemoteEditChanges.Password;
+        var requested = edit.LibraryIds?.Distinct(StringComparer.Ordinal).ToList();
+        changes |= requested is null || SameLibraries(requested, saved.LibraryIds) ? RemoteEditChanges.None : RemoteEditChanges.Libraries;
+
+        var credentials = new RemoteCredentials { Username = edit.Username, Password = keepsPassword ? stored!.Password : edit.Password! };
+        return (new EditPlan(serverId, name, url, credentials, changes, saved, requested), RemoteResult.Fail<RemoteEditReport>(RemoteFailure.None));
+    }
+
+    private static bool SameLibraries(IReadOnlyCollection<string> first, IReadOnlyCollection<string> second)
+        => first.Count == second.Count && first.All(second.Contains);
+
+    // Accepts only the saved Server Id (row 433), then reads what the remote offers the user with the edited data.
+    private async Task<RemoteResult<EditRead>> ReadEditedAsync(EditPlan plan, RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        var savedId = plan.Saved.JellyfinServerId;
+        if (savedId.Length > 0 && session.ServerId is { } remoteId && remoteId != savedId)
+        {
+            WarnOtherServer(plan.Saved.Name, remoteId, savedId);
+            var answered = await _client.GetServerNameAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
+            return RemoteResult.Fail(RemoteFailure.OtherServer, new EditRead(new RemoteEditReport(RemoteEditField.Url) { ServerName = answered.Value }, null));
+        }
+
+        // As for an add (120): another configured server already stands for this remote.
+        if (savedId.Length == 0 && session.ServerId is { } readId
+            && _store.Read(config => config.Servers.FirstOrDefault(server => server.Id != plan.ServerId && server.JellyfinServerId == readId)?.Name) is { } configured)
+        {
+            return RemoteResult.Fail(RemoteFailure.AlreadyConfigured, new EditRead(new RemoteEditReport(RemoteEditField.Url) { ServerName = configured }, null));
+        }
+
+        var capabilities = await DetectCapabilitiesAsync(endpoint, session, plan.Name, cancellationToken).ConfigureAwait(false);
+        var libraries = await ReadLibrariesAsync(capabilities.Mode, endpoint, session, cancellationToken).ConfigureAwait(false);
+        if (libraries.Value is not { } visible)
+        {
+            return RemoteResult.Fail(libraries.Failure, new EditRead(new RemoteEditReport(RemoteEditField.LibraryIds), null));
+        }
+
+        // Libraries the user no longer sees leave the imported ones (row 434).
+        var ids = (plan.RequestedLibraryIds ?? plan.Saved.LibraryIds).Where(id => visible.Any(library => library.Id == id)).ToList();
+        var changes = SameLibraries(ids, plan.Saved.LibraryIds) ? plan.Changes : plan.Changes | RemoteEditChanges.Libraries;
+        var name = await _client.GetServerNameAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
+        var report = new RemoteEditReport(RemoteEditField.None) { Changes = changes, ServerName = name.Value, Libraries = visible, LibraryIds = ids };
+        return RemoteResult.Success(new EditRead(report, capabilities));
     }
 
     private Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteMode mode, RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
@@ -930,12 +1067,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // Ends a login on which another server answered, and logs both ids with neither the address nor the token (row 433).
     private async Task RefuseOtherServerAsync(RemoteEndpoint endpoint, RemoteSession login, string serverName, string storedId)
     {
+        WarnOtherServer(serverName, login.ServerId, storedId);
+        await EndUnusedLoginAsync(endpoint, login, serverName, refusedIsEnded: false).ConfigureAwait(false);
+    }
+
+    // Logs a login refused because another server answered, with both ids and neither the address nor the token.
+    private void WarnOtherServer(string serverName, string? remoteId, string storedId)
+    {
         _logger.LogWarning(
             "Remote server {ServerName} answered with Server Id {RemoteServerId}, not the stored {StoredServerId}: another server answers at its address, so the login is refused",
             LogText.Clean(serverName),
-            login.ServerId,
+            remoteId,
             storedId);
-        await EndUnusedLoginAsync(endpoint, login, serverName, refusedIsEnded: false).ConfigureAwait(false);
     }
 
     // Records the outcome of a call, and writes to the activity log when the server goes offline or answers again (49, 130).
@@ -972,6 +1115,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private sealed record StoredServer(Guid Id, string Name, string Url);
 
     private sealed record SessionAttempt<T>(RemoteResult<T> Attempt, RemoteSession? Session);
+
+    // The saved fields an edit compares with.
+    private sealed record SavedServer(string Name, string Url, string JellyfinServerId, IReadOnlyList<string> LibraryIds);
+
+    // An edit whose fields are valid, with the credentials it logs in with. The password is in no generated text.
+    private sealed record EditPlan(Guid ServerId, string Name, string Url, RemoteCredentials Credentials, RemoteEditChanges Changes, SavedServer Saved, IReadOnlyList<string>? RequestedLibraryIds);
+
+    // What the remote offers with the edited data, and its capabilities for the save.
+    private sealed record EditRead(RemoteEditReport Report, RemoteCapabilities? Capabilities);
 
     private sealed class ServerRuntime : IDisposable
     {

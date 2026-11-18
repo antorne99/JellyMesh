@@ -133,4 +133,13 @@ public interface IJellyfinRemoteClient
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The time on the remote, null if it answered without a <c>Date</c> header.</returns>
     Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the name the remote gives itself, for the refusal of another server at a saved address (row 433).
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The name, cleaned and bounded; empty when the remote gives none.</returns>
+    Task<RemoteResult<string>> GetServerNameAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken);
 }

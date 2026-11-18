@@ -265,6 +265,23 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<string>> GetServerNameAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        var response = await ReadAsync(endpoint, "/System/Info/Public", session, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<string>(response.Failure);
+        }
+
+        var info = Parse<PublicInfoResponse>(response.Body);
+        return info is null
+            ? RemoteResult.Fail<string>(RemoteFailure.InvalidResponse)
+            : RemoteResult.Success(LogText.Clean(info.ServerName) ?? string.Empty);
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -558,6 +575,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     private sealed record UserPolicy(bool IsAdministrator);
 
     private sealed record CapabilitiesResponse(int ProtocolVersion);
+
+    private sealed record PublicInfoResponse(string? ServerName);
 
     private sealed record UserViewsResponse(IReadOnlyList<UserView>? Items);
 

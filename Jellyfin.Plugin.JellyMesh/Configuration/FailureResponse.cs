@@ -15,7 +15,12 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 public sealed record FailureResponse(RemoteFailure Failure, string Message)
 {
     /// <summary>
-    /// Gets the name of the configured server a refused add matches, if any.
+    /// Gets the name of the configured server a refused add or edit matches, or that of the other server at an edited address.
     /// </summary>
     public string? ServerName { get; init; }
+
+    /// <summary>
+    /// Gets the field of the edit form a refusal is about, null when it is about none.
+    /// </summary>
+    public RemoteEditField? Field { get; init; }
 }
