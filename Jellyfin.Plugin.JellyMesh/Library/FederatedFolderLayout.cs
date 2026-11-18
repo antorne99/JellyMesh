@@ -45,4 +45,15 @@ public static class FederatedFolderLayout
     /// <param name="serverId">The server.</param>
     /// <returns>The path.</returns>
     public static string ServerPath(string federatedFolderPath, Guid serverId) => Path.Combine(federatedFolderPath, FederatedPaths.ServerFolder(serverId));
+
+    /// <summary>
+    /// Gets a type folder of a remote library of a server: <c>{root}/{server}/{library}/{type}</c>.
+    /// </summary>
+    /// <param name="federatedFolderPath">The federated folder.</param>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraryId">The id of the library on the remote.</param>
+    /// <param name="type">The type folder.</param>
+    /// <returns>The path.</returns>
+    public static string TypeFolderPath(string federatedFolderPath, Guid serverId, string libraryId, TypeFolder type)
+        => Path.Combine(federatedFolderPath, FederatedPaths.TypeFolderOf(serverId, libraryId, type));
 }
