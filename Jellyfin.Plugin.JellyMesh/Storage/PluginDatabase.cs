@@ -36,6 +36,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private readonly ILogger<PluginDatabase> _logger;
     private readonly IKeyFileGuard _guard;
     private readonly IReadOnlyList<SchemaMigration> _migrations;
+    private readonly TimeProvider _time;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private SqliteConnection? _writer;
     private StoreHealth? _health;
@@ -58,7 +59,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     /// <param name="guard">Keeps the files private.</param>
     /// <param name="migrations">The schema steps, with versions 1, 2, 3 and so on.</param>
     /// <param name="busyTimeoutSeconds">How long a connection waits on another one's lock.</param>
-    internal PluginDatabase(string folder, ILogger<PluginDatabase> logger, IKeyFileGuard guard, IReadOnlyList<SchemaMigration> migrations, int busyTimeoutSeconds)
+    /// <param name="time">The clock that dates copies and damaged files; the system clock when <c>null</c>.</param>
+    internal PluginDatabase(string folder, ILogger<PluginDatabase> logger, IKeyFileGuard guard, IReadOnlyList<SchemaMigration> migrations, int busyTimeoutSeconds, TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(migrations);
         for (var index = 0; index < migrations.Count; index++)
@@ -74,6 +76,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _logger = logger;
         _guard = guard;
         _migrations = migrations;
+        _time = time ?? TimeProvider.System;
 
         // ReadWrite, not ReadWriteCreate: the store makes a missing file private itself, and never replaces one that does not open.
         var settings = new SqliteConnectionStringBuilder
@@ -178,6 +181,20 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return BackUp();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         _writer?.Dispose();
@@ -244,6 +261,32 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
         // The first column is 1 when a reader kept the checkpoint from finishing.
         return reader.Read() && reader.GetInt64(0) == 0;
+    }
+
+    // VACUUM INTO makes its file 0644 and refuses one that is not empty (F23), so it fills an empty private file. It runs
+    // outside any transaction, on the writer with the gate held; a failed copy is deleted, and only then are old ones pruned.
+    private StoreBackup BackUp()
+    {
+        var writer = Writer();
+        var now = _time.GetUtcNow();
+        var copy = new StoreBackup(StoreBackups.BackupPath(_folder, now), DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds()));
+        File.Delete(copy.FilePath);
+        _guard.CreatePrivate(copy.FilePath).Dispose();
+        try
+        {
+            using var command = Command(writer, "VACUUM INTO $path;");
+            command.Parameters.AddWithValue("$path", copy.FilePath);
+            command.ExecuteNonQuery();
+        }
+        catch
+        {
+            File.Delete(copy.FilePath);
+            throw;
+        }
+
+        StoreBackups.Prune(_folder);
+        _logger.LogInformation("The JellyMesh database was copied to {Copy}", Path.GetFileName(copy.FilePath));
+        return copy;
     }
 
     // The writer of a healthy store, opening it first if nothing has; called with the gate held.

@@ -59,4 +59,13 @@ public interface IPluginDatabase
     /// <returns><c>true</c> when the log was emptied; <c>false</c> when a reader kept it busy.</returns>
     /// <exception cref="StoreSuspendedException">The database is not healthy.</exception>
     Task<bool> TruncateWalAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Copies the database with <c>VACUUM INTO</c> into an owner-only file next to it, after the writes before it, and keeps
+    /// the last 2 copies, as the nightly reconciliation asks.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The new copy.</returns>
+    /// <exception cref="StoreSuspendedException">The database is not healthy.</exception>
+    Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken);
 }
