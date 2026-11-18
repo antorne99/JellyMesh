@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Model.Tasks;
 using Moq;
@@ -41,7 +42,7 @@ public sealed class SyncScheduleServiceTests : IDisposable
 
     private IncrementalSyncTask IncrementalTask() => new(Mock.Of<ICatalogSyncService>(), _store, new CapturingLogger<IncrementalSyncTask>());
 
-    private ReconciliationTask ReconciliationTask() => new(Mock.Of<ICatalogSyncService>(), _store, new CapturingLogger<ReconciliationTask>());
+    private ReconciliationTask ReconciliationTask() => new(Mock.Of<ICatalogSyncService>(), _store, Mock.Of<IPluginDatabase>(), new CapturingLogger<ReconciliationTask>());
 
     private (Mock<IScheduledTaskWorker> Incremental, Mock<IScheduledTaskWorker> Reconciliation) WithTasks(TaskResult? lastRun)
     {

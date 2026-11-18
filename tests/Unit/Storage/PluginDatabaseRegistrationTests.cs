@@ -8,7 +8,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Storage;
 
 public class PluginDatabaseRegistrationTests
 {
-    // One instance for both names, shared by the configuration store and every other user of the database.
+    // One instance for both names, opened on first use and shared by every part of the plugin that keeps its data there.
     [Fact]
     public void ThePluginRegistersOneDatabase()
     {

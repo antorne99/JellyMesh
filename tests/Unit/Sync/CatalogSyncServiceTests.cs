@@ -215,6 +215,25 @@ public sealed class CatalogSyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task WhileTheDatabaseIsSuspendedNothingStartsAndNothingChanges()
+    {
+        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
+        await _fixture.AddServerAsync("A", "films");
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        var before = _fixture.Index.Snapshot;
+        _fixture.Client.Queries.Clear();
+        _fixture.Database.Suspended = true;
+
+        Assert.Equal(SyncStartResult.DatabaseSuspended, _fixture.Sync.TryStart());
+        Assert.Equal(SyncStartResult.DatabaseSuspended, await _fixture.Sync.RunIncrementalAsync(CancellationToken.None));
+
+        Assert.Same(before, _fixture.Index.Snapshot);
+        Assert.Empty(_fixture.Client.Queries);
+        _fixture.Database.Suspended = false;
+        Assert.Equal(SyncStartResult.Started, await _fixture.Sync.RunAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ASecondSyncIsRefusedWhileOneRuns()
     {
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
@@ -267,13 +286,12 @@ public sealed class CatalogSyncServiceTests : IDisposable
     {
         _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
         var server = await _fixture.AddServerAsync("A", "films");
-        await System.IO.File.WriteAllTextAsync(_fixture.Folder, "a file where the folder should be");
+        _fixture.Database.InterruptNextWrite();
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
         Assert.True(_fixture.Sync.GetStatus().IndexSaveFailed);
         Assert.Null(_fixture.Index.Snapshot.Find(server.Id));
-        System.IO.File.Delete(_fixture.Folder);
     }
 
     [Fact]

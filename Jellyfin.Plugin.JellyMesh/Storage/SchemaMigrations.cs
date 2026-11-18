@@ -16,9 +16,13 @@ public static class SchemaMigrations
         // The first version only marks the file as the plugin database; the tables come with the phases that fill them.
         new(1, static (_, _) => { }),
 
-        // Placeholders for the steps of F28 (2) and F29 (3), replaced by theirs when the phases are merged.
-        new(2, static (_, _) => { }),
-        new(3, static (_, _) => { }),
+        // The federation index and the stub registry (F28).
+        new(2, static (connection, transaction) =>
+        {
+            Index.IndexTables.Create(connection, transaction);
+            Library.StubTables.Create(connection, transaction);
+        }),
+        new(SmallStateSchema.Version, SmallStateSchema.Apply),
         new(4, ConfigurationTables.Create)
     ];
 

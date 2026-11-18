@@ -2,52 +2,62 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
+using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// The library renames whose user lists are not all rewritten yet, in an owner-only file of the plugin data folder that
-/// a write replaces in one step (§10 row 290). It holds library names and ids only.
+/// The library renames whose user lists are not all rewritten yet, in the table <c>library_renames</c> of the plugin
+/// database (§10 row 290). It holds library names and ids only. Each change is a short transaction of its own; a rename
+/// set aside stays in the table, marked, and is never replayed.
 /// </summary>
 public sealed class LibraryRenameJournal
 {
     /// <summary>
-    /// The file name.
+    /// The file of 0.5, which the data migration reads once.
     /// </summary>
     public const string FileName = "library-renames.json";
 
-    private const int CurrentVersion = 1;
+    private const string SelectPending = """
+        SELECT id, old_name, new_name, old_id, new_id, type, temporary_name
+        FROM library_renames WHERE set_aside_utc IS NULL ORDER BY id;
+        """;
 
-    private static readonly JsonSerializerOptions _options = new()
-    {
-        RespectNullableAnnotations = true,
-        RespectRequiredConstructorParameters = true,
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
+    private const string Insert = """
+        INSERT INTO library_renames (old_name, new_name, old_id, new_id, type, temporary_name)
+        VALUES ($oldName, $newName, $oldId, $newId, $type, $temporary)
+        RETURNING id;
+        """;
 
-    private readonly string _path;
+    private const string Delete = "DELETE FROM library_renames WHERE id = $id;";
+
+    private const string MarkSetAside = "UPDATE library_renames SET set_aside_utc = $now WHERE id = $id;";
+
+    private readonly IPluginDatabase _database;
     private readonly ILogger<LibraryRenameJournal> _logger;
     private readonly Lock _lock = new();
-    private List<LibraryRenameRecord>? _records;
+    private List<(long Id, LibraryRenameRecord Record)>? _records;
+
+    // The database generation the renames were read in; another one means their ids may name other rows.
+    private long _readGeneration;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LibraryRenameJournal"/> class.
     /// </summary>
-    /// <param name="folder">The folder of the file.</param>
+    /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public LibraryRenameJournal(string folder, ILogger<LibraryRenameJournal> logger)
+    public LibraryRenameJournal(IPluginDatabase database, ILogger<LibraryRenameJournal> logger)
     {
-        _path = Path.Combine(folder, FileName);
+        _database = database;
         _logger = logger;
     }
 
     /// <summary>
-    /// Gets a value indicating whether a rename is not done, or the file cannot be read for now.
+    /// Gets a value indicating whether a rename is not done, or the database cannot be read for now.
     /// </summary>
     public bool HasPending
     {
@@ -61,14 +71,14 @@ public sealed class LibraryRenameJournal
     }
 
     /// <summary>
-    /// Gets the renames not done, empty while the file cannot be read.
+    /// Gets the renames not done, empty while the database cannot be read.
     /// </summary>
     /// <returns>The records, oldest first.</returns>
     public IReadOnlyList<LibraryRenameRecord> Pending()
     {
         lock (_lock)
         {
-            return Load()?.ToList() ?? [];
+            return Load()?.Select(entry => entry.Record).ToList() ?? [];
         }
     }
 
@@ -76,14 +86,23 @@ public sealed class LibraryRenameJournal
     /// Saves a rename before its folder moves.
     /// </summary>
     /// <param name="record">The rename.</param>
-    /// <exception cref="IOException">The file cannot be read or written, so the rename must not start.</exception>
+    /// <exception cref="IOException">The database cannot be read or written, so the rename must not start.</exception>
     public void Add(LibraryRenameRecord record)
     {
+        ArgumentNullException.ThrowIfNull(record);
+
         lock (_lock)
         {
-            var records = Load() ?? throw new IOException("The file of the library renames cannot be read.");
-            Write([.. records, record]);
-            _records = [.. records, record];
+            var records = Load() ?? throw new IOException("The library renames cannot be read.");
+            try
+            {
+                var id = _database.WriteAsync((connection, transaction) => InsertRecord(connection, transaction, record), CancellationToken.None).GetAwaiter().GetResult();
+                records.Add((id, record));
+            }
+            catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
+            {
+                throw new IOException("The library rename cannot be saved.", exception);
+            }
         }
     }
 
@@ -91,190 +110,126 @@ public sealed class LibraryRenameJournal
     /// Drops a rename once every user is rewritten.
     /// </summary>
     /// <param name="record">The rename.</param>
-    /// <returns>False when the file cannot be written, so the rename is replayed later.</returns>
-    public bool Remove(LibraryRenameRecord record)
-    {
-        lock (_lock)
-        {
-            if (Load() is not { } records)
-            {
-                return false;
-            }
-
-            var left = records.Where(other => other != record).ToList();
-            try
-            {
-                Write(left);
-                _records = left;
-                return true;
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                _logger.LogError("Cannot save the library renames: {Error}", exception.GetType().Name);
-                return false;
-            }
-        }
-    }
+    /// <returns>False when the database cannot be written, so the rename is replayed later.</returns>
+    public bool Remove(LibraryRenameRecord record) => Change(record, setAside: false);
 
     /// <summary>
-    /// Moves a rename the resume cannot trust to the damaged file, next to those set aside before, so it is never replayed
-    /// (§10 row 329). When the damaged file cannot be written, the rename is dropped all the same (row 357).
+    /// Marks a rename the resume cannot trust as set aside, next to those set aside before, so it is never replayed
+    /// (§10 row 329).
     /// </summary>
     /// <param name="record">The rename.</param>
-    /// <returns>What became of the rename; it stays pending only while this file cannot be read or written.</returns>
-    public SetAsideOutcome SetAside(LibraryRenameRecord record)
+    /// <returns>What became of the rename; it stays pending only while the database cannot be read or written.</returns>
+    public SetAsideOutcome SetAside(LibraryRenameRecord record) =>
+        Change(record, setAside: true) ? SetAsideOutcome.SetAside : SetAsideOutcome.Pending;
+
+    private static long InsertRecord(SqliteConnection connection, SqliteTransaction transaction, LibraryRenameRecord record)
+    {
+        using var command = StoreSql.Command(
+            connection,
+            transaction,
+            Insert,
+            ("$oldName", record.OldName),
+            ("$newName", record.NewName),
+            ("$oldId", StoreSql.Text(record.OldId)),
+            ("$newId", StoreSql.Text(record.NewId)),
+            ("$type", record.Type?.ToString()),
+            ("$temporary", record.TemporaryName));
+        return (long)command.ExecuteScalar()!;
+    }
+
+    private static List<(long Id, LibraryRenameRecord Record)> ReadPending(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var records = new List<(long, LibraryRenameRecord)>();
+        using var command = StoreSql.Command(connection, transaction, SelectPending);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var type = StoreSql.TextOrNull(reader, 5) is { } text && Enum.TryParse<CollectionType>(text, out var parsed) ? parsed : (CollectionType?)null;
+            records.Add((
+                reader.GetInt64(0),
+                new LibraryRenameRecord(
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    Guid.ParseExact(reader.GetString(3), "N"),
+                    Guid.ParseExact(reader.GetString(4), "N"),
+                    type,
+                    StoreSql.TextOrNull(reader, 6))));
+        }
+
+        return records;
+    }
+
+    // Drops or marks the rows of the record and takes them out of the pending ones; false when it cannot.
+    private bool Change(LibraryRenameRecord record, bool setAside)
     {
         lock (_lock)
         {
             if (Load() is not { } records)
             {
-                return SetAsideOutcome.Pending;
+                return false;
             }
 
-            var copied = true;
+            var ids = records.Where(entry => entry.Record == record).Select(entry => entry.Id).ToList();
             try
             {
-                var damaged = _path + ".damaged";
-                Save(damaged, [.. SetAsideBefore(damaged), record]);
+                var now = DateTime.UtcNow.Ticks;
+                var generation = _readGeneration;
+                _database.WriteAsync(
+                    (connection, transaction) =>
+                    {
+                        ThrowIfReopened(generation);
+                        foreach (var id in ids)
+                        {
+                            if (setAside)
+                            {
+                                StoreSql.Execute(connection, transaction, MarkSetAside, ("$id", id), ("$now", now));
+                            }
+                            else
+                            {
+                                StoreSql.Execute(connection, transaction, Delete, ("$id", id));
+                            }
+                        }
+                    },
+                    CancellationToken.None).GetAwaiter().GetResult();
+                records.RemoveAll(entry => ids.Contains(entry.Id));
+                return true;
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                _logger.LogError("Cannot copy a library rename to the damaged file: {Error}", exception.GetType().Name);
-                copied = false;
-            }
-
-            var left = records.Where(other => other != record).ToList();
-            try
-            {
-                Write(left);
-                _records = left;
-                return copied ? SetAsideOutcome.SetAside : SetAsideOutcome.DroppedWithoutCopy;
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
             {
                 _logger.LogError("Cannot save the library renames: {Error}", exception.GetType().Name);
-                return SetAsideOutcome.Pending;
+                return false;
             }
         }
     }
 
-    // The records of a damaged file still readable as one, or none: what cannot be read, even for lack of access, is
-    // replaced (row 352).
-    private static List<LibraryRenameRecord> SetAsideBefore(string path)
+    // Refuses a change planned on ids of an earlier opening of the database, rolling it back.
+    private void ThrowIfReopened(long generation)
     {
-        try
+        if (_database.Generation != generation)
         {
-            using var stream = File.OpenRead(path);
-            return JsonSerializer.Deserialize<JournalFile>(stream, _options) is { Version: CurrentVersion } file && file.Records.All(record => record is not null)
-                ? file.Records.ToList()
-                : [];
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException or IOException or UnauthorizedAccessException)
-        {
-            return [];
+            throw new StoreSuspendedException("The database was opened again since the library renames were read.");
         }
     }
 
-    // Null while the file cannot be read for now; a damaged one is set aside, or dropped, and counts as empty.
-    private List<LibraryRenameRecord>? Load()
+    // Called with the lock held: the pending renames, null while the database cannot be read for now.
+    private List<(long Id, LibraryRenameRecord Record)>? Load()
     {
-        if (_records is not null)
+        if (_records is not null && _readGeneration == _database.Generation)
         {
             return _records;
         }
 
         try
         {
-            using var stream = File.OpenRead(_path);
-            var file = JsonSerializer.Deserialize<JournalFile>(stream, _options);
-            if (file?.Version == CurrentVersion && file.Records.All(record => record is not null))
-            {
-                _records = file.Records.ToList();
-                return _records;
-            }
-
-            _logger.LogError("The file of the library renames has an unsupported format");
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            _logger.LogError("Cannot read the file of the library renames: {Error}", exception.GetType().Name);
-        }
-        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
-        {
-            _records = [];
+            (_records, _readGeneration) = _database.ReadAsync(
+                (connection, transaction) => (ReadPending(connection, transaction), _database.Generation),
+                CancellationToken.None).GetAwaiter().GetResult();
             return _records;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogWarning("Cannot read the file of the library renames for now: {Error}", exception.GetType().Name);
-            return null;
-        }
-
-        try
-        {
-            File.Move(_path, _path + ".damaged", overwrite: true);
-            _logger.LogError("The damaged file of the library renames is set aside");
-            _records = [];
-            return _records;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogError("Cannot set aside the damaged file of the library renames: {Error}", exception.GetType().Name);
-        }
-
-        // Dropped all the same, so it is never replayed and later renames are not blocked (row 357).
-        try
-        {
-            File.Delete(_path);
-            _logger.LogError("The damaged file of the library renames is dropped without a copy");
-            _records = [];
-            return _records;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogError("Cannot drop the damaged file of the library renames: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the library renames for now: {Error}", exception.GetType().Name);
             return null;
         }
     }
-
-    // Owner-only, flushed to disk, then moved over the file; no file at all when nothing is pending.
-    private void Write(List<LibraryRenameRecord> records)
-    {
-        if (records.Count == 0)
-        {
-            File.Delete(_path);
-            return;
-        }
-
-        Save(_path, records);
-    }
-
-    // Owner-only, flushed to disk, then moved over the file in one step.
-    private static void Save(string path, List<LibraryRenameRecord> records)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp";
-        var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None };
-        if (!OperatingSystem.IsWindows())
-        {
-            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        }
-
-        try
-        {
-            using (var stream = new FileStream(temporary, options))
-            {
-                JsonSerializer.Serialize(stream, new JournalFile(CurrentVersion, records), _options);
-                stream.Flush(true);
-            }
-
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporary);
-        }
-    }
-
-    private sealed record JournalFile(int Version, IReadOnlyList<LibraryRenameRecord> Records);
 }

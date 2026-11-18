@@ -437,6 +437,15 @@ public sealed class PluginConfigurationStoreTests : IDisposable
 
         public StoreHealth Health => Suspended ? new StoreHealth(StoreState.Unavailable, "test") : inner.Health;
 
+        // Added to the database's own, as a reopen after a retry or a restore from a copy does.
+        public long Reopened { get; set; }
+
+        public long Generation => inner.Generation + Reopened;
+
+        public StoreRecovery? Recovery => inner.Recovery;
+
+        public void DismissRecovery() => inner.DismissRecovery();
+
         public StoreHealth Retry() => Health;
 
         public Task<T> ReadAsync<T>(Func<SqliteConnection, SqliteTransaction, T> read, CancellationToken cancellationToken)
@@ -471,5 +480,9 @@ public sealed class PluginConfigurationStoreTests : IDisposable
                 cancellationToken);
 
         public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => inner.TruncateWalAsync(cancellationToken);
+
+        public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => inner.BackUpAsync(cancellationToken);
+
+        public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => inner.DeleteExpiredDamagedAsync(cancellationToken);
     }
 }

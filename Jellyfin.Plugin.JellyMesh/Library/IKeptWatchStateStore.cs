@@ -2,18 +2,21 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Dedup;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// The watch state of the titles of removed servers, in a SQLite database in the plugin data folder (Q412, Q414).
+/// The watch state of the titles of removed servers, in the plugin database (Q412, Q414).
 /// </summary>
 public interface IKeptWatchStateStore
 {
     /// <summary>
-    /// Gets a value indicating whether the file exists, so that a server that never removed one makes none.
+    /// Tells whether any title is kept, so that a server that never removed one writes nothing for it.
     /// </summary>
-    bool Exists { get; }
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether a title is kept.</returns>
+    Task<bool> HasTitlesAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Saves the titles in one transaction, each replacing the record of the same old item but keeping its first saved date.
@@ -46,4 +49,21 @@ public interface IKeptWatchStateStore
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>How many titles went.</returns>
     Task<int> PruneAsync(DateTime savedBeforeUtc, IReadOnlySet<Guid> users, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Saves the manual merges a removed server had a copy in, before its copies leave them, in place of those saved for it.
+    /// </summary>
+    /// <param name="serverId">The removed server.</param>
+    /// <param name="merges">Its merges, with all their copies.</param>
+    /// <param name="savedUtc">When, in UTC: they go with the titles kept as long.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task SaveMergesAsync(Guid serverId, IReadOnlyList<ManualMerge> merges, DateTime savedUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the manual merges saved for removed servers.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The merges, each with its removed server and dated when it was saved.</returns>
+    Task<IReadOnlyList<(Guid ServerId, ManualMerge Merge)>> ReadMergesAsync(CancellationToken cancellationToken);
 }

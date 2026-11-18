@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Dedup;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -24,6 +26,16 @@ public interface IWatchStateKeeper
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether the state is saved, so that the stubs may go.</returns>
     Task<bool> KeepAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Saves the manual merges a server about to leave them has copies in, so that its kept titles find every other copy
+    /// (D33).
+    /// </summary>
+    /// <param name="serverId">The removed server.</param>
+    /// <param name="merges">The merges with a copy on it.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether they are saved, so that its copies may leave the merges.</returns>
+    Task<bool> KeepMergesAsync(Guid serverId, IReadOnlyList<ManualMerge> merges, CancellationToken cancellationToken);
 
     /// <summary>
     /// Puts the saved state back on the stubs of the same content, with the rules of row 2, and forgets what it put back.

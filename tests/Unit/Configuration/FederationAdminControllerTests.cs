@@ -370,6 +370,68 @@ public class FederationAdminControllerTests
         libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Never);
     }
 
+    // D33: the kept watch state gets the merges of the removed server before its copies leave them.
+    [Fact]
+    public async Task Removing_a_server_keeps_its_merges_for_the_watch_state_before_taking_its_copies_out()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var removed = Merge(Copy("local", "l1", isLocal: true), Copy(server.Id.ToString("N"), "a"));
+        var untouched = Merge(Copy("local", "l2", isLocal: true), Copy("0123456789abcdef0123456789abcdef", "b"));
+        var merges = new InMemoryMergeStore();
+        merges.Set(removed, untouched);
+        var mergesAtKeep = -1;
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.KeepMergesAsync(server.Id, It.IsAny<IReadOnlyList<ManualMerge>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => mergesAtKeep = merges.Merges.Count)
+            .ReturnsAsync(true);
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, merges, keeper: keeper.Object);
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        keeper.Verify(k => k.KeepMergesAsync(server.Id, It.Is<IReadOnlyList<ManualMerge>>(kept => kept.Single() == removed), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(2, mergesAtKeep);
+        Assert.Same(untouched, Assert.Single(merges.Merges));
+    }
+
+    // A server added back with its id and removed again replaces the merges kept the first time, even with none now.
+    [Fact]
+    public async Task Removing_a_server_without_merges_clears_those_kept_for_it_before()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.KeepMergesAsync(server.Id, It.IsAny<IReadOnlyList<ManualMerge>>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var merges = new InMemoryMergeStore();
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, merges, keeper: keeper.Object);
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        keeper.Verify(k => k.KeepMergesAsync(server.Id, It.Is<IReadOnlyList<ManualMerge>>(kept => kept.Count == 0), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(0, merges.Updates);
+    }
+
+    // Merges that cannot be kept for the watch state keep the copies of the removed server, shown as not found.
+    [Fact]
+    public async Task Merges_that_cannot_be_kept_for_the_watch_state_keep_the_copies_of_the_removed_server()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var merge = Merge(Copy("local", "l1", isLocal: true), Copy(server.Id.ToString("N"), "a"));
+        var merges = new InMemoryMergeStore();
+        merges.Set(merge);
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.KeepMergesAsync(server.Id, It.IsAny<IReadOnlyList<ManualMerge>>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var sync = RemovingSync(server.Id);
+        var controller = CreateController(fixture, sync.Object, merges, keeper: keeper.Object);
+
+        var result = await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Same(merge, Assert.Single(merges.Merges));
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
+    }
+
     [Fact]
     public async Task A_removal_that_fails_keeps_the_manual_merges()
     {
@@ -443,7 +505,8 @@ public class FederationAdminControllerTests
         ICatalogSyncService sync,
         IManualMergeStore? merges = null,
         ILogger<FederationAdminController>? logger = null,
-        IServerLibraryManager? libraries = null) => new(
+        IServerLibraryManager? libraries = null,
+        IWatchStateKeeper? keeper = null) => new(
         fixture.Registry,
         fixture.Vault,
         fixture.Store,
@@ -453,7 +516,8 @@ public class FederationAdminControllerTests
         sync,
         merges ?? new InMemoryMergeStore(),
         libraries ?? Mock.Of<IServerLibraryManager>(),
-        logger ?? new CapturingLogger<FederationAdminController>());
+        logger ?? new CapturingLogger<FederationAdminController>(),
+        keeper: keeper);
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
 

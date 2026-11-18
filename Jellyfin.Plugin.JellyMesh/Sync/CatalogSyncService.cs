@@ -54,6 +54,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ILibraryChangeTracker? _changes;
     private readonly ILastServedSourceStore? _lastServed;
     private readonly IUnchangedSyncGate? _gate;
+    private readonly IPluginDatabase? _database;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
@@ -85,6 +86,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="changes">What remembers the libraries on the federated folder at each sync, for the page (Q53).</param>
     /// <param name="lastServed">The last server that served each stub, pruned after every sync (Q76).</param>
     /// <param name="gate">What tells a sync that nothing changed since the last one, so it skips its stubs and links (Q386).</param>
+    /// <param name="database">The plugin database: while it is suspended, so is the sync.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -102,7 +104,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         ILayoutMigration? migration = null,
         ILibraryChangeTracker? changes = null,
         ILastServedSourceStore? lastServed = null,
-        IUnchangedSyncGate? gate = null)
+        IUnchangedSyncGate? gate = null,
+        IPluginDatabase? database = null)
     {
         _registry = registry;
         _reader = reader;
@@ -121,6 +124,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _changes = changes;
         _lastServed = lastServed;
         _gate = gate;
+        _database = database;
     }
 
     /// <summary>
@@ -283,6 +287,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         {
             MarkLibraryFollowSkipped();
             return SyncStartResult.Suspended;
+        }
+
+        // Without the database the index and the stubs cannot be kept, so the sync waits for it like for the key.
+        if (_database?.Health.Suspended == true)
+        {
+            MarkLibraryFollowSkipped();
+            return SyncStartResult.DatabaseSuspended;
         }
 
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)

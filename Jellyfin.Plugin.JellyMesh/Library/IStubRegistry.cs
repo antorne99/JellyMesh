@@ -37,9 +37,10 @@ public interface IStubRegistry
     VersionGroup? FindGroupOfLocal(Guid itemId);
 
     /// <summary>
-    /// Tells whether a stub or a stub series of a server is still in the registry.
+    /// Tells whether a stub or a stub series of a server may still be in the registry. True while the registry cannot tell:
+    /// not read, read before the database was opened again, or emptied by rows that did not read until a full materialization.
     /// </summary>
     /// <param name="serverId">The server.</param>
-    /// <returns>Whether the server still has titles in the federated folder.</returns>
+    /// <returns>Whether the server may still have titles in the federated folder.</returns>
     bool HasTitlesOf(Guid serverId);
 }

@@ -519,7 +519,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         var texts = _fixture.Files
             .Where(file => !file.EndsWith(".jpg", StringComparison.Ordinal))
             .Select(file => StubFixture.Text(Path.Combine(_fixture.Root, file)))
-            .Append(StubFixture.Text(Path.Combine(Path.GetDirectoryName(_fixture.Root)!, "plugin", StubRegistry.FileName)));
+            .Append(await _fixture.Sync.Database.DumpAsync("stub_"));
         Assert.All(texts, text =>
         {
             Assert.DoesNotContain(TestValues.Token, text, StringComparison.Ordinal);
@@ -1097,6 +1097,45 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(1, sync.GetStatus().UnconfiguredStubs);
     }
 
+    // D27: a sync with no changes writes nothing, through the index and the stubs alike.
+    [Fact]
+    public async Task ASyncThatFindsNothingNewWritesNothing()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        await _fixture.Sync.AddServerAsync("A", "films");
+        using var sync = SyncWithMaterializer();
+        await sync.RunAsync(CancellationToken.None);
+        Assert.Single(_fixture.Registry.State.Stubs);
+        var writes = _fixture.Sync.Database.Writes;
+
+        await sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(writes, _fixture.Sync.Database.Writes);
+    }
+
+    [Fact]
+    public async Task AfterRowsThatDoNotReadTheNextRunTellsTheTitlesOfEachServerAgain()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithArt("a", "1"));
+        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        var other = Guid.NewGuid();
+        await _fixture.Sync.Database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE stub_entries SET kind = 'Unknown';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+        _fixture.Sync.Database.Reopen();
+        Assert.True(_fixture.Registry.HasTitlesOf(other));
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.True(_fixture.Registry.HasTitlesOf(server.Id));
+        Assert.False(_fixture.Registry.HasTitlesOf(other));
+    }
+
     [Fact]
     public async Task ARemovalIsRememberedAcrossARestart()
     {
@@ -1106,7 +1145,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         await sync.RunAsync(CancellationToken.None);
 
         await sync.RemoveServerAsync(server.Id, () => Task.FromResult(true), CancellationToken.None);
-        using var restarted = new StubRegistry(Path.Combine(Path.GetDirectoryName(_fixture.Root)!, "plugin"), _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
+        using var restarted = new StubRegistry(_fixture.Sync.Database, _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
 
         Assert.Equal([server.Id], restarted.State.RemovedServers);
     }

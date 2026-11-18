@@ -14,6 +14,7 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
@@ -29,6 +30,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     private static readonly Guid _serverB = Guid.NewGuid();
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-carrier-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
@@ -57,8 +59,9 @@ public sealed class WatchStateCarrierTests : IDisposable
     public WatchStateCarrierTests()
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
-        _registry = new StubRegistry(Path.Combine(_data, "registry"), _store, new CapturingLogger<StubRegistry>());
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _database = new TestDatabase(Path.Combine(_data, "registry"));
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _failingLookups.Contains(id) ? throw new IOException("/secret") : _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>()))
@@ -105,6 +108,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     {
         _registry.Dispose();
         _log.Dispose();
+        _database.Dispose();
         _cancellation.Dispose();
         if (Directory.Exists(_data))
         {
@@ -653,9 +657,11 @@ public sealed class WatchStateCarrierTests : IDisposable
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         _log.Dispose();
-        Directory.CreateDirectory(_data);
-        await File.WriteAllTextAsync(Path.Combine(_data, "log"), "in the way");
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        // The log alone fails, on a database of its own: the stub registry still reads and writes.
+        using var logDatabase = new TestDatabase();
+        _log = new WatchStateCarryLog(logDatabase, new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.EnsureLoaded());
+        logDatabase.Suspended = true;
 
         var move = Move(old, oldStub, (a, _serverA));
 
@@ -670,11 +676,11 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
 
-        File.Delete(Path.Combine(_data, "log"));
+        logDatabase.Suspended = false;
         report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
-        Assert.True(File.Exists(Path.Combine(_data, "log", WatchStateCarryLog.FileName)));
+        Assert.Equal(1, logDatabase.Count("watch_state_carries"));
     }
 
     [Fact]
@@ -714,7 +720,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Contains(_carrierLogger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
         Assert.DoesNotContain(_carrierLogger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, first.Id, out _));
         Assert.True(_log.TryFind(_mario.Id, second.Id, out _));
     }
@@ -767,20 +773,17 @@ public sealed class WatchStateCarrierTests : IDisposable
         await CarryAsync(Move(old, oldStub, (a, _serverA)));
         Row(_mario, a).IsFavorite = false;
         _saves.Clear();
-        var folder = Path.Combine(_data, "log");
-        var file = Path.Combine(folder, WatchStateCarryLog.FileName);
-        var content = await File.ReadAllTextAsync(file);
         _log.Dispose();
-        var failing = true;
-        _log = new WatchStateCarryLog(folder, new CapturingLogger<WatchStateCarryLog>(), path => failing ? throw new IOException("busy") : File.OpenRead(path));
+        _database.Suspended = true;
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
 
         Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
         Assert.Empty(_saves);
-        Assert.Equal(content, await File.ReadAllTextAsync(file));
+        Assert.Equal(1, _database.Count("watch_state_carries"));
 
-        failing = false;
+        _database.Suspended = false;
         report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
@@ -842,7 +845,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Row(_mario, a).Rating = null;
         _cancellingSaves.Clear();
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         var report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
@@ -865,7 +868,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(Row(_luigi, a).IsFavorite);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_luigi.Id, old.Id, out _));
     }
 
@@ -966,7 +969,7 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal([old.Id], report.ForgettableOldItemIds);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
 
         Row(_mario, a).IsFavorite = false;
@@ -1013,7 +1016,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Gone(old);
         await ForgetRemovedAsync(report.ForgettableOldItemIds);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         Assert.Equal([old.Id], report.ForgettableOldItemIds);
         Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
@@ -1086,9 +1089,11 @@ public sealed class WatchStateCarrierTests : IDisposable
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         _log.Dispose();
-        Directory.CreateDirectory(_data);
-        await File.WriteAllTextAsync(Path.Combine(_data, "log"), "in the way");
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        // The log alone fails, on a database of its own: the stub registry still reads and writes.
+        using var logDatabase = new TestDatabase();
+        _log = new WatchStateCarryLog(logDatabase, new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.EnsureLoaded());
+        logDatabase.Suspended = true;
         var move = RemovingMove(old, oldStub, (a, _serverA));
 
         var report = await CarryAsync(move);
@@ -1100,7 +1105,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         // A run again does not put back the favorite the user took off meanwhile.
         Row(_mario, a).IsFavorite = false;
         _saves.Clear();
-        File.Delete(Path.Combine(_data, "log"));
+        logDatabase.Suspended = false;
         report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
@@ -1124,7 +1129,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CarryAsync(move, RemovingMove(other, otherStub, (b, _serverA))));
 
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
         Row(_mario, a).IsFavorite = false;
         _saves.Clear();
@@ -1266,25 +1271,23 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
-    public async Task ForgettingWhoseSaveFailsKeepsTheRecordsOnDisk()
+    public async Task ForgettingWhoseSaveFailsKeepsTheRecordsInTheDatabase()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         var move = RemovingMove(old, oldStub, (a, _serverA));
         var report = await CarryAsync(move);
-        var folder = Path.Combine(_data, "log");
-        var blocker = Path.Combine(folder, WatchStateCarryLog.FileName + ".tmp");
-        Directory.CreateDirectory(blocker);
+        _database.Suspended = true;
         Gone(old);
 
         Assert.Empty(await ForgetRemovedAsync(report.ForgettableOldItemIds));
 
         Assert.Contains(_carrierLogger.Lines, line => line.Contains("forgetting", StringComparison.Ordinal));
         Assert.DoesNotContain(_carrierLogger.Lines, line => line.Contains(_data, StringComparison.Ordinal));
-        Directory.Delete(blocker);
+        _database.Suspended = false;
         _log.Dispose();
-        _log = new WatchStateCarryLog(folder, new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
         _items[old.Id] = old;
         Row(_mario, a).IsFavorite = false;
@@ -1382,7 +1385,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     {
         await _log.SaveAsync(CancellationToken.None);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
     }
 
     // The old flat stub and its item.
