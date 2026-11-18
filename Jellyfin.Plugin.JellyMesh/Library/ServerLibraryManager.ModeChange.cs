@@ -91,18 +91,38 @@ public sealed partial class ServerLibraryManager
         {
             scanned = await EnableAsync(serverId, owner, mode, cancellationToken).ConfigureAwait(false);
         }
+        else
+        {
+            // A library made before a crash is recorded, so it goes with the others; then no intent is left.
+            var root = _store.Read(config => config.FederatedFolderPath);
+            if (root.Length > 0 && ReadFolders() is { } folders)
+            {
+                ResolvePending(serverId, owner, root, folders);
+            }
+
+            ForgetPendingInNone();
+        }
 
         await RetireAsync(serverId, scanned, cancellationToken).ConfigureAwait(false);
     }
 
-    // In "none" with no library left, a library asked before a crash is no longer the plugin's to find, as on a switch off.
-    private void ForgetPendingInNone(Guid serverId) => _store.Update(config =>
+    // In "none" a library asked before a crash is no longer the plugin's to find, as on a switch off, so a library the admin
+    // makes later with its name and paths is never taken for one the plugin made.
+    private void ForgetPendingInNone()
     {
-        if (Find(config, serverId) is { LibraryMode: LibraryMode.None, AutomaticLibraryRegistry.Count: 0, PendingLibraries.Count: > 0 } server)
+        if (!_store.Read(config => config.Servers.Any(server => server.LibraryMode == LibraryMode.None && server.PendingLibraries.Count > 0)))
         {
-            server.PendingLibraries.Clear();
+            return;
         }
-    });
+
+        _store.Update(config =>
+        {
+            foreach (var server in config.Servers.Where(server => server.LibraryMode == LibraryMode.None))
+            {
+                server.PendingLibraries.Clear();
+            }
+        });
+    }
 
     // Deletes the plugin libraries of the old mode and releases its adopted ones, once those of the new mode are there and
     // scanned. Called again by each check, so a change stopped halfway goes on.
@@ -140,7 +160,7 @@ public sealed partial class ServerLibraryManager
             serverId,
             (config, record) => Find(config, serverId) is { } server && Retires(server.LibraryMode, record) && ReadyToRetire(server, root, olderLayout),
             cancellationToken).ConfigureAwait(false);
-        ForgetPendingInNone(serverId);
+        ForgetPendingInNone();
 
         // Removing a library drops for a while the titles it shared with the new ones; a scan brings them back (F23).
         if (!none && _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0) < before)

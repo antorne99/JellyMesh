@@ -198,6 +198,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     KeepCreatedKeys(serverId);
                 }
 
+                ForgetPendingInNone();
                 if (FollowAll() is { } folders)
                 {
                     var scanned = await ConvergeAsync(serverIds, folders, false, cancellationToken).ConfigureAwait(false);

@@ -290,4 +290,28 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.DoesNotContain("scan", fixture.Scans.Steps);
     }
+
+    [Fact]
+    public async Task A_change_to_none_with_no_library_left_forgets_the_libraries_asked_before_a_crash()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.LibraryMode = LibraryMode.None;
+        fixture.Server.PendingLibraries.Add(new PendingLibraryConfig { Name = "Casa - Film", Kind = ServerLibraryKind.Movies });
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Server.PendingLibraries);
+    }
+
+    [Fact]
+    public async Task A_check_forgets_the_libraries_asked_before_a_crash_of_a_server_in_none_mode()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.LibraryMode = LibraryMode.None;
+        fixture.Server.PendingLibraries.Add(new PendingLibraryConfig { Name = "Casa - Film", Kind = ServerLibraryKind.Movies });
+
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+
+        Assert.Empty(fixture.Server.PendingLibraries);
+    }
 }
