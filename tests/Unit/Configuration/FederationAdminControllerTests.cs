@@ -573,6 +573,49 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task Adding_a_server_switches_its_libraries_on_in_the_mode_of_new_servers()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.NewServerLibraryMode = LibraryMode.ByRemoteLibrary;
+        var libraries = new Mock<IServerLibraryManager>();
+
+        var id = (await ControllerFor(fixture, libraries: libraries.Object).AddServer(_request, CancellationToken.None)).Value!.Id;
+
+        libraries.Verify(manager => manager.Enable(id, LibraryMode.ByRemoteLibrary), Times.Once);
+    }
+
+    [Fact]
+    public async Task The_mode_of_the_add_form_wins_and_none_switches_nothing_on()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        var request = new AddServerRequest { Name = _request.Name, Url = _request.Url, Username = _request.Username, Password = _request.Password, LibraryMode = LibraryMode.None };
+
+        var added = await ControllerFor(fixture, libraries: libraries.Object).AddServer(request, CancellationToken.None);
+
+        Assert.NotNull(added.Value);
+        libraries.Verify(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>()), Times.Never);
+        libraries.Verify(manager => manager.Enable(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task An_unknown_library_mode_is_refused_before_the_server_is_added()
+    {
+        using var fixture = new RegistryFixture();
+        var request = new AddServerRequest { Name = _request.Name, Url = _request.Url, Username = _request.Username, Password = _request.Password, LibraryMode = (LibraryMode)7 };
+
+        var added = await ControllerFor(fixture).AddServer(request, CancellationToken.None);
+
+        var refusal = Assert.IsType<SettingRefusal>(Assert.IsType<BadRequestObjectResult>(added.Result).Value);
+        Assert.Equal(nameof(AddServerRequest.LibraryMode), refusal.Field);
+        Assert.Empty(fixture.Registry.GetServers());
+    }
+
+    [Fact]
+    public void Another_mode_is_refused_with_a_message()
+        => Assert.NotEqual("The operation failed.", FederationAdminController.RefusalMessage(AutomaticLibrariesOutcome.ModeChangeNotAllowed));
+
+    [Fact]
     public void Switching_off_without_a_confirmation_answers_with_the_libraries_it_would_delete()
     {
         using var fixture = new RegistryFixture();
