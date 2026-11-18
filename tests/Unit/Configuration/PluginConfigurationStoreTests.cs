@@ -190,6 +190,25 @@ public sealed class PluginConfigurationStoreTests : IDisposable
     }
 
     [Fact]
+    public void AbsentAndVanishedLibrariesSurviveARestart()
+    {
+        var serverId = Guid.NewGuid();
+        Store().Update(config =>
+        {
+            var server = new RemoteServerConfig { Id = serverId, Name = "Casa", Url = TestValues.Url };
+            server.AbsentLibraryIds.Add(TestLibraries.FilmsB);
+            server.VanishedLibraries.Add(new VanishedLibraryConfig { Id = TestLibraries.FilmsC, Name = "Film vecchi" });
+            server.VanishedLibraries.Add(new VanishedLibraryConfig { Id = TestLibraries.ShowsC, Name = "Serie vecchie" });
+            config.Servers.Add(server);
+        });
+
+        var loaded = Store().Read(config => config.Servers.Single());
+
+        Assert.Equal([TestLibraries.FilmsB], loaded.AbsentLibraryIds);
+        Assert.Equal([(TestLibraries.FilmsC, "Film vecchi"), (TestLibraries.ShowsC, "Serie vecchie")], loaded.VanishedLibraries.Select(library => (library.Id, library.Name)));
+    }
+
+    [Fact]
     public async Task AServerKeptBeforeTheLibraryModesHasThemPerTypeWhereItsLibrariesWereOnAndNoneElsewhere()
     {
         var on = Guid.NewGuid();

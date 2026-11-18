@@ -101,13 +101,20 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
     public Task<RemoteResult<RemoteCapabilities>> DetectCapabilitiesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
         => Task.FromResult(CapabilityFailure == RemoteFailure.None ? RemoteResult.Success(Capabilities) : RemoteResult.Fail<RemoteCapabilities>(CapabilityFailure));
 
+    /// <summary>Fails the reads of the library list.</summary>
+    public RemoteFailure LibrariesFailure { get; set; }
+
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
-        => Task.FromResult(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(Libraries.ToList()));
+        => Task.FromResult(LibrariesFailure == RemoteFailure.None
+            ? RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(Libraries.ToList())
+            : RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(LibrariesFailure));
 
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetSharedLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         SharedLibraryReads++;
-        return Task.FromResult(RemoteResult.Success<IReadOnlyList<RemoteLibrary>>((SharedLibraries ?? Libraries).ToList()));
+        return Task.FromResult(LibrariesFailure == RemoteFailure.None
+            ? RemoteResult.Success<IReadOnlyList<RemoteLibrary>>((SharedLibraries ?? Libraries).ToList())
+            : RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(LibrariesFailure));
     }
 
     public Task<RemoteResult<RemoteChangePage>> GetChangesAsync(RemoteEndpoint endpoint, RemoteSession session, string? cursor, CancellationToken cancellationToken)
