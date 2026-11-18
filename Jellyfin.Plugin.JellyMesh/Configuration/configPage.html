@@ -2931,7 +2931,7 @@
                 }
 
                 // Builds the form that adds a server, when server is null, or edits one with its fields locked as the case
-                // asks (920 Casi). An edit reads the libraries first. Returns that read and the field to focus.
+                // asks (920 Casi). Returns the field to focus, and the read of the libraries, which gives its error if any.
                 function serverForm(container, server, done) {
                     container.textContent = '';
                     var editing = !!server;
@@ -3125,6 +3125,13 @@
                     form.jmPresetMode(settingsSection.data && settingsSection.data.NewServerLibraryMode);
                     showModeNote();
                     if (!editing) {
+                        // The add form is the only one of its kind, so its parts keep the ids the page had for them.
+                        form.id = 'jmAddServerForm';
+                        fields.Name.id = 'jmServerName';
+                        fields.Url.id = 'jmServerUrl';
+                        fields.Username.id = 'jmServerUser';
+                        fields.Password.id = 'jmServerPassword';
+                        mode.id = 'jmServerLibraryMode';
                         submit.id = 'jmAddServer';
                         submit.disabled = suspended;
                         return { form: form, ready: Promise.resolve(), focus: fields.Name };
@@ -3178,9 +3185,12 @@
                         if (check.RemoteWarning) {
                             addFormNote(notes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: server.Name, problem: connectionLabel(check.RemoteWarning) }), true);
                         }
+
+                        return null;
                     }, function (error) {
                         libraries.textContent = '';
                         addFormNote(libraries, t('The libraries could not be read, so they stay as they are. {reason}', { reason: error.message }), true);
+                        return error;
                     });
                     return { form: form, ready: ready, focus: focus };
                 }
@@ -3283,7 +3293,8 @@
                     var edit = create('div');
                     edit.className = 'jmLibraries';
 
-                    // Opens the edit form, focused on its first field, or on the libraries once read when asked.
+                    // Opens the edit form, focused on its first field, or on the libraries once read when asked. Gives the
+                    // error of that read, if any.
                     row.jmEdit = function (toLibraries, quiet) {
                         row.open = true;
                         var opened = serverForm(edit, server, function (saved) {
@@ -3296,12 +3307,14 @@
                             focusField(opened.focus);
                         }
 
-                        return opened.ready.then(function () {
+                        return opened.ready.then(function (failure) {
                             var target = edit.querySelector('.jmFormLibraries input') || edit.querySelector('.jmFormLibraries');
                             if (toLibraries && target) {
                                 target.focus({ preventScroll: true });
                                 target.scrollIntoView({ block: 'center' });
                             }
+
+                            return failure;
                         });
                     };
 
@@ -3762,7 +3775,11 @@
                         return Promise.resolve();
                     }
 
-                    return row.jmEdit(true).then(function () {
+                    return row.jmEdit(true).then(function (failure) {
+                        if (failure) {
+                            throw failure;
+                        }
+
                         showMessage(t('Added {server}. Choose its libraries.', { server: server.Name }));
                     });
                 }
