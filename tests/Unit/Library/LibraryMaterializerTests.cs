@@ -74,7 +74,8 @@ public sealed class LibraryMaterializerTests : IDisposable
                 StubFixture.In(a, "Film", "Film (2020)", "fanart.jpg"),
                 StubFixture.In(a, "Film", "Film (2020)", "movie.nfo"),
                 StubFixture.In(a, "Film", "Film (2020)", "poster.jpg"),
-                StubFixture.In(a, "Serie", ".jellymesh"),
+                StubFixture.InServer(a, "Film", ".jellymesh"),
+                StubFixture.InServer(a, "Serie", ".jellymesh"),
                 Path.Combine("Film", ".jellymesh"),
                 Path.Combine("Serie", ".jellymesh")
             }.Order(StringComparer.Ordinal),
@@ -414,18 +415,18 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task AServerFolderGetsTheSeasonOfItsOwnServer()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-b", "Serie B", "tvshows"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.ShowsB, "Serie B", "tvshows"));
         AddSeasonedShow();
-        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Series, TestItems.Series("sb"));
-        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Season, Season("sb1", 1, "sb") with { Name = "Name on B" });
-        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Episode, TestItems.Episode("eb", "sb", 1, 2) with { SeasonId = "sb1" });
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Series, TestItems.Series("sb"));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Season, Season("sb1", 1, "sb") with { Name = "Name on B" });
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("eb", "sb", 1, 2) with { SeasonId = "sb1" });
         var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
-        var b = await _fixture.Sync.AddServerAsync("B", "shows-b");
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.ShowsB);
 
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Contains("<title>The Beginning</title>", StubFixture.Text(_fixture.Path_(a, "Serie", "Show (2020)", "Season 01", "season.nfo")), StringComparison.Ordinal);
-        Assert.Contains("<title>Name on B</title>", StubFixture.Text(_fixture.Path_(b, "Serie", "Show (2020)", "Season 01", "season.nfo")), StringComparison.Ordinal);
+        Assert.Contains("<title>Name on B</title>", StubFixture.Text(_fixture.PathIn(b, TestLibraries.ShowsB, "Serie", "Show (2020)", "Season 01", "season.nfo")), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -439,10 +440,10 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(
             new[]
             {
-                StubFixture.In(a, "Film", ".jellymesh"),
-                StubFixture.In(a, "Serie", ".jellymesh"),
-                StubFixture.In(b, "Film", ".jellymesh"),
-                StubFixture.In(b, "Serie", ".jellymesh"),
+                StubFixture.InServer(a, "Film", ".jellymesh"),
+                StubFixture.InServer(a, "Serie", ".jellymesh"),
+                StubFixture.InServer(b, "Film", ".jellymesh"),
+                StubFixture.InServer(b, "Serie", ".jellymesh"),
                 Path.Combine("Film", ".jellymesh"),
                 Path.Combine("Serie", ".jellymesh")
             }.Order(StringComparer.Ordinal),
@@ -459,8 +460,8 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(
             new[]
             {
-                StubFixture.In(a, "Film", ".jellymesh"),
-                StubFixture.In(a, "Serie", ".jellymesh"),
+                StubFixture.InServer(a, "Film", ".jellymesh"),
+                StubFixture.InServer(a, "Serie", ".jellymesh"),
                 Path.Combine("Film", ".jellymesh"),
                 Path.Combine("Serie", ".jellymesh")
             }.Order(StringComparer.Ordinal),
@@ -539,7 +540,7 @@ public sealed class LibraryMaterializerTests : IDisposable
 
         var strm = Assert.Single(_fixture.Files, file => file.EndsWith(".strm", StringComparison.Ordinal));
         Assert.StartsWith(StubFixture.In(a, "Film") + Path.DirectorySeparatorChar, strm, StringComparison.Ordinal);
-        Assert.Equal(4, strm.Count(character => character == Path.DirectorySeparatorChar) + 1);
+        Assert.Equal(5, strm.Count(character => character == Path.DirectorySeparatorChar) + 1);
     }
 
     [Fact]
@@ -918,12 +919,12 @@ public sealed class LibraryMaterializerTests : IDisposable
     public async Task RemovingAServerDeletesItsStubsAndLeavesThoseOfTheOther()
     {
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt("a", "1"));
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("extra", "Extra", "movies"));
-        _fixture.Sync.Client.Add("extra", RemoteItemType.Movie, TestItems.Movie("b", "Other", 2021, "2"));
-        var removed = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, "extra");
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Extra", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("b", "Other", 2021, "2"));
+        var removed = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsB);
         var kept = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
-        var path = _fixture.Path_(removed, "Film", "Other (2021)", "Other (2021) - A.strm");
+        var path = _fixture.PathIn(removed, TestLibraries.FilmsB, "Film", "Other (2021)", "Other (2021) - A.strm");
         Assert.True(File.Exists(path));
         var item = new Movie { Id = Guid.NewGuid(), Path = path };
         _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
@@ -1225,16 +1226,16 @@ public sealed class LibraryMaterializerTests : IDisposable
     {
         var local = Guid.NewGuid();
         _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = local.ToString("N"), Kind = ContentKind.Movie, Ids = new ContentIds("1") });
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
-        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, FilmWithArt("mb"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, FilmWithArt("mb"));
         var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
-        var b = await _fixture.Sync.AddServerAsync("B", "films-b");
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.FilmsB);
 
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.True(File.Exists(_fixture.Path_(a, "Film", "Film (2020)", "Film (2020) - A.strm")));
-        Assert.True(File.Exists(_fixture.Path_(b, "Film", "Film (2020)", "Film (2020) - B.strm")));
+        Assert.True(File.Exists(_fixture.PathIn(b, TestLibraries.FilmsB, "Film", "Film (2020)", "Film (2020) - B.strm")));
         var group = Assert.Single(_fixture.Registry.State.Groups);
         Assert.Equal(_fixture.Registry.State.Stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal), group.StubIds.Order(StringComparer.Ordinal));
         Assert.Equal([local], group.LocalItemIds);
@@ -1416,13 +1417,13 @@ public sealed class LibraryMaterializerTests : IDisposable
     [Fact]
     public async Task EachServerGetsTheTvshowNfoOfItsOwnSeriesEvenWithALocalOne()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-b", "Serie B", "tvshows"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.ShowsB, "Serie B", "tvshows"));
         _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s") with { Overview = "Plot of A" });
         _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
-        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Series, TestItems.Series("sb") with { Overview = "Plot of B" });
-        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Episode, TestItems.Episode("eb", "sb", 1, 2));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Series, TestItems.Series("sb") with { Overview = "Plot of B" });
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("eb", "sb", 1, 2));
         var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
-        var b = await _fixture.Sync.AddServerAsync("B", "shows-b");
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.ShowsB);
         var localSeries = new Series
         {
             Id = Guid.NewGuid(),
@@ -1447,7 +1448,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
 
         var ofA = StubFixture.Text(_fixture.Path_(a, "Serie", "Show (2020)", "tvshow.nfo"));
-        var ofB = StubFixture.Text(_fixture.Path_(b, "Serie", "Show (2020)", "tvshow.nfo"));
+        var ofB = StubFixture.Text(_fixture.PathIn(b, TestLibraries.ShowsB, "Serie", "Show (2020)", "tvshow.nfo"));
         Assert.Contains("<plot>Plot of A</plot>", ofA, StringComparison.Ordinal);
         Assert.Contains("<plot>Plot of B</plot>", ofB, StringComparison.Ordinal);
         Assert.All([ofA, ofB], tvshow =>

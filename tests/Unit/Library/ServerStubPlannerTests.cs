@@ -104,7 +104,8 @@ public class ServerStubPlannerTests
         IReadOnlyList<ServerCatalog> catalogs,
         StubState? state = null,
         IReadOnlyList<RemoteServerInfo>? servers = null,
-        LocalSeries? localSeries = null)
+        LocalSeries? localSeries = null,
+        Func<Guid, string, TypeFolder, string>? placementOf = null)
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = catalogs };
         return StubPlanner.PlanByServer(new StubPlanInput(
@@ -114,7 +115,10 @@ public class ServerStubPlannerTests
             servers ?? [Server(_serverA, "Casa"), Server(_serverB, "Ufficio")],
             true,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => localSeries));
+            _ => localSeries)
+        {
+            PlacementOf = placementOf ?? StubPlanInput.DefaultPlacement
+        });
     }
 
     private static StubWork On(StubPlan plan, Guid server) => Assert.Single(plan.Stubs, stub => stub.Entry.ServerId == server);
@@ -123,6 +127,81 @@ public class ServerStubPlannerTests
         => (group.Id, group.IdentityKey, string.Join(',', group.StubIds.Order()), string.Join(',', group.LocalItemIds), group.PrimaryStubId);
 
     private static ResolvedContent Local(ResolvedContent content, params Guid[] localIds) => content with { IsLocal = true, LocalItemIds = localIds };
+
+    [Fact]
+    public void ATitleInTwoLibrariesOfOneLocalLibraryGetsOneStubWithTheOtherCopyAsASource()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"), OnA("n"))],
+            [Catalog(_serverA, Film("m", "Film", Version("m2160", 2160)), Film("n") with { LibraryId = TestLibraries.FilmsB })]);
+
+        var stub = On(plan, _serverA);
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), stub.Entry.RelativePath);
+        Assert.Equal([("m", Library), ("n", TestLibraries.FilmsB)], stub.Entry.Sources.Select(source => (source.ItemId, source.LibraryId)));
+    }
+
+    [Fact]
+    public void ATitleInTwoLibrariesOfDifferentLocalLibrariesGetsOneStubInEachFolder()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"), OnA("n"))],
+            [Catalog(_serverA, Film("m", "Film", Version("m2160", 2160)), Film("n") with { LibraryId = TestLibraries.FilmsB })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(
+            [
+                (Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), "m"),
+                (Path.Combine(A, TestLibraries.FilmsB, "Film", "Film (2020)", "Film (2020) - Casa.strm"), "n")
+            ],
+            plan.Stubs.Select(stub => (stub.Entry.RelativePath, Assert.Single(stub.Entry.Sources).ItemId)).Order());
+        Assert.Equal(2, plan.Stubs.Select(stub => stub.Entry.Id).Distinct().Count());
+    }
+
+    [Fact]
+    public void AnItemInSeveralLibrariesOfDifferentLocalLibrariesGetsAStubInEachFolder()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"))],
+            [Catalog(_serverA, Film("m") with { LibraryId = TestLibraries.Films, OtherLibraryIds = [TestLibraries.FilmsB] })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(
+            [Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), Path.Combine(A, TestLibraries.FilmsB, "Film", "Film (2020)", "Film (2020) - Casa.strm")],
+            plan.Stubs.Select(stub => stub.Entry.RelativePath).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void ATitleOfALibraryWithoutAValidIdHasNoStub()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"))],
+            [Catalog(_serverA, Film("m") with { LibraryId = "../films" })]);
+
+        Assert.Empty(plan.Stubs);
+        Assert.Equal(1, plan.Unplaceable);
+    }
+
+    [Fact]
+    public void WhileAStubOfTheServerFoldersIsLeftNewTitlesGoThereToo()
+    {
+        var old = new StubEntry
+        {
+            Id = "old",
+            Kind = StubKind.Movie,
+            ServerId = _serverA,
+            RelativePath = FederatedPaths.MovieStub(_serverA, "Old (2019)", "Casa"),
+            IdentityKey = "old",
+            Sources = [new StubSource(_serverA, "o", "o") { LibraryId = Library }]
+        };
+
+        var plan = Plan(
+            [Title("old", OnA("o")), Title("k", OnB("z"))],
+            [Catalog(_serverA, Film("o", "Old") with { ProductionYear = 2019 }), Catalog(_serverB, Film("z"))],
+            StubState.Empty with { Stubs = [old] });
+
+        Assert.Equal(old.RelativePath, On(plan, _serverA).Entry.RelativePath);
+        Assert.Equal(Path.Combine(B, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), On(plan, _serverB).Entry.RelativePath);
+    }
 
     [Fact]
     public void TheBestCopyOfAServerIsItsStubAndItsOtherCopiesAreInternalSources()
@@ -156,9 +235,9 @@ public class ServerStubPlannerTests
 
         var series = Assert.Single(plan.Series);
         Assert.Equal(_serverA, series.Entry.ServerId);
-        Assert.Equal(Path.Combine(A, "Serie", "Show (2020)"), series.Entry.RelativePath);
+        Assert.Equal(Path.Combine(A, Shows, "Serie", "Show (2020)"), series.Entry.RelativePath);
         Assert.Equal("Show", series.Metadata.Title);
-        Assert.Equal(Path.Combine(A, "Serie", "Show (2020)", "Season 01", "Show S01E07 - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
+        Assert.Equal(Path.Combine(A, Shows, "Serie", "Show (2020)", "Season 01", "Show S01E07 - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
         Assert.Equal(series.Entry.Id, On(plan, _serverA).Entry.SeriesStubId);
     }
 
@@ -170,11 +249,11 @@ public class ServerStubPlannerTests
         Assert.Equal(2, plan.Stubs.Count);
         var onA = On(plan, _serverA);
         var onB = On(plan, _serverB);
-        Assert.Equal(Path.Combine(A, "Film", "Film (2020)", "Film (2020) - Casa.strm"), onA.Entry.RelativePath);
-        Assert.Equal(Path.Combine(B, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), onB.Entry.RelativePath);
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), onA.Entry.RelativePath);
+        Assert.Equal(Path.Combine(B, Library, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), onB.Entry.RelativePath);
         Assert.Equal([(_serverA, "m")], onA.Entry.Sources.Select(source => (source.ServerId, source.ItemId)));
         Assert.Equal([(_serverB, "z")], onB.Entry.Sources.Select(source => (source.ServerId, source.ItemId)));
-        Assert.Equal(Path.Combine(A, "Film", "Film (2020)", "movie.nfo"), onA.NfoPath);
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "movie.nfo"), onA.NfoPath);
         Assert.NotEqual(onA.Entry.Id, onB.Entry.Id);
     }
 

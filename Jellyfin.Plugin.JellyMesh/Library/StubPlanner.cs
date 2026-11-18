@@ -50,8 +50,8 @@ public static class StubPlanner
         var matcher = new StubMatcher(flat);
         var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
 
-        var paths = new PathAllocator(flat, flatSeries, FederatedPaths.MovieFolder, FederatedPaths.SeriesFolderOf);
-        var scope = new SeriesScope(null, flatSeries, input.View.Contents, paths.SeriesFolder, input.LocalSeriesOf);
+        var paths = new PathAllocator(flat, flatSeries);
+        var scope = new SeriesScope(null, flatSeries, input.View.Contents, (_, _, title, year, id) => paths.SeriesFolder(TypeFolder.Series.Name, title, year, id), input.LocalSeriesOf);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
         var works = new List<StubWork>();
         var unplaceable = 0;
@@ -67,7 +67,7 @@ public static class StubPlanner
 
             if (content.Identity.Kind == ContentKind.Movie)
             {
-                works.Add(MovieWork(input, content, stub, winner, catalog, null, id => FederatedPaths.MovieStub(paths.MovieFolder(winner.Name, winner.ProductionYear, id))));
+                works.Add(MovieWork(input, content, stub, winner, catalog, null, id => FederatedPaths.MovieStub(paths.MovieFolderName(TypeFolder.Movies.Name, winner.Name, winner.ProductionYear, id))));
             }
             else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
             {
@@ -130,44 +130,52 @@ public static class StubPlanner
         var merged = new HashSet<string>(StringComparer.Ordinal);
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
 
+        var legacy = StubLayout.IsLegacy(input.State);
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);
             var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id).ToList();
-            var matcher = new StubMatcher(own);
-            var claims = matcher.ClaimAll(StubContents.Group(contents));
-
-            var paths = new PathAllocator(own, ownSeries, name => FederatedPaths.MovieFolder(server.Id, name), name => FederatedPaths.SeriesFolderOf(server.Id, name));
-            var scope = new SeriesScope(server.Id, ownSeries, contents, paths.SeriesFolder, _ => null);
-            var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
             var label = labels[server.Id];
-            foreach (var (content, stub) in claims)
+            var parts = legacy
+                ? [ServerPart.Legacy(server.Id, contents, own, ownSeries)]
+                : PartsOf(input.PlacementOf, catalog, server.Id, contents, own, ownSeries, unplaceable);
+            foreach (var part in parts)
             {
-                if (catalog.Find(server.Id, content.Winner!.ItemId) is not { } winner)
+                var matcher = new StubMatcher(part.Stubs);
+                var claims = matcher.ClaimAll(StubContents.Group(part.Contents));
+
+                var paths = new PathAllocator(part.Stubs, part.Series);
+                var scope = new SeriesScope(server.Id, part.Series, part.Contents, (remote, winner, title, year, id) => paths.SeriesFolder(part.FolderOf([remote, winner], TypeFolder.Series), title, year, id), _ => null);
+                var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
+                foreach (var (content, stub) in claims)
                 {
-                    continue;
+                    if (catalog.Find(server.Id, content.Winner!.ItemId) is not { } winner)
+                    {
+                        continue;
+                    }
+
+                    if (content.Identity.Kind == ContentKind.Movie)
+                    {
+                        var folder = part.FolderOf([winner], TypeFolder.Movies);
+                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id), label)), content, winner));
+                    }
+                    else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
+                    {
+                        unplaceable.Add(content.Identity.Key);
+                    }
+                    else
+                    {
+                        var seriesPlan = SeriesPlanOf(input, content, winner, catalog, scope, seriesPlans);
+                        placed.Add((EpisodeWork(input, content, stub, winner, seriesPlan, catalog, server.Id, label), content, winner));
+                    }
                 }
 
-                if (content.Identity.Kind == ContentKind.Movie)
-                {
-                    placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStub(server.Id, paths.MovieFolder(winner.Name, winner.ProductionYear, id), label)), content, winner));
-                }
-                else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
-                {
-                    unplaceable.Add(content.Identity.Key);
-                }
-                else
-                {
-                    var seriesPlan = SeriesPlanOf(input, content, winner, catalog, scope, seriesPlans);
-                    placed.Add((EpisodeWork(input, content, stub, winner, seriesPlan, catalog, server.Id, label), content, winner));
-                }
+                seriesWorks.AddRange(seriesPlans.Values.Select(plan => WithSeasons(input, plan, catalog)));
+                works.AddRange(placed.Skip(works.Count).Select(entry => entry.Work));
+                claimed.UnionWith(part.Stubs.Where(matcher.IsClaimed).Select(stub => stub.Id));
+                merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
             }
-
-            seriesWorks.AddRange(seriesPlans.Values.Select(plan => WithSeasons(input, plan, catalog)));
-            works.AddRange(placed.Skip(works.Count).Select(entry => entry.Work));
-            claimed.UnionWith(own.Where(matcher.IsClaimed).Select(stub => stub.Id));
-            merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
         }
 
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
@@ -209,7 +217,13 @@ public static class StubPlanner
     /// <param name="servers">The configured servers.</param>
     /// <param name="stubs">The stubs.</param>
     /// <returns>The claims of every server.</returns>
-    public static IReadOnlyList<StubClaim> ClaimByServer(FederationView view, IndexSnapshot snapshot, IReadOnlyList<RemoteServerInfo> servers, IReadOnlyList<StubEntry> stubs)
+    /// <param name="placementOf">Where a type folder of a remote library goes, as in <see cref="StubPlanInput.PlacementOf"/>.</param>
+    public static IReadOnlyList<StubClaim> ClaimByServer(
+        FederationView view,
+        IndexSnapshot snapshot,
+        IReadOnlyList<RemoteServerInfo> servers,
+        IReadOnlyList<StubEntry> stubs,
+        Func<Guid, string, TypeFolder, string>? placementOf = null)
     {
         ArgumentNullException.ThrowIfNull(view);
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -217,10 +231,19 @@ public static class StubPlanner
         ArgumentNullException.ThrowIfNull(stubs);
 
         var catalog = IndexItemLookup.Build(snapshot);
-        return servers
-            .SelectMany(server => new StubMatcher(stubs.Where(stub => stub.ServerId == server.Id))
-                .ClaimAll(StubContents.Group(ServerContents(view, snapshot, catalog, server))))
-            .ToList();
+        var legacy = StubLayout.IsLegacy(stubs, []);
+        var claims = new List<StubClaim>();
+        foreach (var server in servers)
+        {
+            var contents = ServerContents(view, snapshot, catalog, server);
+            var own = stubs.Where(stub => stub.ServerId == server.Id).ToList();
+            var parts = legacy
+                ? [ServerPart.Legacy(server.Id, contents, own, [])]
+                : PartsOf(placementOf ?? StubPlanInput.DefaultPlacement, catalog, server.Id, contents, own, [], []);
+            claims.AddRange(parts.SelectMany(part => new StubMatcher(part.Stubs).ClaimAll(StubContents.Group(part.Contents))));
+        }
+
+        return claims;
     }
 
     /// <summary>
@@ -262,14 +285,14 @@ public static class StubPlanner
         foreach (var title in titles)
         {
             var (_, content, winner) = title.First();
-            var stubIds = title.DistinctBy(entry => entry.Work.Entry.ServerId).Select(entry => entry.Work.Entry.Id).ToList();
+            var stubIds = title.DistinctBy(entry => SlotOf(input, entry.Work.Entry)).Select(entry => entry.Work.Entry.Id).ToList();
             var local = LocalCopiesOf(seasons, content, winner);
             var old = oldGroups.FirstHolding(stubIds, local, reused);
             if (old is not null)
             {
                 reused.Add(old.Id);
-                var servers = title.Select(entry => entry.Work.Entry.ServerId).ToHashSet();
-                stubIds.AddRange(old.StubIds.Where(id => kept.TryGetValue(id, out var stub) && servers.Add(stub.ServerId)));
+                var slots = title.Select(entry => SlotOf(input, entry.Work.Entry)).ToHashSet();
+                stubIds.AddRange(old.StubIds.Where(id => kept.TryGetValue(id, out var stub) && slots.Add(SlotOf(input, stub))));
             }
 
             AddGroup(groups, assigned, old?.Id ?? NewId(), content.Identity.Key, stubIds, local, old?.PrimaryStubId);
@@ -282,6 +305,12 @@ public static class StubPlanner
 
         return groups;
     }
+
+    // A version group holds one stub per server and local library: an older stub has the server alone.
+    private static (Guid? ServerId, string Placement) SlotOf(StubPlanInput input, StubEntry stub)
+        => (stub.ServerId, FederatedPaths.RemoteLibraryOf(stub.RelativePath) is { } library && stub.ServerId is { } server
+            ? input.PlacementOf(server, library, TypeFolder.Of(stub.Kind))
+            : string.Empty);
 
     // Adds a group of the stubs not in one yet, if it still has two copies.
     private static void AddGroup(List<VersionGroup> groups, HashSet<string> assigned, string id, string identityKey, List<string> stubIds, IReadOnlyList<Guid> local, string? primary)
@@ -428,6 +457,63 @@ public static class StubPlanner
         return contents;
     }
 
+    // Splits the contents of a server by the local library their remote libraries go to, with the stubs already there. A
+    // title in two remote libraries of one local library is one content, with the copies of both (D19).
+    private static List<ServerPart> PartsOf(
+        Func<Guid, string, TypeFolder, string> placementOf,
+        IndexItemLookup catalog,
+        Guid serverId,
+        List<ResolvedContent> contents,
+        List<StubEntry> stubs,
+        List<SeriesStub> series,
+        HashSet<string> unplaceable)
+    {
+        var split = new Dictionary<string, List<ResolvedContent>>(StringComparer.Ordinal);
+        foreach (var content in contents)
+        {
+            var type = TypeFolder.Of(content.Identity.Kind);
+            var byKey = new Dictionary<string, List<ResolvedSource>>(StringComparer.Ordinal);
+            foreach (var source in content.Backups.Prepend(content.Winner!))
+            {
+                foreach (var key in LibrariesOf(catalog.Find(serverId, source.ItemId)).Select(library => placementOf(serverId, library, type)).Distinct(StringComparer.Ordinal))
+                {
+                    byKey.TryAdd(key, []);
+                    byKey[key].Add(source);
+                }
+            }
+
+            if (byKey.Count == 0)
+            {
+                unplaceable.Add(content.Identity.Key);
+            }
+
+            foreach (var (key, sources) in byKey)
+            {
+                split.TryAdd(key, []);
+                split[key].Add(content with
+                {
+                    Winner = sources[0],
+                    Backups = sources.Skip(1).ToList(),
+                    RemoteItems = content.RemoteItems.Where(item => sources.Exists(source => source.ItemId == item.ItemId)).ToList()
+                });
+            }
+        }
+
+        string? KeyOf(string path, TypeFolder type) => FederatedPaths.RemoteLibraryOf(path) is { } library ? placementOf(serverId, library, type) : null;
+        var stubKeys = stubs.Select(stub => KeyOf(stub.RelativePath, TypeFolder.Of(stub.Kind)));
+        var seriesKeys = series.Select(entry => KeyOf(entry.RelativePath, TypeFolder.Series));
+        return split.Keys.Concat(stubKeys).Concat(seriesKeys).OfType<string>().Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
+            .Select(key => new ServerPart(
+                split.GetValueOrDefault(key) ?? [],
+                stubs.Where(stub => KeyOf(stub.RelativePath, TypeFolder.Of(stub.Kind)) == key).ToList(),
+                series.Where(entry => KeyOf(entry.RelativePath, TypeFolder.Series) == key).ToList(),
+                (items, type) => FederatedPaths.TypeFolderOf(serverId, items.SelectMany(LibrariesOf).First(library => placementOf(serverId, library, type) == key), type)))
+            .ToList();
+    }
+
+    // The remote libraries of an entry that can name a folder.
+    private static IEnumerable<string> LibrariesOf(IndexedItem? item) => item?.LibraryIds.Where(FederatedPaths.IsLibraryId) ?? [];
+
     // Only for a stub with a configured server: one whose servers are all missing is decided by the caller.
     // A damaged index, a server not read in full or an empty imported library keeps the stub (EmptyLibraryHold).
     private static bool IsGone(StubPlanInput input, Dictionary<Guid, RemoteServerInfo> servers, StubEntry stub, Dictionary<(Guid ServerId, string LibraryId), int> held)
@@ -558,6 +644,7 @@ public static class StubPlanner
             ItemId = winner.SeriesId ?? winner.ItemId,
             Kind = IndexedItemKind.Series,
             LibraryId = winner.LibraryId,
+            OtherLibraryIds = winner.OtherLibraryIds,
             LastSeenUtc = winner.LastSeenUtc,
             Name = winner.SeriesName
         };
@@ -565,7 +652,7 @@ public static class StubPlanner
         var metadata = SeriesMetadata(remote, local, input.IsProtected);
         var name = metadata.Title ?? remote.Name;
         var id = stub?.Id ?? NewId();
-        var relative = stub?.RelativePath ?? scope.NewFolder(name, metadata.Year, id);
+        var relative = stub?.RelativePath ?? scope.NewFolder(remote, winner, name, metadata.Year, id);
 
         var nfo = NfoDocument.Series(metadata);
         var images = new List<StubImage>();
@@ -808,13 +895,14 @@ public static class StubPlanner
     /// <param name="ServerId">The server, null in the flat layout.</param>
     /// <param name="Existing">The series stubs of the scope.</param>
     /// <param name="Contents">The contents whose remote items name the series.</param>
-    /// <param name="NewFolder">Gives the relative folder of a new series from its title, year and ID.</param>
+    /// <param name="NewFolder">Gives the relative folder of a new series from its remote row, the episode that brings it, its
+    /// title, year and ID.</param>
     /// <param name="LocalSeriesOf">Finds the local series of a work key.</param>
     private sealed record SeriesScope(
         Guid? ServerId,
         IReadOnlyList<SeriesStub> Existing,
         IReadOnlyList<ResolvedContent> Contents,
-        Func<string?, int?, string, string> NewFolder,
+        Func<IndexedItem, IndexedItem, string?, int?, string, string> NewFolder,
         Func<string, LocalSeries?> LocalSeriesOf);
 
     /// <summary>
@@ -825,13 +913,8 @@ public static class StubPlanner
     {
         private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
 
-        private readonly Func<string, string> _movieFolder;
-        private readonly Func<string, string> _seriesFolder;
-
-        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series, Func<string, string> movieFolder, Func<string, string> seriesFolder)
+        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series)
         {
-            _movieFolder = movieFolder;
-            _seriesFolder = seriesFolder;
             foreach (var stub in stubs.Where(stub => stub.Kind == StubKind.Movie))
             {
                 _taken.Add(Path.GetDirectoryName(stub.RelativePath)!);
@@ -843,24 +926,44 @@ public static class StubPlanner
             }
         }
 
-        // The folder name of a film, unique in its scope.
-        public string MovieFolder(string? title, int? year, string id)
-            => Unique(FederatedPaths.TitleFolder(title, year), id, _movieFolder);
+        // The folder name of a film, unique in its type folder.
+        public string MovieFolderName(string typeFolder, string? title, int? year, string id)
+            => Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id);
 
-        // The relative folder of a series, unique in its scope.
-        public string SeriesFolder(string? title, int? year, string id)
-            => _seriesFolder(Unique(FederatedPaths.TitleFolder(title, year), id, _seriesFolder));
+        // The relative folder of a series, unique in its type folder.
+        public string SeriesFolder(string typeFolder, string? title, int? year, string id)
+            => Path.Combine(typeFolder, Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id));
 
-        private string Unique(string name, string id, Func<string, string> relative)
+        private string Unique(string typeFolder, string name, string id)
         {
-            if (_taken.Add(relative(name)))
+            if (_taken.Add(Path.Combine(typeFolder, name)))
             {
                 return name;
             }
 
             var unique = string.Create(CultureInfo.InvariantCulture, $"{name} [{id[..8]}]");
-            _taken.Add(relative(unique));
+            _taken.Add(Path.Combine(typeFolder, unique));
             return unique;
         }
+    }
+
+    /// <summary>
+    /// The stubs of one server that share a local library, with the contents they are planned from. In the older layouts a
+    /// server is one part, in its 0.5 folder.
+    /// </summary>
+    /// <param name="Contents">The contents, with only the copies in the type folders of the part.</param>
+    /// <param name="Stubs">The stubs of the part.</param>
+    /// <param name="Series">The series stubs of the part.</param>
+    /// <param name="TypeFolderOf">Gives the relative type folder of a new title from the remote rows it comes from.</param>
+    private sealed record ServerPart(
+        List<ResolvedContent> Contents,
+        List<StubEntry> Stubs,
+        List<SeriesStub> Series,
+        Func<IReadOnlyList<IndexedItem>, TypeFolder, string> TypeFolderOf)
+    {
+        public static ServerPart Legacy(Guid serverId, List<ResolvedContent> contents, List<StubEntry> stubs, List<SeriesStub> series)
+            => new(contents, stubs, series, (_, type) => Path.Combine(FederatedPaths.ServerFolder(serverId), type.Name));
+
+        public string FolderOf(IReadOnlyList<IndexedItem> items, TypeFolder type) => TypeFolderOf(items, type);
     }
 }

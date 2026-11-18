@@ -115,10 +115,27 @@ internal sealed class StubFixture : IDisposable
 
     public static string Text(string path) => File.ReadAllText(path);
 
-    /// <summary>Builds a path relative to the root, inside the folder of a server.</summary>
-    public static string In(RemoteServerInfo server, params string[] parts) => Path.Combine(FederatedPaths.ServerFolder(server.Id), Path.Combine(parts));
+    /// <summary>
+    /// Builds a path relative to the root, inside the folder of a server. A path that starts with a type folder goes into
+    /// the remote library of the fake remote that holds that type.
+    /// </summary>
+    public static string In(RemoteServerInfo server, params string[] parts) => parts switch
+    {
+        ["Film", ..] => Path.Combine(FederatedPaths.ServerFolder(server.Id), TestLibraries.Films, Path.Combine(parts)),
+        ["Serie", ..] => Path.Combine(FederatedPaths.ServerFolder(server.Id), TestLibraries.Shows, Path.Combine(parts)),
+        _ => Path.Combine(FederatedPaths.ServerFolder(server.Id), Path.Combine(parts))
+    };
+
+    /// <summary>Builds a path relative to the root, inside the 0.5 folder of a server.</summary>
+    public static string InServer(RemoteServerInfo server, params string[] parts) => Path.Combine(FederatedPaths.ServerFolder(server.Id), Path.Combine(parts));
 
     public string Path_(params string[] parts) => Path.Combine(Root, Path.Combine(parts));
+
+    /// <summary>Builds a path relative to the root, inside the folder of a remote library of a server.</summary>
+    public static string InLibrary(RemoteServerInfo server, string libraryId, params string[] parts) => Path.Combine(FederatedPaths.LibraryFolder(server.Id, libraryId), Path.Combine(parts));
+
+    /// <summary>Builds an absolute path inside the folder of a remote library of a server.</summary>
+    public string PathIn(RemoteServerInfo server, string libraryId, params string[] parts) => Path.Combine(Root, InLibrary(server, libraryId, parts));
 
     /// <summary>Builds an absolute path inside the folder of a server.</summary>
     public string Path_(RemoteServerInfo server, params string[] parts) => Path.Combine(Root, In(server, parts));

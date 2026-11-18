@@ -108,11 +108,11 @@ public sealed class StubCleanupTaskTests : IDisposable
     [Fact]
     public async Task TheStubsOfTwoServersWithTheSameFilmBothStay()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
-        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("b", "Film", 2020, "1"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("b", "Film", 2020, "1"));
         await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
-        await _fixture.Sync.AddServerAsync("B", "films-b");
+        await _fixture.Sync.AddServerAsync("B", TestLibraries.FilmsB);
         await _fixture.SyncAndMaterializeAsync();
         GiveEveryStubAnItem();
 
@@ -194,10 +194,10 @@ public sealed class StubCleanupTaskTests : IDisposable
     {
         var byTmdb = TestItems.Movie("a", "Film", 2020, "1");
         var byImdb = TestItems.Movie("b", "Film", 2020, "2") with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } };
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, byTmdb);
-        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, byImdb);
-        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, "films-b");
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, byImdb);
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsB);
         await _fixture.SyncAndMaterializeAsync();
         Assert.Equal(2, _fixture.Registry.State.Stubs.Count(stub => stub.Sources.Any(source => source.ItemId is "a" or "b")));
 
@@ -331,11 +331,11 @@ public sealed class StubCleanupTaskTests : IDisposable
     [Fact]
     public async Task AMergeOnOneServerLeavesTheStubOfAnotherServer()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "Film C", "movies"));
-        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, TestItems.Movie("d", "Film", 2020, "1"));
-        var other = await _fixture.Sync.AddServerAsync("B", "films-c");
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "Film C", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, TestItems.Movie("d", "Film", 2020, "1"));
+        var other = await _fixture.Sync.AddServerAsync("B", TestLibraries.FilmsC);
         var (survivor, merged) = await TwoFilmsThatBecomeOneAsync();
-        var otherPath = _fixture.Path_(other, "Film", "Film (2020)", "Film (2020) - B.strm");
+        var otherPath = _fixture.PathIn(other, TestLibraries.FilmsC, "Film", "Film (2020)", "Film (2020) - B.strm");
         _fixture.Library.Setup(library => library.FindByPath(otherPath, false)).Returns(new Movie { Id = Guid.NewGuid(), Path = otherPath });
 
         await RunAsync();

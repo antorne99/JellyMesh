@@ -77,11 +77,11 @@ public sealed class LocalTitleLinkerTests : IDisposable
     [Fact]
     public async Task TheGroupOfTwoServersKeepsItsId()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
-        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("mb"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("mb"));
         await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
-        await _fixture.Sync.AddServerAsync("B", "films-b");
+        await _fixture.Sync.AddServerAsync("B", TestLibraries.FilmsB);
         await _fixture.SyncAndMaterializeAsync();
         var before = Assert.Single(_fixture.Registry.State.Groups);
         var local = AddLocalFilm();
@@ -129,12 +129,12 @@ public sealed class LocalTitleLinkerTests : IDisposable
     [Fact]
     public async Task ATitleWhoseGroupNeedsAStubNotWrittenYetWaitsForTheSync()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "Film B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
-        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("mb"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("mb"));
         await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
-        await _fixture.Sync.AddServerAsync("B", "films-b");
+        await _fixture.Sync.AddServerAsync("B", TestLibraries.FilmsB);
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         var local = AddLocalFilm();
 

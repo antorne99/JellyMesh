@@ -699,11 +699,11 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AMergedTitleGetsTheKeptStateOfEachOfItsIdentities()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
-        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
         var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
-        var c = await AddAndMaterializeAsync("C", "films-c");
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
         await MergeAsync((a, "x", "1"), (c, "y", null));
         var alfa = FilmItem(a);
         var sonda = FilmItem(c);
@@ -720,10 +720,10 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AStubOfTwoFilmsMergedByHandGetsTheKeptStateOfEach()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
-        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
-        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, "films-c");
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsC);
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         await MergeAsync((a, "x", "1"), (a, "y", null));
         var film = FilmItem(a);
@@ -740,12 +740,12 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheCopyOfARemovedServerFindsEveryCopyOfAMergedTitle()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
-        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
         var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
-        var b = await AddAndMaterializeAsync("B", "films-c");
-        var c = await AddAndMaterializeAsync("C", "films-c");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.FilmsC);
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
         await MergeAsync((a, "x", "1"), (c, "y", null));
         var alfa = FilmItem(a);
         var sonda = FilmItem(c);
@@ -768,11 +768,11 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheKeptStateOfAMergedCopyOnTheRemovedServerFindsTheCopyLeft()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
-        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
         var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
-        var c = await AddAndMaterializeAsync("C", "films-c");
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
         await MergeAsync((a, "x", "1"), (c, "y", null));
         var alfa = FilmItem(a);
         Watch(_bruno, FilmItem(c));
@@ -794,14 +794,14 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheMergesKeptForARemovedServerServeOnlyItsTitles()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "B", "movies"));
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
-        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, TestItems.Movie("z", "Zeta", 2024) with { ProviderIds = new Dictionary<string, string?>(), RunTimeTicks = NinetyMinutes });
-        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, FilmWithoutIds("y"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("z", "Zeta", 2024) with { ProviderIds = new Dictionary<string, string?>(), RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
         var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
-        var b = await AddAndMaterializeAsync("B", "films-b");
-        var c = await AddAndMaterializeAsync("C", "films-c");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.FilmsB);
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
         await MergeAsync((a, "x", "1"), (b, "z", null), (c, "y", null));
         var alfa = FilmItem(a);
         await RemoveAsKeptAsync(c);
@@ -838,15 +838,15 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheKeptStateOfAMergedSeriesOnTheRemovedServerFindsTheSeriesLeft()
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-c", "C", "tvshows"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.ShowsC, "C", "tvshows"));
         _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
         _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
         _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
-        _fixture.Sync.Client.Add("shows-c", RemoteItemType.Series, TestItems.Series("t", "Altra Serie", 2025) with { ProviderIds = new Dictionary<string, string?>() });
-        _fixture.Sync.Client.Add("shows-c", RemoteItemType.Season, TestItems.Season("ts1", "t", 1));
-        _fixture.Sync.Client.Add("shows-c", RemoteItemType.Episode, TestItems.Episode("f", "t", 1, 2, "Altra Serie") with { SeasonId = "ts1" });
+        _fixture.Sync.Client.Add(TestLibraries.ShowsC, RemoteItemType.Series, TestItems.Series("t", "Altra Serie", 2025) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.ShowsC, RemoteItemType.Season, TestItems.Season("ts1", "t", 1));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsC, RemoteItemType.Episode, TestItems.Episode("f", "t", 1, 2, "Altra Serie") with { SeasonId = "ts1" });
         var a = await AddAndMaterializeAsync("A", TestLibraries.Shows);
-        var c = await AddAndMaterializeAsync("C", "shows-c");
+        var c = await AddAndMaterializeAsync("C", TestLibraries.ShowsC);
         var merge = new ManualMerge
         {
             Id = Guid.NewGuid(),
