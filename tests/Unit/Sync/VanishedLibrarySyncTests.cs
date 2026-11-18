@@ -115,6 +115,7 @@ public sealed class VanishedLibrarySyncTests : IDisposable
     [Theory]
     [InlineData("list")]
     [InlineData("test")]
+    [InlineData("edit")]
     public async Task A_library_listed_by_any_read_between_two_syncs_starts_counting_from_zero(string read)
     {
         var server = await TwoLibrariesSyncedAsync();
@@ -122,9 +123,13 @@ public sealed class VanishedLibrarySyncTests : IDisposable
         RemoveOnRemote(TestLibraries.FilmsB);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.Libraries.Add(library);
-        Assert.True(read == "list"
-            ? (await _fixture.Registry.GetLibrariesAsync(server.Id, CancellationToken.None)).IsSuccess
-            : (await _fixture.Registry.TestAsync(server.Id, CancellationToken.None)).IsSuccess);
+        var edit = new RemoteServerEdit { Name = server.Name, Url = TestValues.Url, Username = TestValues.Credentials.Username };
+        Assert.True(read switch
+        {
+            "list" => (await _fixture.Registry.GetLibrariesAsync(server.Id, CancellationToken.None)).IsSuccess,
+            "test" => (await _fixture.Registry.TestAsync(server.Id, CancellationToken.None)).IsSuccess,
+            _ => (await _fixture.Registry.CheckEditAsync(server.Id, edit, CancellationToken.None)).IsSuccess
+        });
         RemoveOnRemote(TestLibraries.FilmsB);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
