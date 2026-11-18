@@ -93,7 +93,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
     /// <inheritdoc />
     public void Dispose() => _gate.Dispose();
 
-    private static List<ManualMerge> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
+    internal static List<ManualMerge> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
     {
         var copies = new Dictionary<string, List<MergedCopy>>(StringComparer.Ordinal);
         using (var command = StoreSql.Command(connection, transaction, SelectCopies))

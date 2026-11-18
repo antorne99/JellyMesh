@@ -3,14 +3,18 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Xml.Serialization;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
+using Jellyfin.Data.Enums;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -187,6 +191,90 @@ public sealed class LegacyImportTests : IDisposable
         Assert.Equal(StoreState.Healthy, database.Retry().State);
         Assert.Equal(FixtureCredentials, Assert.Single((await ConfigurationOf(database)).Servers).EncryptedCredentials);
         Assert.False(File.Exists(ConfigurationFile));
+    }
+
+    // The small files as 0.5 wrote them, read back through the stores that now keep them in the database.
+    [Fact]
+    public async Task TheSmallFilesOfVersion05AreReadBackByTheirStores()
+    {
+        var (user, item, stub, server, merge) = (Guid.NewGuid(), Guid.NewGuid(), "f-" + Guid.NewGuid().ToString("N"), Guid.NewGuid(), Guid.NewGuid());
+        var (oldLibrary, newLibrary) = (Guid.NewGuid(), Guid.NewGuid());
+        await File.WriteAllTextAsync(Path.Combine(Folder, "watch-state-carries.json"), $$"""
+            {"Version":1,"Entries":[{"UserId":"{{user}}","ItemId":"{{item}}","LastPlayedDate":"2026-10-01T20:00:00Z"}]}
+            """);
+        await File.WriteAllTextAsync(Path.Combine(Folder, "last-served.json"), $$"""
+            {"Version":1,"Entries":[{"UserId":"{{user}}","StubId":"{{stub}}","ServerId":"{{server}}"}]}
+            """);
+        await File.WriteAllTextAsync(Path.Combine(Folder, "manual-merges.json"), $$"""
+            {"Version":1,"Merges":[{"Id":"{{merge}}","CreatedUtc":"2026-10-02T10:00:00+00:00","Copies":[
+              {"ServerId":"{{server:N}}","ItemId":"a1","Kind":0,"IsLocal":false,"Title":"Film","Year":2001},
+              {"ServerId":"local","ItemId":"b2","Kind":0,"IsLocal":true,"Tmdb":"603"}]}]}
+            """);
+        await File.WriteAllTextAsync(Path.Combine(Folder, "library-renames.json"), $$"""
+            {"Version":1,"Records":[{"OldName":"Film","NewName":"Film (JellyMesh)","OldId":"{{oldLibrary}}","NewId":"{{newLibrary}}","Type":"movies","TemporaryName":null}]}
+            """);
+
+        var database = Open();
+
+        using var carries = new WatchStateCarryLog(database, new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(carries.EnsureLoaded());
+        Assert.True(carries.TryFind(user, item, out var played));
+        Assert.Equal(new DateTime(2026, 10, 1, 20, 0, 0, DateTimeKind.Utc), played);
+
+        using var served = new LastServedSourceStore(database, new CapturingLogger<LastServedSourceStore>());
+        Assert.Equal(server, served.Find(user, stub));
+
+        using var merges = new ManualMergeStore(database, new CapturingLogger<ManualMergeStore>());
+        var kept = Assert.Single(merges.Merges);
+        Assert.Equal(merge, kept.Id);
+        Assert.Equal(["a1", "b2"], kept.Copies.Select(copy => copy.ItemId));
+        Assert.True(kept.Copies[1].IsLocal);
+
+        var renames = new LibraryRenameJournal(database, new CapturingLogger<LibraryRenameJournal>());
+        var rename = Assert.Single(renames.Pending());
+        Assert.Equal(("Film", "Film (JellyMesh)", oldLibrary, newLibrary, CollectionType.movies), (rename.OldName, rename.NewName, rename.OldId, rename.NewId, rename.Type));
+    }
+
+    // A database a build before the migration filled has no mark: the import without old files leaves its rows alone.
+    [Fact]
+    public async Task ADatabaseWithoutTheMarkKeepsItsRowsWhenThereAreNoOldFiles()
+    {
+        var options = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
+        var index = JsonSerializer.Deserialize<IndexSnapshot>(await File.ReadAllTextAsync(Fixture("federation-index.json")), options)!;
+        var stubs = JsonSerializer.Deserialize<StubState>(await File.ReadAllTextAsync(Fixture("federated-stubs.json")), options)!;
+        using (var before = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>()))
+        {
+            await before.WriteAsync(
+                (connection, transaction) =>
+                {
+                    var catalog = index.Servers[0];
+                    IndexTables.Write(connection, transaction, [IndexTables.Plan(catalog.ServerId, null, catalog, null)!], clear: false);
+                    StubTables.Write(connection, transaction, StubTables.Plan(null, stubs)!);
+                },
+                CancellationToken.None);
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        var database = Open();
+
+        Assert.Equal(20, await CountAsync(database, "index_items"));
+        Assert.Equal(16, await CountAsync(database, "stub_entries"));
+    }
+
+    // XmlSerializer drops what it does not know: the 0.5 configuration must hold nothing the import would lose.
+    [Fact]
+    public void TheConfigurationOfVersion05HasNothingTheImportDrops()
+    {
+        var unknown = new List<string>();
+        var serializer = new XmlSerializer(typeof(PluginConfiguration));
+        serializer.UnknownElement += (_, e) => unknown.Add(e.Element.Name);
+        serializer.UnknownAttribute += (_, e) => unknown.Add(e.Attr.Name);
+        serializer.UnknownNode += (_, e) => unknown.Add(e.Name);
+
+        using var stream = File.OpenRead(Fixture("Jellyfin.Plugin.JellyMesh.xml"));
+        Assert.NotNull(serializer.Deserialize(stream));
+        Assert.Empty(unknown);
     }
 
     [Fact]

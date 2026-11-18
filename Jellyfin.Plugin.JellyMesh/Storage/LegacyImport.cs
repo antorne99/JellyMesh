@@ -184,7 +184,7 @@ public sealed class LegacyImport
 
             foreach (var file in damaged)
             {
-                _logger.LogWarning("The old JellyMesh file {File} was damaged, so its data starts empty as the older version did. It stays in {Folder}", file, FolderName);
+                _logger.LogWarning("The old JellyMesh file {File} was damaged, so it was read as the older version would have: from its previous copy, or empty. It stays in {Folder}", file, FolderName);
             }
 
             if (files.Count > 0)
@@ -275,25 +275,31 @@ public sealed class LegacyImport
             ConfigurationTables.Write(connection, transaction, ConfigurationTables.Read(connection, transaction), ConfigurationRows.From(configuration));
         }
 
-        var servers = data.Index.Servers.DistinctBy(server => server.ServerId)
-            .Select(server => IndexTables.Plan(server.ServerId, null, server, null))
-            .OfType<IndexTables.ServerWrite>()
-            .ToList();
-        IndexTables.Write(connection, transaction, servers, clear: true);
+        if (data.Index is { } index)
+        {
+            var servers = index.Servers.DistinctBy(server => server.ServerId)
+                .Select(server => IndexTables.Plan(server.ServerId, null, server, null))
+                .OfType<IndexTables.ServerWrite>()
+                .ToList();
+            IndexTables.Write(connection, transaction, servers, clear: true);
+        }
 
-        if (StubTables.Plan(null, data.Stubs) is { } stubs)
+        if (data.Stubs is not null && StubTables.Plan(null, data.Stubs) is { } stubs)
         {
             StubTables.Write(connection, transaction, stubs);
         }
 
-        ManualMergeStore.Replace(connection, transaction, [], data.Merges);
+        if (data.Merges is { } merges)
+        {
+            ManualMergeStore.Replace(connection, transaction, ManualMergeStore.ReadAll(connection, transaction), merges);
+        }
 
-        foreach (var record in data.Renames)
+        foreach (var record in data.Renames ?? [])
         {
             LibraryRenameJournal.InsertRecord(connection, transaction, record);
         }
 
-        foreach (var carry in data.Carries)
+        foreach (var carry in data.Carries ?? [])
         {
             StoreSql.Execute(
                 connection,
@@ -304,7 +310,7 @@ public sealed class LegacyImport
                 ("$played", carry.LastPlayedDate?.Ticks));
         }
 
-        foreach (var served in data.LastServed)
+        foreach (var served in data.LastServed ?? [])
         {
             StoreSql.Execute(
                 connection,
@@ -315,8 +321,12 @@ public sealed class LegacyImport
                 ("$server", StoreSql.Text(served.ServerId)));
         }
 
-        SyncHistoryStore.Save(connection, transaction, data.History.ToList());
-        LegacyKeptRows.Write(connection, transaction, data.Kept);
+        if (data.History is { } history)
+        {
+            SyncHistoryStore.Save(connection, transaction, history.ToList());
+        }
+
+        LegacyKeptRows.Write(connection, transaction, data.Kept ?? []);
     }
 
     // The old files in the data folder, with their copies, logs and damaged copies, and the configuration XML.
@@ -383,20 +393,22 @@ public sealed class LegacyImport
         var served = ReadJson<LastServedFile>(LastServedSourceStore.FileName, _plainOptions, damaged, file => file.Version == CurrentVersion && file.Entries.All(entry => entry is not null));
         var history = ReadJson<HistoryFile>(SyncHistoryStore.FileName, _historyOptions, damaged, file => file.Version == CurrentVersion && file.Runs.All(run => run is not null && run.Servers is not null && run.Servers.All(server => server is not null)));
 
+        // A file that is missing or damaged leaves its tables as they are, which on a new database is the empty state the
+        // older version started from.
         return new LegacyData(
             ReadConfiguration(damaged),
-            index ?? IndexSnapshot.Empty(IndexHealth.Ok),
-            (stubs ?? StubState.Empty) with
+            index,
+            stubs is null ? null : stubs with
             {
                 Version = StubState.CurrentVersion,
-                Stubs = (stubs?.Stubs ?? []).DistinctBy(stub => stub.Id).ToList(),
-                Series = (stubs?.Series ?? []).DistinctBy(series => series.Id).ToList()
+                Stubs = stubs.Stubs.DistinctBy(stub => stub.Id).ToList(),
+                Series = stubs.Series.DistinctBy(series => series.Id).ToList()
             },
-            merges?.Merges ?? [],
-            renames?.Records ?? [],
-            (carries?.Entries ?? []).DistinctBy(entry => (entry.UserId, entry.ItemId)).ToList(),
-            (served?.Entries ?? []).DistinctBy(entry => (entry.UserId, entry.StubId)).ToList(),
-            history?.Runs ?? [],
+            merges?.Merges.DistinctBy(merge => merge.Id).ToList(),
+            renames?.Records,
+            carries?.Entries.DistinctBy(entry => (entry.UserId, entry.ItemId)).ToList(),
+            served?.Entries.DistinctBy(entry => (entry.UserId, entry.StubId)).ToList(),
+            history?.Runs,
             ReadKept(damaged));
     }
 
@@ -427,7 +439,8 @@ public sealed class LegacyImport
         return null;
     }
 
-    // Jellyfin starts a plugin with a configuration XML it cannot read from the defaults, and so does the migration.
+    // Jellyfin starts a plugin with a configuration XML it cannot read from the defaults, and so does the migration. The
+    // bytes are read first, so a file that cannot be read for now throws instead of counting as damaged.
     private PluginConfiguration? ReadConfiguration(List<string> damaged)
     {
         if (_configurationFile is null || !File.Exists(_configurationFile))
@@ -435,9 +448,10 @@ public sealed class LegacyImport
             return null;
         }
 
+        var bytes = File.ReadAllBytes(_configurationFile);
         try
         {
-            using var stream = new FileStream(_configurationFile, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var stream = new MemoryStream(bytes, writable: false);
             using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
             if (new XmlSerializer(typeof(PluginConfiguration)).Deserialize(reader) is PluginConfiguration configuration)
             {
@@ -450,15 +464,15 @@ public sealed class LegacyImport
         }
 
         damaged.Add(Path.GetFileName(_configurationFile));
-        return new PluginConfiguration();
+        return null;
     }
 
-    private List<LegacyKeptRows.Title> ReadKept(List<string> damaged)
+    private List<LegacyKeptRows.Title>? ReadKept(List<string> damaged)
     {
         var path = Path.Combine(_folder, KeptWatchStateStore.FileName);
         if (!File.Exists(path))
         {
-            return [];
+            return null;
         }
 
         // ReadWrite and never Create, so a log a crash left is rolled back as the older version would have.
@@ -479,19 +493,19 @@ public sealed class LegacyImport
         }
 
         damaged.Add(KeptWatchStateStore.FileName);
-        return [];
+        return null;
     }
 
     private sealed record LegacyData(
         PluginConfiguration? Configuration,
-        IndexSnapshot Index,
-        StubState Stubs,
-        IReadOnlyList<ManualMerge> Merges,
-        IReadOnlyList<LibraryRenameRecord> Renames,
-        IReadOnlyList<CarryEntry> Carries,
-        IReadOnlyList<LastServedEntry> LastServed,
-        IReadOnlyList<SyncRun> History,
-        IReadOnlyList<LegacyKeptRows.Title> Kept);
+        IndexSnapshot? Index,
+        StubState? Stubs,
+        IReadOnlyList<ManualMerge>? Merges,
+        IReadOnlyList<LibraryRenameRecord>? Renames,
+        IReadOnlyList<CarryEntry>? Carries,
+        IReadOnlyList<LastServedEntry>? LastServed,
+        IReadOnlyList<SyncRun>? History,
+        IReadOnlyList<LegacyKeptRows.Title>? Kept);
 
     private sealed record MergeFile(int Version, IReadOnlyList<ManualMerge> Merges);
 
