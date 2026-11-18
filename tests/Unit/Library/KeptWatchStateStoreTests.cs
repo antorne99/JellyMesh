@@ -39,7 +39,8 @@ public sealed class KeptWatchStateStoreTests : IDisposable
     // Every field, lists and users included, in a form records compare by value.
     private static string Describe(KeptTitle title) => string.Join(
         '\n',
-        (title with { Genres = [], Studios = [], People = [], Users = [] }).ToString(),
+        (title with { Genres = [], Studios = [], People = [], Users = [], Copies = [] }).ToString(),
+        string.Join(',', title.Copies),
         string.Join(',', title.Genres),
         string.Join(',', title.Studios),
         string.Join(',', title.People),
@@ -188,4 +189,45 @@ public sealed class KeptWatchStateStoreTests : IDisposable
 
         Assert.Equal(0, _database.Count("kept_titles"));
     }
+
+    private static readonly MergedCopy _alfa = new() { ServerId = "a", ItemId = "x", Tmdb = "1", Title = "Alfa", Year = 2026 };
+    private static readonly MergedCopy _sonda = new() { ServerId = "c", ItemId = "y" };
+
+    // D33: a title keeps the copies of its manual merges, which go with it.
+    [Fact]
+    public async Task ATitleKeepsTheCopiesOfItsManualMergesUntilItGoes()
+    {
+        var store = Store();
+        var oldItem = Guid.NewGuid();
+        await store.SaveAsync([Film(oldItem, "Sonda", Watched(_anna)) with { Copies = [_alfa, _sonda] }], CancellationToken.None);
+        await store.SaveAsync([Film(oldItem, "Sonda", Watched(_anna)) with { Copies = [_sonda, _alfa] }], CancellationToken.None);
+
+        var title = Assert.Single(await Store().ReadAsync(CancellationToken.None));
+
+        Assert.Equal([_sonda, _alfa], title.Copies);
+        Assert.Equal(2, _database.Count("kept_title_copies"));
+        await store.ForgetAsync([(title.Id, _anna)], CancellationToken.None);
+        Assert.Equal(0, _database.Count("kept_title_copies"));
+    }
+
+    // The merges a removed server had, saved before its copies leave them, stay for its titles until they are old.
+    [Fact]
+    public async Task TheMergesOfARemovedServerStayUntilTheyAreOld()
+    {
+        var store = Store();
+        var server = Guid.NewGuid();
+        var merge = new ManualMerge { Id = Guid.NewGuid(), CreatedUtc = _saved, Copies = [_alfa, _sonda] };
+        await store.SaveMergesAsync(server, [merge with { Copies = [_alfa] }], _saved, CancellationToken.None);
+        await store.SaveMergesAsync(server, [merge], _saved, CancellationToken.None);
+
+        var read = Assert.Single(await Store().ReadMergesAsync(CancellationToken.None));
+
+        Assert.Equal(merge.Id, read.Id);
+        Assert.Equal([_alfa, _sonda], read.Copies);
+        await store.PruneAsync(_saved.AddDays(-90), new HashSet<Guid>(), CancellationToken.None);
+        Assert.Single(await store.ReadMergesAsync(CancellationToken.None));
+        await store.PruneAsync(_saved.AddDays(1), new HashSet<Guid>(), CancellationToken.None);
+        Assert.Empty(await store.ReadMergesAsync(CancellationToken.None));
+    }
+
 }

@@ -14,6 +14,8 @@ public class SmallStateSchemaTests
     [InlineData("watch_state_carries")]
     [InlineData("kept_titles")]
     [InlineData("kept_user_states")]
+    [InlineData("kept_title_copies")]
+    [InlineData("kept_merge_copies")]
     public void ANewDatabaseHasTheEmptyTablesOfTheSmallState(string table)
     {
         using var database = new TestDatabase();

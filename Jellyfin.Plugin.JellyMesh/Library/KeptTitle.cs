@@ -58,6 +58,11 @@ public sealed record KeptTitle
     /// <summary>Gets when the record was saved, in UTC. It goes after 90 days unused.</summary>
     public required DateTime SavedUtc { get; init; }
 
+    /// <summary>
+    /// Gets the copies of the manual merges the title was in when it was kept, so that any copy left finds it (D33).
+    /// </summary>
+    public IReadOnlyList<MergedCopy> Copies { get; init; } = [];
+
     /// <summary>Gets the state of each user.</summary>
     public IReadOnlyList<KeptUserState> Users { get; init; } = [];
 }

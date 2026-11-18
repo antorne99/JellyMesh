@@ -11,8 +11,9 @@ using Microsoft.Data.Sqlite;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// <see cref="IKeptWatchStateStore"/> over the tables <c>kept_titles</c> and <c>kept_user_states</c> of the plugin
-/// database. Every value goes in as a parameter; each call is one short transaction.
+/// <see cref="IKeptWatchStateStore"/> over the tables <c>kept_titles</c>, <c>kept_user_states</c>, <c>kept_title_copies</c>
+/// and <c>kept_merge_copies</c> of the plugin database. Every value goes in as a parameter; each call is one short
+/// transaction.
 /// </summary>
 public sealed class KeptWatchStateStore : IKeptWatchStateStore
 {
@@ -25,6 +26,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
 
     private const string DeleteTitleOfOldItem = """
         DELETE FROM kept_user_states WHERE title_id IN (SELECT id FROM kept_titles WHERE old_item_id = $old);
+        DELETE FROM kept_title_copies WHERE title_id IN (SELECT id FROM kept_titles WHERE old_item_id = $old);
         DELETE FROM kept_titles WHERE old_item_id = $old;
         """;
 
@@ -67,6 +69,35 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
         DELETE FROM kept_titles WHERE NOT EXISTS (SELECT 1 FROM kept_user_states WHERE kept_user_states.title_id = kept_titles.id);
         """;
 
+    private const string InsertTitleCopy = """
+        INSERT INTO kept_title_copies (title_id, position, server_id, item_id, kind, is_local, tmdb, imdb, tvdb, title, year)
+        VALUES ($owner, $position, $server, $item, $kind, $local, $tmdb, $imdb, $tvdb, $title, $year);
+        """;
+
+    private const string SelectTitleCopies = """
+        SELECT title_id, server_id, item_id, kind, is_local, tmdb, imdb, tvdb, title, year
+        FROM kept_title_copies ORDER BY title_id, position;
+        """;
+
+    private const string DeleteOrphanCopies = """
+        DELETE FROM kept_title_copies WHERE NOT EXISTS (SELECT 1 FROM kept_titles WHERE kept_titles.id = kept_title_copies.title_id);
+        """;
+
+    private const string DeleteMergesOfServer = "DELETE FROM kept_merge_copies WHERE removed_server_id = $removed;";
+
+    private const string InsertMergeCopy = """
+        INSERT INTO kept_merge_copies (removed_server_id, merge_id, position, server_id, item_id, kind, is_local, tmdb, imdb, tvdb,
+            title, year, saved_utc)
+        VALUES ($removed, $owner, $position, $server, $item, $kind, $local, $tmdb, $imdb, $tvdb, $title, $year, $saved);
+        """;
+
+    private const string SelectMergeCopies = """
+        SELECT removed_server_id || ':' || merge_id, server_id, item_id, kind, is_local, tmdb, imdb, tvdb, title, year, merge_id, saved_utc
+        FROM kept_merge_copies ORDER BY removed_server_id, merge_id, position;
+        """;
+
+    private const string DeleteMergesSavedBefore = "DELETE FROM kept_merge_copies WHERE saved_utc < $before;";
+
     private readonly IPluginDatabase _database;
 
     /// <summary>
@@ -100,6 +131,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
                     var saved = SavedOf(connection, transaction, title.OldItemId) ?? ToUtc(title.SavedUtc).Ticks;
                     StoreSql.Execute(connection, transaction, DeleteTitleOfOldItem, ("$old", StoreSql.Text(title.OldItemId)));
                     var id = InsertTitleRow(connection, transaction, title, saved);
+                    InsertCopies(connection, transaction, InsertTitleCopy, title.Copies, ("$owner", id));
                     foreach (var user in title.Users)
                     {
                         StoreSql.Execute(
@@ -140,13 +172,15 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
                 }
             }
 
+            var copies = ReadCopies(connection, transaction, SelectTitleCopies, reader => reader.GetInt64(0));
             var titles = new List<KeptTitle>();
             using (var command = StoreSql.Command(connection, transaction, SelectTitles))
             using (var reader = command.ExecuteReader())
             {
                 while (reader.Read())
                 {
-                    titles.Add(ReadTitle(reader, users));
+                    var title = ReadTitle(reader, users);
+                    titles.Add(title with { Copies = copies.TryGetValue(title.Id, out var own) ? own.Copies : [] });
                 }
             }
 
@@ -167,6 +201,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
                 }
 
                 StoreSql.Execute(connection, transaction, DeleteEmptyTitles);
+                StoreSql.Execute(connection, transaction, DeleteOrphanCopies);
             },
             cancellationToken);
     }
@@ -190,9 +225,103 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
                     }
                 }
 
-                return removed + StoreSql.Execute(connection, transaction, DeleteEmptyTitles);
+                removed += StoreSql.Execute(connection, transaction, DeleteEmptyTitles);
+                StoreSql.Execute(connection, transaction, DeleteOrphanCopies);
+                StoreSql.Execute(connection, transaction, DeleteMergesSavedBefore, before);
+                return removed;
             },
             cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task SaveMergesAsync(Guid serverId, IReadOnlyList<ManualMerge> merges, DateTime savedUtc, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(merges);
+        return _database.WriteAsync(
+            (connection, transaction) =>
+            {
+                var removed = ("$removed", (object?)StoreSql.Text(serverId));
+                StoreSql.Execute(connection, transaction, DeleteMergesOfServer, removed);
+                foreach (var merge in merges)
+                {
+                    InsertCopies(connection, transaction, InsertMergeCopy, merge.Copies, removed, ("$owner", StoreSql.Text(merge.Id)), ("$saved", ToUtc(savedUtc).Ticks));
+                }
+            },
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ManualMerge>> ReadMergesAsync(CancellationToken cancellationToken) => _database.ReadAsync(
+        (connection, transaction) => (IReadOnlyList<ManualMerge>)ReadCopies(connection, transaction, SelectMergeCopies, reader => reader.GetString(0))
+            .Values
+            .Select(entry => new ManualMerge { Id = entry.MergeId, CreatedUtc = entry.SavedUtc, Copies = entry.Copies })
+            .ToList(),
+        cancellationToken);
+
+    private static void InsertCopies(SqliteConnection connection, SqliteTransaction transaction, string sql, IReadOnlyList<MergedCopy> copies, params (string Name, object? Value)[] owner)
+    {
+        for (var position = 0; position < copies.Count; position++)
+        {
+            var copy = copies[position];
+            StoreSql.Execute(
+                connection,
+                transaction,
+                sql,
+                [
+                    .. owner,
+                    ("$position", position),
+                    ("$server", copy.ServerId),
+                    ("$item", copy.ItemId),
+                    ("$kind", copy.Kind.ToString()),
+                    ("$local", copy.IsLocal),
+                    ("$tmdb", copy.Tmdb),
+                    ("$imdb", copy.Imdb),
+                    ("$tvdb", copy.Tvdb),
+                    ("$title", copy.Title),
+                    ("$year", copy.Year)
+                ]);
+        }
+    }
+
+    // The copies by owner, in order. A merge row also gives its id and date.
+    private static Dictionary<TKey, (Guid MergeId, DateTimeOffset SavedUtc, List<MergedCopy> Copies)> ReadCopies<TKey>(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string sql,
+        Func<SqliteDataReader, TKey> ownerOf)
+        where TKey : notnull
+    {
+        var owners = new Dictionary<TKey, (Guid, DateTimeOffset, List<MergedCopy> Copies)>();
+        using var command = StoreSql.Command(connection, transaction, sql);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var owner = ownerOf(reader);
+            if (!owners.TryGetValue(owner, out var entry))
+            {
+                var isMerge = reader.FieldCount > 10;
+                entry = (
+                    isMerge ? Guid.ParseExact(reader.GetString(10), "N") : Guid.Empty,
+                    isMerge ? new DateTimeOffset(reader.GetInt64(11), TimeSpan.Zero) : default,
+                    []);
+                owners[owner] = entry;
+            }
+
+            entry.Copies.Add(new MergedCopy
+            {
+                ServerId = reader.GetString(1),
+                ItemId = reader.GetString(2),
+                Kind = Enum.TryParse<ContentKind>(reader.GetString(3), out var kind) ? kind : ContentKind.Movie,
+                IsLocal = reader.GetInt64(4) != 0,
+                Tmdb = StoreSql.TextOrNull(reader, 5),
+                Imdb = StoreSql.TextOrNull(reader, 6),
+                Tvdb = StoreSql.TextOrNull(reader, 7),
+                Title = StoreSql.TextOrNull(reader, 8),
+                Year = StoreSql.IntOrNull(reader, 9)
+            });
+        }
+
+        return owners;
     }
 
     private static DateTime ToUtc(DateTime date) => date.Kind switch

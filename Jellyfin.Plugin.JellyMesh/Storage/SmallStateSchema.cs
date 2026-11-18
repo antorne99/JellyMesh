@@ -103,6 +103,34 @@ public static class SmallStateSchema
             rating REAL,
             PRIMARY KEY (title_id, user_id)) WITHOUT ROWID;
         CREATE INDEX kept_user_states_by_user ON kept_user_states (user_id);
+        CREATE TABLE kept_title_copies (
+            title_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            server_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            is_local INTEGER NOT NULL,
+            tmdb TEXT,
+            imdb TEXT,
+            tvdb TEXT,
+            title TEXT,
+            year INTEGER,
+            PRIMARY KEY (title_id, position)) WITHOUT ROWID;
+        CREATE TABLE kept_merge_copies (
+            removed_server_id TEXT NOT NULL,
+            merge_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            server_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            is_local INTEGER NOT NULL,
+            tmdb TEXT,
+            imdb TEXT,
+            tvdb TEXT,
+            title TEXT,
+            year INTEGER,
+            saved_utc INTEGER NOT NULL,
+            PRIMARY KEY (removed_server_id, merge_id, position)) WITHOUT ROWID;
         """;
 
     /// <summary>

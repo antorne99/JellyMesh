@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Dedup;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -48,4 +49,21 @@ public interface IKeptWatchStateStore
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>How many titles went.</returns>
     Task<int> PruneAsync(DateTime savedBeforeUtc, IReadOnlySet<Guid> users, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Saves the manual merges a removed server had a copy in, before its copies leave them, in place of those saved for it.
+    /// </summary>
+    /// <param name="serverId">The removed server.</param>
+    /// <param name="merges">Its merges, with all their copies.</param>
+    /// <param name="savedUtc">When, in UTC: they go with the titles kept as long.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task SaveMergesAsync(Guid serverId, IReadOnlyList<ManualMerge> merges, DateTime savedUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the manual merges saved for removed servers.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The merges, each dated when it was saved.</returns>
+    Task<IReadOnlyList<ManualMerge>> ReadMergesAsync(CancellationToken cancellationToken);
 }
