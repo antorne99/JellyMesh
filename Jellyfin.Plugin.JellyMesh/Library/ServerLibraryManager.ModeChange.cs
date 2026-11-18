@@ -94,13 +94,6 @@ public sealed partial class ServerLibraryManager
         }
         else
         {
-            // A library made before a crash is recorded, so it goes with the others; then no intent is left.
-            var root = _store.Read(config => config.FederatedFolderPath);
-            if (root.Length > 0 && ReadFolders() is { } folders)
-            {
-                ResolvePending(serverId, owner, root, folders);
-            }
-
             ForgetPendingInNone();
         }
 
