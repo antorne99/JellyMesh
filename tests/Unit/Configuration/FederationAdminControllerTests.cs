@@ -585,6 +585,20 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task The_mode_of_an_added_server_is_kept_even_when_its_libraries_cannot_start_yet()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>()))
+            .Returns(AutomaticLibrariesRequest.Refused(AutomaticLibrariesOutcome.NoFederatedFolder));
+        var request = new AddServerRequest { Name = _request.Name, Url = _request.Url, Username = _request.Username, Password = _request.Password, LibraryMode = LibraryMode.ByRemoteLibrary };
+
+        var id = (await ControllerFor(fixture, libraries: libraries.Object).AddServer(request, CancellationToken.None)).Value!.Id;
+
+        Assert.Equal(LibraryMode.ByRemoteLibrary, fixture.Store.Configuration.Servers.Single(server => server.Id == id).LibraryMode);
+    }
+
+    [Fact]
     public async Task The_mode_of_the_add_form_wins_and_none_switches_nothing_on()
     {
         using var fixture = new RegistryFixture();

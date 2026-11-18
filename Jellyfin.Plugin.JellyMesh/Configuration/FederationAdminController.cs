@@ -195,11 +195,19 @@ public class FederationAdminController : ControllerBase
 
         _sync.PrepareServerFolders();
 
-        // The libraries come once a sync has read the remote libraries; without a federated folder the server stays in none mode.
+        // The mode is kept at once, so that a check makes the libraries once the folder is set and a sync read the remote ones.
         var mode = request.LibraryMode ?? _store.Read(config => config.NewServerLibraryMode);
         if (mode != LibraryMode.None)
         {
-            _libraries.Enable(result.Value!.Id, mode);
+            var id = result.Value!.Id;
+            _store.Update(config =>
+            {
+                if (config.Servers.FirstOrDefault(server => server.Id == id) is { } server)
+                {
+                    server.LibraryMode = mode;
+                }
+            });
+            _libraries.Enable(id, mode);
         }
 
         return ToStatus(result.Value!);

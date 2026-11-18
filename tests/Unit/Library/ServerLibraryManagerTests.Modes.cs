@@ -174,4 +174,15 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(fixture.Libraries.Created);
         Assert.Equal(LibraryMode.ByType, fixture.Server.LibraryMode);
     }
+
+    [Fact]
+    public async Task A_server_added_in_a_mode_before_the_federated_folder_was_set_gets_its_libraries_at_a_check()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.LibraryMode = LibraryMode.ByRemoteLibrary;
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Film", "Casa - Film 4K", "Casa - Serie"], fixture.Libraries.Created.Select(call => call.Name).Order(StringComparer.Ordinal));
+    }
 }
