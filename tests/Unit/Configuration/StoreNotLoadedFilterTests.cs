@@ -43,14 +43,14 @@ public class StoreNotLoadedFilterTests
         { "Library", "GetDownload" }
     };
 
-    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, IPluginConfigurationStore? store = null)
+    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, StoreNotLoadedFilter? filter = null)
     {
         var context = new ResourceExecutingContext(
             new ActionContext(new DefaultHttpContext(), new RouteData(), action),
             new List<IFilterMetadata>(),
             new List<IValueProviderFactory>());
         var ran = false;
-        await new StoreNotLoadedFilter(store ?? _store, _authorization.Object).OnResourceExecutionAsync(context, () =>
+        await (filter ?? new StoreNotLoadedFilter(_store, _authorization.Object)).OnResourceExecutionAsync(context, () =>
         {
             ran = true;
             return Task.FromResult(new ResourceExecutedContext(context, new List<IFilterMetadata>()));
@@ -124,6 +124,27 @@ public class StoreNotLoadedFilterTests
         Assert.True(ran);
         Assert.Null(context.Result);
         _authorization.Verify(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()), Times.Never);
+    }
+
+    // The filter lives as long as the server: once the database has loaded, a later failure blocks no one again.
+    [Fact]
+    public async Task OnceTheDatabaseHasLoadedAUserWhoIsNoAdminPassesForGood()
+    {
+        var filter = new StoreNotLoadedFilter(_store, _authorization.Object);
+        var browse = ProviderFixture.Stock("Items", "GetItems");
+        _store.Unavailable = true;
+
+        var (before, _) = await RunAsync(browse, filter);
+        _store.Unavailable = false;
+        var (loaded, ranLoaded) = await RunAsync(browse, filter);
+        _store.Unavailable = true;
+        var (later, ranLater) = await RunAsync(browse, filter);
+
+        Assert.IsType<ContentResult>(before.Result);
+        Assert.True(ranLoaded);
+        Assert.Null(loaded.Result);
+        Assert.True(ranLater);
+        Assert.Null(later.Result);
     }
 
     [Fact]

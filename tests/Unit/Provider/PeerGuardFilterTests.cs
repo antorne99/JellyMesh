@@ -1241,6 +1241,7 @@ public class PeerPlaybackInfoFilterTests
         return new OkObjectResult(new PlaybackInfoResponse { PlaySessionId = playSession, ErrorCode = error });
     }
 
+    // This filter lets everyone by while the peers cannot be read; StoreNotLoadedFilter stops non-admins (D32).
     [Fact]
     public async Task While_the_peers_cannot_be_read_a_local_user_plays_as_on_stock()
     {
