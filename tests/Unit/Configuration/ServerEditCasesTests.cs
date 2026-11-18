@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using Microsoft.AspNetCore.Http;
@@ -411,6 +412,30 @@ public sealed partial class ServerEditTests
         await Controller().SaveServerEdit(id, Edit(libraries: ["1"]), cancel.Token);
 
         _sync.Verify(service => service.StartServerSync(id), Times.Once);
+    }
+
+    [Fact]
+    public async Task Entering_again_the_password_of_a_server_whose_credentials_no_longer_decrypt_resumes_every_server()
+    {
+        var healthy = await AddAsync("1");
+        _fixture.Store.Configuration.Servers.Add(new RemoteServerConfig
+        {
+            Id = Guid.NewGuid(),
+            Name = "Broken",
+            Url = OtherUrl,
+            JellyfinServerId = FirstId,
+            EncryptedCredentials = _fixture.Vault.Protect(Guid.NewGuid(), TestValues.Credentials)!
+        });
+        var broken = _fixture.Store.Configuration.Servers.Last().Id;
+        Assert.Equal(KeyState.Wrong, _fixture.Vault.GetKeyState());
+
+        var empty = await Controller().SaveServerEdit(broken, Edit(name: "Broken", url: OtherUrl), CancellationToken.None);
+        var entered = await Controller().SaveServerEdit(broken, Edit(name: "Broken", url: OtherUrl, password: TestValues.Password), CancellationToken.None);
+
+        Assert.Equal(RemoteEditField.Password, Refusal(empty).Failure.Field);
+        Assert.False(Assert.IsType<ServerStatus>(entered.Value).NeedsPassword);
+        Assert.Equal(KeyState.Ok, _fixture.Vault.GetKeyState());
+        Assert.NotNull(_fixture.Vault.Unprotect(healthy, _fixture.Store.Configuration.Servers.First().EncryptedCredentials));
     }
 
     // Makes the registry keep a login, as a call would, with the token of the saved user.
