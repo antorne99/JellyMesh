@@ -96,7 +96,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
 
         if (!confirmed)
         {
-            var libraries = _libraries.GetState(serverId).Libraries.Select(library => library.Name).ToList();
+            var libraries = _libraries.GetState(serverId).Libraries.Where(library => !library.Adopted).Select(library => library.Name).ToList();
             return new ServerRenameRequest(ServerRenameOutcome.ConfirmationRequired, Task.CompletedTask, libraries);
         }
 

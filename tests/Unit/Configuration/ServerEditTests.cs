@@ -272,6 +272,22 @@ public sealed class ServerEditTests : IDisposable
     }
 
     [Fact]
+    public async Task A_rename_leaves_out_an_adopted_library_it_never_renames()
+    {
+        var id = await AddAsync("1");
+        _libraries.Setup(manager => manager.GetState(It.IsAny<Guid>())).Returns(new AutomaticLibrariesState(
+            true,
+            false,
+            [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Film di casa") { Adopted = true }, new AutomaticLibraryStatus(ServerLibraryKind.Series, "Friend - Serie")],
+            [],
+            AutomaticLibrariesError.None));
+
+        var result = await Controller().CheckServerEdit(id, Edit(name: "Casa"), CancellationToken.None);
+
+        Assert.Equal(["Friend - Serie"], Assert.IsType<ServerEditCheck>(result.Value).Consequences.Rename?.Libraries);
+    }
+
+    [Fact]
     public async Task Libraries_left_out_or_no_longer_visible_are_removed()
     {
         var id = await AddAsync("1", "2", "9");

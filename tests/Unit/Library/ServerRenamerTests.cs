@@ -103,6 +103,21 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
+    public void AnAdoptedLibraryIsNotListedAmongThoseToRename()
+    {
+        _libraries.Setup(libraries => libraries.GetState(_server)).Returns(new AutomaticLibrariesState(
+            true,
+            false,
+            [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Film di casa") { Adopted = true }, new AutomaticLibraryStatus(ServerLibraryKind.Series, "Casa - Serie")],
+            [],
+            AutomaticLibrariesError.None));
+
+        var answer = _renamer.Rename(_server, "Mare", false);
+
+        Assert.Equal(["Casa - Serie"], answer.Libraries);
+    }
+
+    [Fact]
     public void WhileStubsOfTheServerWaitForAScan_ARenameIsRefused()
     {
         _pending = true;
