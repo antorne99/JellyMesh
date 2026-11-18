@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Integration 7 of the per-server spec: the libraries JellyMesh keeps for a server (D6, D7, D16, D20, decisions 131 and 140).
+# The adoption of 0.6 (§10 rows 440-441) is proven on the remote library layout by adoption.sh.
 # Starts a private instance with the plugin and a stock remote, checks, then removes both with their volumes.
 # usage: run.sh   (PREFIX and PORT pick the private containers, KEEP=1 leaves them running)
 set -euo pipefail
@@ -134,6 +135,10 @@ only_path() { # <library name> <path> <type>
   folder "$1" | jq -e --arg p "$2" --arg t "$3" '.Locations == [$p] and .CollectionType == $t' >/dev/null
 }
 
+no_paths() { # <library name> <type>
+  folder "$1" | jq -e --arg t "$2" '.Locations == [] and .CollectionType == $t' >/dev/null
+}
+
 echo "== setup: $LOCAL (port $PORT) and $REMOTE"
 cleanup
 docker network create "$NET" >/dev/null
@@ -259,7 +264,7 @@ wait_missing() { # <library name>
   echo "$1 was not deleted" >&2; return 1
 }
 
-echo "== an admin library on the server folder before the switch-on is never taken [131]"
+echo "== an admin library with exactly the paths and type the plugin would give is adopted [131, row 441]"
 code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false,"Confirmed":true}' | head -1)
 check "the confirmed switch off answers 202" [ "$code" = 202 ]
 wait_libraries
@@ -268,19 +273,16 @@ code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enab
 check "switching on answers 202" [ "$code" = 202 ]
 wait_libraries
 scan_idle
-check "Film is created next to the admin library" only_path "$FILM" "$FILM_PATH" movies
-delete "/Library/VirtualFolders?name=$(urlencode "$FILM")&refreshLibrary=false"
-scan_idle
-sync_full
-check "the admin library is not taken for the deleted Film" [ "$(registry)" = "$(jq -nc --arg s "$SERIE" '[$s]')" ]
-check "the deleted Film is listed as gone" [ "$(released)" = "$(jq -nc --arg f "$FILM" '[$f]')" ]
+check "no Film is created next to the admin library" missing "$FILM"
+check "the admin library is adopted" [ "$(registry)" = "$(jq -nc --arg s "$SERIE" '["Mine on the folder",$s]')" ]
+check "and keeps its path and type" only_path 'Mine on the folder' "$FILM_PATH" movies
 
 echo "== removing the server deletes its libraries with no confirmation [140]"
 delete "/JellyMesh/Admin/Servers/$SERVER"
 wait_missing "$SERIE"
 echo "   libraries: $(folders | jq -c '[.[].Name]')"
 check "the registry library is deleted" missing "$SERIE"
-check "the admin library on the server folder stays" only_path 'Mine on the folder' "$FILM_PATH" movies
+check "the adopted library stays, released without the server folder" no_paths 'Mine on the folder' movies
 check "the admin library elsewhere stays" only_path "NAS  Casa - Film" /other movies
 check "nothing is left to delete" held_none
 
