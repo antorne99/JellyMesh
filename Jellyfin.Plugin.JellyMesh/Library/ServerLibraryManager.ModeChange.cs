@@ -26,7 +26,7 @@ public sealed partial class ServerLibraryManager
     /// <inheritdoc />
     public LibraryModeChange? PreviewModeChange(Guid serverId, LibraryMode mode)
     {
-        var olderLayout = _stubs.UsesOlderLayout() ?? false;
+        var usesOlder = _stubs.UsesOlderLayout();
         var folders = ReadFolders() ?? [];
         return _store.Read(config =>
         {
@@ -35,14 +35,15 @@ public sealed partial class ServerLibraryManager
                 return null;
             }
 
+            // As the change does: nothing goes while the layout is unknown, and a by-type library takes its type folders.
             var root = config.FederatedFolderPath;
-            var plan = root.Length == 0 ? [] : LibraryPlan.For(server, root, olderLayout || StubLayout.HasOlderStubFiles(root), mode);
+            var plan = root.Length == 0 || usesOlder is not { } older ? [] : LibraryPlan.For(server, root, older || StubLayout.HasOlderStubFiles(root), mode);
             if (mode != LibraryMode.None && plan.Count == 0)
             {
                 return new LibraryModeChange(server.LibraryMode, mode, [], []);
             }
 
-            var kept = plan.Select(planned => TakeOverMatch(server, mode, planned, folders)).OfType<AutomaticLibraryConfig>().ToList();
+            var kept = plan.Select(planned => TakeOverMatch(server, mode, WithTypeFolders(planned, root, serverId), folders)).OfType<AutomaticLibraryConfig>().ToList();
             var retiring = server.AutomaticLibraryRegistry.Where(record => Retires(mode, record) && !kept.Contains(record)).ToList();
             return new LibraryModeChange(
                 server.LibraryMode,
@@ -123,6 +124,12 @@ public sealed partial class ServerLibraryManager
             }
         });
     }
+
+    // A planned library with the type folders that hold titles of its kind, as a by-type library takes them.
+    private PlannedLibrary WithTypeFolders(PlannedLibrary wanted, string root, Guid serverId)
+        => wanted.RemoteLibraryId.Length > 0 || TypeFolderPaths(wanted.Kind, root, serverId) is not { } held
+            ? wanted
+            : wanted with { Paths = [.. wanted.Paths, .. held.Where(path => !wanted.Paths.Any(other => FederatedFolderLinkChecker.IsSamePath(other, path)))] };
 
     // Deletes the plugin libraries of the old mode and releases its adopted ones, once those of the new mode are there and
     // scanned. Called again by each check, so a change stopped halfway goes on.

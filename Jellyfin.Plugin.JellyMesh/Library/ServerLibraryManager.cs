@@ -623,9 +623,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             foreach (var wanted in plan)
             {
                 // A by-type library also takes the type folders that came to hold titles, as during a folder migration.
-                var planned = wanted.RemoteLibraryId.Length > 0 || TypeFolderPaths(wanted.Kind, root, serverId) is not { } held
-                    ? wanted
-                    : wanted with { Paths = [.. wanted.Paths, .. held.Where(path => !wanted.Paths.Any(other => FederatedFolderLinkChecker.IsSamePath(other, path)))] };
+                var planned = WithTypeFolders(wanted, root, serverId);
                 if (records.FirstOrDefault(record => string.Equals(KeyOf(record), planned.Key, StringComparison.OrdinalIgnoreCase)) is { } record)
                 {
                     changed |= AddFolders(serverId, record, planned, root, olderLayout, folders);

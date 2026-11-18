@@ -336,4 +336,32 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(LibraryMode.None, fixture.Server.LibraryMode);
         Assert.Empty(fixture.Server.AutomaticLibraryRegistry);
     }
+
+    [Fact]
+    public async Task The_preview_counts_the_type_folders_a_by_type_library_takes_as_the_change_does()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.FilmsB);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+        HoldsFilms(fixture, _filmsFolder, _filmsBFolder);
+
+        var change = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByType);
+        fixture.Server.LibraryMode = LibraryMode.ByType;
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Equal(["Casa - Film"], change!.DeletedLibraries);
+        Assert.Equal(change.DeletedLibraries, fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task While_the_layout_is_unknown_the_preview_deletes_nothing_as_the_change_does()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByType);
+        fixture.Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns((bool?)null);
+
+        var change = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByRemoteLibrary);
+
+        Assert.Empty(change!.DeletedLibraries);
+        Assert.NotEmpty(fixture.Manager.PreviewModeChange(_serverId, LibraryMode.None)!.DeletedLibraries);
+    }
 }
