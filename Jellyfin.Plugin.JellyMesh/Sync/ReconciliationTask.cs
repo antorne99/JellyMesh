@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Sync;
 
 /// <summary>
 /// Reads every remote in full at the configured time, which is what catches deletions (plan §3.1), then copies the plugin
-/// database (row 427).
+/// database (row 427) and deletes the damaged files past their 30 days (D35).
 /// </summary>
 public sealed class ReconciliationTask : SyncTask
 {
@@ -64,6 +64,7 @@ public sealed class ReconciliationTask : SyncTask
             if (!cancellationToken.IsCancellationRequested)
             {
                 await BackUpAsync(cancellationToken).ConfigureAwait(false);
+                await DeleteExpiredDamagedAsync(cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -82,6 +83,23 @@ public sealed class ReconciliationTask : SyncTask
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogWarning("The nightly copy of the JellyMesh database failed: {Error}", exception.Message);
+        }
+    }
+
+    // Damaged files that cannot go yet are logged and stay for the next night; it does not fail the reconciliation (D35).
+    private async Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _database.DeleteExpiredDamagedAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (StoreSuspendedException)
+        {
+            _logger.LogWarning("The expired damaged JellyMesh database files were kept: the database is suspended");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning("The expired damaged JellyMesh database files cannot be deleted: {Error}", exception.Message);
         }
     }
 

@@ -283,6 +283,47 @@ public sealed class SyncTaskTests : IDisposable
         Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
     }
 
+    // Damaged files past their 30 days go after the copy (D35).
+    [Fact]
+    public async Task TheReconciliationDeletesExpiredDamagedFilesAfterTheCopy()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sync")).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("copy")).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sweep")).Returns(Task.CompletedTask);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["sync", "copy", "sweep"], steps);
+    }
+
+    [Fact]
+    public async Task ACopyThatFailsStillLeavesTheSweep()
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk full"));
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        _database.Verify(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task ASweepThatCannotRunIsLoggedAndDoesNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+    }
+
     [Fact]
     public async Task ACancelledReconciliationMakesNoCopy()
     {
@@ -294,5 +335,6 @@ public sealed class SyncTaskTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.ExecuteAsync(NoProgress, cancellation.Token));
 
         _database.Verify(d => d.BackUpAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _database.Verify(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

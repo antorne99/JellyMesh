@@ -79,10 +79,19 @@ public interface IPluginDatabase
 
     /// <summary>
     /// Copies the database with <c>VACUUM INTO</c> into an owner-only file next to it, after the writes before it, and keeps
-    /// the last 2 copies, as the nightly reconciliation asks.
+    /// the last 2 copies, overwriting the others before deleting them, as the nightly reconciliation asks.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The new copy.</returns>
     /// <exception cref="StoreSuspendedException">The database is not healthy.</exception>
     Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Overwrites and deletes the damaged files set aside, with their logs, 30 days after the date in their name (D35).
+    /// A file that cannot go is logged and left for the next night.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when the sweep is done.</returns>
+    /// <exception cref="StoreSuspendedException">The database is not healthy, so its damaged files may still be needed.</exception>
+    Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken);
 }

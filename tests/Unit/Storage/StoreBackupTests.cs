@@ -21,6 +21,8 @@ public sealed class StoreBackupTests : IDisposable
 
     private readonly FixedClock _clock = new(new DateTimeOffset(2026, 11, 18, 3, 0, 0, TimeSpan.Zero));
 
+    private readonly CapturingLogger<PluginDatabase> _logger = new();
+
     public StoreBackupTests() => Directory.CreateDirectory(Folder);
 
     // Under the temp folder, not the bind mount: WAL needs shared memory a host mount may not give.
@@ -46,7 +48,7 @@ public sealed class StoreBackupTests : IDisposable
     {
         var database = new PluginDatabase(
             Folder,
-            new CapturingLogger<PluginDatabase>(),
+            _logger,
             guard ?? KeyFileGuards.ForThisSystem(),
             SchemaMigrations.All,
             1,
@@ -492,6 +494,242 @@ public sealed class StoreBackupTests : IDisposable
         Assert.Equal(StoreState.Healthy, database.Health.State);
         Assert.Null(database.Recovery);
         Assert.Empty(Directory.GetFiles(Folder, "*damaged*"));
+    }
+
+    private string[] DamagedFiles() => Directory.GetFiles(Folder, PluginDatabase.FileName + ".damaged-*").Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray()!;
+
+    private string Plant(string name, int length = 4096)
+    {
+        var path = Path.Combine(Folder, name);
+        var bytes = new byte[length];
+        Array.Fill(bytes, (byte)'s');
+        File.WriteAllBytes(path, bytes);
+        return path;
+    }
+
+    // A second name for the file, which keeps its bytes readable after the first name is deleted.
+    private static string HardLink(string path)
+    {
+        var link = path + ".link";
+        using var process = System.Diagnostics.Process.Start("ln", [path, link]);
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+        return link;
+    }
+
+    private static void AssertZeroed(string link, int length)
+    {
+        var bytes = File.ReadAllBytes(link);
+        Assert.Equal(length, bytes.Length);
+        Assert.All(bytes, b => Assert.Equal(0, b));
+    }
+
+    // Damaged files and their logs go 30 days after the date in their name (D35); names that carry no date stay.
+    [Fact]
+    public async Task DamagedFilesAndTheirLogsGoAfterThirtyDays()
+    {
+        var database = Open();
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Plant("jellymesh.db.damaged-20261018030000");
+        Plant("jellymesh.db.damaged-20261018030000-wal");
+        Plant("jellymesh.db.damaged-20261018030000-2");
+        Plant("jellymesh.db.damaged-20261018030000-2-journal");
+        Plant("jellymesh.db.damaged-20261019030000");
+        Plant("jellymesh.db.damaged-20261019030001-wal");
+        Plant("jellymesh.db.damaged-20261019030001");
+        Plant("jellymesh.db.damaged-notadate");
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+
+        Assert.Equal(["jellymesh.db.damaged-20261019030001", "jellymesh.db.damaged-20261019030001-wal", "jellymesh.db.damaged-notadate"], DamagedFiles());
+    }
+
+    [Fact]
+    public async Task AnExpiredDamagedFileIsOverwrittenBeforeItGoes()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var database = Open();
+        var link = HardLink(Plant("jellymesh.db.damaged-20261001030000", 10000));
+        var log = HardLink(Plant("jellymesh.db.damaged-20261001030000-wal", 300));
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+
+        Assert.Equal(["jellymesh.db.damaged-20261001030000-wal.link", "jellymesh.db.damaged-20261001030000.link"], DamagedFiles());
+        AssertZeroed(link, 10000);
+        AssertZeroed(log, 300);
+    }
+
+    // A date ahead of the clock, as a clock running fast writes, counts from the first night that sees it.
+    [Fact]
+    public async Task ADamagedFileDatedAheadGoesThirtyDaysAfterTheFirstSweepSawIt()
+    {
+        var database = Open();
+        var path = Plant("jellymesh.db.damaged-20991231000000");
+        File.SetLastWriteTimeUtc(path, new DateTime(2099, 12, 31, 0, 0, 0, DateTimeKind.Utc));
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromDays(29);
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+        Assert.True(File.Exists(path));
+
+        _clock.Now += TimeSpan.FromDays(1);
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+        Assert.False(File.Exists(path));
+    }
+
+    // With a date ahead, the write time stands in for it: a rename keeps the database's own, so the file may go sooner.
+    [Fact]
+    public async Task ADamagedFileDatedAheadWithAnOldWriteTimeGoesByItsWriteTime()
+    {
+        var database = Open();
+        var path = Plant("jellymesh.db.damaged-20991231000000");
+        File.SetLastWriteTimeUtc(path, new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+
+        Assert.False(File.Exists(path));
+    }
+
+    // A link dated ahead is deleted, never stamped, so nothing outside the folder is written.
+    [Fact]
+    public async Task ADamagedLinkDatedAheadIsDeletedWithoutTouchingItsTarget()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var database = Open();
+        var target = Path.Combine(Folder, "outside");
+        await File.WriteAllTextAsync(target, "kept");
+        var written = new DateTime(2099, 12, 31, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(target, written);
+        var link = Path.Combine(Folder, "jellymesh.db.damaged-20991231000000");
+        File.CreateSymbolicLink(link, target);
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+
+        Assert.False(File.Exists(link));
+        Assert.Equal("kept", await File.ReadAllTextAsync(target));
+        Assert.Equal(written, File.GetLastWriteTimeUtc(target));
+    }
+
+    // A file that cannot be overwritten is not deleted unread: it stays with a warning, and the next night tries again.
+    [Fact]
+    public async Task ADamagedFileThatCannotBeOverwrittenStaysUntilTheNextNight()
+    {
+        var database = Open();
+        var path = Plant("jellymesh.db.damaged-20261001030000");
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+
+            Assert.True(File.Exists(path));
+            Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _logger.Levels);
+        }
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+        Assert.False(File.Exists(path));
+    }
+
+    // While the store is not healthy a damaged file may be all that is left of it, and a recovery cut short still needs it.
+    [Fact]
+    public async Task ASuspendedDatabaseKeepsItsDamagedFiles()
+    {
+        Directory.CreateDirectory(DatabasePath);
+        var database = Open();
+        Plant("jellymesh.db.damaged-20261001030000");
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.DeleteExpiredDamagedAsync(CancellationToken.None));
+
+        Assert.Equal(["jellymesh.db.damaged-20261001030000"], DamagedFiles());
+    }
+
+    [Fact]
+    public async Task PrunedCopiesAreOverwrittenBeforeTheyGo()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var database = Open();
+        await AddItemAsync(database, "secret");
+        var first = await database.BackUpAsync(CancellationToken.None);
+        var length = (int)new FileInfo(first.FilePath).Length;
+        var link = HardLink(first.FilePath);
+        for (var night = 1; night <= 2; night++)
+        {
+            _clock.Now += TimeSpan.FromDays(1);
+            await database.BackUpAsync(CancellationToken.None);
+        }
+
+        Assert.False(File.Exists(first.FilePath));
+        AssertZeroed(link, length);
+    }
+
+    // A copy that cannot be overwritten stays with a warning, the new copy is still made, and the next night prunes it.
+    [Fact]
+    public async Task ACopyThatCannotBePrunedStaysUntilTheNextNight()
+    {
+        var database = Open();
+        var first = await database.BackUpAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromDays(1);
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromDays(1);
+        using (new FileStream(first.FilePath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await database.BackUpAsync(CancellationToken.None);
+
+            Assert.True(File.Exists(first.FilePath));
+            Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _logger.Levels);
+        }
+
+        _clock.Now += TimeSpan.FromDays(1);
+        await database.BackUpAsync(CancellationToken.None);
+
+        Assert.Equal(["jellymesh.db.backup-20261120030000", "jellymesh.db.backup-20261121030000"], Copies());
+    }
+
+    [Fact]
+    public async Task ACopyReplacedInTheSameSecondIsOverwrittenFirst()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var database = Open();
+        await AddItemAsync(database, "secret");
+        var first = await database.BackUpAsync(CancellationToken.None);
+        var length = (int)new FileInfo(first.FilePath).Length;
+        var link = HardLink(first.FilePath);
+
+        await database.BackUpAsync(CancellationToken.None);
+
+        AssertZeroed(link, length);
+    }
+
+    [Fact]
+    public async Task ALeftoverPartialCopyIsOverwrittenBeforeItGoes()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var database = Open();
+        var partial = Plant("jellymesh.db.backup-20261117030000.partial", 5000);
+        var link = HardLink(partial);
+
+        await database.BackUpAsync(CancellationToken.None);
+
+        Assert.False(File.Exists(partial));
+        AssertZeroed(link, 5000);
     }
 
     // Fills each new file once spoiled, which VACUUM INTO refuses (F23).
