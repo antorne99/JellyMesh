@@ -29,7 +29,7 @@ internal sealed class StubFixture : IDisposable
     public StubFixture()
     {
         Root = Path.Combine(_data, "federata");
-        Sync = new SyncFixture(stubFolder: Path.Combine(_data, "plugin"));
+        Sync = new SyncFixture();
         Sync.Store.Configuration.FederatedFolderPath = Root;
         Registry = Sync.Stubs;
         Merges = new ManualMergeStore(Database, new CapturingLogger<ManualMergeStore>());
@@ -83,7 +83,7 @@ internal sealed class StubFixture : IDisposable
 
     public StrmSigner Signer { get; }
 
-    public TestDatabase Database { get; } = new();
+    public TestDatabase Database => Sync.Database;
 
     public ManualMergeStore Merges { get; }
 
@@ -134,7 +134,6 @@ internal sealed class StubFixture : IDisposable
         Registry.Dispose();
         Sync.Dispose();
         Merges.Dispose();
-        Database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);

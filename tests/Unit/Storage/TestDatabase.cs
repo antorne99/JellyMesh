@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Security;
@@ -9,45 +12,98 @@ using Microsoft.Data.Sqlite;
 namespace Jellyfin.Plugin.JellyMesh.Tests.Storage;
 
 /// <summary>
-/// A plugin database at the latest schema in a temp folder of its own, which can be suspended to stand for one that
-/// cannot be opened.
+/// The real plugin database over a folder, which counts its write transactions and can interrupt one or be suspended.
 /// </summary>
 internal sealed class TestDatabase : IPluginDatabase, IDisposable
 {
-    private readonly PluginDatabase _database;
+    // SQLITE_FULL, as a disk that fills up halfway through a write.
+    private const int DiskFull = 13;
+
+    private readonly PluginDatabase _inner;
+    private int _writes;
+    private int _interruptAfter = -1;
+    private long _reopened;
+    private readonly bool _ownsFolder;
+
+    public TestDatabase(string folder)
+    {
+        Folder = folder;
+        _inner = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1);
+    }
 
     // Under the temp folder, not the bind mount: WAL needs shared memory a host mount may not give.
     public TestDatabase()
+        : this(Path.Combine(Path.GetTempPath(), "jellymesh-db-" + Guid.NewGuid().ToString("N")))
     {
-        Folder = Path.Combine(Path.GetTempPath(), "jellymesh-db-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Folder);
-        _database = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1);
+        _ownsFolder = true;
     }
 
     public string Folder { get; }
 
-    /// <summary>Gets or sets a value indicating whether every read and write throws as on a suspended store.</summary>
+    /// <summary>Gets how many write transactions were started.</summary>
+    public int Writes => Volatile.Read(ref _writes);
+
+    /// <summary>Gets or sets a value indicating whether the store answers as suspended.</summary>
     public bool Suspended { get; set; }
 
-    /// <summary>Gets how many writes were committed.</summary>
-    public int Writes { get; private set; }
+    public StoreHealth Health => Suspended ? new StoreHealth(StoreState.Unavailable, "test") : _inner.Health;
 
-    public StoreHealth Health => Suspended ? new StoreHealth(StoreState.Unavailable, "Suspended by the test.") : _database.Health;
+    /// <summary>Makes the next write fail after its callback ran, so that it rolls back what it wrote.</summary>
+    /// <param name="exception">What the write throws; a disk-full error if null.</param>
+    public void InterruptNextWrite(Exception? exception = null)
+    {
+        Interrupt = exception ?? new SqliteException("disk full", DiskFull);
+        Volatile.Write(ref _interruptAfter, Writes);
+    }
 
-    public StoreHealth Retry() => _database.Retry();
+    private Exception? Interrupt { get; set; }
+
+    private Exception? ReadFailure { get; set; }
+
+    /// <summary>Makes the next read throw from inside its transaction, as a row that does not convert would.</summary>
+    /// <param name="exception">What the read throws.</param>
+    public void FailNextRead(Exception exception) => ReadFailure = exception;
+
+    public StoreRecovery? Recovery => _inner.Recovery;
+
+    public long Generation => _inner.Generation + Interlocked.Read(ref _reopened);
+
+    /// <summary>Counts as a reopen of the database, after which the rows may not be those read before.</summary>
+    public void Reopen() => Interlocked.Increment(ref _reopened);
+
+    public StoreHealth Retry() => _inner.Retry();
+
+    public void DismissRecovery() => _inner.DismissRecovery();
 
     public Task<T> ReadAsync<T>(Func<SqliteConnection, SqliteTransaction, T> read, CancellationToken cancellationToken)
     {
         ThrowIfSuspended();
-        return _database.ReadAsync(read, cancellationToken);
+        if (ReadFailure is { } failure)
+        {
+            ReadFailure = null;
+            return _inner.ReadAsync<T>((_, _) => throw failure, cancellationToken);
+        }
+
+        return _inner.ReadAsync(read, cancellationToken);
     }
 
     public async Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
     {
         ThrowIfSuspended();
-        var result = await _database.WriteAsync(write, cancellationToken).ConfigureAwait(false);
-        Writes++;
-        return result;
+        var number = Interlocked.Increment(ref _writes) - 1;
+        if (Interlocked.CompareExchange(ref _interruptAfter, -1, number) != number)
+        {
+            return await _inner.WriteAsync(write, cancellationToken);
+        }
+
+        var interrupt = Interrupt!;
+        return await _inner.WriteAsync<T>(
+            (connection, transaction) =>
+            {
+                write(connection, transaction);
+                throw interrupt;
+            },
+            cancellationToken);
     }
 
     public Task WriteAsync(Action<SqliteConnection, SqliteTransaction> write, CancellationToken cancellationToken)
@@ -62,28 +118,72 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
             cancellationToken);
     }
 
-    public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => _database.TruncateWalAsync(cancellationToken);
+    /// <summary>Reads every value of every row of the tables whose name starts with a prefix, as text.</summary>
+    /// <param name="prefix">The prefix of the table names.</param>
+    /// <returns>The values, one per line.</returns>
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "The table names come from the schema of a test database.")]
+    public Task<string> DumpAsync(string prefix) => _inner.ReadAsync(
+        (connection, transaction) =>
+        {
+            var tables = new List<string>();
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, length($prefix)) = $prefix ORDER BY name;";
+                command.Parameters.AddWithValue("$prefix", prefix);
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    tables.Add(reader.GetString(0));
+                }
+            }
 
-    /// <summary>Counts the rows of a table.</summary>
-    public long Count(string table) => _database.ReadAsync(
+            var text = new StringBuilder();
+            foreach (var table in tables)
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "SELECT * FROM \"" + table + "\";";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    for (var column = 0; column < reader.FieldCount; column++)
+                    {
+                        text.Append(reader.GetValue(column)).Append('\n');
+                    }
+                }
+            }
+
+            return text.ToString();
+        },
+        CancellationToken.None);
+
+    public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => _inner.TruncateWalAsync(cancellationToken);
+
+    public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => _inner.BackUpAsync(cancellationToken);
+
+    /// <summary>Counts the rows of a table, with an optional condition after its name.</summary>
+    [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "A table name of the test.")]
+    public long Count(string table) => _inner.ReadAsync(
         (connection, transaction) =>
         {
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
-#pragma warning disable CA2100 // A table name of the test.
             command.CommandText = "SELECT count(*) FROM " + table + ";";
-#pragma warning restore CA2100
             return (long)command.ExecuteScalar()!;
         },
         CancellationToken.None).GetAwaiter().GetResult();
 
     public void Dispose()
     {
-        _database.Dispose();
-        SqliteConnection.ClearAllPools();
-        if (Directory.Exists(Folder))
+        _inner.Dispose();
+        if (_ownsFolder)
         {
-            Directory.Delete(Folder, true);
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(Folder))
+            {
+                Directory.Delete(Folder, true);
+            }
         }
     }
 
@@ -91,7 +191,7 @@ internal sealed class TestDatabase : IPluginDatabase, IDisposable
     {
         if (Suspended)
         {
-            throw new StoreSuspendedException("Suspended by the test.");
+            throw new StoreSuspendedException("suspended for the test");
         }
     }
 }

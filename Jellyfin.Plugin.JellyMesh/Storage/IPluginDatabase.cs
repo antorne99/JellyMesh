@@ -16,6 +16,23 @@ public interface IPluginDatabase
     StoreHealth Health { get; }
 
     /// <summary>
+    /// Gets a number that changes each time the database is opened healthy, as after a retry or a restore from a copy, so
+    /// that rows read before can be told stale. Reading it never opens the database.
+    /// </summary>
+    long Generation { get; }
+
+    /// <summary>
+    /// Gets the last time a damaged database was set aside and replaced, which the page shows with the copy date until the
+    /// admin dismisses it; <c>null</c> when there is none. It opens the database on the first read.
+    /// </summary>
+    StoreRecovery? Recovery { get; }
+
+    /// <summary>
+    /// Forgets the last recovery once the admin has checked the server list.
+    /// </summary>
+    void DismissRecovery();
+
+    /// <summary>
     /// Opens the database again when it is not healthy, as the page's "Retry" asks.
     /// </summary>
     /// <returns>The state after the attempt.</returns>
@@ -59,4 +76,13 @@ public interface IPluginDatabase
     /// <returns><c>true</c> when the log was emptied; <c>false</c> when a reader kept it busy.</returns>
     /// <exception cref="StoreSuspendedException">The database is not healthy.</exception>
     Task<bool> TruncateWalAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Copies the database with <c>VACUUM INTO</c> into an owner-only file next to it, after the writes before it, and keeps
+    /// the last 2 copies, as the nightly reconciliation asks.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The new copy.</returns>
+    /// <exception cref="StoreSuspendedException">The database is not healthy.</exception>
+    Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken);
 }

@@ -52,8 +52,8 @@ public sealed class StubCleanupTaskTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private StubCleanupTask Task() => new(
-        _fixture.Registry,
+    private StubCleanupTask Task(StubRegistry? registry = null) => new(
+        registry ?? _fixture.Registry,
         _fixture.Resolver,
         _fixture.Sync.Index,
         _fixture.Sync.Registry,
@@ -120,6 +120,26 @@ public sealed class StubCleanupTaskTests : IDisposable
 
         Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
         Assert.All(_fixture.Registry.State.Stubs, stub => Assert.True(File.Exists(_fixture.Path_(stub.RelativePath))));
+        Assert.Empty(_calls);
+    }
+
+    // A registry that could not be read at the start is empty for lack of data, not because the stubs are gone.
+    [Fact]
+    public async Task ARegistryThatCannotBeReadLeavesTheFolderAlone()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
+        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.SyncAndMaterializeAsync();
+        GiveEveryStubAnItem();
+        var files = _fixture.Files;
+        _fixture.Sync.Database.Suspended = true;
+        using var unread = new StubRegistry(_fixture.Sync.Database, _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
+
+        await Assert.ThrowsAsync<IOException>(() => Task(unread).Run(new Progress<double>(), CancellationToken.None));
+
+        _fixture.Sync.Database.Suspended = false;
+        Assert.Equal(files, _fixture.Files);
+        Assert.Single(_fixture.Registry.State.Stubs);
         Assert.Empty(_calls);
     }
 

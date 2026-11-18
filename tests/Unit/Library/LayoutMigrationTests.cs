@@ -8,7 +8,6 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
-using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using MediaBrowser.Controller.Entities;
@@ -19,6 +18,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
@@ -34,7 +34,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-migration-" + Guid.NewGuid().ToString("N"));
     private readonly InMemoryConfigurationStore _store = new();
-    private readonly TestDatabase _database = new();
+    private readonly TestDatabase _database;
     private readonly WatchStateCarryLog _log;
     private readonly InMemoryLastServedStore _lastServed = new();
     private readonly Mock<ILibraryManager> _library = new();
@@ -66,6 +66,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Manual;
+        _database = new TestDatabase(Path.Combine(_data, "registry"));
         _registry = NewRegistry();
         SetUpLibraryPaths();
         _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
@@ -951,7 +952,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
 
     private string OldSeries => FederatedFolderLayout.SeriesPath(Root);
 
-    private StubRegistry NewRegistry() => new(Path.Combine(_data, "registry"), _store, new CapturingLogger<StubRegistry>());
+    private StubRegistry NewRegistry() => new(_database, _store, new CapturingLogger<StubRegistry>());
 
     private IEnumerable<string> NewPaths() => new[] { _serverA, _serverB }
         .SelectMany(server => new[] { FederatedFolderLayout.ServerMoviesPath(Root, server), FederatedFolderLayout.ServerSeriesPath(Root, server) });

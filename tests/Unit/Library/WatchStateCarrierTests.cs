@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Library;
-using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -15,6 +14,7 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
@@ -30,6 +30,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     private static readonly Guid _serverB = Guid.NewGuid();
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-carrier-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
@@ -52,14 +53,14 @@ public sealed class WatchStateCarrierTests : IDisposable
     private readonly User _mario = new("mario", "auth", "reset");
     private readonly User _luigi = new("luigi", "auth", "reset");
     private readonly List<User> _everyone;
-    private readonly TestDatabase _database = new();
     private WatchStateCarryLog _log;
     private string? _lastServedStub;
 
     public WatchStateCarrierTests()
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
-        _registry = new StubRegistry(Path.Combine(_data, "registry"), _store, new CapturingLogger<StubRegistry>());
+        _database = new TestDatabase(Path.Combine(_data, "registry"));
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
         _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _failingLookups.Contains(id) ? throw new IOException("/secret") : _items.GetValueOrDefault(id));
@@ -656,9 +657,11 @@ public sealed class WatchStateCarrierTests : IDisposable
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         _log.Dispose();
-        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
+        // The log alone fails, on a database of its own: the stub registry still reads and writes.
+        using var logDatabase = new TestDatabase();
+        _log = new WatchStateCarryLog(logDatabase, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.EnsureLoaded());
-        _database.Suspended = true;
+        logDatabase.Suspended = true;
 
         var move = Move(old, oldStub, (a, _serverA));
 
@@ -673,11 +676,11 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
 
-        _database.Suspended = false;
+        logDatabase.Suspended = false;
         report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
-        Assert.Equal(1, _database.Count("watch_state_carries"));
+        Assert.Equal(1, logDatabase.Count("watch_state_carries"));
     }
 
     [Fact]
@@ -1086,9 +1089,11 @@ public sealed class WatchStateCarrierTests : IDisposable
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         _log.Dispose();
-        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
+        // The log alone fails, on a database of its own: the stub registry still reads and writes.
+        using var logDatabase = new TestDatabase();
+        _log = new WatchStateCarryLog(logDatabase, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.EnsureLoaded());
-        _database.Suspended = true;
+        logDatabase.Suspended = true;
         var move = RemovingMove(old, oldStub, (a, _serverA));
 
         var report = await CarryAsync(move);
@@ -1100,7 +1105,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         // A run again does not put back the favorite the user took off meanwhile.
         Row(_mario, a).IsFavorite = false;
         _saves.Clear();
-        _database.Suspended = false;
+        logDatabase.Suspended = false;
         report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
