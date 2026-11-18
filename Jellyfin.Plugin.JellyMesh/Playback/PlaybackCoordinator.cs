@@ -296,13 +296,21 @@ public sealed class PlaybackCoordinator
         var handedOver = false;
         try
         {
+            // Taken before the call: a stop and reopen meanwhile replace it, and what opened then belongs to the stop.
+            var end = EndOf(serverId).Token;
             var opened = await GatedAsync(
                 serverId,
                 Times.StreamOpen,
                 (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
                 cancellationToken).ConfigureAwait(false);
+            if (opened.IsSuccess && end.IsCancellationRequested)
+            {
+                opened.Value!.Dispose();
+                return RemoteResult.Fail<RemoteContent>(RemoteFailure.UnknownServer);
+            }
+
             handedOver = opened.IsSuccess;
-            return handedOver ? RemoteResult.Success(opened.Value!.HoldUntilDisposed(place).EndsWith(EndOf(serverId).Token)) : opened;
+            return handedOver ? RemoteResult.Success(opened.Value!.HoldUntilDisposed(place).EndsWith(end)) : opened;
         }
         finally
         {
@@ -667,6 +675,7 @@ public sealed class PlaybackCoordinator
         // audio track would otherwise be refused by its own stream.
         var replaces = previous?.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId) ? previous.RemotePlaySessionId : null;
         var remoteRequest = ToRemote(request, source, keepIndexes, replaces);
+        var end = EndOf(source.ServerId).Token;
         var answer = await GatedAsync(
             source.ServerId,
             Times.RemotePlaybackInfo,
@@ -721,6 +730,13 @@ public sealed class PlaybackCoordinator
         {
             await CloseRemoteAsync(session).ConfigureAwait(false);
             return new Attempt(null, true);
+        }
+
+        // The server stopped during the calls: this session belongs to what was stopped.
+        if (end.IsCancellationRequested)
+        {
+            await CloseRemoteAsync(session).ConfigureAwait(false);
+            return new Attempt(null, false);
         }
 
         _sessions.Add(session);
