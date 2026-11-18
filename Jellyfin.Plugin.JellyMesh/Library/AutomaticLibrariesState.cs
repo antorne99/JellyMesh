@@ -24,6 +24,9 @@ public sealed record AutomaticLibrariesState(
     /// <summary>Gets the folders of the server to add to libraries by hand in "none" mode, each with the type it needs.</summary>
     public IReadOnlyList<ManualLibraryPath> ManualPaths { get; init; } = [];
 
+    /// <summary>Gets the remote libraries the server no longer has, by name: they left the imported ones (§10 row 436).</summary>
+    public IReadOnlyList<string> Vanished { get; init; } = [];
+
     /// <summary>Gets the libraries of the admin that kept the last check from making or adopting a library, and why.</summary>
     public IReadOnlyList<LibraryConflict> Conflicts { get; init; } = [];
 }

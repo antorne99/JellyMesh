@@ -218,8 +218,8 @@ else
   own() { get local /JellyMesh/Admin/Status | jq -c --arg id "$1" ".Servers[] | select(.Id == \$id) | .AutomaticLibraries | $2"; }
   own_on() { # own_on <server id>: switches its libraries on and waits for both
     local i
-    post local "/JellyMesh/Admin/Servers/$1/AutomaticLibraries" '{"Enabled":true}' >/dev/null
-    check "switching on answers 202" 202 "$(status)"
+    save_server local "$1" '{"LibraryMode":"ByType"}' >/dev/null
+    check "switching on answers 200" 200 "$(status)"
     for i in $(seq 1 120); do [ "$(own "$1" '[.Busy, (.Libraries | length)]')" = '[false,2]' ] && return 0; sleep 1; done
     echo "the libraries of a server did not come" >&2
   }

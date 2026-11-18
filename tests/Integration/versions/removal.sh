@@ -35,8 +35,8 @@ put_film "locale/film/$SIN (2010)" "$SIN (2010)"
 put_film "remoto-standard/film/$COD (2026)" "$COD (2026)"
 check "the Film folder of peer leaves Film" 204 "$(unlink_folder local Film "$folder_b/Film")"
 check "the Serie folder of peer leaves Serie" 204 "$(unlink_folder local Serie "$folder_b/Serie")"
-post local "/JellyMesh/Admin/Servers/$B/AutomaticLibraries" '{"Enabled":true}' >/dev/null
-check "the automatic libraries of peer are switched on" 202 "$(status)"
+save_server local "$B" '{"LibraryMode":"ByType"}' >/dev/null
+check "the automatic libraries of peer are switched on" 200 "$(status)"
 for _ in $(seq 1 120); do [ "$(auto_busy)" = false ] && break; sleep 1; done
 names=$(auto_names)
 echo "automatic libraries of peer: $names"

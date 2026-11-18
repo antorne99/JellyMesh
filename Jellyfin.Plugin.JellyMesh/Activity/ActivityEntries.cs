@@ -37,6 +37,11 @@ public static class ActivityEntries
     public const string PasswordUnreadableType = "JellyMeshPasswordUnreadable";
 
     /// <summary>
+    /// The type of the entry for an imported library the remote no longer has.
+    /// </summary>
+    public const string LibraryVanishedType = "JellyMeshLibraryVanished";
+
+    /// <summary>
     /// Builds the entry for a server that stopped answering.
     /// </summary>
     /// <param name="serverName">The display name of the server.</param>
@@ -104,6 +109,20 @@ public static class ActivityEntries
         return new ActivityEntry($"JellyMesh: the stored password of remote server {serverName} no longer decrypts", PasswordUnreadableType, LogLevel.Error)
         {
             Overview = "Sync and remote playback are suspended until the password is entered again on the JellyMesh configuration page."
+        };
+    }
+
+    /// <summary>
+    /// Builds the entry for an imported library that two consecutive answers of the remote no longer listed (§10 row 436).
+    /// </summary>
+    /// <param name="serverName">The display name of the server.</param>
+    /// <param name="libraryName">The name the library had on the remote.</param>
+    /// <returns>The entry.</returns>
+    public static ActivityEntry LibraryVanished(string serverName, string libraryName)
+    {
+        return new ActivityEntry($"JellyMesh: library {libraryName} is gone from remote server {serverName}", LibraryVanishedType, LogLevel.Warning)
+        {
+            Overview = "It left the imported libraries: its titles are removed from the federated folder, and its library too once they are gone."
         };
     }
 }

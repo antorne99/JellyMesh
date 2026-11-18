@@ -69,8 +69,8 @@ public class NetworkTests
     {
         var page = Page();
 
-        Assert.Matches("<label[^>]*for=\"jmServerUrl\">Server URL</label>", page);
-        Assert.Contains("id=\"jmServerUrl\" type=\"url\" is=\"emby-input\" required placeholder=\"http://server:8096\"", page, StringComparison.Ordinal);
+        Assert.Contains("Url: addInput(grid, t('Server URL'), 'url'),", page, StringComparison.Ordinal);
+        Assert.Contains("fields.Url.placeholder = 'http://server:8096';", page, StringComparison.Ordinal);
         Assert.Contains("\"Server URL\": \"URL del server\"", page, StringComparison.Ordinal);
     }
 

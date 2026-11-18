@@ -183,9 +183,10 @@ link_server() {
 
 # import_all <consumer> <server id>: every library the remote offers.
 import_all() {
-  local ids
-  ids=$(get "$1" "/JellyMesh/Admin/Servers/$2/Libraries" | jq -c '{LibraryIds: map(.Id)}')
-  post "$1" "/JellyMesh/Admin/Servers/$2/Libraries" "$ids" >/dev/null
+  local form ids
+  form=$(get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+  ids=$(post "$1" "/JellyMesh/Admin/Servers/$2/Edit/Check" "$form" | jq -c '[.Libraries[].Id]')
+  req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" >/dev/null
 }
 
 sync_now() {

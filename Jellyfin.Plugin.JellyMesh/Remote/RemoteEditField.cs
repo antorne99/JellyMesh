@@ -23,6 +23,6 @@ public enum RemoteEditField
     /// <summary>The libraries to import.</summary>
     LibraryIds,
 
-    /// <summary>The library mode.</summary>
+    /// <summary>The library mode of the server.</summary>
     LibraryMode
 }

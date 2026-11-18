@@ -76,65 +76,36 @@ public sealed partial class ServerEditTests
         await removal;
     }
 
-    // The other endpoints that change a server take the same lock as the edit form.
+    // The cancel of a rename, the one route besides the form that changes a server, takes the same lock as the form.
     [Fact]
-    public async Task The_other_endpoints_that_change_a_server_wait_for_the_edit_in_progress()
+    public async Task The_cancel_of_a_rename_waits_for_the_edit_in_progress()
     {
         var id = await AddAsync("1");
         var renamer = Renamer(id);
-        _libraries.Setup(manager => manager.Enable(id)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
         var held = await _fixture.Registry.EnterEditAsync(id, CancellationToken.None);
 
-        var libraries = Controller().SetLibraries(id, new SetLibrariesRequest(["2"]), CancellationToken.None);
-        var credentials = Controller().UpdateCredentials(id, new CredentialsRequest { Username = "dedicated", Password = "pass" }, CancellationToken.None);
-        var rename = Controller(renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true }, CancellationToken.None);
         var cancel = Controller(renamer.Object).CancelServerRename(id, CancellationToken.None);
-        var automatic = Controller().SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = true }, CancellationToken.None);
         await Task.Delay(100);
 
-        Assert.False(libraries.IsCompleted || credentials.IsCompleted || rename.IsCompleted || cancel.IsCompleted || automatic.IsCompleted);
-        Assert.Empty(Requests);
-        renamer.Verify(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+        Assert.False(cancel.IsCompleted);
         renamer.Verify(r => r.CancelPendingAsync(It.IsAny<Guid>()), Times.Never);
-        _libraries.Verify(manager => manager.Enable(It.IsAny<Guid>()), Times.Never);
         held!.Dispose();
-        Assert.IsType<NoContentResult>(await libraries);
-        Assert.IsType<ServerStatus>((await credentials).Value);
-        Assert.Equal(StatusCodes.Status202Accepted, Assert.IsType<AcceptedResult>((await rename).Result).StatusCode);
         Assert.NotNull((await cancel).Value);
-        Assert.IsType<AcceptedResult>((await automatic).Result);
     }
 
     [Fact]
-    public async Task The_other_endpoints_that_change_a_server_are_refused_while_it_is_being_removed()
+    public async Task The_cancel_of_a_rename_is_refused_while_the_server_is_being_removed()
     {
         var id = await AddAsync("1");
         var renamer = Renamer(id);
         var held = await _fixture.Registry.EnterEditAsync(id, CancellationToken.None);
         var removal = Controller().RemoveServer(id, CancellationToken.None);
         await Task.Delay(100);
-        var before = Snapshot(id);
 
-        var libraries = Assert.IsType<ObjectResult>(await Controller().SetLibraries(id, new SetLibrariesRequest(["2"]), CancellationToken.None));
-        var credentials = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = "dedicated", Password = "pass" }, CancellationToken.None);
-        var rename = await Controller(renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true }, CancellationToken.None);
         var cancel = await Controller(renamer.Object).CancelServerRename(id, CancellationToken.None);
-        var automatic = await Controller().SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = true }, CancellationToken.None);
 
-        var refusals = new[]
-        {
-            (libraries.StatusCode!.Value, Assert.IsType<FailureResponse>(libraries.Value)), Refusal(credentials), Refusal(rename), Refusal(cancel), Refusal(automatic)
-        };
-        Assert.All(refusals, refusal =>
-        {
-            Assert.Equal(StatusCodes.Status409Conflict, refusal.Item1);
-            Assert.Equal(RemoteFailure.BeingRemoved, refusal.Item2.Failure);
-        });
-        Assert.Equal(before, Snapshot(id));
-        Assert.Empty(Requests);
-        renamer.Verify(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+        Assert.Equal((StatusCodes.Status409Conflict, RemoteFailure.BeingRemoved), (Refusal(cancel).Status, Refusal(cancel).Failure.Failure));
         renamer.Verify(r => r.CancelPendingAsync(It.IsAny<Guid>()), Times.Never);
-        _libraries.Verify(manager => manager.Enable(It.IsAny<Guid>()), Times.Never);
         held!.Dispose();
         await removal;
     }
@@ -182,19 +153,6 @@ public sealed partial class ServerEditTests
         await slow;
 
         Assert.Equal("Mare", Assert.IsType<ServerStatus>(quick.Value).Name);
-    }
-
-    [Fact]
-    public async Task The_old_rename_endpoint_refuses_the_name_of_another_server()
-    {
-        var id = await AddAsync("1");
-        AddSecond("Mare");
-        var renamer = Renamer(id);
-
-        var rename = await Controller(renamer.Object).RenameServer(id, new RenameServerRequest { Name = " mare ", Confirmed = true }, CancellationToken.None);
-
-        Assert.Equal((409, RemoteFailure.NameTaken), (Refusal(rename).Status, Refusal(rename).Failure.Failure));
-        renamer.Verify(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
@@ -422,50 +380,19 @@ public sealed partial class ServerEditTests
         }
     }
 
-    // Until F35 drops it, the old credentials endpoint is a save of the form with only the user and password changed.
-    [Fact]
-    public async Task A_new_user_through_the_old_credentials_endpoint_has_the_effects_of_the_form()
-    {
-        var id = await AddAsync("1");
-        await KeepLoginAsync(id);
-        await _playback.OpenAsync(PlaybackValues.Stub(new StubSource(id, "remote-item", "remote-item-ms")));
-        _token = "new-user-token";
-
-        var result = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = "someone", Password = "new-pass" }, CancellationToken.None);
-
-        Assert.Equal("Friend", Assert.IsType<ServerStatus>(result.Value).Name);
-        Assert.Equal(0, _playback.Coordinator.CountServerSessions(id));
-        var logout = Assert.Single(Requests, request => request.Uri.AbsolutePath == "/Sessions/Logout");
-        Assert.Contains(TestValues.Token, logout.Authorization, StringComparison.Ordinal);
-        Assert.Equal(["1"], _fixture.Store.Configuration.Servers.Single().ImportedLibraryIds);
-        _sync.Verify(sync => sync.StartServerSync(id), Times.Once);
-    }
-
     // A lost key leaves only a live login to end the old user with: the new one is saved and the server works again.
     [Fact]
-    public async Task A_new_user_through_the_old_credentials_endpoint_fixes_a_lost_key()
+    public async Task A_new_user_entered_on_the_form_fixes_a_lost_key()
     {
         var id = await AddAsync("1");
         _fixture.KeySource.Key = TestValues.OtherKey;
 
-        var result = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = "someone", Password = "new-pass" }, CancellationToken.None);
+        var result = await Controller().SaveServerEdit(id, Edit(user: "someone", password: "new-pass"), CancellationToken.None);
 
         Assert.False(Assert.IsType<ServerStatus>(result.Value).NeedsPassword);
         Assert.Equal("someone", _fixture.Vault.Unprotect(id, _fixture.Store.Configuration.Servers.Single().EncryptedCredentials)!.Username);
         Assert.All(Requests.Where(request => request.Uri.AbsolutePath == "/Sessions/Logout"), logout => Assert.Contains(TestValues.Token, logout.Authorization, StringComparison.Ordinal));
         _sync.Verify(sync => sync.StartServerSync(id), Times.Once);
-    }
-
-    [Fact]
-    public async Task A_server_saved_without_its_id_takes_the_one_read_through_the_old_credentials_endpoint()
-    {
-        var id = await AddAsync("1");
-        _fixture.Store.Configuration.Servers.Single().JellyfinServerId = string.Empty;
-
-        var result = await Controller().UpdateCredentials(id, new CredentialsRequest { Username = TestValues.Username, Password = "new-pass" }, CancellationToken.None);
-
-        Assert.IsType<ServerStatus>(result.Value);
-        Assert.Equal(FirstId, _fixture.Store.Configuration.Servers.Single().JellyfinServerId);
     }
 
     [Fact]
@@ -635,6 +562,22 @@ public sealed partial class ServerEditTests
         }
 
         Assert.Equal(before, Snapshot());
+    }
+
+    // D28: the fix for a server that no longer answers is often a new address that does.
+    [Fact]
+    public async Task With_the_saved_address_down_a_new_address_that_answers_passes_the_check_and_the_save()
+    {
+        var id = await AddAsync("1");
+        _downHost = new Uri(TestValues.Url).Host;
+        var edit = Edit(url: OtherUrl);
+
+        var check = await Controller().CheckServerEdit(id, edit, CancellationToken.None);
+        var save = await Controller().SaveServerEdit(id, edit, CancellationToken.None);
+
+        Assert.IsType<ServerEditCheck>(check.Value);
+        Assert.Equal(OtherUrl, Assert.IsType<ServerStatus>(save.Value).Url);
+        Assert.Equal(OtherUrl, Assert.Single(_fixture.Store.Configuration.Servers).Url);
     }
 
     [Fact]

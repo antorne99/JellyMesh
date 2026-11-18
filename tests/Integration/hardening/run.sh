@@ -141,8 +141,9 @@ echo "--- a remote that behaves, first"
 set_mode normal
 server=$(post /JellyMesh/Admin/Servers "$(jq -n --arg u "$FAKE_URL" --arg p "$REMOTE_PASSWORD" '{Name:"ostile",Url:$u,Username:"jm",Password:$p}')" | jq -r .Id)
 check "server added" 200 "$(status)"
-libraries=$(get "/JellyMesh/Admin/Servers/$server/Libraries" | jq -c '{LibraryIds: map(.Id)}')
-post "/JellyMesh/Admin/Servers/$server/Libraries" "$libraries" >/dev/null
+form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$server" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+libraries=$(post "/JellyMesh/Admin/Servers/$server/Edit/Check" "$form" | jq -c '{LibraryIds: [.Libraries[].Id]}')
+req PUT "/JellyMesh/Admin/Servers/$server" "$(jq -c --argjson l "$libraries" '. + $l' <<<"$form")" >/dev/null
 sync_now
 check "sync" null "$(last_failure)"
 # Stubs go to the folder of the server, which an admin adds to the library.

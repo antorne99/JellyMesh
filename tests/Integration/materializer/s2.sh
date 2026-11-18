@@ -96,8 +96,7 @@ curl -fsS -X DELETE -H "$ACCEPT" -H "$(auth_header)" "$BASE/JellyMesh/Admin/Serv
 echo "### deselect the film library of JellyMesh and of Standard: film stubs go"
 film_before=$(stub_files | grep -c Film/ || true)
 for s in "$A" "$B"; do
-  series_only=$(get "/JellyMesh/Admin/Servers/$s/Libraries" | jq -c '{LibraryIds:[.[]|select(.CollectionType=="tvshows")|.Id]}')
-  post "/JellyMesh/Admin/Servers/$s/Libraries" "$series_only" >/dev/null
+  choose_libraries "$s" '[.Libraries[] | select(.CollectionType == "tvshows") | .Id]'
 done
 sync_and_scan
 echo "film stubs: $film_before -> $(stub_files | grep -c Film/ || true)"

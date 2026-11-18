@@ -372,8 +372,10 @@ public sealed class IncrementalSyncTests : IDisposable
     [Fact]
     public async Task OneServerOfflineDoesNotStopTheNext()
     {
-        var bad = await _fixture.AddServerAsync("Bad", "deleted");
+        Remote.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
+        var bad = await _fixture.AddServerAsync("Bad", TestLibraries.FilmsB);
         var good = await SyncedServerAsync();
+        Remote.Libraries.RemoveAll(library => library.Id == TestLibraries.FilmsB);
         Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("c"));
         SaveOnRemote("c");
 

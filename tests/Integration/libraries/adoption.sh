@@ -35,10 +35,13 @@ exists() { [ -n "$(folder "$1")" ] && echo yes || echo no; }
 locations() { folder "$1" | jq -c '.Locations | sort'; }
 type_of() { folder "$1" | jq -r '.CollectionType // ""'; }
 lib_names() { get local /Library/VirtualFolders | jq -c '[.[].Name] | sort'; }
-switch() { # switch <json>: prints the status
-  post local "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" "$1" >/dev/null
+# form <json>: the edit form of the server with those fields changed.
+form() { get local /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" --argjson c "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""} + $c'; }
+switch() { # switch <mode>: saves the library mode with the edit form, and prints the status
+  req local PUT "/JellyMesh/Admin/Servers/$SERVER" "$(form "{\"LibraryMode\":\"$1\"}")" >/dev/null
   status
 }
+consequences() { post local "/JellyMesh/Admin/Servers/$SERVER/Edit/Check" "$(form "$1")" | jq -c .Consequences; }
 wait_own() {
   local i
   for i in $(seq 1 300); do
@@ -90,7 +93,7 @@ check "in none mode the state lists a film and a series folder" "1 1" "$(echo "$
 echo "--- an exact library is adopted, one with an extra path blocks the series library [rows 440-441, D30]"
 make "Film miei" movies "$FILM_PATHS"
 make "Serie mie" tvshows "$(echo "$SERIE_PATHS" | jq -c '. + ["/media/extra"]')"
-check "switching on answers 202" 202 "$(switch '{"Enabled":true}')"
+check "switching on answers 200" 200 "$(switch ByType)"
 wait_own
 scan local
 check "the exact library is adopted, the series one is not made" '[["Film miei",true]]' "$(registry)"
@@ -123,13 +126,13 @@ check "nothing is in the way any more" '[]' "$(conflicts)"
 check "the registry holds both" '[["Casa - Serie",false],["Film miei",true]]' "$(registry | jq -c 'sort')"
 
 echo "--- a server rename never renames the adopted library"
-answer=$(post local "/JellyMesh/Admin/Servers/$SERVER/Rename" '{"Name":"Mare"}')
-check "the rename lists only the library the plugin made" '["Casa - Serie"]' "$(echo "$answer" | jq -c .Libraries)"
+check "the rename lists only the library the plugin made" '["Casa - Serie"]' "$(consequences '{"Name":"Mare"}' | jq -c .Rename.Libraries)"
 
 echo "--- switching off releases the adopted library and deletes only the one the plugin made [row 440]"
-answer=$(post local "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false}')
-check "the confirmation names only the library the plugin made" '["Casa - Serie"]' "$(echo "$answer" | jq -c .ToDelete)"
-check "confirmed switch off answers 202" 202 "$(switch '{"Enabled":false,"Confirmed":true}')"
+changes=$(consequences '{"LibraryMode":"None"}')
+check "the confirmation names only the library the plugin made" '["Casa - Serie"]' "$(echo "$changes" | jq -c .ModeChange.Deleted)"
+check "and the adopted one it releases" '["Film miei"]' "$(echo "$changes" | jq -c .ModeChange.Released)"
+check "confirmed switch off answers 200" 200 "$(switch None)"
 wait_own
 check "Casa - Serie is deleted" no "$(exists 'Casa - Serie')"
 check "the adopted library stays, with its type" "yes movies" "$(exists 'Film miei') $(type_of 'Film miei')"
@@ -138,7 +141,7 @@ check "the registry is empty" '[]' "$(registry)"
 
 echo "--- removing the server releases an adopted library once its titles are gone [140, 278]"
 add_paths "Film miei" "$FILM_PATHS"
-check "switching on again answers 202" 202 "$(switch '{"Enabled":true}')"
+check "switching on again answers 200" 200 "$(switch ByType)"
 wait_own
 check "the exact library is adopted again" '[["Film miei",true]]' "$(registry | jq -c 'map(select(.[0] == "Film miei"))')"
 req local DELETE "/JellyMesh/Admin/Servers/$SERVER" >/dev/null

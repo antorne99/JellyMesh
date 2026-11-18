@@ -324,14 +324,35 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
-    public async Task LibrariesComeFromUserViewsAndKeepOnlyFilmsAndSeries()
+    public async Task LibrariesComeFromUserViewsWithTheHiddenOnesAndKeepOnlyFilmsAndSeries()
     {
         var handler = StubHandler.StockServer();
 
         var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
 
         Assert.Equal(["Film", "Serie"], result.Value!.Select(library => library.Name));
-        Assert.Equal(TestValues.Url + "/UserViews", Assert.Single(handler.Requests).Uri.ToString());
+        Assert.Equal(TestValues.Url + "/UserViews?includeHidden=true", Assert.Single(handler.Requests).Uri.ToString());
+    }
+
+    [Fact]
+    public async Task AViewThatIsNoLibraryOfItsOwnMayCombineSeveral()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"g1","Name":"Film","CollectionType":"movies","Type":"UserView"},{"Id":"s1","Name":"Serie","CollectionType":"tvshows","Type":"CollectionFolder"}]}"""));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Equal([("g1", true), ("s1", false)], result.Value!.Select(library => (library.Id, library.MayCombine)));
+    }
+
+    [Fact]
+    public async Task AnAnswerWithOnlyOtherLibraryTypesGivesNoLibrariesButCountsItsViews()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"m1","Name":"Musica","CollectionType":"music"}]}"""));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Empty(result.Value!);
+        Assert.Equal(1, RemoteLibraryList.ViewCountOf(result.Value!));
     }
 
     [Fact]

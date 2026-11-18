@@ -85,4 +85,11 @@ public interface IRemoteCatalogReader
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The time on the server, null if it does not tell or there is nothing to read from it.</returns>
     Task<RemoteResult<DateTimeOffset?>> GetServerTimeAsync(RemoteServerInfo server, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Takes the names of the libraries of a server that left the imported ones since the last call, for the sync history.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The names, empty if none.</returns>
+    IReadOnlyList<string> TakeVanishedLibraries(Guid serverId) => [];
 }

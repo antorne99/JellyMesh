@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Tests.Activity;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
@@ -24,7 +25,7 @@ internal sealed class SyncFixture : IDisposable
         KeySource = new FixedKeySource(key);
         Vault = new CredentialVault(KeySource, Store);
         Registry = new RemoteServerRegistry(Store, Vault, Client, new CapturingLogger<RemoteServerRegistry>());
-        Reader = new RemoteCatalogReader(Registry, Client, Store, ReaderLogger);
+        Reader = new RemoteCatalogReader(Registry, Client, Store, ReaderLogger, Activity);
         Database = new TestDatabase(_folder);
         Index = new FederationIndex(Database, new CapturingLogger<FederationIndex>());
         Stubs = new StubRegistry(Database, Store, new CapturingLogger<StubRegistry>());
@@ -44,6 +45,8 @@ internal sealed class SyncFixture : IDisposable
     public RemoteServerRegistry Registry { get; }
 
     public CapturingLogger<RemoteCatalogReader> ReaderLogger { get; } = new();
+
+    public RecordingActivityWriter Activity { get; } = new();
 
     public RemoteCatalogReader Reader { get; }
 

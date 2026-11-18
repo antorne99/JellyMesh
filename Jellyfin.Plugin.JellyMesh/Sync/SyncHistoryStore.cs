@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -39,7 +40,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         """;
 
     private const string SelectServers = """
-        SELECT run_id, server_id, server_name, read, created, updated, removed, failed, failure
+        SELECT run_id, server_id, server_name, read, created, updated, removed, failed, failure, warning
         FROM sync_run_servers ORDER BY run_id, position;
         """;
 
@@ -51,8 +52,8 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         """;
 
     private const string InsertServer = """
-        INSERT INTO sync_run_servers (run_id, position, server_id, server_name, read, created, updated, removed, failed, failure)
-        VALUES ($run, $position, $server, $name, $read, $created, $updated, $removed, $failed, $failure);
+        INSERT INTO sync_run_servers (run_id, position, server_id, server_name, read, created, updated, removed, failed, failure, warning)
+        VALUES ($run, $position, $server, $name, $read, $created, $updated, $removed, $failed, $failure, $warning);
         """;
 
     private const string SelectKinds = "SELECT id, kind FROM sync_runs ORDER BY id DESC;";
@@ -196,7 +197,8 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
                     ("$updated", server.Updated),
                     ("$removed", server.Removed),
                     ("$failed", server.Failed),
-                    ("$failure", server.Failure?.ToString()));
+                    ("$failure", server.Failure?.ToString()),
+                    ("$warning", server.Warning is { } warning ? JsonSerializer.Serialize(warning) : null));
             }
         }
 
@@ -241,7 +243,10 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
                     reader.GetInt32(5),
                     reader.GetInt32(6),
                     reader.GetInt32(7),
-                    StoreSql.TextOrNull(reader, 8) is { } failure && Enum.TryParse<RemoteFailure>(failure, out var parsed) ? parsed : null));
+                    StoreSql.TextOrNull(reader, 8) is { } failure && Enum.TryParse<RemoteFailure>(failure, out var parsed) ? parsed : null)
+                {
+                    Warning = ReadWarning(StoreSql.TextOrNull(reader, 9))
+                });
             }
         }
 
@@ -271,6 +276,24 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         }
 
         return runs;
+    }
+
+    // A warning that does not parse is left out, as the rest of the run still reads.
+    private static SyncRunWarning? ReadWarning(string? text)
+    {
+        if (text is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<SyncRunWarning>(text) is { VanishedLibraries: not null } warning ? warning : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     // Called with the lock held: the runs not saved yet before the saved ones, within the limits.

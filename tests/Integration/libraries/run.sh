@@ -25,13 +25,20 @@ auth_header() {
 }
 get() { curl -fsS -H "$ACCEPT" -H "$(auth_header)" "$BASE$1"; }
 post() { curl -fsS -X POST -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "${2:-}" "$BASE$1"; }
-# Posts and prints the status code, then the body on the next line.
-post_status() {
-  local body
+# Saves the library mode of the server with the edit form, and prints the status code, then the body on the next line.
+set_mode() {
+  local body form
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" --arg m "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: "", LibraryMode: $m}')
   body=$(mktemp)
-  curl -sS -o "$body" -w '%{http_code}\n' -X POST -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "${2:-}" "$BASE$1"
+  curl -sS -o "$body" -w '%{http_code}\n' -X PUT -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "$form" "$BASE/JellyMesh/Admin/Servers/$SERVER"
   cat "$body"
   rm -f "$body"
+}
+# What the edit form would list for the mode before saving it.
+mode_change() {
+  local form
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" --arg m "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: "", LibraryMode: $m}')
+  post "/JellyMesh/Admin/Servers/$SERVER/Edit/Check" "$form" | jq -c .Consequences.ModeChange
 }
 delete() { curl -fsS -X DELETE -H "$ACCEPT" -H "$(auth_header)" "$BASE$1"; }
 urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
@@ -186,8 +193,8 @@ docker exec "$LOCAL" sh -c "mkdir -p '$FILM_PATH/Dummy (2020)' /other && /usr/li
 post "/Library/VirtualFolders?name=$(urlencode 'NAS  Casa - Film')&collectionType=movies&refreshLibrary=false&paths=/other" '{"LibraryOptions":{}}'
 
 echo "== switch on [D6, D16, D20, name with :]"
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' | head -1)
-check "switching on answers 202" [ "$code" = 202 ]
+code=$(set_mode ByType | head -1)
+check "switching on answers 200" [ "$code" = 200 ]
 wait_libraries
 FILM="NAS  Casa $GUID8 - Film"
 SERIE="NAS  Casa - Serie"
@@ -227,12 +234,10 @@ check "a library with a new path leaves the registry" [ "$(registry)" = '["Serie
 check "and is listed as left to the admin" [ "$(released)" = "$(jq -nc --arg f "$FILM" '[$f]')" ]
 
 echo "== switch off with a confirmation [D6]"
-answer=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false}')
-check "switching off without a confirmation answers 409" [ "$(echo "$answer" | head -1)" = 409 ]
-check "and names only the registry library" [ "$(echo "$answer" | tail -n +2 | jq -c .ToDelete)" = '["Serie di Casa"]' ]
-check "nothing is deleted before the confirmation" exists 'Serie di Casa'
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false,"Confirmed":true}' | head -1)
-check "the confirmed switch off answers 202" [ "$code" = 202 ]
+check "the edit check names only the registry library" [ "$(mode_change None | jq -c .Deleted)" = '["Serie di Casa"]' ]
+check "nothing is deleted by the check" exists 'Serie di Casa'
+code=$(set_mode None | head -1)
+check "the confirmed switch off answers 200" [ "$code" = 200 ]
 wait_libraries
 echo "   libraries: $(folders | jq -c '[.[].Name]')"
 check "the registry library is deleted" missing 'Serie di Casa'
@@ -244,8 +249,8 @@ check "the switch is off" [ "$(state | jq -r .Enabled)" = false ]
 echo "== switch on again while a scan runs"
 delete "/Library/VirtualFolders?name=$(urlencode "$FILM")&refreshLibrary=false"
 post /Library/Refresh
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' | head -1)
-check "switching on during a scan answers 202" [ "$code" = 202 ]
+code=$(set_mode ByType | head -1)
+check "switching on during a scan answers 200" [ "$code" = 200 ]
 wait_libraries
 scan_idle
 FILM_ID=$(folder "$FILM" | jq -r .ItemId)
@@ -265,12 +270,12 @@ wait_missing() { # <library name>
 }
 
 echo "== an admin library with exactly the paths and type the plugin would give is adopted [131, row 441]"
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false,"Confirmed":true}' | head -1)
-check "the confirmed switch off answers 202" [ "$code" = 202 ]
+code=$(set_mode None | head -1)
+check "the confirmed switch off answers 200" [ "$code" = 200 ]
 wait_libraries
 post "/Library/VirtualFolders?name=$(urlencode 'Mine on the folder')&collectionType=movies&refreshLibrary=false&paths=$(urlencode "$FILM_PATH")" '{"LibraryOptions":{}}'
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' | head -1)
-check "switching on answers 202" [ "$code" = 202 ]
+code=$(set_mode ByType | head -1)
+check "switching on answers 200" [ "$code" = 200 ]
 wait_libraries
 scan_idle
 check "no Film is created next to the admin library" missing "$FILM"

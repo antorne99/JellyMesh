@@ -156,8 +156,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        // /Library/VirtualFolders answers 403 to a non-admin user.
-        return await ReadLibrariesAsync(endpoint, session, "/UserViews", cancellationToken).ConfigureAwait(false);
+        // /Library/VirtualFolders answers 403 to a non-admin user. A library the user hid from My Media is still one it sees.
+        return await ReadLibrariesAsync(endpoint, session, "/UserViews?includeHidden=true", true, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -165,7 +165,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        return await ReadLibrariesAsync(endpoint, session, ProviderPath + "/Libraries", cancellationToken).ConfigureAwait(false);
+        return await ReadLibrariesAsync(endpoint, session, ProviderPath + "/Libraries", false, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -186,7 +186,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             : RemoteResult.Fail<RemoteChangePage>(RemoteFailure.InvalidResponse);
     }
 
-    private async Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken)
+    // The views of a user can group libraries in one that is no library of its own; the shared ones of a provider never do.
+    private async Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, string path, bool userViews, CancellationToken cancellationToken)
     {
         var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
@@ -200,11 +201,14 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             return RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(RemoteFailure.InvalidResponse);
         }
 
-        IReadOnlyList<RemoteLibrary> libraries = views.Items
+        var libraries = views.Items
             .Where(view => !string.IsNullOrEmpty(view.Id) && _importableCollectionTypes.Contains(view.CollectionType, StringComparer.OrdinalIgnoreCase))
-            .Select(view => new RemoteLibrary(view.Id!, view.Name ?? string.Empty, view.CollectionType!))
+            .Select(view => new RemoteLibrary(view.Id!, view.Name ?? string.Empty, view.CollectionType!)
+            {
+                MayCombine = userViews && !string.Equals(view.Type, "CollectionFolder", StringComparison.Ordinal)
+            })
             .ToList();
-        return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(libraries);
+        return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(new RemoteLibraryList(libraries, views.Items.Count(view => !string.IsNullOrEmpty(view.Id))));
     }
 
     /// <inheritdoc />
@@ -583,7 +587,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     private sealed record UserViewsResponse(IReadOnlyList<UserView>? Items);
 
-    private sealed record UserView(string? Id, string? Name, string? CollectionType);
+    private sealed record UserView(string? Id, string? Name, string? CollectionType, string? Type);
 
     private sealed record ItemsResponse(IReadOnlyList<RemoteItem>? Items, int? TotalRecordCount, IReadOnlyDictionary<string, RemoteQuality>? Quality);
 

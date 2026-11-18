@@ -225,10 +225,10 @@ public sealed partial class ServerLibraryManagerTests
         var toNone = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.None);
 
         Assert.Equal((LibraryMode.ByType, LibraryMode.ByRemoteLibrary), (toRemote!.From, toRemote.To));
-        Assert.Empty(toRemote.DeletedLibraries);
-        Assert.Equal(["Film di casa"], toRemote.ReleasedLibraries);
-        Assert.Equal(["Casa - Serie"], toNone!.DeletedLibraries);
-        Assert.Equal(["Film di casa"], toNone.ReleasedLibraries);
+        Assert.Empty(toRemote.Deleted);
+        Assert.Equal(["Film di casa"], toRemote.Released);
+        Assert.Equal(["Casa - Serie"], toNone!.Deleted);
+        Assert.Equal(["Film di casa"], toNone.Released);
         Assert.Null(fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByType));
         Assert.Equal(LibraryMode.ByType, fixture.Server.LibraryMode);
         Assert.Empty(fixture.Libraries.Removed);
@@ -395,8 +395,8 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Server.LibraryMode = LibraryMode.ByType;
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        Assert.Equal(["Casa - Film"], change!.DeletedLibraries);
-        Assert.Equal(change.DeletedLibraries, fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(["Casa - Film"], change!.Deleted);
+        Assert.Equal(change.Deleted, fixture.Libraries.Removed.Select(call => call.Name));
     }
 
     [Fact]
@@ -407,7 +407,7 @@ public sealed partial class ServerLibraryManagerTests
 
         var change = fixture.Manager.PreviewModeChange(_serverId, LibraryMode.ByRemoteLibrary);
 
-        Assert.Empty(change!.DeletedLibraries);
-        Assert.NotEmpty(fixture.Manager.PreviewModeChange(_serverId, LibraryMode.None)!.DeletedLibraries);
+        Assert.Empty(change!.Deleted);
+        Assert.NotEmpty(fixture.Manager.PreviewModeChange(_serverId, LibraryMode.None)!.Deleted);
     }
 }

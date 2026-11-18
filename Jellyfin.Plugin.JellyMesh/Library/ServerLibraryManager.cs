@@ -132,6 +132,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 AutomaticLibrariesError.None)
             {
                 Mode = server.LibraryMode,
+                Vanished = server.VanishedLibraries.Select(library => library.Name.Length > 0 ? library.Name : library.Id).ToList(),
                 ManualPaths = config.FederatedFolderPath.Length == 0 ? [] : LibraryPlan.ManualPaths(server, config.FederatedFolderPath, olderLayout)
             }
             : new AutomaticLibrariesState(false, false, [], [], AutomaticLibrariesError.None));
@@ -209,6 +210,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                         await RetireAsync(serverId, scanned, cancellationToken).ConfigureAwait(false);
                     }
                 }
+
+                await RemoveVanishedAsync(cancellationToken).ConfigureAwait(false);
             }
             finally
             {

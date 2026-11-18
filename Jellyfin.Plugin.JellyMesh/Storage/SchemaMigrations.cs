@@ -29,7 +29,10 @@ public static class SchemaMigrations
         new(LegacyImport.SchemaVersion, LegacyImport.CreateTable),
 
         // The library modes (F39).
-        new(6, ConfigurationTables.AddLibraryModes)
+        new(6, ConfigurationTables.AddLibraryModes),
+
+        // The warnings of the sync history (F38).
+        new(7, SmallStateSchema.AddWarnings)
     ];
 
     /// <summary>

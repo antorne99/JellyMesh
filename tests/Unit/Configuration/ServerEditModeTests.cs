@@ -15,7 +15,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
 // Row 438: the library mode changes in the Edit form, with its effects in the confirmation and after the save.
 public sealed partial class ServerEditTests
 {
-    private LibraryMode SavedMode => _fixture.Store.Configuration.Servers.Single().LibraryMode;
+    private LibraryMode StoredMode => _fixture.Store.Configuration.Servers.Single().LibraryMode;
 
     private async Task<Guid> AddInModeAsync(LibraryMode mode, params string[] libraries)
     {
@@ -36,7 +36,7 @@ public sealed partial class ServerEditTests
         var result = await Controller().SaveServerEdit(id, Edit(libraries: ["1"], mode: LibraryMode.ByRemoteLibrary), CancellationToken.None);
 
         Assert.IsType<ServerStatus>(result.Value);
-        Assert.Equal(LibraryMode.ByRemoteLibrary, SavedMode);
+        Assert.Equal(LibraryMode.ByRemoteLibrary, StoredMode);
         Assert.Equal(["libraries", "mode", "sync"], _steps.Where(step => step != "logout"));
     }
 
@@ -49,7 +49,7 @@ public sealed partial class ServerEditTests
         var result = await Controller().SaveServerEdit(id, Edit(mode: LibraryMode.None), CancellationToken.None);
 
         Assert.Equal(RemoteFailure.Unreachable, Assert.IsType<ServerStatus>(result.Value).RemoteWarning);
-        Assert.Equal(LibraryMode.None, SavedMode);
+        Assert.Equal(LibraryMode.None, StoredMode);
         _libraries.Verify(manager => manager.ApplyMode(id), Times.Once);
         _sync.Verify(service => service.StartServerSync(It.IsAny<Guid>()), Times.Never);
     }
@@ -63,7 +63,7 @@ public sealed partial class ServerEditTests
 
         await Controller().SaveServerEdit(id, Edit(name: "Casa", mode: mode), CancellationToken.None);
 
-        Assert.Equal(LibraryMode.ByType, SavedMode);
+        Assert.Equal(LibraryMode.ByType, StoredMode);
         _libraries.Verify(manager => manager.ApplyMode(It.IsAny<Guid>()), Times.Never);
     }
 
@@ -81,7 +81,7 @@ public sealed partial class ServerEditTests
             Assert.Equal(RemoteEditField.LibraryMode, failure.Field);
         }
 
-        Assert.Equal(LibraryMode.ByType, SavedMode);
+        Assert.Equal(LibraryMode.ByType, StoredMode);
         Assert.Empty(Requests);
     }
 
@@ -93,7 +93,7 @@ public sealed partial class ServerEditTests
 
         await Controller().SaveServerEdit(id, Edit(url: OtherUrl, mode: LibraryMode.None), CancellationToken.None);
 
-        Assert.Equal(LibraryMode.ByType, SavedMode);
+        Assert.Equal(LibraryMode.ByType, StoredMode);
         _libraries.Verify(manager => manager.ApplyMode(It.IsAny<Guid>()), Times.Never);
     }
 
@@ -113,7 +113,7 @@ public sealed partial class ServerEditTests
         Assert.Equal(change, check.Consequences.ModeChange);
         Assert.True(check.Consequences.Any);
         Assert.Equal(offline, check.RemoteOffline);
-        Assert.Equal(LibraryMode.ByType, SavedMode);
+        Assert.Equal(LibraryMode.ByType, StoredMode);
     }
 
     [Fact]

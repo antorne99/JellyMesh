@@ -12,12 +12,12 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 public sealed record ServerEditConsequences(ServerRenameConsequence? Rename, IReadOnlyList<ImportedLibraryRemoval> RemovedLibraries, int StoppedStreams)
 {
     /// <summary>
+    /// Gets the change of the library mode, null when the mode stays.
+    /// </summary>
+    public LibraryModeChange? ModeChange { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether the save has any consequence to confirm.
     /// </summary>
     public bool Any => Rename is not null || RemovedLibraries.Count > 0 || StoppedStreams > 0 || ModeChange is not null;
-
-    /// <summary>
-    /// Gets the change of library mode with the libraries it deletes and releases, null when the mode stays (row 438).
-    /// </summary>
-    public LibraryModeChange? ModeChange { get; init; }
 }

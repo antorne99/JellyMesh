@@ -134,6 +134,19 @@ public static class SmallStateSchema
         """;
 
     /// <summary>
+    /// Adds the warning of each server to the sync history (F38), inside the step's transaction.
+    /// </summary>
+    /// <param name="connection">The open database.</param>
+    /// <param name="transaction">The step's transaction.</param>
+    public static void AddWarnings(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "ALTER TABLE sync_run_servers ADD COLUMN warning TEXT;";
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// Creates the tables, inside the step's transaction.
     /// </summary>
     /// <param name="connection">The writer connection.</param>

@@ -555,20 +555,15 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public async Task Switching_on_the_libraries_of_a_server_starts_in_the_background_and_shows_the_state()
+    public async Task The_status_shows_the_libraries_of_each_server()
     {
         using var fixture = new RegistryFixture();
         var libraries = new Mock<IServerLibraryManager>();
         var controller = ControllerFor(fixture, libraries: libraries.Object);
         var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
         var state = new AutomaticLibrariesState(true, true, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None);
-        libraries.Setup(manager => manager.Enable(id)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
         libraries.Setup(manager => manager.GetState(id)).Returns(state);
 
-        var result = await controller.SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = true }, CancellationToken.None);
-
-        var accepted = Assert.IsType<AcceptedResult>(result.Result);
-        Assert.Same(state, accepted.Value);
         Assert.Same(state, Assert.Single(controller.GetStatus().Value!.Servers).AutomaticLibraries);
     }
 
@@ -628,109 +623,6 @@ public class FederationAdminControllerTests
     [Fact]
     public void Another_mode_is_refused_with_a_message()
         => Assert.NotEqual("The operation failed.", FederationAdminController.RefusalMessage(AutomaticLibrariesOutcome.ModeChangeNotAllowed));
-
-    [Fact]
-    public async Task Switching_off_without_a_confirmation_answers_with_the_libraries_it_would_delete()
-    {
-        using var fixture = new RegistryFixture();
-        var libraries = new Mock<IServerLibraryManager>();
-        var id = Guid.NewGuid();
-        libraries.Setup(manager => manager.Disable(id, false))
-            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Friend - Film", "Friend - Serie"]));
-
-        var result = await ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false }, CancellationToken.None);
-
-        var conflict = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(409, conflict.StatusCode);
-        var body = Assert.IsType<AutomaticLibrariesRefusal>(conflict.Value);
-        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, body.Outcome);
-        Assert.Equal(["Friend - Film", "Friend - Serie"], body.ToDelete);
-    }
-
-    [Fact]
-    public async Task A_confirmed_switch_off_reaches_the_manager()
-    {
-        using var fixture = new RegistryFixture();
-        var libraries = new Mock<IServerLibraryManager>();
-        var id = Guid.NewGuid();
-        libraries.Setup(manager => manager.Disable(id, true)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
-
-        var result = await ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false, Confirmed = true }, CancellationToken.None);
-
-        Assert.IsType<AcceptedResult>(result.Result);
-    }
-
-    [Theory]
-    [InlineData(AutomaticLibrariesOutcome.UnknownServer, 404)]
-    [InlineData(AutomaticLibrariesOutcome.NoFederatedFolder, 409)]
-    [InlineData(AutomaticLibrariesOutcome.Busy, 409)]
-    public async Task A_refused_switch_answers_with_its_reason(AutomaticLibrariesOutcome outcome, int status)
-    {
-        using var fixture = new RegistryFixture();
-        var libraries = new Mock<IServerLibraryManager>();
-        libraries.Setup(manager => manager.Enable(It.IsAny<Guid>())).Returns(AutomaticLibrariesRequest.Refused(outcome));
-
-        var result = await ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(Guid.NewGuid(), new SetAutomaticLibrariesRequest { Enabled = true }, CancellationToken.None);
-
-        var refused = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(status, refused.StatusCode);
-        var body = Assert.IsType<AutomaticLibrariesRefusal>(refused.Value);
-        Assert.Equal(outcome, body.Outcome);
-        Assert.False(string.IsNullOrWhiteSpace(body.Message));
-    }
-
-    [Fact]
-    public async Task A_confirmed_rename_starts_in_the_background_and_shows_the_state()
-    {
-        using var fixture = new RegistryFixture();
-        var renamer = new Mock<IServerRenamer>();
-        var id = Guid.NewGuid();
-        var state = new ServerRenameState(true, false, false);
-        renamer.Setup(r => r.Rename(id, "Mare", true)).Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
-        renamer.Setup(r => r.GetState(id)).Returns(state);
-
-        var result = await ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true }, CancellationToken.None);
-
-        var accepted = Assert.IsType<AcceptedResult>(result.Result);
-        Assert.Same(state, accepted.Value);
-    }
-
-    [Fact]
-    public async Task A_rename_without_a_confirmation_answers_with_the_libraries_it_renames()
-    {
-        using var fixture = new RegistryFixture();
-        var renamer = new Mock<IServerRenamer>();
-        var id = Guid.NewGuid();
-        renamer.Setup(r => r.Rename(id, "Mare", false))
-            .Returns(new ServerRenameRequest(ServerRenameOutcome.ConfirmationRequired, Task.CompletedTask, ["Casa - Film"]));
-
-        var result = await ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare" }, CancellationToken.None);
-
-        var conflict = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(409, conflict.StatusCode);
-        var body = Assert.IsType<ServerRenameRefusal>(conflict.Value);
-        Assert.Equal(ServerRenameOutcome.ConfirmationRequired, body.Outcome);
-        Assert.Equal(["Casa - Film"], body.Libraries);
-    }
-
-    [Theory]
-    [InlineData(ServerRenameOutcome.InvalidName, 400)]
-    [InlineData(ServerRenameOutcome.UnknownServer, 404)]
-    [InlineData(ServerRenameOutcome.Busy, 409)]
-    public async Task A_refused_rename_answers_with_its_reason(ServerRenameOutcome outcome, int status)
-    {
-        using var fixture = new RegistryFixture();
-        var renamer = new Mock<IServerRenamer>();
-        renamer.Setup(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>())).Returns(ServerRenameRequest.Refused(outcome));
-
-        var result = await ControllerFor(fixture, renamer: renamer.Object).RenameServer(Guid.NewGuid(), new RenameServerRequest { Name = " " }, CancellationToken.None);
-
-        var refused = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(status, refused.StatusCode);
-        var body = Assert.IsType<ServerRenameRefusal>(refused.Value);
-        Assert.Equal(outcome, body.Outcome);
-        Assert.False(string.IsNullOrWhiteSpace(body.Message));
-    }
 
     [Fact]
     public async Task Cancelling_a_pending_rename_answers_with_the_state()
@@ -808,7 +700,8 @@ public class FederationAdminControllerTests
         var added = await controller.AddServer(_request, CancellationToken.None);
         var id = added.Value!.Id;
         var test = await controller.TestServer(id, CancellationToken.None);
-        var libraries = await controller.GetLibraries(id, CancellationToken.None);
+        var form = new ServerEditRequest { Name = added.Value.Name, Url = added.Value.Url, Username = TestValues.Username, Password = TestValues.Password };
+        var libraries = await controller.CheckServerEdit(id, form, CancellationToken.None);
         var status = controller.GetStatus();
 
         var api = ToJson(added.Value) + ToJson(test.Value) + ToJson(libraries.Value) + ToJson(status.Value);
@@ -975,7 +868,8 @@ public class FederationAdminControllerTests
         var controller = ControllerFor(fixture);
         Assert.True(controller.GetStatus().Value!.Servers.Single().NeedsPassword);
 
-        var result = await controller.UpdateCredentials(server.Id, new CredentialsRequest { Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+        var form = new ServerEditRequest { Name = server.Name, Url = server.Url, Username = TestValues.Username, Password = TestValues.Password };
+        var result = await controller.SaveServerEdit(server.Id, form, CancellationToken.None);
 
         Assert.False(result.Value!.NeedsPassword);
         var status = controller.GetStatus().Value!;
@@ -994,19 +888,6 @@ public class FederationAdminControllerTests
         Assert.Equal(KeyState.Ok, status.KeyState);
         Assert.False(status.Suspended);
         Assert.Null(status.Warning);
-    }
-
-    [Fact]
-    public async Task LibrariesAreMarkedWhenSelected()
-    {
-        using var fixture = new RegistryFixture();
-        var controller = ControllerFor(fixture);
-        var server = await fixture.AddServerAsync();
-
-        Assert.IsType<NoContentResult>(await controller.SetLibraries(server.Id, new SetLibrariesRequest(["2"]), CancellationToken.None));
-        var libraries = await controller.GetLibraries(server.Id, CancellationToken.None);
-
-        Assert.Equal([false, true], libraries.Value!.Select(library => library.Selected));
     }
 
     [Fact]
