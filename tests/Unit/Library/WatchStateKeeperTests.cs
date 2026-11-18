@@ -605,6 +605,7 @@ public sealed class WatchStateKeeperTests : IDisposable
             Mock.Of<ILibraryMaterializer>(),
             new ServerLibraryManagerTests.FakeRenamer { Libraries = libraries },
             _fixture.Registry,
+            new LibraryPaths(libraries.Object, new CapturingLogger<LibraryPaths>()),
             new CapturingLogger<ServerLibraryManager>());
         await manager.Enable(a.Id).Job;
         var created = libraries.Folders.Select(folder => folder.Name).ToList();
