@@ -56,6 +56,25 @@ services:
       - remoto-jellymesh-cache:/cache
       - ./media/remoto-jellymesh:/media:ro
 
+  # Oldest supported Jellyfin, for the release check only (scripts/release-check.sh).
+  # The profile keeps it out of a plain "docker compose up"; the script creates
+  # and removes it with its volumes on each run.
+  release-12-1:
+    image: jellyfin/jellyfin:12.1.20260915-010956
+    profiles: [release]
+    hostname: release-12-1
+    environment:
+      <<: *jellyfin-env
+      # The plugin opens its store in the first sync or a post-scan task, and both need a federated folder.
+      JELLYMESH_FEDERATED_ROOT: /federata
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${RELEASE_PORT:-8099}:8096"
+    volumes:
+      - release-12-1-config:/config
+      - release-12-1-cache:/cache
+    tmpfs:
+      - /federata
+
 volumes:
   locale-config:
   locale-cache:
@@ -63,3 +82,5 @@ volumes:
   remoto-standard-cache:
   remoto-jellymesh-config:
   remoto-jellymesh-cache:
+  release-12-1-config:
+  release-12-1-cache:
