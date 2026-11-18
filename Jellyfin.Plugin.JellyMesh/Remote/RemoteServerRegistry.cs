@@ -234,6 +234,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Fail<RemoteServerInfo>(login.Failure);
             }
 
+            if (RefusedServerId(serverId, login.Value!.ServerId) is { } refusedFor)
+            {
+                await RefuseOtherServerAsync(endpoint, login.Value!, stored.Name, refusedFor).ConfigureAwait(false);
+                return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.OtherServer);
+            }
+
             // New credentials that cannot be saved end their login; the kept one stays and logs in again at its 401 (419).
             var encrypted = _vault.Protect(serverId, credentials);
             if (encrypted is null)
@@ -244,7 +250,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
             var found = false;
             var heldElsewhere = false;
-            string? storedId = null;
             string? previous = null;
             string? savedId = null;
             try
@@ -258,7 +263,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                         {
                             previous = server.EncryptedCredentials;
                             server.EncryptedCredentials = encrypted;
-                            storedId = server.JellyfinServerId;
                             if (server.JellyfinServerId.Length == 0 && login.Value!.ServerId is { } remoteId)
                             {
                                 heldElsewhere = !TryStoreServerId(config, server, remoteId);
@@ -294,7 +298,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
             }
 
-            WarnIfOtherServerId(stored.Name, storedId, login.Value!.ServerId);
             if (heldElsewhere)
             {
                 WarnServerIdHeldElsewhere(stored.Name, login.Value!.ServerId!);
@@ -624,6 +627,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return login;
             }
 
+            if (RefusedServerId(server.Id, fresh.ServerId) is { } refusedFor)
+            {
+                runtime.Session = null;
+                await RefuseOtherServerAsync(endpoint, fresh, server.Name, refusedFor).ConfigureAwait(false);
+                DropIfRemoved(server.Id, runtime);
+                return RemoteResult.Fail<RemoteSession>(RemoteFailure.OtherServer);
+            }
+
             // A login that ends after the removal of its server is ended at once, so that no device stays behind (413).
             if (!runtime.TryKeep(fresh) || !IsConfigured(server.Id))
             {
@@ -858,7 +869,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var stored = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id)?.JellyfinServerId);
         if (stored is null || stored.Length > 0)
         {
-            WarnIfOtherServerId(server.Name, stored, remoteId);
             return;
         }
 
@@ -905,17 +915,27 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             remoteId);
     }
 
-    // Logs a login whose Server Id differs from the stored one, which stays (decision 126).
-    private void WarnIfOtherServerId(string serverName, string? storedId, string? remoteId)
+    // The saved Server Id of a server when the remote gave another one, null when the login is accepted (row 433).
+    private string? RefusedServerId(Guid serverId, string? remoteId)
     {
-        if (!string.IsNullOrEmpty(storedId) && remoteId is not null && remoteId != storedId)
+        if (remoteId is null)
         {
-            _logger.LogWarning(
-                "Remote server {ServerName} answered with Server Id {RemoteServerId}, not the stored {StoredServerId}; the stored one is kept",
-                LogText.Clean(serverName),
-                remoteId,
-                storedId);
+            return null;
         }
+
+        var stored = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.JellyfinServerId);
+        return string.IsNullOrEmpty(stored) || stored == remoteId ? null : stored;
+    }
+
+    // Ends a login on which another server answered, and logs both ids with neither the address nor the token (row 433).
+    private async Task RefuseOtherServerAsync(RemoteEndpoint endpoint, RemoteSession login, string serverName, string storedId)
+    {
+        _logger.LogWarning(
+            "Remote server {ServerName} answered with Server Id {RemoteServerId}, not the stored {StoredServerId}: another server answers at its address, so the login is refused",
+            LogText.Clean(serverName),
+            login.ServerId,
+            storedId);
+        await EndUnusedLoginAsync(endpoint, login, serverName, refusedIsEnded: false).ConfigureAwait(false);
     }
 
     // Records the outcome of a call, and writes to the activity log when the server goes offline or answers again (49, 130).
@@ -1058,7 +1078,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             RemoteFailure.Unreachable or RemoteFailure.Timeout => false,
             RemoteFailure.Suspended or RemoteFailure.UnknownServer or RemoteFailure.InvalidServer or RemoteFailure.Busy
                 or RemoteFailure.ServerError or RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped
-                or RemoteFailure.ForgetFailed => null,
+                or RemoteFailure.ForgetFailed or RemoteFailure.OtherServer => null,
             _ => true
         };
     }

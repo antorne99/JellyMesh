@@ -111,5 +111,11 @@ public enum RemoteFailure
     /// <summary>
     /// The remote gave the Server Id of a server already configured here, so adding it again would show every title twice.
     /// </summary>
-    AlreadyConfigured
+    AlreadyConfigured,
+
+    /// <summary>
+    /// The remote gave a Server Id other than the one saved for this server: another server answers at its address, so
+    /// the login is refused and ended (row 433).
+    /// </summary>
+    OtherServer
 }

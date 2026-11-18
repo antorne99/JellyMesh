@@ -566,6 +566,7 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
             RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
             RemoteFailure.AlreadyConfigured => "This server is already configured.",
+            RemoteFailure.OtherServer => "Another server answers at this address. To use it, remove this one and add it as a new server.",
             _ => "The operation failed."
         };
     }
@@ -615,7 +616,7 @@ public class FederationAdminController : ControllerBase
     {
         var status = failure switch
         {
-            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured => StatusCodes.Status409Conflict,
+            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
