@@ -343,11 +343,8 @@ episodes remoto-standard "$S" 2026 1 7 8 "$ED" "$SD" h264 2000
 episodes remoto-standard "$S" 2026 1 9 10 "$ED" "$SD" h264 2000
 episode remoto-jellymesh "$S" 2026 1 10 "$ED" "$HD" h264 4000
 
-# --- 0.7 content types (spec 0.6-0.7, integration test 11) -------------------
-# Small files, all generated: tones from ffmpeg, frames of the films above as
-# pictures, and books, comics and EXIF written by media-types.py in Python.
-# Each server plays its own tone (locale 659 Hz, standard 440, JellyMesh 554,
-# a little higher per track), so playback shows which copy is really served.
+# --- 0.7 content types (integration test 11; see README, "0.7 types") ---------
+# Tones and frames from ffmpeg; books, comics and EXIF from media-types.py.
 
 PY_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-noble
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
@@ -433,9 +430,8 @@ photo() {
   rm -f "$MEDIA/$raw"
 }
 
-# clip <output> <source> <start s> <seconds> <WxH> <kbit/s> <label> [creation time]: like encode, but
-# without the source's tags (its artist would become the artist of a music video),
-# and dated as a camera does when a creation time is given.
+# clip <output> <source> <start s> <seconds> <WxH> <kbit/s> <label> [creation time]: an H.264 clip
+# without the source's tags, byte-identical on every run, dated when a creation time is given.
 clip() {
   local out=$1 src=$2 start=$3 secs=$4 size=$5 rate=$6 label=$7 date=${8:-} tmp
   [ -f "$MEDIA/$out" ] && return
@@ -444,7 +440,8 @@ clip() {
   tmp="$(dirname "$out")/.tmp-$$.${out##*.}"
   video_args h264 "$rate"
   ffmpeg -ss "$start" -t "$secs" -i "/work/.sources/$src" -vf "$(video_filter "$size" h264 "$label")" \
-    -r 24 "${VIDEO_ARGS[@]}" -c:a aac -ac 2 -b:a 128k -map_metadata -1 ${date:+-metadata "creation_time=$date"} "/work/$tmp"
+    -r 24 "${VIDEO_ARGS[@]}" -threads 1 -c:a aac -ac 2 -b:a 128k -map_metadata -1 "${BITEXACT[@]}" \
+    ${date:+-metadata "creation_time=$date"} "/work/$tmp"
   mv "$MEDIA/$tmp" "$MEDIA/$out"
 }
 
@@ -525,9 +522,7 @@ EOF
   clip "$dir/$name.mkv" "$SINTEL" 10 30 "$size" "$rate" "$server - music video ${size#*x}p ${rate}k"
 }
 
-# Music: the same album as FLAC and as MP3 on the two remotes and a local copy, a
-# multi-disc album that differs in bit depth, and an album with no IDs at all
-# whose first title differs by an article.
+# Music: one album as FLAC, MP3 and a local copy, a multi-disc album, an album without IDs.
 album_federato remoto-standard flac16 flac
 album_federato remoto-jellymesh mp3-320 mp3
 album_federato locale mp3-128 mp3
@@ -549,9 +544,7 @@ EOF
 musicvideo remoto-standard "$SD" 2000
 musicvideo remoto-jellymesh "$HD" 4000
 
-# Home videos in nested folders, dated by creation_time, and photos: an album with
-# EXIF and GPS, EXIF without GPS (portrait), a JPEG and a PNG without EXIF, and a
-# photo with GPS beside videos whose names it does not start with.
+# Home videos in nested folders, and photos with EXIF and GPS, EXIF only, or neither.
 HV=remoto-standard/videodomestici
 clip "$HV/2025/Estate/Spiaggia.mp4" "$TOS" 600 20 "$SD" 2000 Spiaggia.mp4 2025-07-14T10:00:00.000000Z
 clip "$HV/2025/Inverno/Neve.mkv" "$ED" 400 20 "$SD" 2000 Neve.mkv 2025-12-20T16:30:00.000000Z
@@ -562,10 +555,8 @@ photo "$HV/Album Vacanze 2025/IMG_0002.jpg" "$ED" 500 900x1200 "2025:08:11 09:15
 picture "$HV/Album Vacanze 2025/IMG_0003.jpg" "$SINTEL" 30 1600x900 "IMG_0003, no EXIF"
 picture "$HV/Album Vacanze 2025/IMG_0004.png" "$ED" 520 800x600 "IMG_0004, PNG, no EXIF"
 
-# books <server> full|short: EPUB and a one-file audiobook with chapters; with full
-# also a PDF over 128 KiB (pdf.js uses Range only above that) with an .opf beside
-# it, a CBZ, and an audiobook in three files of two chapters each. Each book is
-# alone in its folder, as BookResolver wants.
+# books <server> full|short: EPUB and M4B audiobook; full adds PDF with .opf, CBZ and a
+# three-file audiobook, each book in its own folder.
 books() {
   local server=$1 full=$2 dir n pages=()
   dir="$server/libri/JM Libro Epub"
@@ -653,9 +644,9 @@ cat >"$MEDIA/$MIX/JM Serie Mista (2026)/tvshow.nfo" <<EOF
   <uniqueid type="imdb">tt99000401</uniqueid>
 </tvshow>
 EOF
-encode "$MIX/JM Film Misto (2026)/JM Film Misto (2026).mkv" "$TOS" 620 30 "$SD" h264 2000 "remoto-standard - mixed film"
+clip "$MIX/JM Film Misto (2026)/JM Film Misto (2026).mkv" "$TOS" 620 30 "$SD" 2000 "remoto-standard - mixed film"
 for n in 1 2; do
-  encode "$MIX/JM Serie Mista (2026)/Season 01/JM Serie Mista S01E0$n.mkv" "$ED" $((450 + n * 30)) 20 "$SD" h264 2000 \
+  clip "$MIX/JM Serie Mista (2026)/Season 01/JM Serie Mista S01E0$n.mkv" "$ED" $((450 + n * 30)) 20 "$SD" 2000 \
     "remoto-standard - mixed S01E0$n"
 done
 
