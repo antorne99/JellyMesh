@@ -530,6 +530,61 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(Shared(fixture).PendingLibraries);
     }
 
+    // D55: a shared library the server stored under a number before a crash, and never recorded.
+    private static async Task<Fixture> WithNumberedPendingFilm()
+    {
+        var fixture = WithTwoServers();
+        await fixture.Manager.EnableShared().Job;
+        fixture.Store.Update(config =>
+        {
+            config.SharedLibraries.Libraries.Remove(config.SharedLibraries.Libraries.Single(record => record.Kind == ServerLibraryKind.Movies));
+            config.SharedLibraries.CreatedLibraryKeys.Remove("Movies");
+            var intent = new PendingLibraryConfig { Kind = ServerLibraryKind.Movies, Name = SharedFilm };
+            intent.Paths.Add(_movies);
+            intent.Paths.Add(_otherMovies);
+            config.SharedLibraries.PendingLibraries.Add(intent);
+        });
+        var made = fixture.Libraries.Folders.Single(folder => folder.Name == SharedFilm);
+        made.Name = SharedFilm + "2";
+        made.ItemId = fixture.Libraries.IdOf(SharedFilm + "2");
+        return fixture;
+    }
+
+    [Fact]
+    public async Task A_switch_off_lists_a_numbered_shared_library_never_recorded_and_deletes_it_only_once_confirmed()
+    {
+        var fixture = await WithNumberedPendingFilm();
+
+        var unconfirmed = fixture.Manager.DisableShared(null);
+        var stale = fixture.Manager.DisableShared(Confirm(SharedSeries));
+
+        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, unconfirmed.Outcome);
+        Assert.Equal([SharedFilm + "2", SharedSeries], unconfirmed.ToDelete.Order(StringComparer.Ordinal));
+        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, stale.Outcome);
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Single(Shared(fixture).PendingLibraries);
+
+        await fixture.Manager.DisableShared(Shown(unconfirmed)).Job;
+
+        Assert.Equal([SharedFilm + "2", SharedSeries], fixture.Libraries.Removed.Select(call => call.Name).Order(StringComparer.Ordinal));
+        Assert.False(Shared(fixture).Enabled);
+        Assert.Empty(Shared(fixture).PendingLibraries);
+    }
+
+    [Fact]
+    public async Task A_numbered_shared_library_never_recorded_that_cannot_be_deleted_keeps_the_option_on_and_is_listed_again()
+    {
+        var fixture = await WithNumberedPendingFilm();
+        fixture.Libraries.RemoveFailure = new InvalidOperationException("boom");
+        fixture.Libraries.RemoveFailureFor = name => name == SharedFilm + "2";
+
+        await fixture.Manager.DisableShared(Shown(fixture.Manager.DisableShared(null))).Job;
+
+        Assert.True(Shared(fixture).Enabled);
+        Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
+        Assert.Contains(SharedFilm + "2", fixture.Manager.DisableShared(null).ToDelete);
+    }
+
     [Fact]
     public async Task No_library_scan_runs_while_a_shared_library_is_not_recorded_and_a_check_with_no_ids_records_and_scans_it()
     {

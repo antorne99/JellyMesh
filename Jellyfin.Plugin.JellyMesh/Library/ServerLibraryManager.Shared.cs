@@ -58,7 +58,7 @@ public sealed partial class ServerLibraryManager
         // Every library is named, those deleted and those released, after a follow when the gate is free; the job checks
         // them again under the gate (D48).
         FollowSharedIfFree();
-        var current = SharedSwitchOff();
+        var current = SharedSwitchOff(PendingNumbered(ReadFolders()));
         if (current.ToDelete.Count + current.ToRelease.Count > 0 && (confirmation is null || !SameSwitchOff(confirmation, current)))
         {
             return new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, [.. current.ToDelete]) { ToRelease = [.. current.ToRelease] };
@@ -67,10 +67,28 @@ public sealed partial class ServerLibraryManager
         return Start(_sharedOwner, (_, token) => DisableSharedAsync(current, token));
     }
 
-    // The shared libraries a switch-off deletes and those it releases.
-    private SharedLibrariesConfirmation SharedSwitchOff() => _store.Read(config => new SharedLibrariesConfirmation(
-        config.SharedLibraries.Libraries.Where(record => !record.Adopted).Select(record => record.Name).ToList(),
+    // The shared libraries a switch-off deletes, with those stored under a number and never recorded, and those it releases.
+    private SharedLibrariesConfirmation SharedSwitchOff(IReadOnlyList<VirtualFolderInfo> numbered) => _store.Read(config => new SharedLibrariesConfirmation(
+        config.SharedLibraries.Libraries.Where(record => !record.Adopted).Select(record => record.Name).Concat(numbered.Select(folder => folder.Name)).ToList(),
         config.SharedLibraries.Libraries.Where(record => record.Adopted).Select(record => record.Name).ToList()));
+
+    // The libraries the server stored under a number for shared intents before a crash, never recorded: the one with the
+    // intent's type and exactly its folders, when none has its name (D55).
+    private List<VirtualFolderInfo> PendingNumbered(List<VirtualFolderInfo>? folders)
+    {
+        var (root, intents) = _store.Read(config => (config.FederatedFolderPath, config.SharedLibraries.PendingLibraries.ToList()));
+        if (folders is null || root.Length == 0)
+        {
+            return [];
+        }
+
+        return intents
+            .Where(intent => FindMade(intent, root, _sharedOwner, folders) is null)
+            .Select(intent => FindAllMade(intent, root, _sharedOwner, folders, name => IsNumbered(name, intent.Name)) is [var only] ? only : null)
+            .OfType<VirtualFolderInfo>()
+            .Distinct()
+            .ToList();
+    }
 
     private static bool SameSwitchOff(SharedLibrariesConfirmation confirmed, SharedLibrariesConfirmation current)
         => confirmed.ToDelete.ToHashSet(StringComparer.Ordinal).SetEquals(current.ToDelete) && confirmed.ToRelease.ToHashSet(StringComparer.Ordinal).SetEquals(current.ToRelease);
@@ -174,13 +192,15 @@ public sealed partial class ServerLibraryManager
     private async Task DisableSharedAsync(SharedLibrariesConfirmation confirmed, CancellationToken cancellationToken)
     {
         // The follow runs first, so that a library taken for a renamed one is checked against the confirmed names too.
-        if (ReadFolders() is { } folders)
+        var folders = ReadFolders();
+        if (folders is not null)
         {
             Follow(SharedRegistry, folders);
         }
 
         // A library made or renamed since the admin confirmed was not named, so the option stays on until a new confirmation.
-        if (!SameSwitchOff(confirmed, SharedSwitchOff()))
+        var numbered = PendingNumbered(folders);
+        if (!SameSwitchOff(confirmed, SharedSwitchOff(numbered)))
         {
             _logger.LogWarning("A shared library changed after the switch-off was confirmed, so the option stays on");
             _errors[_sharedOwner] = AutomaticLibrariesError.Unconfirmed;
@@ -194,6 +214,18 @@ public sealed partial class ServerLibraryManager
             if (!await DeleteEachAsync(SharedRegistry, _sharedOwner, null, confirmed, () => removed = true, cancellationToken).ConfigureAwait(false))
             {
                 return;
+            }
+
+            // Its intent stays until it is gone, so that the next switch-off lists it again (D55).
+            foreach (var made in numbered)
+            {
+                if (!await RemoveSharedAsync(made, cancellationToken).ConfigureAwait(false))
+                {
+                    _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+                    return;
+                }
+
+                removed = true;
             }
 
             _store.Update(config =>
