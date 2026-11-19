@@ -9,6 +9,7 @@
 # incremental sync three times (the first finds the scanned library, the next ones find nothing changed), the nightly
 # reconciliation on scanned items and one more incremental after it.
 # SCALE_NAME, SCALE_PORT and SCALE_FAKE_PORT (the first fake; the others follow) override the container and the ports.
+# SCALE_FIRST_ONLY=1 measures the first sync alone.
 # usage: run.sh   (raw data and results.txt go in WORK, by default ${TMPDIR:-/tmp}/jm-scale-run)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -79,7 +80,7 @@ snapshot() {
   local phase=$1
   get /JellyMesh/Admin/Sync >"$WORK/$phase-status.json"
   in_box "awk '/VmHWM|VmRSS/ { print \$1, int(\$2 / 1024) }' /proc/$JPID/status; echo cgroup-peak \$(( \$(cat /sys/fs/cgroup/memory.peak) / 1048576 ))" >"$WORK/$phase-memory.txt"
-  in_box "for f in \$(find /config -name federation-index.json -o -name federated-stubs.json); do echo \$(basename \$f) \$(stat -c '%s %.3Y' \$f); done" >"$WORK/$phase-files.txt"
+  in_box "for f in \$(find /config -name federation-index.json -o -name federated-stubs.json -o -name jellymesh.db); do echo \$(basename \$f) \$(stat -c '%s %.3Y' \$f); done" >"$WORK/$phase-files.txt"
   in_box "grep -o '\"LocalItemIds\"' \$(find /config -name federated-stubs.json) | wc -l" >"$WORK/$phase-groups.txt" 2>/dev/null
   # After the scan: the films and episodes Jellyfin lists, by how many versions each one holds.
   [ -f "$WORK/scan-requested" ] && get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=MediaSourceCount' |
@@ -122,9 +123,11 @@ start_nightly() { post "/ScheduledTasks/Running/$NIGHTLY_TASK"; }
 
 # The fakes share one request log: each line is one short append.
 FAKE_PIDS=
+# The fakes list no item until the servers are set up: saving the libraries of a server starts a sync of that server.
+touch "$WORK/hold"
 for n in $(seq 1 "$REMOTES"); do
   echo "--- fake remote $n on :$((FAKE + n - 1))"
-  SCALE_SERVER_ID=$(printf '%032x' $((0x8000 + n))) SCALE_SERVER_NAME="scale-remote-$n" \
+  SCALE_HOLD="$WORK/hold" SCALE_SERVER_ID=$(printf '%032x' $((0x8000 + n))) SCALE_SERVER_NAME="scale-remote-$n" \
     python3 "$S/fake_remote.py" "$((FAKE + n - 1))" "$WORK/requests.log" >"$WORK/fake-$n.out" 2>&1 &
   FAKE_PIDS="$FAKE_PIDS $!"
 done
@@ -156,16 +159,21 @@ NIGHTLY_TASK=$(get /ScheduledTasks | jq -r '.[] | select(.Key == "JellyMeshRecon
 SERVERS=
 for n in $(seq 1 "$REMOTES"); do
   name=scale; [ "$REMOTES" -gt 1 ] && name="scale-$n"
-  server=$(post /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$((FAKE + n - 1))" --arg n "$name" '{Name:$n,Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" | jq -r .Id)
+  server=$(post /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$((FAKE + n - 1))" --arg n "$name" '{Name:$n,Url:$u,Username:"jellymesh",Password:"jellymesh-test",LibraryMode:"None"}')" | jq -r .Id)
   [ -n "$server" ] && [ "$server" != null ] || { echo "cannot add server $name" >&2; exit 1; }
-  # The server folder is named by the dashed form of the GUID.
-  server=$(echo "$server" | sed -E 's/^(.{8})-?(.{4})-?(.{4})-?(.{4})-?(.{12})$/\1-\2-\3-\4-\5/')
   form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$server" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
   libraries=$(post "/JellyMesh/Admin/Servers/$server/Edit/Check" "$form" | jq -c '{LibraryIds: [.Libraries[].Id]}')
   req PUT "/JellyMesh/Admin/Servers/$server" "$(jq -c --argjson l "$libraries" '. + $l' <<<"$form")" >/dev/null
+  # The server folder is named by the dashed form of the GUID.
+  server=$(echo "$server" | sed -E 's/^(.{8})-?(.{4})-?(.{4})-?(.{4})-?(.{12})$/\1-\2-\3-\4-\5/')
   echo "server $name $server, libraries $libraries"
   SERVERS="$SERVERS $server"
 done
+for i in $(seq 1 300); do
+  [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && break
+  sleep 1
+done
+rm -f "$WORK/hold"
 
 sample &
 SAMPLER_PID=$!
@@ -173,9 +181,11 @@ sleep 5
 snapshot idle
 
 measure first start_full
+[ "${SCALE_FIRST_ONLY:-0}" = 1 ] || {
 measure incremental start_incremental
 measure repeat start_full
 measure nightly start_nightly
+}
 
 if [ "${SCALE_SCAN:-0}" = 1 ]; then
   echo "--- linking the server folders and scanning"

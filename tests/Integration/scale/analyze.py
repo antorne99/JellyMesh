@@ -134,6 +134,21 @@ def report(phase, previous_files):
         f"wall time (LastStartedUtc to LastFinishedUtc) {seconds(end - start)}",
         f"  read of the catalog                      {seconds(read_end - start) if read_end else '-'}"
         f"  ({len(items)} /Items calls, {sum(r[2] for r in items) / 1048576:.1f} MiB, fake busy {seconds(sum(r[1] for r in items))})",
+    ]
+    # A full read of each server starts with its first page of films, so the pages split by server there.
+    segments = []
+    for r in items:
+        if r[3] == "items-Movie 0" or not segments:
+            segments.append([])
+        segments[-1].append(r)
+    if len(segments) > 1:
+        for n, segment in enumerate(segments, 1):
+            end_ms = segment[-1][0] + segment[-1][1]
+            following = segments[n][0][0] if n < len(segments) else read_end
+            lines.append(f"    server {n}: pages {seconds(end_ms - segment[0][0])} ({len(segment)} calls, "
+                         f"{(end_ms - segment[0][0]) / len(segment):.0f} ms a call, fake busy {seconds(sum(r[1] for r in segment))}), "
+                         f"then {seconds(following - end_ms) if following else '-'} to the {'next server' if n < len(segments) else 'read log line'}")
+    lines += [
         f"  index save after the read                {seconds(index_saved - read_end) if index_saved and read_end else 'no write'}",
         f"  materialization                          {seconds(materialize_end - materialize_start) if materialize_start else '-'}",
         f"    image downloads                        {len(images)}"
@@ -152,6 +167,9 @@ def report(phase, previous_files):
     lines.append(f"memory, process VmHWM after the phase     {memory.get('VmHWM', '-')} MiB (cgroup memory.peak {memory.get('cgroup-peak', '-')} MiB, page cache included)")
     lines.append(f"federation-index.json                     {index[0] / 1048576:.1f} MiB" if index else "federation-index.json                     -")
     lines.append(f"federated-stubs.json                      {stubs[0] / 1048576:.1f} MiB" if stubs else "federated-stubs.json                      -")
+    database = files_of(phase).get("jellymesh.db")
+    if database:
+        lines.append(f"jellymesh.db                              {database[0] / 1048576:.1f} MiB")
     groups = (read(f"{phase}-groups.txt") or "").strip()
     if groups:
         lines.append(f"version groups in the registry            {groups}")
