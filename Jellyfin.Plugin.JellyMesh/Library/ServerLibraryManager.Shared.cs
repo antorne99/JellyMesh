@@ -664,10 +664,12 @@ public sealed partial class ServerLibraryManager
         var changed = false;
         foreach (var record in _store.Read(config => config.SharedLibraries.Libraries.Where(record => record.Unblocked).Select(Copy).ToList()))
         {
-            if (FindRecorded(record, folders) is { } folder && !await BlockFoundAsync(record, folder, folders, cancellationToken).ConfigureAwait(false))
+            var folder = FindRecorded(record, folders);
+            var moved = folder is null ? FindMovedShared(record, folders) : null;
+            if ((folder ?? moved) is { } found && !await BlockFoundAsync(record, found, folders, cancellationToken).ConfigureAwait(false))
             {
-                // Only a library known as ours is deleted.
-                if (IsOwnShared(record, folder) && await RemoveSharedAsync(folder, cancellationToken).ConfigureAwait(false))
+                // One found by its paths alone may be a library of the admin, so only a library known as ours is deleted.
+                if (folder is not null && IsOwnShared(record, folder) && await RemoveSharedAsync(folder, cancellationToken).ConfigureAwait(false))
                 {
                     ForgetShared(record);
                     _logger.LogInformation("Deleted the shared library {Library}, which could not be blocked", LogText.Clean(folder.Name));
@@ -683,6 +685,11 @@ public sealed partial class ServerLibraryManager
                 foreach (var kept in config.SharedLibraries.Libraries.Where(kept => kept.Kind == record.Kind && string.Equals(kept.Name, record.Name, StringComparison.Ordinal)))
                 {
                     kept.Unblocked = false;
+                    if (moved is not null)
+                    {
+                        kept.Name = moved.Name;
+                        kept.ItemId = moved.ItemId ?? string.Empty;
+                    }
                 }
             });
             _sharedScanOwed = true;
@@ -700,6 +707,13 @@ public sealed partial class ServerLibraryManager
         return BlockSources(planned, [.. folders.Where(other => other != folder)]) is { } sources
             && await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false);
     }
+
+    // The one library no registry holds with exactly the paths and type of a shared library not found by id or name.
+    private VirtualFolderInfo? FindMovedShared(AutomaticLibraryConfig record, List<VirtualFolderInfo> folders) =>
+        record.Paths.Count > 0
+        && Unclaimed(folders).Where(folder => folder.CollectionType == TypeOf(record.Kind) && SameLocations(folder.Locations ?? [], record.Paths)).ToList() is [var only]
+            ? only
+            : null;
 
     // A shared library found by its recorded id, or by its name with the recorded paths and type.
     private static bool IsOwnShared(AutomaticLibraryConfig record, VirtualFolderInfo folder) =>

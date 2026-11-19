@@ -76,6 +76,25 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Libraries.RemoveFailureFor = name => name == SharedFilm + "2";
     }
 
+    // A shared library without its blocks the admin renamed while the plugin was stopped: no library has its id or name,
+    // one has exactly its paths and type.
+    private static Fixture WithMovedUnblockedLibrary()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _otherMovies);
+        fixture.Libraries.Add("Rinominata", CollectionTypeOptions.movies, _movies, _otherMovies);
+        fixture.Store.Update(config =>
+        {
+            var record = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Vecchia", ItemId = fixture.Libraries.IdOf("Vecchia"), Unblocked = true };
+            record.Paths.Add(_movies);
+            record.Paths.Add(_otherMovies);
+            config.SharedLibraries.Enabled = true;
+            config.SharedLibraries.Libraries.Add(record);
+            config.SharedLibraries.CreatedLibraryKeys.Add(record.KeyOf());
+        });
+        return fixture;
+    }
+
     // Lets the blocks of the shared library be written.
     private static void LetBlocks(Fixture fixture)
     {
@@ -357,6 +376,33 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Contains(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
         Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Name == SharedFilm + "2");
         Assert.Empty(fixture.Manager.GetSharedState().Unblocked);
+    }
+
+    [Fact]
+    public async Task A_shared_library_not_found_by_id_or_name_is_blocked_under_the_name_of_the_one_library_with_its_paths_and_type()
+    {
+        var fixture = WithMovedUnblockedLibrary();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        var record = Shared(fixture).Libraries.Single(record => record.Kind == ServerLibraryKind.Movies);
+        Assert.Equal(("Rinominata", fixture.Libraries.IdOf("Rinominata"), false), (record.Name, record.ItemId, record.Unblocked));
+        Assert.Contains(fixture.Renamer.Blocked, carries => carries.Any(carry => carry.Name == "Rinominata"));
+    }
+
+    [Fact]
+    public async Task A_shared_library_found_only_by_its_paths_is_never_deleted_when_its_blocks_fail()
+    {
+        var fixture = WithMovedUnblockedLibrary();
+        fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+
+        Assert.False(await fixture.Manager.ScanAsync(CancellationToken.None));
+
+        var record = Shared(fixture).Libraries.Single();
+        Assert.Equal(("Vecchia", true), (record.Name, record.Unblocked));
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Renamer.Removed);
+        Assert.Equal(["Vecchia"], fixture.Manager.GetSharedState().Unblocked);
     }
 
     [Fact]
