@@ -20,4 +20,19 @@ internal static class TestLibraries
 
     /// <summary>A third library of series.</summary>
     public const string ShowsC = "5e0e000000000000000000000000000c";
+
+    /// <summary>A library of music.</summary>
+    public const string Music = "a0d1000000000000000000000000000a";
+
+    /// <summary>A library of music videos.</summary>
+    public const string MusicVideos = "c11b000000000000000000000000000a";
+
+    /// <summary>A library of home videos and photos.</summary>
+    public const string HomeVideos = "40e0000000000000000000000000000a";
+
+    /// <summary>A library of books.</summary>
+    public const string Books = "b00c000000000000000000000000000a";
+
+    /// <summary>A library with no type, of films and series.</summary>
+    public const string Mixed = "a1c0000000000000000000000000000a";
 }

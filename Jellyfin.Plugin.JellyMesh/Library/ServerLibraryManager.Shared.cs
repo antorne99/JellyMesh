@@ -302,7 +302,7 @@ public sealed partial class ServerLibraryManager
                 continue;
             }
 
-            var adoption = LibraryAdoption.ClassifyShared(planned, TypeOf(kind), Unclaimed(folders));
+            var adoption = LibraryAdoption.ClassifyShared(planned, Unclaimed(folders));
             conflicts.AddRange(adoption.Conflicts);
             if (adoption.Adopt is { } adopted)
             {
@@ -513,7 +513,7 @@ public sealed partial class ServerLibraryManager
 
         try
         {
-            await _libraries.AddVirtualFolder(name, TypeOf(planned.Kind), OptionsFor(planned.Paths, addsToCollections), false).ConfigureAwait(false);
+            await _libraries.AddVirtualFolder(name, TypeOf(planned.Kind), OptionsFor(planned.Kind, planned.Paths, addsToCollections), false).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -751,7 +751,7 @@ public sealed partial class ServerLibraryManager
     private static bool IsOwnShared(AutomaticLibraryConfig record, VirtualFolderInfo folder) =>
         record.ItemId.Length > 0
             && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase)
-            && folder.CollectionType == TypeOf(record.Kind)
+            && ServerLibraryKinds.HasTypeOf(folder.CollectionType, record.Kind)
             && record.Paths.Count > 0
             && SameLocations(folder.Locations ?? [], record.Paths);
 

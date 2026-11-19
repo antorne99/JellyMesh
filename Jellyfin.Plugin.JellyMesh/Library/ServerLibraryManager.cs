@@ -434,7 +434,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     private static string? PathOf(ServerLibraryKind kind, string root, Guid serverId) => LibraryPlan.ServerFolderOf(kind, root, serverId);
 
-    private static CollectionTypeOptions TypeOf(ServerLibraryKind kind) => kind == ServerLibraryKind.Movies ? CollectionTypeOptions.movies : CollectionTypeOptions.tvshows;
+    private static CollectionTypeOptions? TypeOf(ServerLibraryKind kind) => ServerLibraryKinds.LibraryTypeOf(kind);
 
     private static bool Passes(VirtualFolderInfo folder, AutomaticLibraryConfig record, string root, Guid serverId) =>
         Passes(folder, record.Kind, record.RemoteLibraryId, root, serverId);
@@ -442,7 +442,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // The plugin acts on a library only while it has paths, each the 0.5 folder of the server or a type folder of its remote
     // libraries (of the one remote library it holds alone, if any), and its type is the expected one.
     private static bool Passes(VirtualFolderInfo folder, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
-        folder.CollectionType == TypeOf(kind)
+        ServerLibraryKinds.HasTypeOf(folder.CollectionType, kind)
         && (folder.Locations ?? []) is var locations
         && (locations.Length > 0 || serverId == _sharedOwner)
         && locations.All(location => IsServerFolder(location, kind, remoteLibraryId, root, serverId));
@@ -450,7 +450,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // An adopted library stays adopted while it keeps its type and a folder of the server; any other folder is the admin's.
     private static bool Holds(VirtualFolderInfo folder, AutomaticLibraryConfig record, string root, Guid serverId) =>
         record.Adopted
-            ? folder.CollectionType == TypeOf(record.Kind) && folder.Locations.Any(location => IsServerFolder(location, record.Kind, record.RemoteLibraryId, root, serverId))
+            ? ServerLibraryKinds.HasTypeOf(folder.CollectionType, record.Kind) && folder.Locations.Any(location => IsServerFolder(location, record.Kind, record.RemoteLibraryId, root, serverId))
             : Passes(folder, record, root, serverId);
 
     // The 0.5 folder of the server or a type folder of its remote libraries; for the shared libraries, those of any server.
@@ -459,14 +459,14 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             ? ServerOfFolder(location, root) is { } server && IsServerFolder(location, kind, string.Empty, root, server)
             : (PathOf(kind, root, serverId) is { } serverFolder && FederatedFolderLinkChecker.IsSamePath(location, serverFolder)) || IsTypeFolderOf(location, kind, remoteLibraryId, root, serverId);
 
-    // A type folder of the given kind in a remote library folder of the server, that of the given remote library if one is given.
+    // A type folder of the given kind (Film or Serie for a mixed one) in a remote library folder of the server, that of the given remote library if one is given.
     private static bool IsTypeFolderOf(string location, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
         FederatedPaths.RelativeTo(root, Path.TrimEndingDirectorySeparator(location))?.Split(Path.DirectorySeparatorChar) is [var server, var library, _]
         && Guid.TryParseExact(server, "D", out var id)
         && id == serverId
         && FederatedPaths.IsLibraryId(library)
         && (remoteLibraryId.Length == 0 || string.Equals(library, remoteLibraryId, StringComparison.OrdinalIgnoreCase))
-        && FederatedFolderLinkChecker.IsSamePath(location, FederatedFolderLayout.TypeFolderPath(root, serverId, library, LibraryPlan.TypeOf(kind)));
+        && ServerLibraryKinds.TypeFoldersOf(kind).Any(type => FederatedFolderLinkChecker.IsSamePath(location, FederatedFolderLayout.TypeFolderPath(root, serverId, library, type)));
 
     // A library left only because the federated folder changed: it still holds folders of the server under another root,
     // two levels up from a 0.5 folder or three from a type folder.
@@ -477,6 +477,20 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             .Any(other => other is { Length: > 0 } && Passes(folder, record, other, serverId));
 
     // Films go into collections only when the plugin federates them (decision 196); libraries already there keep theirs.
+    // The new types also save no lyrics, download no subtitles and show photos only with home videos (§3.12).
+    private static LibraryOptions OptionsFor(ServerLibraryKind kind, IEnumerable<string> paths, bool addsToCollections)
+    {
+        var options = OptionsFor(paths, addsToCollections);
+        if (kind is ServerLibraryKind.Music or ServerLibraryKind.MusicVideos or ServerLibraryKind.HomeVideos or ServerLibraryKind.Books)
+        {
+            options.SaveLyricsWithMedia = false;
+            options.SubtitleDownloadLanguages = [];
+            options.EnablePhotos = kind == ServerLibraryKind.HomeVideos;
+        }
+
+        return options;
+    }
+
     private static LibraryOptions OptionsFor(IEnumerable<string> paths, bool addsToCollections) => new()
     {
         PathInfos = paths.Select(path => new MediaPathInfo(path)).ToArray(),
@@ -680,7 +694,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
                 // A library of the admin with exactly the paths and type is adopted; one partly on them blocks it (D4, D30),
                 // unless it also holds folders of other servers, as by row 77.
-                var adoption = LibraryAdoption.Classify(planned, TypeOf(planned.Kind), Unclaimed(folders), root, serverId);
+                var adoption = LibraryAdoption.Classify(planned, Unclaimed(folders), root, serverId);
                 conflicts.AddRange(adoption.Conflicts);
                 if (adoption.Adopt is { } adopted)
                 {
@@ -884,7 +898,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
         try
         {
-            await _libraries.AddVirtualFolder(name, TypeOf(planned.Kind), OptionsFor(planned.Paths, addsToCollections), false).ConfigureAwait(false);
+            await _libraries.AddVirtualFolder(name, TypeOf(planned.Kind), OptionsFor(planned.Kind, planned.Paths, addsToCollections), false).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -1155,7 +1169,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     private async Task<Guid?> RenameOneAsync(VirtualFolderInfo folder, ServerLibraryKind kind, string newName, CancellationToken cancellationToken)
     {
-        var type = kind == ServerLibraryKind.Movies ? CollectionType.movies : CollectionType.tvshows;
+        var type = ServerLibraryKinds.CollectionTypeOf(kind);
         try
         {
             return await _renamer.RenameAsync(folder.Name, Guid.TryParse(folder.ItemId, out var id) ? id : null, type, newName, cancellationToken).ConfigureAwait(false);
@@ -1500,7 +1514,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     // The absolute type folders of the remote libraries of a server that hold titles of a kind, null while unknown.
     private List<string>? TypeFolderPaths(ServerLibraryKind kind, string root, Guid serverId)
-        => _stubs.TypeFoldersOf(serverId, LibraryPlan.TypeOf(kind))?.Select(folder => FederatedPaths.Resolve(root, folder)).ToList();
+    {
+        var held = ServerLibraryKinds.TypeFoldersOf(kind).Select(type => _stubs.TypeFoldersOf(serverId, type)).ToList();
+        return held.Any(folders => folders is null) ? null : [.. held.SelectMany(folders => folders!).Select(folder => FederatedPaths.Resolve(root, folder))];
+    }
 
     private void Follow(Guid serverId, IReadOnlyList<VirtualFolderInfo> folders) => Follow(config => LiveRegistry(config, serverId), folders);
 
