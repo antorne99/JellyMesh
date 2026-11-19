@@ -35,7 +35,7 @@ internal static class TestValues
     public const string ViewsJson =
         "{\"Items\":[{\"Id\":\"1\",\"Name\":\"Film\",\"CollectionType\":\"movies\"},"
         + "{\"Id\":\"2\",\"Name\":\"Serie\",\"CollectionType\":\"tvshows\"},"
-        + "{\"Id\":\"3\",\"Name\":\"Musica\",\"CollectionType\":\"music\"}],\"TotalRecordCount\":3}";
+        + "{\"Id\":\"3\",\"Name\":\"Playlist\",\"CollectionType\":\"playlists\"}],\"TotalRecordCount\":3}";
 }
 
 internal sealed class InMemoryMergeStore : IManualMergeStore

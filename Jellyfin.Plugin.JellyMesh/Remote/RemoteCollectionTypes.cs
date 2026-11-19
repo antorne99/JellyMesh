@@ -29,6 +29,9 @@ public static class RemoteCollectionTypes
     /// <summary>A library with no type of its own, which Jellyfin sends without one [D14].</summary>
     public const string Mixed = "mixed";
 
+    private const string Photos = "photos";
+    private const string LibraryView = "CollectionFolder";
+
     private static readonly RemoteItemType[] _films = [RemoteItemType.Movie];
     private static readonly RemoteItemType[] _series = [RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode];
 
@@ -50,4 +53,22 @@ public static class RemoteCollectionTypes
     /// <returns>The item types, in the order they are read.</returns>
     public static IReadOnlyList<RemoteItemType> ItemTypesOf(string? collectionType)
         => collectionType is not null && _itemTypes.TryGetValue(collectionType, out var types) ? types : [];
+
+    /// <summary>
+    /// Gets the type a remote view is imported as: an old <c>photos</c> view as home videos, a library view without a
+    /// type as mixed. Channels, playlists, collections and other views are no library the plugin imports.
+    /// </summary>
+    /// <param name="collectionType">The <c>CollectionType</c> of the view.</param>
+    /// <param name="viewType">The <c>Type</c> of the view.</param>
+    /// <returns>The type, or null.</returns>
+    public static string? Of(string? collectionType, string? viewType)
+    {
+        if (string.IsNullOrEmpty(collectionType))
+        {
+            return string.Equals(viewType, LibraryView, StringComparison.Ordinal) ? Mixed : null;
+        }
+
+        var type = string.Equals(collectionType, Photos, StringComparison.OrdinalIgnoreCase) ? HomeVideos : collectionType.ToLowerInvariant();
+        return _itemTypes.ContainsKey(type) ? type : null;
+    }
 }
