@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
@@ -211,6 +212,24 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(["Film", "Mine on the folder"], fixture.Libraries.Folders.Select(folder => folder.Name));
         Assert.False(fixture.Server.AutomaticLibraries);
         Assert.Empty(fixture.Server.AutomaticLibraryRegistry);
+    }
+
+    // Asserts that the deletions took each library out of the users' given and deletion lists, and never out of a blocked one.
+    private static void LeftOnlyGivenLists(Fixture fixture, params string[] names) =>
+        Assert.Equal(
+            names.SelectMany(name => new[] { (name, PreferenceKind.EnabledFolders), (name, PreferenceKind.EnableContentDeletionFromFolders) }).Order(),
+            fixture.Renamer.Removed.Select(removed => (removed.Name, removed.List)).Order());
+
+    [Fact]
+    public async Task Switching_off_keeps_the_blocks_of_the_libraries_it_deletes()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        LeftOnlyGivenLists(fixture, "Casa - Film", "Casa - Serie");
     }
 
     [Fact]
@@ -1310,6 +1329,19 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task The_libraries_a_removed_server_left_keep_their_blocks_when_deleted()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        LeftOnlyGivenLists(fixture, "Casa - Film", "Casa - Serie");
+    }
+
+    [Fact]
     public async Task A_library_held_while_a_server_is_removed_during_its_creation_waits_for_the_titles_too()
     {
         var fixture = new Fixture();
@@ -1905,7 +1937,13 @@ public sealed partial class ServerLibraryManagerTests
                         throw CreateFailure;
                     }
 
-                    Add(RenameOnCreate?.Invoke(name) ?? name, type, options.PathInfos.Select(info => info.Path).ToArray());
+                    var made = RenameOnCreate?.Invoke(name) ?? name;
+                    Add(made, type, options.PathInfos.Select(info => info.Path).ToArray());
+                    if (NoIdOnCreate)
+                    {
+                        Find(made).ItemId = null;
+                    }
+
                     return Task.CompletedTask;
                 });
             _mock.Setup(manager => manager.RemoveVirtualFolder(It.IsAny<string>(), It.IsAny<bool>()))
@@ -1962,6 +2000,9 @@ public sealed partial class ServerLibraryManagerTests
         public Func<string, string>? RenameOnCreate { get; set; }
 
         public Action? OnCreate { get; set; }
+
+        // When set, a library is made with no id, as one the server has not scanned yet.
+        public bool NoIdOnCreate { get; set; }
 
         // Runs after each read of the libraries, before the caller sees it.
         public Action? OnRead { get; set; }
@@ -2020,6 +2061,71 @@ public sealed partial class ServerLibraryManagerTests
 
         // Runs when a rename starts, before it moves the library.
         public Action? OnRename { get; set; }
+
+        public List<IReadOnlyList<AccessCarry>> Carried { get; } = [];
+
+        public List<IReadOnlyList<AccessCarry>> Previewed { get; } = [];
+
+        // The users a carry or a preview reports as losing titles.
+        public IReadOnlyList<AccessLoss> Lost { get; set; } = [];
+
+        public Exception? CarryFailure { get; set; }
+
+        public Action? OnCarry { get; set; }
+
+        public Task<IReadOnlyList<AccessLoss>> CarryAccessAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+        {
+            OnCarry?.Invoke();
+            if (CarryFailure is not null)
+            {
+                throw CarryFailure;
+            }
+
+            Carried.Add(carries);
+            return Task.FromResult(Lost);
+        }
+
+        public List<IReadOnlyList<AccessCarry>> Blocked { get; } = [];
+
+        public Exception? BlockFailure { get; set; }
+
+        public Action? OnBlock { get; set; }
+
+        public Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+        {
+            OnBlock?.Invoke();
+            if (BlockFailure is not null)
+            {
+                throw BlockFailure;
+            }
+
+            Blocked.Add(carries);
+            return Task.CompletedTask;
+        }
+
+        public List<(string Name, Guid? Id, PreferenceKind List)> Removed { get; } = [];
+
+        public Exception? RemoveFailure { get; set; }
+
+        public Action? OnRemove { get; set; }
+
+        public Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken)
+        {
+            OnRemove?.Invoke();
+            if (RemoveFailure is not null)
+            {
+                throw RemoveFailure;
+            }
+
+            Removed.Add((name, itemId, list));
+            return Task.CompletedTask;
+        }
+
+        public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
+        {
+            Previewed.Add(carries);
+            return Lost;
+        }
 
         public Task ResumeAsync(CancellationToken cancellationToken)
         {

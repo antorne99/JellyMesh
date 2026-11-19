@@ -3309,6 +3309,61 @@ def edit_locks(s, width):
     u.close(page)
 
 
+def mode_change(s, width):
+    """The confirmation of a mode change names the libraries it deletes and releases and who loses titles, as the check
+    answers them, with every name escaped."""
+    name = width + " mode change"
+    viewport = u.VIEWPORTS[width]
+    answers = []
+
+    def check_answer(context):
+        def answer(route):
+            if route.request.method != "POST" or not answers:
+                route.continue_()
+                return
+            response = route.fetch()
+            data = response.json()
+            data["Consequences"]["ModeChange"] = answers[-1]
+            route.fulfill(response=response, json=data)
+
+        context.route("**/JellyMesh/Admin/Servers/*/Edit/Check", answer)
+
+    saved_mode = lambda: of_server(u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1], "stock")["AutomaticLibraries"]["Mode"]
+    page = s.open("fresh", width, tab="servers", route=check_answer)
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    mode = stock.locator(u.EDIT_FORM).get_by_label(u.MODE_LABEL, exact=True)
+
+    answers.append({"From": "ByType", "To": "ByRemoteLibrary", "Deleted": ["stock - Film", HOSTILE], "Released": [],
+                    "LostAccess": [{"Library": HOSTILE, "Users": ["ristretto", HOSTILE_PEER]}, {"Library": LONG_NAME, "Users": ["bambini"]}]})
+    mode.select_option("ByRemoteLibrary")
+    u.button(stock, "save").click()
+    confirm_shows(page, name + " between two modes", "Save these changes?", [
+        "The library mode changes from By type to By remote library", "makes the new libraries first, then deletes its old ones",
+        "These libraries are deleted now: stock - Film, " + HOSTILE,
+        f"In {HOSTILE} these users lose titles, because they could see only some of the libraries it joins: ristretto, {HOSTILE_PEER}.",
+        f"In {LONG_NAME} these users lose titles"], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " between two modes releases nothing", "adopted libraries stay" not in shown, shown)
+    check(name + " between two modes says no rename", "scanned twice" not in shown and "becomes stock" not in shown, shown)
+    u.shot(page, f"mode-change-confirm-{width}", full_page=False)
+    confirm_keeps(page, name + " between two modes", lambda: saved_mode() == "None")
+
+    answers.append({"From": "ByRemoteLibrary", "To": "None", "Deleted": ["stock - Film HD"], "Released": [HOSTILE_PEER], "LostAccess": []})
+    mode.select_option("ByType")
+    u.button(stock, "save").click()
+    confirm_shows(page, name + " to none", "Save these changes?", [
+        "The library mode becomes None: JellyMesh makes no library for this server, and you add its folders to your libraries by hand.",
+        "These libraries are deleted now: stock - Film HD.",
+        f"These adopted libraries stay, and JellyMesh no longer manages them: {HOSTILE_PEER}."], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " to none names no one", "lose titles" not in shown, shown)
+    u.shot(page, f"mode-change-none-{width}", full_page=False)
+    confirm_keeps(page, name + " to none", lambda: saved_mode() == "None")
+    healthy(page, name)
+    u.close(page)
+
+
 def recreate(s, width):
     """Recreate missing libraries sends the mode saved at the click alone: no name or URL, so no failed rename runs again."""
     name = width + " recreate"
@@ -3416,6 +3471,7 @@ SCENARIOS = {
     "edit-form": (edit_form, WIDTHS),
     "edit-locks": (edit_locks, WIDTHS),
     "adopted": (adopted, WIDTHS),
+    "mode-change": (mode_change, WIDTHS),
     "recreate": (recreate, ["1280"]),
 }
 

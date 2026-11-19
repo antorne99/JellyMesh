@@ -179,6 +179,143 @@ public sealed class LibraryRenamer : ILibraryRenamer
         }
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AccessLoss>> CarryAccessAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(carries);
+        var users = _users.GetUsers().ToList();
+        var lost = LossesOf(carries, users);
+        await WriteAccessAsync(users, carries, true, cancellationToken).ConfigureAwait(false);
+        return lost;
+    }
+
+    /// <inheritdoc />
+    public async Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(carries);
+        var root = _paths.DefaultUserViewsPath;
+        var named = carries
+            .Select(carry => carry.Id is null && ChildOf(root, carry.Name) is { } path ? carry with { Id = _library.GetNewItemId(path, typeof(CollectionFolder)) } : carry)
+            .ToList();
+        await WriteAccessAsync(_users.GetUsers().ToList(), named, false, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Writes to each user the blocks of the new plugin libraries, and with give the ones given by id; a user that cannot be
+    // saved keeps both lists it had and the write fails.
+    private async Task WriteAccessAsync(IReadOnlyList<User> users, IReadOnlyList<AccessCarry> carries, bool give, CancellationToken cancellationToken)
+    {
+        foreach (var user in users)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var enabled = user.GetPreference(PreferenceKind.EnabledFolders);
+            var blocked = user.GetPreference(PreferenceKind.BlockedMediaFolders);
+            var given = carries.Where(carry => carry.Id is not null && !carry.Adopted).Select(carry => (Id: carry.Id!.Value, Access: AccessOf(user, carry))).ToList();
+            var touched = AddIds(user, PreferenceKind.BlockedMediaFolders, given.Where(pair => pair.Access.Blocked).Select(pair => pair.Id));
+            touched |= give && AddIds(user, PreferenceKind.EnabledFolders, given.Where(pair => pair.Access.Enabled).Select(pair => pair.Id));
+            if (!touched)
+            {
+                continue;
+            }
+
+            try
+            {
+                await _users.UpdateUserAsync(user).ConfigureAwait(false);
+            }
+            catch
+            {
+                user.SetPreference(PreferenceKind.EnabledFolders, enabled);
+                user.SetPreference(PreferenceKind.BlockedMediaFolders, blocked);
+                throw;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken)
+    {
+        if ((itemId ?? (ChildOf(_paths.DefaultUserViewsPath, name) is { } path ? _library.GetNewItemId(path, typeof(CollectionFolder)) : null)) is not { } id)
+        {
+            return;
+        }
+
+        foreach (var user in _users.GetUsers().ToList())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var values = user.GetPreference(list);
+            var kept = values.Where(value => !Guid.TryParse(value, out var named) || named != id).ToArray();
+            if (kept.Length == values.Length)
+            {
+                continue;
+            }
+
+            user.SetPreference(list, kept);
+            try
+            {
+                await _users.UpdateUserAsync(user).ConfigureAwait(false);
+            }
+            catch
+            {
+                user.SetPreference(list, values);
+                throw;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
+    {
+        ArgumentNullException.ThrowIfNull(carries);
+        return LossesOf(carries, _users.GetUsers().ToList());
+    }
+
+    // For each new library, the users who saw titles of it through an old library and do not see it after the carry.
+    private static List<AccessLoss> LossesOf(IReadOnlyList<AccessCarry> carries, IReadOnlyList<User> users) =>
+        [.. carries.Select(carry => new AccessLoss(carry.Name, [.. users.Where(user => Loses(user, carry)).Select(user => user.Username)]))
+            .Where(loss => loss.Users.Count > 0)];
+
+    // A new library is blocked for a user who blocked an old one holding any of its folders, and given by id to a user who
+    // had by id old libraries holding each of its folders.
+    private static (bool Enabled, bool Blocked) AccessOf(User user, AccessCarry carry)
+    {
+        var enabled = IdsOf(user, PreferenceKind.EnabledFolders);
+        var blocked = IdsOf(user, PreferenceKind.BlockedMediaFolders);
+        return (
+            !user.HasPermission(PermissionKind.EnableAllFolders) && carry.Folders.Count > 0 && carry.Folders.All(sources => sources.Any(enabled.Contains)),
+            carry.Folders.Any(sources => sources.Any(blocked.Contains)));
+    }
+
+    // Whether the user saw a folder of the new library through an old one and does not see the new library after the carry,
+    // which leaves an adopted library as the admin set it.
+    private static bool Loses(User user, AccessCarry carry)
+    {
+        var all = user.HasPermission(PermissionKind.EnableAllFolders);
+        var enabled = IdsOf(user, PreferenceKind.EnabledFolders);
+        var blocked = IdsOf(user, PreferenceKind.BlockedMediaFolders);
+        bool Sees(Guid id) => (all || enabled.Contains(id)) && !blocked.Contains(id);
+        var access = carry.Adopted ? (Enabled: false, Blocked: false) : AccessOf(user, carry);
+        var seesAfter = !access.Blocked && (access.Enabled || (carry.Id is { } id ? Sees(id) : all));
+        return !seesAfter && carry.Folders.Any(sources => sources.Any(Sees));
+    }
+
+    // The library ids a list of the user names, in any form.
+    private static HashSet<Guid> IdsOf(User user, PreferenceKind kind) =>
+        [.. user.GetPreference(kind).Select(value => Guid.TryParse(value, out var id) ? id : Guid.Empty).Where(id => id != Guid.Empty)];
+
+    // Adds to a list of the user the ids it lacks. Tells whether it changed.
+    private static bool AddIds(User user, PreferenceKind kind, IEnumerable<Guid> ids)
+    {
+        var values = user.GetPreference(kind);
+        var held = IdsOf(user, kind);
+        var missing = ids.Where(id => !held.Contains(id)).Distinct().ToList();
+        if (missing.Count == 0)
+        {
+            return false;
+        }
+
+        user.SetPreference(kind, [.. values, .. missing.Select(id => id.ToString("N", CultureInfo.InvariantCulture))]);
+        return true;
+    }
+
     // The path of a child of the libraries folder, or null for a name that would leave it.
     private static string? ChildOf(string root, string name)
     {

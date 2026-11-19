@@ -29,4 +29,7 @@ public sealed record AutomaticLibrariesState(
 
     /// <summary>Gets the libraries of the admin that kept the last check from making or adopting a library, and why.</summary>
     public IReadOnlyList<LibraryConflict> Conflicts { get; init; } = [];
+
+    /// <summary>Gets the users who lost titles in the last change of library mode, by library of the new mode.</summary>
+    public IReadOnlyList<AccessLoss> LostAccess { get; init; } = [];
 }

@@ -45,6 +45,7 @@ public sealed partial class ServerEditTests
         var started = new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []);
         _libraries.Setup(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>())).Returns(started);
         _libraries.Setup(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>())).Returns(started);
+        _libraries.Setup(manager => manager.ApplyMode(It.IsAny<Guid>())).Returns(started);
     }
 
     // The page never gets the saved user back, so an empty user keeps it, as an empty password does (row 432).
@@ -81,6 +82,8 @@ public sealed partial class ServerEditTests
     {
         var id = await AddAsync("1");
         SavedMode(id, LibraryMode.ByType, TwoLibraries);
+        _libraries.Setup(manager => manager.PreviewModeChange(id, LibraryMode.None))
+            .Returns(new LibraryModeChange(LibraryMode.ByType, LibraryMode.None, ["Friend - Film"], ["Serie"]));
         var before = Snapshot();
 
         var result = await Controller().CheckServerEdit(id, WithMode(Edit(), LibraryMode.None), CancellationToken.None);
@@ -92,7 +95,7 @@ public sealed partial class ServerEditTests
         Assert.Equal(["Serie"], change.Released);
         Assert.True(check.Consequences.Any);
         Assert.Equal(before, Snapshot());
-        _libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
+        _libraries.Verify(manager => manager.ApplyMode(It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]
@@ -108,7 +111,7 @@ public sealed partial class ServerEditTests
         Assert.Null(Assert.IsType<ServerEditCheck>(check.Value).Consequences.ModeChange);
         Assert.Equal(LibraryMode.ByType, _fixture.Store.Configuration.Servers.Single().LibraryMode);
         _libraries.Verify(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>()), Times.Never);
-        _libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
+        _libraries.Verify(manager => manager.ApplyMode(It.IsAny<Guid>()), Times.Never);
     }
 
     // "Recreate missing libraries" sends the saved mode again, which brings back the libraries of the registry.
@@ -124,7 +127,7 @@ public sealed partial class ServerEditTests
 
         Assert.False(Assert.IsType<ServerEditCheck>(check.Value).Consequences.Any);
         _libraries.Verify(manager => manager.Enable(id, LibraryMode.ByType), Times.Once);
-        _libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
+        _libraries.Verify(manager => manager.ApplyMode(It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]
@@ -137,11 +140,11 @@ public sealed partial class ServerEditTests
         await Controller().SaveServerEdit(id, WithMode(Edit(), LibraryMode.None), CancellationToken.None);
 
         _libraries.Verify(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>()), Times.Never);
-        _libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
+        _libraries.Verify(manager => manager.ApplyMode(It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]
-    public async Task A_save_to_none_deletes_the_libraries_after_the_save_with_the_confirmation_of_the_form()
+    public async Task A_save_to_none_saves_the_mode_then_changes_the_libraries_as_the_form_confirmed()
     {
         var id = await AddAsync("1");
         SavedMode(id, LibraryMode.ByType, TwoLibraries);
@@ -150,7 +153,9 @@ public sealed partial class ServerEditTests
         var result = await Controller().SaveServerEdit(id, WithMode(Edit(), LibraryMode.None), CancellationToken.None);
 
         Assert.IsType<ServerStatus>(result.Value);
-        _libraries.Verify(manager => manager.Disable(id, true), Times.Once);
+        Assert.Equal(LibraryMode.None, _fixture.Store.Configuration.Servers.Single().LibraryMode);
+        _libraries.Verify(manager => manager.ApplyMode(id), Times.Once);
+        _libraries.Verify(manager => manager.Disable(It.IsAny<Guid>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
@@ -159,6 +164,8 @@ public sealed partial class ServerEditTests
         var id = await AddAsync("1");
         SavedMode(id, LibraryMode.None);
         Starts();
+        _libraries.Setup(manager => manager.PreviewModeChange(id, LibraryMode.ByRemoteLibrary))
+            .Returns(new LibraryModeChange(LibraryMode.None, LibraryMode.ByRemoteLibrary, [], []));
 
         var check = await Controller().CheckServerEdit(id, WithMode(Edit(), LibraryMode.ByRemoteLibrary), CancellationToken.None);
         await Controller().SaveServerEdit(id, WithMode(Edit(), LibraryMode.ByRemoteLibrary), CancellationToken.None);
@@ -167,31 +174,26 @@ public sealed partial class ServerEditTests
         Assert.Equal((LibraryMode.None, LibraryMode.ByRemoteLibrary), (change.From, change.To));
         Assert.Empty(change.Deleted);
         Assert.Equal(LibraryMode.ByRemoteLibrary, _fixture.Store.Configuration.Servers.Single().LibraryMode);
-        _libraries.Verify(manager => manager.Enable(id, LibraryMode.ByRemoteLibrary), Times.Once);
+        _libraries.Verify(manager => manager.ApplyMode(id), Times.Once);
     }
 
-    // Until F40 the mode of a server with libraries changes only through none; the refusal comes before anything is saved.
+    // F40: a change between two modes of a server with libraries is checked with its preview and applied after the save.
     [Fact]
-    public async Task A_change_between_two_modes_with_libraries_is_refused_on_the_mode_before_the_save()
+    public async Task A_change_between_two_modes_with_libraries_is_previewed_and_applied()
     {
         var id = await AddAsync("1");
         SavedMode(id, LibraryMode.ByType, TwoLibraries);
         Starts();
-        var before = Snapshot();
+        var preview = new LibraryModeChange(LibraryMode.ByType, LibraryMode.ByRemoteLibrary, ["Friend - Film"], []);
+        _libraries.Setup(manager => manager.PreviewModeChange(id, LibraryMode.ByRemoteLibrary)).Returns(preview);
 
         var check = await Controller().CheckServerEdit(id, WithMode(Edit(name: "Casa"), LibraryMode.ByRemoteLibrary), CancellationToken.None);
         var save = await Controller().SaveServerEdit(id, WithMode(Edit(name: "Casa"), LibraryMode.ByRemoteLibrary), CancellationToken.None);
 
-        foreach (var (status, failure) in new[] { Refusal(check), Refusal(save) })
-        {
-            Assert.Equal(StatusCodes.Status409Conflict, status);
-            Assert.Equal(RemoteEditField.LibraryMode, failure.Field);
-            Assert.Equal(FederationAdminController.RefusalMessage(AutomaticLibrariesOutcome.ModeChangeNotAllowed), failure.Message);
-        }
-
-        Assert.Equal(before, Snapshot());
-        Assert.Equal(LibraryMode.ByType, _fixture.Store.Configuration.Servers.Single().LibraryMode);
-        Assert.Empty(Requests);
+        Assert.Same(preview, Assert.IsType<ServerEditCheck>(check.Value).Consequences.ModeChange);
+        Assert.IsType<ServerStatus>(save.Value);
+        Assert.Equal(LibraryMode.ByRemoteLibrary, _fixture.Store.Configuration.Servers.Single().LibraryMode);
+        _libraries.Verify(manager => manager.ApplyMode(id), Times.Once);
         _libraries.Verify(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>()), Times.Never);
     }
 
@@ -232,7 +234,7 @@ public sealed partial class ServerEditTests
         var result = await Controller().SaveServerEdit(id, WithMode(Edit(), LibraryMode.None), CancellationToken.None);
 
         Assert.Equal(RemoteFailure.Unreachable, Assert.IsType<ServerStatus>(result.Value).RemoteWarning);
-        _libraries.Verify(manager => manager.Disable(id, true), Times.Once);
+        _libraries.Verify(manager => manager.ApplyMode(id), Times.Once);
     }
 
     // The page says a failed rename finishes with a save of the same name, as the old rename endpoint did.

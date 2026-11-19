@@ -40,6 +40,22 @@ public interface IServerLibraryManager
     AutomaticLibrariesRequest Enable(Guid serverId, LibraryMode mode);
 
     /// <summary>
+    /// Brings the libraries of the server to the mode saved for it in the background: those of the new mode are made or
+    /// adopted and scanned first, then those of the old mode are deleted or released (§10 row 438).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>The answer.</returns>
+    AutomaticLibrariesRequest ApplyMode(Guid serverId);
+
+    /// <summary>
+    /// Tells what a change to the mode given would do to the libraries of the server, without changing anything.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="mode">The new mode.</param>
+    /// <returns>The change, or null when the mode stays or the server is unknown.</returns>
+    LibraryModeChange? PreviewModeChange(Guid serverId, LibraryMode mode);
+
+    /// <summary>
     /// Deletes in the background the libraries of the registry and turns the switch off, once confirmed.
     /// </summary>
     /// <param name="serverId">The server.</param>

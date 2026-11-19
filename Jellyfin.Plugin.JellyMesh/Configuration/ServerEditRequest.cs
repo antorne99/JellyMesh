@@ -50,6 +50,7 @@ public sealed class ServerEditRequest
         Url = Url ?? string.Empty,
         Username = Username ?? string.Empty,
         Password = Password,
-        LibraryIds = LibraryIds
+        LibraryIds = LibraryIds,
+        LibraryMode = LibraryMode
     };
 }

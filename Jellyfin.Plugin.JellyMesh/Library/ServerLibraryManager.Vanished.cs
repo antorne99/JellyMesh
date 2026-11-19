@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
@@ -113,6 +114,13 @@ public sealed partial class ServerLibraryManager
             || record.Adopted
             || !Holds(folder, record, root, serverId)
             || !folder.Locations.All(location => IsVanishedFolder(location, root, serverId, gone)))
+        {
+            return false;
+        }
+
+        var id = Guid.TryParse(record.ItemId, out var found) ? found : (Guid?)null;
+        if (!await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false)
+            || !await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.EnableContentDeletionFromFolders, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }

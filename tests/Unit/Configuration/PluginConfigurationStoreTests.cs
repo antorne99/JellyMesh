@@ -209,6 +209,22 @@ public sealed class PluginConfigurationStoreTests : IDisposable
     }
 
     [Fact]
+    public void TheUsersWhoLostTitlesInAModeChangeSurviveARestart()
+    {
+        Store().Update(config =>
+        {
+            var server = new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa", Url = TestValues.Url };
+            server.LostAccess.Add(new LostAccessConfig { Library = "Casa - Film", User = "bambini" });
+            server.LostAccess.Add(new LostAccessConfig { Library = "Casa - Film", User = "noadulti" });
+            config.Servers.Add(server);
+        });
+
+        var loaded = Store().Read(config => config.Servers.Single());
+
+        Assert.Equal([("Casa - Film", "bambini"), ("Casa - Film", "noadulti")], loaded.LostAccess.Select(lost => (lost.Library, lost.User)));
+    }
+
+    [Fact]
     public async Task AServerKeptBeforeTheLibraryModesHasThemPerTypeWhereItsLibrariesWereOnAndNoneElsewhere()
     {
         var on = Guid.NewGuid();

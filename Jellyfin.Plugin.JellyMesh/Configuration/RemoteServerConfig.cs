@@ -66,6 +66,11 @@ public class RemoteServerConfig
     public Collection<VanishedLibraryConfig> VanishedLibraries { get; } = [];
 
     /// <summary>
+    /// Gets the users who lost titles in the last change of library mode, by library, until the next change (§10 row 438).
+    /// </summary>
+    public Collection<LostAccessConfig> LostAccess { get; } = [];
+
+    /// <summary>
     /// Gets or sets which local libraries hold the type folders of this server. None for a server kept from before the
     /// modes; one added later takes <see cref="PluginConfiguration.NewServerLibraryMode"/>.
     /// </summary>

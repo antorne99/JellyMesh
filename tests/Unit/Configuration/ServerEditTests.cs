@@ -121,8 +121,8 @@ public sealed partial class ServerEditTests : IDisposable
         return server.Id;
     }
 
-    private static ServerEditRequest Edit(string name = "Friend", string url = TestValues.Url, string user = TestValues.Username, string? password = null, IReadOnlyList<string>? libraries = null)
-        => new() { Name = name, Url = url, Username = user, Password = password, LibraryIds = libraries };
+    private static ServerEditRequest Edit(string name = "Friend", string url = TestValues.Url, string user = TestValues.Username, string? password = null, IReadOnlyList<string>? libraries = null, LibraryMode? mode = null)
+        => new() { Name = name, Url = url, Username = user, Password = password, LibraryIds = libraries, LibraryMode = mode };
 
     private static string DeviceOf(StubHandler.RecordedRequest request)
         => request.Authorization!.Split("DeviceId=\"")[1].Split('"')[0];
@@ -138,7 +138,7 @@ public sealed partial class ServerEditTests : IDisposable
     private string Snapshot(Guid? id = null)
     {
         var server = _fixture.Store.Configuration.Servers.Single(candidate => id is null || candidate.Id == id);
-        return string.Join('|', server.Name, server.Url, server.EncryptedCredentials, server.JellyfinServerId, string.Join(',', server.ImportedLibraryIds));
+        return string.Join('|', server.Name, server.Url, server.EncryptedCredentials, server.JellyfinServerId, string.Join(',', server.ImportedLibraryIds), server.LibraryMode);
     }
 
     [Fact]
@@ -477,7 +477,7 @@ public sealed partial class ServerEditTests : IDisposable
         _fixture.Store.SaveFailure = new InvalidOperationException("disk full");
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => Controller().SaveServerEdit(id, Edit(name: "Casa", url: OtherUrl, user: "someone", password: "new-pass", libraries: ["2"]), CancellationToken.None));
+            () => Controller().SaveServerEdit(id, Edit(name: "Casa", url: OtherUrl, user: "someone", password: "new-pass", libraries: ["2"], mode: LibraryMode.ByRemoteLibrary), CancellationToken.None));
 
         Assert.Equal(before, Snapshot());
         var login = Requests.Last(request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");

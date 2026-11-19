@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Jellyfin.Plugin.JellyMesh.Library;
 
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 

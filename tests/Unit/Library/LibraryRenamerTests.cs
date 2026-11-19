@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -150,6 +151,267 @@ public sealed class LibraryRenamerTests : IDisposable
         await RenameAsync();
 
         _changes.Verify(changes => changes.Renamed(OldId, NewId, "Mare - Film"), Times.Once);
+    }
+
+    // One old library whose titles two new libraries take, as from "by type" to "by remote library".
+    private static AccessCarry[] Split(Guid old, Guid first, Guid second) =>
+        [new AccessCarry("Casa - Film", first, [[old]]), new AccessCarry("Casa - Film 4K", second, [[old]])];
+
+    // Two old libraries whose titles one new library takes, as from "by remote library" to "by type".
+    private static AccessCarry[] Merge(Guid children, Guid adults, Guid merged) =>
+        [new AccessCarry("Casa - Film", merged, [[children], [adults]])];
+
+    [Fact]
+    public async Task Users_with_access_to_an_old_library_get_the_new_ones_and_users_with_all_libraries_stay()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N"), first.ToString("D")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+        _other.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, false);
+
+        var lost = await _renamer.CarryAccessAsync(Split(OldId, first, second), CancellationToken.None);
+
+        Assert.Equal([OldId.ToString("N"), first.ToString("D"), second.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([OldId.ToString("N")], _other.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Empty(lost);
+        _users.Verify(users => users.UpdateUserAsync(_limited), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+        _users.Verify(users => users.UpdateUserAsync(_blocked), Times.Never);
+    }
+
+    [Fact]
+    public async Task Users_who_block_an_old_library_also_block_the_new_ones_with_all_libraries_or_not()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("D")]);
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N"), first.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+
+        await _renamer.CarryAccessAsync(Split(OldId, first, second), CancellationToken.None);
+
+        Assert.Equal([OldId.ToString("D"), first.ToString("N"), second.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Equal([OldId.ToString("N"), first.ToString("N"), second.ToString("N")], _limited.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Empty(_blocked.GetPreference(PreferenceKind.EnabledFolders));
+        _users.Verify(users => users.UpdateUserAsync(_blocked), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_limited), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+    }
+
+    [Fact]
+    public async Task Users_who_block_an_old_library_block_the_new_ones_before_a_scan_and_are_given_nothing()
+    {
+        var first = Guid.NewGuid();
+        var adopted = Guid.NewGuid();
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("D")]);
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+
+        await _renamer.BlockAsync(
+            [
+                new AccessCarry("Mare - Film", first, [[OldId]]),
+                new AccessCarry("Mare - Serie", null, [[OldId]]),
+                new AccessCarry("Film di casa", adopted, [[OldId]]) { Adopted = true }
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(
+            [OldId.ToString("D"), first.ToString("N"), IdOf(Path.Combine(_root, "Mare - Serie")).ToString("N")],
+            _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        _users.Verify(users => users.UpdateUserAsync(_blocked), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_limited), Times.Never);
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_user_whose_block_cannot_be_saved_keeps_the_list_it_had_and_the_block_fails()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_blocked)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.BlockAsync([new AccessCarry("Mare - Film", NewId, [[OldId]])], CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
+    public async Task A_deleted_library_leaves_the_list_given_in_any_form_and_nothing_else()
+    {
+        var kept = Guid.NewGuid();
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("D").ToUpperInvariant(), kept.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _blocked.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+
+        await _renamer.RemoveFromUsersAsync("Casa - Mare", OldId, PreferenceKind.EnabledFolders, CancellationToken.None);
+
+        Assert.Equal([kept.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Empty(_blocked.GetPreference(PreferenceKind.EnabledFolders));
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_deleted_library_with_no_id_is_found_by_its_name()
+    {
+        _limited.SetPreference(PreferenceKind.EnableContentDeletionFromFolders, [OldId.ToString("N")]);
+
+        await _renamer.RemoveFromUsersAsync("Casa - Film", null, PreferenceKind.EnableContentDeletionFromFolders, CancellationToken.None);
+
+        Assert.Empty(_limited.GetPreference(PreferenceKind.EnableContentDeletionFromFolders));
+    }
+
+    [Fact]
+    public async Task A_user_that_cannot_be_saved_keeps_the_id_of_a_deleted_library_and_the_removal_fails()
+    {
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.RemoveFromUsersAsync("Casa - Film", OldId, PreferenceKind.EnabledFolders, CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+    }
+
+    [Fact]
+    public async Task A_user_with_one_of_two_merged_libraries_gets_no_access_and_is_named()
+    {
+        var (children, adults, merged) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, false);
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+
+        var lost = await _renamer.CarryAccessAsync(Merge(children, adults, merged), CancellationToken.None);
+
+        Assert.Equal([children.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        var loss = Assert.Single(lost);
+        Assert.Equal("Casa - Film", loss.Library);
+        Assert.Equal(["limited"], loss.Users);
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_user_who_blocked_one_of_two_merged_libraries_has_the_merged_one_blocked_and_is_named()
+    {
+        var (children, adults, merged) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [children.ToString("N")]);
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N"), adults.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.BlockedMediaFolders, [adults.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+
+        var lost = await _renamer.CarryAccessAsync(Merge(children, adults, merged), CancellationToken.None);
+
+        Assert.Equal([children.ToString("N"), merged.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Empty(_blocked.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([adults.ToString("N"), merged.ToString("N")], _limited.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Equal(new[] { "blocked", "limited" }, Assert.Single(lost).Users.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_user_with_both_merged_libraries_keeps_access_to_the_merged_one()
+    {
+        var (children, adults, merged) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N"), adults.ToString("D")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, false);
+
+        var lost = await _renamer.CarryAccessAsync(Merge(children, adults, merged), CancellationToken.None);
+
+        Assert.Equal([children.ToString("N"), adults.ToString("D"), merged.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Empty(_other.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Empty(lost);
+    }
+
+    [Fact]
+    public async Task An_adopted_library_is_never_written_and_who_had_no_access_to_it_is_named()
+    {
+        var (children, adults, adopted) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N"), adults.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, false);
+        _other.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N"), adopted.ToString("N")]);
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [children.ToString("N")]);
+
+        var lost = await _renamer.CarryAccessAsync([new AccessCarry("Film di casa", adopted, [[children], [adults]]) { Adopted = true }], CancellationToken.None);
+
+        var loss = Assert.Single(lost);
+        Assert.Equal("Film di casa", loss.Library);
+        Assert.Equal(["limited"], loss.Users);
+        Assert.Equal([children.ToString("N"), adults.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([children.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
+    }
+
+    [Fact]
+    public void The_preview_names_who_would_lose_titles_and_changes_no_user()
+    {
+        var (children, adults) = (Guid.NewGuid(), Guid.NewGuid());
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, false);
+        _other.SetPreference(PreferenceKind.EnabledFolders, [children.ToString("N"), adults.ToString("N")]);
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [adults.ToString("N")]);
+
+        var lost = _renamer.LosingAccess([new AccessCarry("Casa - Film", null, [[children], [adults]])]);
+
+        Assert.Equal(new[] { "blocked", "limited" }, Assert.Single(lost).Users.Order(StringComparer.Ordinal));
+        Assert.Equal([children.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([adults.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_user_whose_blocked_list_cannot_be_saved_keeps_both_lists_it_had()
+    {
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.CarryAccessAsync([new AccessCarry("Mare - Film", NewId, [[OldId]])], CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
+    public async Task Access_already_carried_is_not_written_again()
+    {
+        var first = Guid.NewGuid();
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N"), first.ToString("N")]);
+
+        await _renamer.CarryAccessAsync([new AccessCarry("Casa - Film", first, [[OldId]])], CancellationToken.None);
+
+        _users.Verify(users => users.UpdateUserAsync(It.IsAny<User>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_user_that_cannot_be_saved_keeps_the_list_it_had_and_the_carry_fails()
+    {
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.CarryAccessAsync([new AccessCarry("Mare - Film", NewId, [[OldId]])], CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
     }
 
     [Fact]

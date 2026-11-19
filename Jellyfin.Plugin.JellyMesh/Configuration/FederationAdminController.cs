@@ -663,8 +663,7 @@ public class FederationAdminController : ControllerBase
     // Tells whether the last rename of the server failed, so that a save of the same name runs it again.
     private bool RenameFailed(Guid serverId) => _renamer is not null && _renamer.GetState(serverId).Failed;
 
-    // Refuses on the mode an unknown one, a change while the libraries are being updated, and a change between two modes
-    // of a server with libraries, which goes through none until F40 (section 3.8).
+    // Refuses on the mode an unknown one and a change while the libraries are being updated (section 3.8).
     private ObjectResult? RefuseMode(Guid serverId, LibraryMode? asked)
     {
         if (asked is not { } mode)
@@ -684,14 +683,9 @@ public class FederationAdminController : ControllerBase
         }
 
         var state = _libraries.GetState(serverId);
-        var outcome = state.Busy
-            ? AutomaticLibrariesOutcome.Busy
-            : mode != saved && mode != LibraryMode.None && saved != LibraryMode.None && state.Libraries.Count > 0
-                ? AutomaticLibrariesOutcome.ModeChangeNotAllowed
-                : AutomaticLibrariesOutcome.Started;
-        return outcome == AutomaticLibrariesOutcome.Started
-            ? null
-            : StatusCode(StatusCodes.Status409Conflict, new FailureResponse(RemoteFailure.None, RefusalMessage(outcome)) { Field = RemoteEditField.LibraryMode });
+        return state.Busy
+            ? StatusCode(StatusCodes.Status409Conflict, new FailureResponse(RemoteFailure.None, RefusalMessage(AutomaticLibrariesOutcome.Busy)) { Field = RemoteEditField.LibraryMode })
+            : null;
     }
 
     // Fills a name or an address the form left out with the saved one, so that a form of the mode alone changes neither.
@@ -775,9 +769,20 @@ public class FederationAdminController : ControllerBase
             RunStep("libraries", _sync.PrepareServerFolders);
         }
 
-        if (mode is { } asked)
+        if (changes.HasFlag(RemoteEditChanges.LibraryMode))
         {
-            RunStep("library mode", () => ApplyLibraryMode(serverId, asked));
+            RunStep("library mode", () =>
+            {
+                var answer = _libraries.ApplyMode(serverId);
+                if (answer.Outcome != AutomaticLibrariesOutcome.Started)
+                {
+                    _logger.LogWarning("The change of library mode after an edit of a server did not start: {Outcome}", answer.Outcome);
+                }
+            });
+        }
+        else if (mode is { } asked and not LibraryMode.None)
+        {
+            RunStep("library mode", () => MakeMissingLibraries(serverId, asked));
         }
 
         if ((changes & (RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Libraries)) != RemoteEditChanges.None)
@@ -786,28 +791,15 @@ public class FederationAdminController : ControllerBase
         }
     }
 
-    // Applies the mode of the form: none deletes and releases the libraries, a mode makes or adopts them and keeps the
-    // mode; the saved mode sent again makes the missing ones again (section 3.8).
-    private void ApplyLibraryMode(Guid serverId, LibraryMode mode)
+    // The saved mode sent again makes the libraries of the server that are missing (section 3.8).
+    private void MakeMissingLibraries(Guid serverId, LibraryMode mode)
     {
-        var saved = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.LibraryMode);
-        if (saved is null || (mode == LibraryMode.None && saved == LibraryMode.None))
+        if (_store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.LibraryMode) != mode)
         {
             return;
         }
 
-        AutomaticLibrariesRequest answer;
-        if (mode == LibraryMode.None)
-        {
-            // The form confirmed the libraries the change deletes.
-            answer = _libraries.Disable(serverId, confirmed: true);
-        }
-        else
-        {
-            KeepLibraryMode(serverId, mode);
-            answer = _libraries.Enable(serverId, mode);
-        }
-
+        var answer = _libraries.Enable(serverId, mode);
         if (answer.Outcome != AutomaticLibrariesOutcome.Started)
         {
             _logger.LogWarning("The library mode after an edit of a server was not applied: {Outcome}", answer.Outcome);
@@ -859,28 +851,14 @@ public class FederationAdminController : ControllerBase
         return new ServerEditCheck(
             report.ServerName ?? string.Empty,
             visible.Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, kept.Contains(library.Id))).ToList(),
-            new ServerEditConsequences(rename, removed, streams) { ModeChange = ModeChangeOf(serverId, request.LibraryMode) })
+            new ServerEditConsequences(rename, removed, streams)
+            {
+                ModeChange = report.Changes.HasFlag(RemoteEditChanges.LibraryMode) && request.LibraryMode is { } mode ? _libraries.PreviewModeChange(serverId, mode) : null
+            })
         {
             RemoteOffline = report.RemoteOffline,
             RemoteWarning = report.RemoteWarning
         };
-    }
-
-    // The change of mode an edit asks, with the libraries it deletes and those it releases; null when the mode stays.
-    private LibraryModeChange? ModeChangeOf(Guid serverId, LibraryMode? asked)
-    {
-        var saved = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.LibraryMode);
-        if (asked is not { } mode || saved is not { } from || mode == from)
-        {
-            return null;
-        }
-
-        var leaving = mode == LibraryMode.None ? _libraries.GetState(serverId).Libraries : [];
-        return new LibraryModeChange(
-            from,
-            mode,
-            leaving.Where(library => !library.Adopted).Select(library => library.Name).ToList(),
-            leaving.Where(library => library.Adopted).Select(library => library.Name).ToList());
     }
 
     // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure

@@ -27,6 +27,10 @@ internal sealed class ConfigurationRows
     private const string VanishedLibrary = "vanished_library";
     private const string VanishedLibraryName = "vanished_library_name";
 
+    // The users who lost titles in the last mode change, by library and user name at the same positions (§10 row 438).
+    private const string LostAccessLibrary = "lost_access_library";
+    private const string LostAccessUser = "lost_access_user";
+
     // The positions of the adopted libraries in the list of a server, so no schema step is needed (§10 row 441).
     private const string AdoptedLibrary = "adopted_library";
 
@@ -94,6 +98,8 @@ internal sealed class ConfigurationRows
             serverValues.AddRange(Values(id, AbsentLibrary, server.AbsentLibraryIds));
             serverValues.AddRange(Values(id, VanishedLibrary, server.VanishedLibraries.Select(library => library.Id)));
             serverValues.AddRange(Values(id, VanishedLibraryName, server.VanishedLibraries.Select(library => library.Name)));
+            serverValues.AddRange(Values(id, LostAccessLibrary, server.LostAccess.Select(lost => lost.Library)));
+            serverValues.AddRange(Values(id, LostAccessUser, server.LostAccess.Select(lost => lost.User)));
             remoteLibraries.AddRange(server.RemoteLibraries.Select((library, position) => Row(id, position, library.Id, library.Name, library.CollectionType)));
             pendingLibraries.AddRange(server.PendingLibraries.Select((library, position)
                 => Row(id, position, library.Kind.ToString(), library.Name, library.RemoteLibraryId, JsonSerializer.Serialize(library.Paths))));
@@ -222,6 +228,7 @@ internal sealed class ConfigurationRows
             MarkAdopted(server.AutomaticLibraryRegistry, serverValues, id);
             Fill(server.AbsentLibraryIds, serverValues, id, AbsentLibrary);
             FillVanished(server.VanishedLibraries, serverValues, id);
+            FillLostAccess(server.LostAccess, serverValues, id);
 
             // A library kept by an older version, or by its imported files, counts as made, so one deleted is never made again.
             foreach (var key in server.AutomaticLibraryRegistry.Select(record => record.KeyOf()).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
@@ -345,6 +352,18 @@ internal sealed class ConfigurationRows
         foreach (var row in lists[(owner, VanishedLibrary)].OrderBy(row => (long)row[2]))
         {
             target.Add(new VanishedLibraryConfig { Id = (string)row[3], Name = names.GetValueOrDefault((long)row[2], string.Empty) });
+        }
+    }
+
+    private static void FillLostAccess(Collection<LostAccessConfig> target, ILookup<(string Owner, string List), object[]> lists, string owner)
+    {
+        var users = lists[(owner, LostAccessUser)].ToDictionary(row => (long)row[2], row => (string)row[3]);
+        foreach (var row in lists[(owner, LostAccessLibrary)].OrderBy(row => (long)row[2]))
+        {
+            if (users.TryGetValue((long)row[2], out var user))
+            {
+                target.Add(new LostAccessConfig { Library = (string)row[3], User = user });
+            }
         }
     }
 
