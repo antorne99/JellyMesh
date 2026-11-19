@@ -13,6 +13,8 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 public sealed class StubRemoverTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "jellymesh-remover-" + Guid.NewGuid().ToString("N"));
+    private const string MusicLibrary = "0123456789abcdef0123456789abcdef";
+
     private readonly Mock<ILibraryManager> _library = new();
     private readonly StubRemover _remover;
 
@@ -78,6 +80,42 @@ public sealed class StubRemoverTests : IDisposable
         Assert.False(Directory.Exists(season));
         Assert.Equal(series, Assert.Single(removal.State.Series));
         _library.Verify(library => library.DeleteItem(seasonItem, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
+    }
+
+    [Fact]
+    public void TheLastTrackOfAnArtistTakesItsAlbumAndArtistFoldersButNotTheMusicFolder()
+    {
+        var server = Guid.NewGuid();
+        var first = Track(server, "t1", "Artist", "Album", "01 - One");
+        var second = Track(server, "t2", "Artist", "Album", "02 - Two");
+        var album = Path.Combine(_root, Path.GetDirectoryName(first.RelativePath)!);
+        var albumItem = new Folder { Id = Guid.NewGuid(), Path = album };
+        _library.Setup(library => library.FindByPath(album, true)).Returns(albumItem);
+        File.WriteAllText(Path.Combine(album, "folder.jpg"), "cover");
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [first, second] }, [first, second]);
+
+        Assert.Empty(removal.State.Stubs);
+        Assert.Equal(2, removal.Removed);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(album)));
+        Assert.True(Directory.Exists(Path.Combine(_root, FederatedPaths.TypeFolderOf(server, MusicLibrary, TypeFolder.Music))));
+        _library.Verify(library => library.DeleteItem(albumItem, It.Is<DeleteOptions>(options => !options.DeleteFileLocation)), Times.Once);
+    }
+
+    [Fact]
+    public void AnAlbumOrArtistWithATrackLeftKeepsItsFolder()
+    {
+        var server = Guid.NewGuid();
+        var gone = Track(server, "t1", "Artist", "Album", "01 - One");
+        var sameAlbum = Track(server, "t2", "Artist", "Album", "02 - Two");
+        var otherGone = Track(server, "t3", "Artist", "Other", "01 - One");
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [gone, sameAlbum, otherGone] }, [gone, otherGone]);
+
+        Assert.Equal(sameAlbum, Assert.Single(removal.State.Stubs));
+        Assert.False(File.Exists(Path.Combine(_root, gone.RelativePath)));
+        Assert.True(File.Exists(Path.Combine(_root, sameAlbum.RelativePath)));
+        Assert.False(Directory.Exists(Path.Combine(_root, Path.GetDirectoryName(otherGone.RelativePath)!)));
     }
 
     [Fact]
@@ -251,6 +289,15 @@ public sealed class StubRemoverTests : IDisposable
             IdentityKey = id,
             Sources = []
         };
+    }
+
+    private StubEntry Track(Guid server, string id, string artist, string album, string name)
+    {
+        var path = Path.Combine(FederatedPaths.TypeFolderOf(server, MusicLibrary, TypeFolder.Music), artist, album, name + ".strm");
+        var full = Path.Combine(_root, path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, "url");
+        return new StubEntry { Id = id, ServerId = server, Kind = StubKind.Track, RelativePath = path, IdentityKey = id, Sources = [] };
     }
 
     private SeriesStub Series(string id, string folder)
