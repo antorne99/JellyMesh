@@ -508,14 +508,31 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
 
             found = true;
-            server.ImportedLibraryIds.Clear();
-            foreach (var id in ids)
-            {
-                server.ImportedLibraryIds.Add(id);
-            }
+            Import(server, ids);
         });
 
         return found;
+    }
+
+    // Sets the libraries to import; those not imported before wait for the automatic migration to place them (D57).
+    private static void Import(RemoteServerConfig server, IReadOnlyCollection<string> ids)
+    {
+        var toPlace = server.LibrariesToPlace
+            .Concat(ids.Where(id => !server.ImportedLibraryIds.Contains(id)))
+            .Where(ids.Contains)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        server.ImportedLibraryIds.Clear();
+        foreach (var id in ids)
+        {
+            server.ImportedLibraryIds.Add(id);
+        }
+
+        server.LibrariesToPlace.Clear();
+        foreach (var id in toPlace)
+        {
+            server.LibrariesToPlace.Add(id);
+        }
     }
 
     /// <inheritdoc />
@@ -940,6 +957,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                     before.ImportedLibraryIds.Add(id);
                 }
 
+                foreach (var id in server.LibrariesToPlace)
+                {
+                    before.LibrariesToPlace.Add(id);
+                }
+
                 server.Name = plan.Name;
                 server.Url = plan.Url;
                 server.EncryptedCredentials = encrypted ?? server.EncryptedCredentials;
@@ -950,11 +972,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
                 if (read is not null)
                 {
-                    server.ImportedLibraryIds.Clear();
-                    foreach (var id in read.Report.LibraryIds)
-                    {
-                        server.ImportedLibraryIds.Add(id);
-                    }
+                    Import(server, read.Report.LibraryIds);
 
                     server.Mode = read.Capabilities!.Mode;
                     server.ProtocolVersion = read.Capabilities.ProtocolVersion;
@@ -983,6 +1001,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 foreach (var id in before.ImportedLibraryIds)
                 {
                     server.ImportedLibraryIds.Add(id);
+                }
+
+                server.LibrariesToPlace.Clear();
+                foreach (var id in before.LibrariesToPlace)
+                {
+                    server.LibrariesToPlace.Add(id);
                 }
 
                 if (savedId is not null && server.JellyfinServerId == savedId)

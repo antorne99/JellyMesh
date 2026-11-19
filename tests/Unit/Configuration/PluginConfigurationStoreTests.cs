@@ -162,6 +162,23 @@ public sealed class PluginConfigurationStoreTests : IDisposable
     }
 
     [Fact]
+    public void TheLibrariesToPlaceOfAServerSurviveARestart()
+    {
+        var serverId = Guid.NewGuid();
+        Store().Update(config =>
+        {
+            var server = new RemoteServerConfig { Id = serverId, Name = "Casa", Url = TestValues.Url };
+            server.LibrariesToPlace.Add("b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
+            server.LibrariesToPlace.Add("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf");
+            config.Servers.Add(server);
+        });
+
+        var loaded = Store().Read(config => config);
+
+        Assert.Equal(["b0b1b2b3b4b5b6b7b8b9babbbcbdbebf", "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"], loaded.Servers[0].LibrariesToPlace);
+    }
+
+    [Fact]
     public void AnAdoptedLibraryStaysAdoptedAfterARestartForAServerAndARemovedOne()
     {
         var serverId = Guid.NewGuid();

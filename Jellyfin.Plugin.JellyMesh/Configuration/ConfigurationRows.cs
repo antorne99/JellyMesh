@@ -33,6 +33,9 @@ internal sealed class ConfigurationRows
 
     // The positions of the adopted libraries in the list of a server, so no schema step is needed (§10 row 441).
     private const string AdoptedLibrary = "adopted_library";
+
+    // The imported libraries the automatic migration has not placed yet, so no schema step is needed (§10 row 496).
+    private const string LibraryToPlace = "library_to_place";
     private const string UnblockedLibrary = "unblocked_library";
 
     // The owner of the shared libraries in the tables of the servers: not a GUID, so no server reads its rows (§10 row 442).
@@ -106,6 +109,7 @@ internal sealed class ConfigurationRows
             automatic.AddRange(Libraries(id, server.AutomaticLibraryRegistry));
             serverValues.AddRange(Values(id, AdoptedLibrary, AdoptedPositions(server.AutomaticLibraryRegistry)));
             serverValues.AddRange(Values(id, AbsentLibrary, server.AbsentLibraryIds));
+            serverValues.AddRange(Values(id, LibraryToPlace, server.LibrariesToPlace));
             serverValues.AddRange(Values(id, VanishedLibrary, server.VanishedLibraries.Select(library => library.Id)));
             serverValues.AddRange(Values(id, VanishedLibraryName, server.VanishedLibraries.Select(library => library.Name)));
             serverValues.AddRange(Values(id, LostAccessLibrary, server.LostAccess.Select(lost => lost.Library)));
@@ -251,6 +255,7 @@ internal sealed class ConfigurationRows
             Fill(server.AutomaticLibraryRegistry, automatic, id);
             MarkAdopted(server.AutomaticLibraryRegistry, serverValues, id);
             Fill(server.AbsentLibraryIds, serverValues, id, AbsentLibrary);
+            Fill(server.LibrariesToPlace, serverValues, id, LibraryToPlace);
             FillVanished(server.VanishedLibraries, serverValues, id);
             FillLostAccess(server.LostAccess, serverValues, id);
 

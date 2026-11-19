@@ -56,6 +56,11 @@ public class RemoteServerConfig
     public Collection<RemoteLibraryConfig> RemoteLibraries { get; } = [];
 
     /// <summary>
+    /// Gets the libraries imported after the server was linked, which the automatic migration has not placed yet (D57).
+    /// </summary>
+    public Collection<string> LibrariesToPlace { get; } = [];
+
+    /// <summary>
     /// Gets the imported libraries one correct answer of the remote did not list: a second one in a row drops them (§10 row 436).
     /// </summary>
     public Collection<string> AbsentLibraryIds { get; } = [];
