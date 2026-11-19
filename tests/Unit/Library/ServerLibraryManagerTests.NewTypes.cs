@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Model.Entities;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -48,6 +49,17 @@ public sealed partial class ServerLibraryManagerTests
     private static List<(int Block, AccessCarry Carry)> BlocksOf(Fixture fixture, Guid source) =>
         [.. fixture.Renamer.Blocked.SelectMany((carries, block) => carries.Select(carry => (block, carry)))
             .Where(pair => pair.carry.Folders.SelectMany(ids => ids).Contains(source))];
+
+    // The stubs are read and no type folder holds titles yet, as for the new types until their titles are written.
+    private static void NoTitles(Fixture fixture)
+        => fixture.Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), It.IsAny<TypeFolder>())).Returns([]);
+
+    // Each library of the server with its type and paths, by name.
+    private static List<(string Name, CollectionTypeOptions? Type, string Paths)> Snapshot(Fixture fixture) =>
+        [.. fixture.Server.AutomaticLibraryRegistry
+            .Select(record => fixture.Libraries.Find(record.Name))
+            .Select(folder => (folder.Name, folder.CollectionType, string.Join('|', folder.Locations)))
+            .OrderBy(library => library.Name, StringComparer.Ordinal)];
 
     private static void Import(RemoteServerConfig server, string id, string name, string type)
     {
@@ -281,5 +293,71 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal("Tutti i server - Musica", carry.Name);
         Assert.DoesNotContain(carry.Name, madeWhenBlocked[block]);
         Assert.Contains(fixture.Libraries.Created, call => call.Name == "Tutti i server - Musica");
+    }
+
+    [Theory]
+    [InlineData(LibraryMode.ByType, 3)]
+    [InlineData(LibraryMode.ByRemoteLibrary, 2)]
+    public async Task Libraries_of_a_new_type_and_of_a_mixed_library_with_no_titles_yet_stay_as_made(LibraryMode mode, int count)
+    {
+        var fixture = WithMixed();
+        Import(fixture.Server, TestLibraries.Music, "Dischi", "music");
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.Films);
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.FilmsB);
+        fixture.Server.ImportedLibraryIds.Remove(TestLibraries.Shows);
+        NoTitles(fixture);
+        await fixture.Manager.Enable(_serverId, mode).Job;
+        var made = Snapshot(fixture);
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(count, made.Count);
+        Assert.Equal(made, Snapshot(fixture));
+        Assert.Equal(count, fixture.Libraries.Created.Count);
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Libraries.RemovedPaths);
+    }
+
+    [Fact]
+    public async Task A_shared_library_of_a_new_type_with_no_titles_yet_stays_as_made()
+    {
+        var fixture = WithMixed();
+        Import(fixture.Server, TestLibraries.Music, "Dischi", "music");
+        NoTitles(fixture);
+        await fixture.Manager.EnableShared().Job;
+        var made = Shared(fixture).Libraries.Select(record => (record.Name, string.Join('|', record.Paths))).ToList();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.NewManager().ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Tutti i server - Film", "Tutti i server - Musica", "Tutti i server - Serie"], made.Select(record => record.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(made, Shared(fixture).Libraries.Select(record => (record.Name, string.Join('|', record.Paths))));
+        Assert.Equal(3, fixture.Libraries.Created.Count);
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Libraries.RemovedPaths);
+    }
+
+    [Fact]
+    public async Task A_mixed_library_comes_and_goes_with_a_change_of_mode()
+    {
+        var fixture = WithMixed();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+
+        fixture.Server.LibraryMode = LibraryMode.ByRemoteLibrary;
+        await fixture.Manager.ApplyMode(_serverId).Job;
+        var mixed = fixture.Libraries.Find("Casa - Tutto");
+        Assert.Null(mixed.CollectionType);
+        Assert.Equal([Absolute(_mixedFilmFolder), Absolute(_mixedSerieFolder)], mixed.Locations);
+        Assert.Equal(
+            [TestLibraries.Shows, TestLibraries.Mixed, TestLibraries.Films, TestLibraries.FilmsB],
+            fixture.Server.AutomaticLibraryRegistry.Select(record => record.RemoteLibraryId).Order(StringComparer.Ordinal));
+
+        fixture.Server.LibraryMode = LibraryMode.ByType;
+        await fixture.Manager.ApplyMode(_serverId).Job;
+        Assert.DoesNotContain(fixture.Libraries.Folders, folder => folder.Name == "Casa - Tutto");
+        Assert.Equal([ServerLibraryKind.Movies, ServerLibraryKind.Series], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Kind).Order());
+        var series = fixture.Server.AutomaticLibraryRegistry.Single(record => record.Kind == ServerLibraryKind.Series);
+        Assert.Equal([Absolute(_showsFolder), Absolute(_mixedSerieFolder)], fixture.Libraries.Find(series.Name).Locations);
     }
 }
