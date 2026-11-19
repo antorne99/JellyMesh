@@ -3282,12 +3282,33 @@
                     }));
                     fields.Name.value = server.Name;
                     fields.Url.value = server.Url;
-                    var rename = renameState(server);
-                    var restart = !!(statusSection.data && statusSection.data.RenamedLibrariesNeedRestart);
-                    if (rename.Busy || rename.Pending || rename.Failed || restart) {
-                        // An unfinished rename locks the name; a failed one runs again when the form is saved (920 Casi).
-                        fields.Name.readOnly = true;
-                        addFormNote(notes, t('The name cannot change now. {state}', {
+                    var lockNotes = create('div');
+                    notes.appendChild(lockNotes);
+
+                    // An unfinished rename locks the name, with its state, again at each status read while the form is
+                    // open; a failed one runs again when the form is saved (920 Casi).
+                    form.jmLocks = function (current) {
+                        server = current;
+                        var rename = renameState(current);
+                        var restart = !!(statusSection.data && statusSection.data.RenamedLibrariesNeedRestart);
+                        var locked = !!(rename.Busy || rename.Pending || rename.Failed || restart);
+                        var key = JSON.stringify([locked, rename.Pending && !rename.Busy, renameProblem(rename)]);
+                        if (lockNotes.jmKey === key) {
+                            return;
+                        }
+
+                        lockNotes.jmKey = key;
+                        lockNotes.textContent = '';
+                        if (fields.Name.readOnly !== locked) {
+                            fields.Name.value = current.Name;
+                            fields.Name.readOnly = locked;
+                        }
+
+                        if (!locked) {
+                            return;
+                        }
+
+                        addFormNote(lockNotes, t('The name cannot change now. {state}', {
                             state: renameProblem(rename) || t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts. Restart Jellyfin when you can.')
                         }), true);
                         if (rename.Pending && !rename.Busy) {
@@ -3295,9 +3316,10 @@
                             cancelRow.appendChild(button(t('Cancel the pending rename'), function () {
                                 cancelRename(server);
                             }));
-                            notes.appendChild(cancelRow);
+                            lockNotes.appendChild(cancelRow);
                         }
-                    }
+                    };
+                    form.jmLocks(server);
 
                     var focus = fields.Name.readOnly ? fields.Url : fields.Name;
                     if (login) {
@@ -3439,6 +3461,10 @@
                         setText(renameNote, renameText);
                         renameNote.hidden = !renameText;
                         renameCancel.hidden = !renameCurrent.Pending || renameCurrent.Busy;
+                        var openForm = edit && edit.querySelector('.jmServerForm');
+                        if (openForm && openForm.jmLocks) {
+                            openForm.jmLocks(server);
+                        }
                     };
                     row.jmUpdate(server, report);
 

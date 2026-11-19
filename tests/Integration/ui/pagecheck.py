@@ -3377,8 +3377,10 @@ def edit_locks(s, width):
         else:
             data.update(RemoteWarning="Timeout")
 
+    rename = [{"Busy": False, "Pending": True, "Failed": False, "Stuck": False}]
+
     def cases(context):
-        fake(context, "Status", lambda data: of_server(data, "stock").update(Rename={"Busy": False, "Pending": True, "Failed": False, "Stuck": False}))
+        fake(context, "Status", lambda data: of_server(data, "stock").update(Rename=rename[0]))
 
         def answer(route):
             if route.request.method != "POST":
@@ -3409,6 +3411,11 @@ def edit_locks(s, width):
     u.answer_confirm(page, False)
     healthy(page, name)
     u.shot(page, f"edit-rename-lock-{width}")
+    rename[0] = dict(rename[0], Pending=False)
+    unlocked = lambda: not form.get_by_label("Name", exact=True).evaluate("node => node.readOnly") and "The name cannot change now" not in form.inner_text()
+    check(name + " a rename that ends unlocks the open form", until(page, unlocked, 25), form.inner_text())
+    rename[0] = dict(rename[0], Pending=True)
+    check(name + " a rename that starts locks the open form", until(page, lambda: not unlocked(), 25), form.inner_text())
 
     peer = u.server_row(page, "peer")
     u.button(peer, "edit").click()
