@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -102,6 +103,77 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal([[Guid.Parse(fixture.Libraries.IdOf("Mio"))], []], carry.Folders.Select(folder => folder.ToList()));
         Assert.Equal(0, createdWhenBlocked);
         Assert.Contains(fixture.Libraries.Created, call => call.Name == SharedFilm);
+    }
+
+    [Fact]
+    public async Task A_library_on_its_folders_not_scanned_yet_is_named_by_the_id_of_its_name()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.Find("Mio").ItemId = null;
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.Null(fixture.Libraries.Find("Mio").ItemId);
+        var carry = Assert.Single(fixture.Renamer.Blocked.SelectMany(carries => carries));
+        Assert.Equal([[Guid.Parse(fixture.Libraries.IdOf("Mio"))], []], carry.Folders.Select(folder => folder.ToList()));
+        Assert.Contains(fixture.Libraries.Created, call => call.Name == SharedFilm);
+    }
+
+    [Fact]
+    public async Task A_library_on_its_folders_with_no_id_to_tell_leaves_the_shared_library_unmade()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.Find("Mio").ItemId = null;
+        fixture.Renamer.NoIdOfName = true;
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.DoesNotContain(fixture.Libraries.Created, call => call.Name == SharedFilm);
+        Assert.Contains(fixture.Libraries.Created, call => call.Name == SharedSeries);
+        Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
+    }
+
+    [Fact]
+    public async Task A_shared_library_the_server_stores_under_another_name_is_blocked_by_that_name_before_a_scan()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.RenameOnCreate = name => name + "1";
+        var scansWhenBlocked = new List<int>();
+        fixture.Renamer.OnBlock = () => scansWhenBlocked.Add(fixture.Scans.Steps.Count(step => step == "scan"));
+
+        await fixture.Manager.EnableShared().Job;
+
+        var made = SharedFilm + "1";
+        var carry = Assert.Single(fixture.Renamer.Blocked.SelectMany(carries => carries), carry => carry.Name == made);
+        Assert.Equal(Guid.Parse(fixture.Libraries.IdOf(made)), carry.Id);
+        Assert.Equal([[Guid.Parse(fixture.Libraries.IdOf("Mio"))], []], carry.Folders.Select(folder => folder.ToList()));
+        Assert.All(scansWhenBlocked, count => Assert.Equal(0, count));
+        Assert.Contains(Shared(fixture).Libraries, record => record.Name == made);
+    }
+
+    [Fact]
+    public async Task A_shared_library_stored_under_another_name_that_cannot_be_blocked_is_deleted_before_a_scan()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.RenameOnCreate = name => name + "1";
+        fixture.Renamer.OnBlock = () =>
+        {
+            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "1"))
+            {
+                fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+            }
+        };
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.Equal([SharedFilm + "1"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Kind == ServerLibraryKind.Movies);
+        Assert.Empty(Shared(fixture).PendingLibraries);
+        Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
     }
 
     [Fact]

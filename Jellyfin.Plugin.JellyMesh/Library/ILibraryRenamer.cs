@@ -52,6 +52,13 @@ public interface ILibraryRenamer
     Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Gets the id the server gives a library of the given name, which a library not scanned yet will have.
+    /// </summary>
+    /// <param name="name">The library name.</param>
+    /// <returns>The id, or null for a name that would leave the libraries folder.</returns>
+    Guid? IdOfName(string name);
+
+    /// <summary>
     /// Removes the id of a library the plugin deletes from one per-id list of each user, in any form, so a library made
     /// again with its name gives nothing back through an old entry; a library with no id is found by its name.
     /// </summary>

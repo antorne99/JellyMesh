@@ -2121,6 +2121,11 @@ public sealed partial class ServerLibraryManagerTests
             return Task.CompletedTask;
         }
 
+        // When set, a library name gives no id, as one that would leave the libraries folder.
+        public bool NoIdOfName { get; set; }
+
+        public Guid? IdOfName(string name) => NoIdOfName || Libraries is null ? null : Guid.Parse(Libraries.IdOf(name));
+
         public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
         {
             Previewed.Add(carries);

@@ -311,7 +311,8 @@ public sealed partial class ServerLibraryManager
         }
 
         // Who blocks a library holding a folder of this one blocks it before it exists, by the id of its name (D42).
-        if (!await BlockSharedBeforeCreateAsync(name, planned, folders, cancellationToken).ConfigureAwait(false))
+        var sources = BlockSources(planned, folders);
+        if (sources is null || !await BlockSharedAsync(name, null, planned, sources, cancellationToken).ConfigureAwait(false))
         {
             _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
             return false;
@@ -343,19 +344,48 @@ public sealed partial class ServerLibraryManager
 
         // The server may add a number to the name, so the new library is found by its paths among those not there before.
         var made = ReadFolders()?.FirstOrDefault(folder => !taken.Contains(folder.Name) && Passes(folder, planned.Kind, string.Empty, root, _sharedOwner));
+        if (made is not null
+            && !string.Equals(made.Name, name, StringComparison.Ordinal)
+            && !await BlockSharedAsync(made.Name, Guid.TryParse(made.ItemId, out var madeId) ? madeId : null, planned, sources, cancellationToken).ConfigureAwait(false))
+        {
+            return await DropUnblockedAsync(intent, made, cancellationToken).ConfigureAwait(false);
+        }
+
         RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = planned.Kind, Name = made?.Name ?? name, ItemId = made?.ItemId ?? string.Empty }, made?.Locations ?? [.. planned.Paths]));
         _logger.LogInformation("Created the shared library {Library}", LogText.Clean(made?.Name ?? name));
         return true;
     }
 
-    // Blocks a shared library about to be made for who blocks a library holding one of its folders. False when the blocks
-    // could not be written, so it is not made.
-    private async Task<bool> BlockSharedBeforeCreateAsync(string name, PlannedLibrary planned, IReadOnlyList<VirtualFolderInfo> folders, CancellationToken cancellationToken)
+    // The libraries holding a folder of a shared library about to be made, one not scanned yet with the id of its name;
+    // null when such an id cannot be told.
+    private List<VirtualFolderInfo>? BlockSources(PlannedLibrary planned, IReadOnlyList<VirtualFolderInfo> folders)
     {
-        var sources = folders
-            .Where(folder => Guid.TryParse(folder.ItemId, out _) && (folder.Locations ?? []).Any(location => planned.Paths.Any(path => FederatedFolderLinkChecker.IsSamePath(location, path))))
-            .ToList();
-        var carries = CarriesFor([new NewLibrary(name, null, planned.Paths, false)], sources);
+        var sources = new List<VirtualFolderInfo>();
+        foreach (var folder in folders.Where(folder => (folder.Locations ?? []).Any(location => planned.Paths.Any(path => FederatedFolderLinkChecker.IsSamePath(location, path)))))
+        {
+            if (Guid.TryParse(folder.ItemId, out _))
+            {
+                sources.Add(folder);
+            }
+            else if (_renamer.IdOfName(folder.Name) is { } id)
+            {
+                sources.Add(new VirtualFolderInfo { Name = folder.Name, CollectionType = folder.CollectionType, Locations = folder.Locations, ItemId = id.ToString("N") });
+            }
+            else
+            {
+                _logger.LogWarning("Cannot tell the id of the library {Library} on the folders of the shared {Kind} library, so it is not made", LogText.Clean(folder.Name), planned.Kind);
+                return null;
+            }
+        }
+
+        return sources;
+    }
+
+    // Blocks a shared library, by its id or else the id of its name, for who blocks a library holding one of its folders.
+    // False when the blocks could not be written.
+    private async Task<bool> BlockSharedAsync(string name, Guid? id, PlannedLibrary planned, IReadOnlyList<VirtualFolderInfo> sources, CancellationToken cancellationToken)
+    {
+        var carries = CarriesFor([new NewLibrary(name, id, planned.Paths, false)], sources);
         if (carries.Count == 0)
         {
             return true;
@@ -368,7 +398,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot block a shared library for the users who blocked a library of its folders, so it is not made: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot block a shared library for the users who blocked a library of its folders: {Error}", exception.GetType().Name);
             return false;
         }
     }
@@ -407,6 +437,25 @@ public sealed partial class ServerLibraryManager
                 WithPaths(record, FindRecorded(record, folders)!.Locations ?? []);
             }
         });
+    }
+
+    // Deletes a shared library the server stored under another name when its blocks could not be written, before any scan
+    // shows it; one that cannot be deleted is recorded, so the switch-off deletes it.
+    private async Task<bool> DropUnblockedAsync(PendingLibraryConfig intent, VirtualFolderInfo made, CancellationToken cancellationToken)
+    {
+        _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+        try
+        {
+            await _libraries.RemoveVirtualFolder(made.Name, false).ConfigureAwait(false);
+            _store.Update(config => RemovePending(config.SharedLibraries.PendingLibraries, intent.KeyOf()));
+            return false;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot delete the shared library {Library}, which could not be blocked: {Error}", LogText.Clean(made.Name), exception.GetType().Name);
+            RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty }, made.Locations ?? []));
+            return true;
+        }
     }
 
     // Saves a shared library and drops its intent.

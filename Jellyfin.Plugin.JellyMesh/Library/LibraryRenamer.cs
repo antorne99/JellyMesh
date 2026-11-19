@@ -190,6 +190,10 @@ public sealed class LibraryRenamer : ILibraryRenamer
     }
 
     /// <inheritdoc />
+    public Guid? IdOfName(string name) =>
+        ChildOf(_paths.DefaultUserViewsPath, name) is { } path ? _library.GetNewItemId(path, typeof(CollectionFolder)) : null;
+
+    /// <inheritdoc />
     public async Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(carries);
