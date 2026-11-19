@@ -33,6 +33,11 @@ public sealed class PlaybackRefusal
     /// </summary>
     public const string FailedText = "Riproduzione non disponibile al momento. Riprova più tardi.";
 
+    /// <summary>
+    /// The body of the 503 on <c>Download</c> and <c>File</c> of a book placeholder whose remote file is out of reach (931).
+    /// </summary>
+    public const string FileOfflineText = "File non disponibile: il server di origine non è raggiungibile. Riprova più tardi.";
+
     private const string Header = "JellyMesh";
     private const string ToastMilliseconds = "8000";
 

@@ -1989,6 +1989,99 @@ public class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
     }
 
+    private const string BookPath = "/federata/server/Libri/Dune (1965)/Dune (1965).epub";
+
+    // A book placeholder of the federated folder, its stub found by its path, as a book has no URL to name it.
+    private InMemoryConfigurationStore BookPlaceholder(bool known = true)
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Book { Path = BookPath });
+        _stubs.Setup(stubs => stubs.FindByPath(BookPath)).Returns(known ? _stub with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965).epub" } : null);
+        return store;
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_book_comes_from_the_remote_file_with_its_range_and_never_from_the_placeholder(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        RemoteStreamRequest? asked = null;
+        var serve = _fixture.Client.Open;
+        _fixture.Client.Open = (request, token) =>
+        {
+            asked = request;
+            return serve(request, token);
+        };
+        var context = FileRequest(action, "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("/Items/remote-item/File", Assert.Single(_fixture.Client.Opened));
+        Assert.Equal("bytes=0-4", asked?.Range);
+    }
+
+    [Fact]
+    public async Task A_book_needs_the_download_permission_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(false);
+        RemoteServes();
+        var store = BookPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<StatusCodeResult>(download.Result).StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(file));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_book_the_user_cannot_see_is_not_found(string action)
+    {
+        MayDownload(true);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Theory]
+    [InlineData("GetFile", true)]
+    [InlineData("GetDownload", true)]
+    [InlineData("GetFile", false)]
+    public async Task A_book_whose_remote_is_offline_is_a_503_that_says_so(string action, bool known)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable));
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder(known)), context));
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.FileOfflineText, result.Content);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_book_outside_the_federated_folder_stays_with_stock()
+    {
+        var store = BookPlaceholder();
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Book { Path = "/media/Libri/Dune.epub" });
+
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
+    }
+
     [Fact]
     public async Task File_of_an_item_that_is_not_a_stub_stays_with_stock()
     {

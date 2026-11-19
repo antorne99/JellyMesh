@@ -246,7 +246,7 @@ public sealed class PlaybackCoordinator
         foreach (var source in Ordered(sources, chosen?.Working.Source))
         {
             tried++;
-            var request = new RemoteStreamRequest(method, FilePath(source), range);
+            var request = new RemoteStreamRequest(method, stub.Kind == StubKind.Book ? BookPath(source) : FilePath(source), range);
             var stream = await OpenAsync(source.ServerId, request, cancellationToken).ConfigureAwait(false);
             if (stream.IsSuccess)
             {
@@ -541,6 +541,9 @@ public sealed class PlaybackCoordinator
             ? new[] { first }.Concat(sources.Where(source => source != first))
             : sources;
     }
+
+    // The remote file of a book: File asks the remote user for no download permission (F48, probe 7).
+    private static string BookPath(StubSource source) => "/Items/" + Uri.EscapeDataString(source.ItemId) + "/File";
 
     private static string FilePath(StubSource source, string? playSessionId = null)
     {
