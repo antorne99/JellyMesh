@@ -658,6 +658,8 @@ public class JellyfinRemoteClientTests
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Genres\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"People\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Studios\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"AlbumArtists\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"Artists\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Chapters\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"ImageTags\":{\"Primary\":null}}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"MediaSources\":[null]}],\"TotalRecordCount\":1}")]
