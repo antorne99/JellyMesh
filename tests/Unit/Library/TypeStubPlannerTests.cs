@@ -152,6 +152,29 @@ public class TypeStubPlannerTests
         Assert.DoesNotContain("..", work.Entry.RelativePath.Split(Path.DirectorySeparatorChar));
     }
 
+    [Theory]
+    [InlineData("A-thumb", "A")]
+    [InlineData("A", "A-thumb")]
+    public void AHomeVideoNamedLikeTheThumbnailOfAnotherGetsADifferentName(string first, string second)
+    {
+        var stems = Plan(Catalog(HomeVideo("v1", first, HomeVideos), HomeVideo("v2", second, HomeVideos))).Stubs
+            .Select(work => Path.GetFileNameWithoutExtension(work.Entry.RelativePath))
+            .ToList();
+
+        Assert.Equal(2, stems.Count);
+        Assert.DoesNotContain(stems, stem => stems.Contains(stem + "-thumb", StringComparer.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void AFolderNamedLikeTheFileOfAHomeVideoGetsADifferentName()
+    {
+        var plan = Plan(Catalog(Folder("f1", "Clip.strm", HomeVideos), HomeVideo("v1", "Clip", HomeVideos), HomeVideo("v2", "Inside", "f1")));
+
+        var paths = plan.Stubs.Select(work => work.Entry.RelativePath).ToList();
+        Assert.Contains(In(HomeVideos, "Video domestici", "Clip.strm"), paths);
+        Assert.Contains(In(HomeVideos, "Video domestici", "Clip.strm [f1]", "Inside.strm"), paths);
+    }
+
     [Fact]
     public void AnItemFederatedOnItsServerGetsNoStub()
     {

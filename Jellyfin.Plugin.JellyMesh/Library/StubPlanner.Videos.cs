@@ -18,6 +18,11 @@ public static partial class StubPlanner
     // Deeper folder chains are cut there, so that a damaged index cannot make paths without end.
     private const int MaxFolderDepth = 32;
 
+    private const string ThumbSuffix = "-thumb";
+
+    // The extensions of the files written next to a home video.
+    private static readonly HashSet<string> _fileExtensions = new([".strm", ".nfo", ".jpg", ".png", ".webp", ".gif"], StringComparer.OrdinalIgnoreCase);
+
     private static bool IsVideoKind(StubKind kind) => kind is StubKind.MusicVideo or StubKind.HomeVideo;
 
     // Plans the music videos and home videos of a server and claims their stubs; the others are left for the sweep.
@@ -133,13 +138,28 @@ public static partial class StubPlanner
     {
         var folder = Path.Combine([typeFolder, .. FolderChain(catalog, serverId, item)]);
         var stem = Path.Combine(folder, FederatedPaths.Sanitize(item.Name));
-        if (!taken.Add(stem))
+        if (IsTaken(taken, stem))
         {
             stem = string.Create(CultureInfo.InvariantCulture, $"{stem} [{id[..8]}]");
-            taken.Add(stem);
         }
 
+        taken.Add(stem);
         return stem + ".strm";
+    }
+
+    // Whether a stem, or its thumbnail, is already one of the stubs or thumbnails of its folder.
+    private static bool IsTaken(HashSet<string> taken, string stem)
+        => taken.Contains(stem)
+            || taken.Contains(stem + ThumbSuffix)
+            || (stem.EndsWith(ThumbSuffix, StringComparison.OrdinalIgnoreCase) && taken.Contains(stem[..^ThumbSuffix.Length]));
+
+    // A remote folder name that ends like a stub file or image, so that it never meets the file of a home video.
+    private static string FolderName(IndexedItem folder)
+    {
+        var name = FederatedPaths.Sanitize(folder.Name);
+        return _fileExtensions.Contains(Path.GetExtension(name))
+            ? string.Create(CultureInfo.InvariantCulture, $"{name} [{folder.ItemId[..Math.Min(8, folder.ItemId.Length)]}]")
+            : name;
     }
 
     // The names of the remote folders and albums above an item, outermost first, each a single safe path segment.
@@ -153,7 +173,7 @@ public static partial class StubPlanner
             && seen.Add(parentId)
             && catalog.Find(serverId, parentId) is { Kind: IndexedItemKind.Folder or IndexedItemKind.PhotoAlbum } parent)
         {
-            names.Add(FederatedPaths.Sanitize(parent.Name));
+            names.Add(FolderName(parent));
             parentId = parent.ParentId;
         }
 
