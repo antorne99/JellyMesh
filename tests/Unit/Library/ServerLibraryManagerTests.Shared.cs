@@ -202,11 +202,14 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal([_movies], fixture.Libraries.Find("Bambini").Locations);
     }
 
-    [Fact]
-    public async Task A_shared_library_that_can_be_neither_blocked_nor_deleted_is_scanned_only_once_blocked()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_shared_library_that_can_be_neither_blocked_nor_deleted_is_scanned_only_once_blocked(bool notScanned)
     {
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.NoIdOnCreate = notScanned;
         fixture.Libraries.RenameOnCreate = name => name + "1";
         var made = SharedFilm + "1";
         fixture.Renamer.OnBlock = () =>
@@ -231,11 +234,36 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Renamer.OnBlock = () => scansWhenBlocked.Add(fixture.Scans.Steps.Count(step => step == "scan"));
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
+        // One not scanned yet is blocked by the id of its name, which the renamer tells.
         var carry = Assert.Single(fixture.Renamer.Blocked.SelectMany(carries => carries), carry => carry.Name == made);
-        Assert.Equal(Guid.Parse(fixture.Libraries.IdOf(made)), carry.Id);
+        Assert.Equal(notScanned ? null : Guid.Parse(fixture.Libraries.IdOf(made)), carry.Id);
         Assert.All(scansWhenBlocked, count => Assert.Equal(0, count));
         Assert.False(Shared(fixture).Libraries.Single(record => record.Name == made).Unblocked);
-        Assert.Contains("scan", fixture.Scans.Steps);
+        Assert.Equal(!notScanned, fixture.Scans.Steps.Contains("scan"));
+    }
+
+    [Fact]
+    public async Task No_library_scan_runs_while_a_shared_library_lacks_its_blocks()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.RenameOnCreate = name => name + "1";
+        fixture.Renamer.OnBlock = () =>
+        {
+            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "1"))
+            {
+                fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+            }
+        };
+        fixture.Libraries.RemoveFailure = new InvalidOperationException("boom");
+        await fixture.Manager.EnableShared().Job;
+
+        fixture.Libraries.RenameOnCreate = null;
+
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+
+        Assert.Contains(fixture.Libraries.Folders, folder => folder.Name == "Casa - Serie");
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
     }
 
     [Fact]

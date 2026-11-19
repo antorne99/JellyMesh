@@ -182,7 +182,7 @@ public sealed partial class ServerLibraryManager
 
         if (!scanned && !none)
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if (!none && !await CarryAccessAsync(serverId, root, cancellationToken).ConfigureAwait(false))
@@ -201,7 +201,7 @@ public sealed partial class ServerLibraryManager
         // Removing a library drops for a while the titles it shared with the new ones; a scan brings them back (F23).
         if (!none && _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0) < before)
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

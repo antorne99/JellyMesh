@@ -15,6 +15,9 @@ public sealed partial class ServerLibraryManager
 {
     private static readonly Guid _sharedOwner = SharedLibraries.Owner;
 
+    // A scan held back for a shared library without its blocks is owed once they are written; read under the gate.
+    private bool _sharedScanOwed;
+
     /// <inheritdoc />
     public SharedLibrariesState GetSharedState()
     {
@@ -157,7 +160,7 @@ public sealed partial class ServerLibraryManager
         _materializer.PrepareServerFolders();
         if (await ConvergeSharedAsync(folders, true, true, cancellationToken).ConfigureAwait(false))
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -210,7 +213,7 @@ public sealed partial class ServerLibraryManager
         Follow(SharedRegistry, folders);
         if (await ConvergeSharedAsync(folders, false, false, cancellationToken).ConfigureAwait(false))
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -226,7 +229,7 @@ public sealed partial class ServerLibraryManager
 
         var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
         KeepSharedCreatedKeys();
-        var changed = await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false);
+        var changed = await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false) | _sharedScanOwed;
         changed |= await ResolveSharedPendingAsync(root, folders, cancellationToken).ConfigureAwait(false);
         var (servers, records, created) = _store.Read(config => (
             config.Servers.Select(server => (server.Id, Folders: _kinds.ToDictionary(kind => kind, kind => SharedLibraries.FoldersOf(server, kind, root, olderLayout)))).ToList(),
@@ -282,19 +285,50 @@ public sealed partial class ServerLibraryManager
 
         // A shared library without its blocks, or not told apart yet, is never scanned: the scan waits for a check that
         // blocks or records it (D42).
-        var (unblocked, pending) = _store.Read(config => (config.SharedLibraries.Libraries.Any(record => record.Unblocked), config.SharedLibraries.PendingLibraries.Count > 0));
-        if (unblocked)
+        if (_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
         {
             _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
         }
 
-        if (unblocked || pending)
+        return changed && !SharedScanHeld();
+    }
+
+    // Queues a library scan and waits for it, unless a shared library still lacks its blocks after a new try (D42).
+    private async Task QueueScanAsync(CancellationToken cancellationToken)
+    {
+        if (!await SharedBlocksMissingAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            _sharedScanOwed = false;
+        }
+    }
+
+    // Writes again the blocks a shared library lacks; true when one still lacks them, which holds back every scan (D42).
+    private async Task<bool> SharedBlocksMissingAsync(CancellationToken cancellationToken)
+    {
+        if (!_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
         {
             return false;
         }
 
-        return changed;
+        if (ReadFolders() is { } folders)
+        {
+            await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
+        {
+            return false;
+        }
+
+        _logger.LogWarning("A shared library still lacks the blocks of the users who block a library on its folders, so no library scan runs");
+        _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+        return true;
     }
+
+    // Whether a shared library lacks its blocks or is not told apart yet, which holds back the scan of a shared check (D42).
+    private bool SharedScanHeld()
+        => _store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked) || config.SharedLibraries.PendingLibraries.Count > 0);
 
     // Adds to a shared library the folders it lacks and removes the server folders no longer planned that hold no titles.
     private bool KeepSharedFolders(AutomaticLibraryConfig record, PlannedLibrary planned, string root, bool olderLayout, IReadOnlySet<Guid> configured, List<VirtualFolderInfo> folders)
@@ -569,7 +603,8 @@ public sealed partial class ServerLibraryManager
             {
                 var planned = new PlannedLibrary(KeyOf(record), record.Kind, string.Empty, string.Empty, [.. record.Paths]);
                 var id = Guid.TryParse(folder.ItemId, out var found) ? found : (Guid?)null;
-                if (BlockSources(planned, folders) is not { } sources || !await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false))
+                if (BlockSources(planned, [.. folders.Where(other => other != folder)]) is not { } sources
+                    || !await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false))
                 {
                     continue;
                 }
@@ -582,6 +617,7 @@ public sealed partial class ServerLibraryManager
                     kept.Unblocked = false;
                 }
             });
+            _sharedScanOwed = true;
             changed = true;
         }
 
