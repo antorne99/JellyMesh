@@ -63,7 +63,7 @@ public static partial class StubPlanner
             }
         }
 
-        var folders = new PathAllocator(own, []);
+        var folders = new PathAllocator(own, [], input.IgnoreRules);
         var files = new HashSet<string>(own.Where(stub => stub.Kind == StubKind.HomeVideo).Select(stub => Path.ChangeExtension(stub.RelativePath, null)), StringComparer.OrdinalIgnoreCase);
         var items = serverCatalog.Items
             .Where(item => item.Kind is IndexedItemKind.MusicVideo or IndexedItemKind.Video)
@@ -92,7 +92,7 @@ public static partial class StubPlanner
                 var sources = ranked.Select(source => new StubSource(server.Id, item.ItemId, source.MediaSourceId) { LibraryId = item.LibraryId }).ToList();
                 works.Add(kind == StubKind.MusicVideo
                     ? MusicVideoWork(input, item, stub, sources, id => FederatedPaths.MovieStubIn(typeFolder, folders.MovieFolderName(typeFolder, item.Name, item.ProductionYear, id, label), label))
-                    : HomeVideoWork(input, item, stub, sources, id => HomeVideoPath(catalog, server.Id, item, typeFolder, files, id)));
+                    : HomeVideoWork(input, item, stub, sources, id => HomeVideoPath(catalog, server.Id, item, typeFolder, files, input.IgnoreRules, id)));
                 if (stub is not null)
                 {
                     claimed.Add(stub.Id);
@@ -144,11 +144,17 @@ public static partial class StubPlanner
     }
 
     // The path of a new home video: the remote folders it is in, then its name, unique in its folder.
-    private static string HomeVideoPath(IndexItemLookup catalog, Guid serverId, IndexedItem item, string typeFolder, HashSet<string> taken, string id)
+    private static string HomeVideoPath(IndexItemLookup catalog, Guid serverId, IndexedItem item, string typeFolder, HashSet<string> taken, IServerIgnoreRules rules, string id)
     {
-        var folder = Path.Combine([typeFolder, .. FolderChain(catalog, serverId, item)]);
-        var stem = Path.Combine(folder, FederatedPaths.Sanitize(item.Name));
-        if (IsTaken(taken, stem) || IsReadAsExtra(stem + ".strm"))
+        var folder = typeFolder;
+        foreach (var parent in FolderChain(catalog, serverId, item))
+        {
+            folder = Path.Combine(folder, FolderName(parent, folder, rules));
+        }
+
+        var name = FederatedPaths.Sanitize(item.Name);
+        var stem = Path.Combine(folder, name);
+        if (IsTaken(taken, stem) || IsReadAsExtra(stem + ".strm") || rules.Ignores(folder, name + ".strm", false))
         {
             stem = string.Create(CultureInfo.InvariantCulture, $"{stem} [{id[..8]}]");
         }
@@ -166,19 +172,19 @@ public static partial class StubPlanner
     // Whether Jellyfin would read a file as an extra of another video, and not as a video of its own.
     private static bool IsReadAsExtra(string path) => ExtraRuleResolver.GetExtraInfo(path, _naming).ExtraType is not null;
 
-    // A remote folder name that ends like a stub file or image, or names an extras folder, gets its id.
-    private static string FolderName(IndexedItem folder)
+    // A remote folder name that ends like a stub file or image, names an extras folder or is skipped by the server gets its id.
+    private static string FolderName(IndexedItem folder, string parent, IServerIgnoreRules rules)
     {
         var name = FederatedPaths.Sanitize(folder.Name);
-        return _fileExtensions.Contains(Path.GetExtension(name)) || _extraFolders.Contains(name)
+        return _fileExtensions.Contains(Path.GetExtension(name)) || _extraFolders.Contains(name) || rules.Ignores(parent, name, true)
             ? string.Create(CultureInfo.InvariantCulture, $"{name} [{folder.ItemId[..Math.Min(8, folder.ItemId.Length)]}]")
             : name;
     }
 
-    // The names of the remote folders and albums above an item, outermost first, each a single safe path segment.
-    private static List<string> FolderChain(IndexItemLookup catalog, Guid serverId, IndexedItem item)
+    // The remote folders and albums above an item, outermost first.
+    private static List<IndexedItem> FolderChain(IndexItemLookup catalog, Guid serverId, IndexedItem item)
     {
-        var names = new List<string>();
+        var names = new List<IndexedItem>();
         var seen = new HashSet<string>(StringComparer.Ordinal) { item.ItemId };
         var parentId = item.ParentId;
         while (parentId is not null
@@ -186,7 +192,7 @@ public static partial class StubPlanner
             && seen.Add(parentId)
             && catalog.Find(serverId, parentId) is { Kind: IndexedItemKind.Folder or IndexedItemKind.PhotoAlbum } parent)
         {
-            names.Add(FolderName(parent));
+            names.Add(parent);
             parentId = parent.ParentId;
         }
 

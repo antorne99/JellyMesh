@@ -39,6 +39,9 @@ public sealed record StubPlanInput(
     /// </summary>
     public Func<Guid, string, TypeFolder, string> PlacementOf { get; init; } = DefaultPlacement;
 
+    /// <summary>Gets the rules by which the server skips files and folders: a planned name it would skip gets the id.</summary>
+    public IServerIgnoreRules IgnoreRules { get; init; } = NoIgnoreRules.Instance;
+
     /// <summary>Gives the default placement: one local library per server and type.</summary>
     /// <param name="serverId">The server.</param>
     /// <param name="libraryId">The remote library.</param>

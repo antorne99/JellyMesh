@@ -70,17 +70,18 @@ public class TypeStubPlannerTests
     private static RemoteServerInfo Server()
         => new(_serverA, "Casa", "http://server", RemoteMode.Standard, 0, [MusicVideos, HomeVideos, Mixed], null, null);
 
-    private static StubPlan Plan(ServerCatalog catalog, StubState? state = null, IReadOnlyList<ResolvedContent>? contents = null, bool isProtected = true)
+    private static StubPlan Plan(ServerCatalog catalog, StubState? state = null, IReadOnlyList<ResolvedContent>? contents = null, bool isProtected = true, IServerIgnoreRules? ignoreRules = null)
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [catalog] };
-        return StubPlanner.PlanByServer(new StubPlanInput(
+        var input = new StubPlanInput(
             new FederationView(IndexHealth.Ok, 0, contents ?? [], []),
             snapshot,
             state ?? StubState.Empty,
             [Server()],
             isProtected,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => null));
+            _ => null);
+        return StubPlanner.PlanByServer(ignoreRules is null ? input : input with { IgnoreRules = ignoreRules });
     }
 
     private static string In(string library, params string[] parts) => Path.Combine(FederatedPaths.LibraryFolder(_serverA, library), Path.Combine(parts));
@@ -239,6 +240,39 @@ public class TypeStubPlannerTests
 
         Assert.Equal(In(HomeVideos, "Video domestici", name + " [f1]", "Beach day.strm"), work.Entry.RelativePath);
         Assert.False(JellyfinNaming.IsExtra(work.Entry.RelativePath));
+    }
+
+    [Fact]
+    public void AFolderTheServerWouldIgnoreGetsItsId()
+    {
+        var work = Assert.Single(Plan(Catalog(Folder("f1", "@eaDir", HomeVideos), HomeVideo("v1", "Beach day", "f1")), ignoreRules: new FakeIgnoreRules("@eaDir")).Stubs);
+
+        Assert.Equal(In(HomeVideos, "Video domestici", "@eaDir [f1]", "Beach day.strm"), work.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void AHomeVideoTheServerWouldIgnoreGetsItsId()
+    {
+        var work = Assert.Single(Plan(Catalog(HomeVideo("v1", "Clip.minta", HomeVideos)), ignoreRules: new FakeIgnoreRules("Clip.minta.strm")).Stubs);
+
+        Assert.Equal(In(HomeVideos, "Video domestici", $"Clip.minta [{work.Entry.Id[..8]}].strm"), work.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void AMusicVideoTheServerWouldIgnoreGetsItsIdInItsFolder()
+    {
+        var work = Assert.Single(Plan(Catalog(MusicVideo("m1", "extrafanart") with { ProductionYear = null }), ignoreRules: new FakeIgnoreRules("extrafanart")).Stubs);
+
+        var folder = $"extrafanart [{work.Entry.Id[..8]}]";
+        Assert.Equal(In(MusicVideos, "Video musicali", folder, folder + " - Casa.strm"), work.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void AHomeVideoAndAFolderLoseTheLeadingDotThatHidesThem()
+    {
+        var work = Assert.Single(Plan(Catalog(Folder("f1", ".Trip", HomeVideos), HomeVideo("v1", ".Beach", "f1"))).Stubs);
+
+        Assert.Equal(In(HomeVideos, "Video domestici", "Trip", "Beach.strm"), work.Entry.RelativePath);
     }
 
     [Fact]

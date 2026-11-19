@@ -105,7 +105,8 @@ public class ServerStubPlannerTests
         StubState? state = null,
         IReadOnlyList<RemoteServerInfo>? servers = null,
         LocalSeries? localSeries = null,
-        Func<Guid, string, TypeFolder, string>? placementOf = null)
+        Func<Guid, string, TypeFolder, string>? placementOf = null,
+        IServerIgnoreRules? ignoreRules = null)
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = catalogs };
         return StubPlanner.PlanByServer(new StubPlanInput(
@@ -117,7 +118,8 @@ public class ServerStubPlannerTests
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
             _ => localSeries)
         {
-            PlacementOf = placementOf ?? StubPlanInput.DefaultPlacement
+            PlacementOf = placementOf ?? StubPlanInput.DefaultPlacement,
+            IgnoreRules = ignoreRules ?? new FakeIgnoreRules()
         });
     }
 
@@ -365,6 +367,37 @@ public class ServerStubPlannerTests
         var folder = $"{name} [{stub.Entry.Id[..8]}]";
         Assert.Equal(Path.Combine(A, Library, "Film", folder, folder + " - Casa.strm"), stub.Entry.RelativePath);
         Assert.False(JellyfinNaming.IsExtra(stub.Entry.RelativePath));
+    }
+
+    [Fact]
+    public void AFilmFolderTheServerWouldIgnoreGetsItsId()
+    {
+        var stub = On(Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m", "metadata") with { ProductionYear = null })], ignoreRules: new FakeIgnoreRules("metadata")), _serverA);
+
+        var folder = $"metadata [{stub.Entry.Id[..8]}]";
+        Assert.Equal(Path.Combine(A, Library, "Film", folder, folder + " - Casa.strm"), stub.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void AFilmWhoseFileTheServerWouldIgnoreGetsItsIdInItsFolder()
+    {
+        var stub = On(Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], ignoreRules: new FakeIgnoreRules("Film (2020) - Casa.strm")), _serverA);
+
+        var folder = $"Film (2020) [{stub.Entry.Id[..8]}]";
+        Assert.Equal(Path.Combine(A, Library, "Film", folder, folder + " - Casa.strm"), stub.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void ASeriesFolderTheServerWouldIgnoreGetsItsId()
+    {
+        var plan = Plan(
+            [EpisodeTitle(7, OnA("e7"))],
+            [Catalog(_serverA, SeriesItem("sa", "subs") with { ProductionYear = null }, EpisodeItem("e7", "sa", 7))],
+            localSeries: new LocalSeries("Locale", 1999, null, new Dictionary<string, string>(), null, null),
+            ignoreRules: new FakeIgnoreRules("subs"));
+
+        var series = Assert.Single(plan.Series);
+        Assert.Equal(Path.Combine(A, Shows, "Serie", $"subs [{series.Entry.Id[..8]}]"), series.Entry.RelativePath);
     }
 
     [Fact]

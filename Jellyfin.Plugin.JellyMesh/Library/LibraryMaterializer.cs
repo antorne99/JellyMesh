@@ -263,7 +263,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             WritesCollections = writesCollections,
             // Only an empty registry, as after a damage, takes back the stub files of the 0.5 layout it finds.
-            KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root)
+            KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root),
+            IgnoreRules = new ServerIgnoreRules(_library, root, _logger)
         });
 
         WriteServerFolders(root, servers, plan.State, ConfiguredTypeFolders(servers));

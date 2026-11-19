@@ -50,7 +50,7 @@ public static partial class StubPlanner
         var matcher = new StubMatcher(flat);
         var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
 
-        var paths = new PathAllocator(flat, flatSeries);
+        var paths = new PathAllocator(flat, flatSeries, input.IgnoreRules);
         var scope = new SeriesScope(null, flatSeries, ByWork(input.View.Contents), (_, _, title, year, id) => paths.SeriesFolder(TypeFolder.Series.Name, title, year, id), input.LocalSeriesOf);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
         var works = new List<StubWork>();
@@ -149,7 +149,7 @@ public static partial class StubPlanner
                 var matcher = new StubMatcher(part.Stubs);
                 var claims = matcher.ClaimAll(StubContents.Group(part.Contents));
 
-                var paths = new PathAllocator(part.Stubs, part.Series);
+                var paths = new PathAllocator(part.Stubs, part.Series, input.IgnoreRules);
                 var scope = new SeriesScope(server.Id, part.Series, ByWork(part.Contents), (remote, winner, title, year, id) => paths.SeriesFolder(part.FolderOf([remote, winner], TypeFolder.Series), title, year, id), _ => null);
                 var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
                 foreach (var (content, stub) in claims)
@@ -940,9 +940,11 @@ public static partial class StubPlanner
     private sealed class PathAllocator
     {
         private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
+        private readonly IServerIgnoreRules _rules;
 
-        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series)
+        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series, IServerIgnoreRules rules)
         {
+            _rules = rules;
             foreach (var stub in stubs.Where(stub => stub.Kind is StubKind.Movie or StubKind.MusicVideo))
             {
                 _taken.Add(Path.GetDirectoryName(stub.RelativePath)!);
@@ -954,21 +956,26 @@ public static partial class StubPlanner
             }
         }
 
-        // The folder name of a film, unique in its type folder, with the id when Jellyfin would read its stub as an extra.
+        // The folder name of a film, unique in its type folder, with the id when Jellyfin would read its stub as an extra or skip it.
         public string MovieFolderName(string typeFolder, string? title, int? year, string id, string? label = null)
         {
             var name = FederatedPaths.TitleFolder(title, year);
-            var stub = label is null ? Path.Combine(typeFolder, name, name + ".strm") : FederatedPaths.MovieStubIn(typeFolder, name, label);
-            return Unique(typeFolder, name, id, IsReadAsExtra(stub));
+            var folder = Path.Combine(typeFolder, name);
+            var stub = label is null ? Path.Combine(folder, name + ".strm") : FederatedPaths.MovieStubIn(typeFolder, name, label);
+            var hidden = IsReadAsExtra(stub) || _rules.Ignores(typeFolder, name, true) || _rules.Ignores(folder, Path.GetFileName(stub), false);
+            return Unique(typeFolder, name, id, hidden);
         }
 
-        // The relative folder of a series, unique in its type folder.
+        // The relative folder of a series, unique in its type folder, with the id when the server would skip it.
         public string SeriesFolder(string typeFolder, string? title, int? year, string id)
-            => Path.Combine(typeFolder, Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id));
-
-        private string Unique(string typeFolder, string name, string id, bool isExtra = false)
         {
-            if (!isExtra && _taken.Add(Path.Combine(typeFolder, name)))
+            var name = FederatedPaths.TitleFolder(title, year);
+            return Path.Combine(typeFolder, Unique(typeFolder, name, id, _rules.Ignores(typeFolder, name, true)));
+        }
+
+        private string Unique(string typeFolder, string name, string id, bool hidden = false)
+        {
+            if (!hidden && _taken.Add(Path.Combine(typeFolder, name)))
             {
                 return name;
             }
