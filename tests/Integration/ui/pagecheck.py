@@ -615,11 +615,11 @@ def quiet(s, width):
     reads = []
     page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
     page.wait_for_timeout(31000)
-    counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges", "Store"]}
+    counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges", "Store", "SharedLibraries"]}
     check(name + " reads the sync every 5 seconds", 5 <= counts["Sync"] <= 7, counts)
     check(name + " reads status and streams every 15 seconds", 1 <= counts["Status"] <= 3 and 1 <= counts["Peers"] <= 3, counts)
     check(name + " reads the status only with the streams, the migration banner too", counts["Status"] == counts["Peers"], counts)
-    check(name + " reads the database with the status", counts["Store"] == counts["Status"], counts)
+    check(name + " reads the database and the libraries of all servers with the status", counts["Store"] == counts["Status"] and counts["SharedLibraries"] == counts["Status"], counts)
     check(name + " reads the peer options at most once a minute", counts["Peers/Options"] <= 1, counts)
     check(name + " leaves the merges alone", counts["Merges"] == 0, counts)
     check(name + " reads nothing else", len(reads) == sum(counts.values()), reads)
@@ -3160,7 +3160,7 @@ def overview_focus(s, width):
     check(name + " keeps the focus", u.has_focus(link), page.evaluate("document.activeElement.tagName"))
     check(name + " does not move the page", page.evaluate("scrollY") == scroll, page.evaluate("scrollY"))
     check(name + " counts the new line", text(page, u.STATUS).startswith("Active. 2 things need attention"), text(page, u.STATUS))
-    check(name + " reads nothing new", {url.rsplit("/Admin/", 1)[1] for url in reads} <= {"Sync", "Status", "Peers", "Peers/Options", "Store"}, set(reads))
+    check(name + " reads nothing new", {url.rsplit("/Admin/", 1)[1] for url in reads} <= {"Sync", "Status", "Peers", "Peers/Options", "Store", "SharedLibraries"}, set(reads))
     focus_shows(page, name + " a link", link)
     u.shot(page, f"overview-focus-{width}", full_page=False)
     healthy(page, name)
@@ -3507,6 +3507,11 @@ def adopted(s, width):
     u.close(page)
 
 
+SHARED_STATE = {"Enabled": True, "Busy": False, "Error": "None", "Released": [], "Conflicts": [], "Unblocked": [],
+                "Libraries": [{"Kind": "Movies", "Name": "Tutti i server - Film", "Adopted": True, "Disabled": False},
+                              {"Kind": "Series", "Name": "Tutti i server - Serie", "Adopted": False, "Disabled": False}]}
+
+
 def fulfill_json(context, path, answer, method="GET"):
     """Answers an admin path to one method with what answer returns for the request, a status and a body."""
     def reply(route):
@@ -3517,6 +3522,97 @@ def fulfill_json(context, path, answer, method="GET"):
         route.fulfill(status=status, json=body)
 
     context.route("**/JellyMesh/Admin/" + path, reply)
+
+
+def shared_libraries(s, width):
+    """The libraries of all servers: their state, marks and errors as text, and the switch-off that resends the names (D48)."""
+    name = width + " shared libraries"
+    state = [dict(SHARED_STATE, Error="Unconfirmed", Unblocked=[HOSTILE], Released=["Vecchia"],
+                  Conflicts=[{"Library": HOSTILE, "Reason": "OtherPaths", "Kind": "Series", "RemoteLibraryId": "", "Paths": ["/federata/a/Serie"]}])]
+    first = {"ToDelete": ["Tutti i server - Serie", "Tutti i server 1a2b3c4d - Film"], "ToRelease": ["Tutti i server - Film"]}
+    second = {"ToDelete": first["ToDelete"] + [HOSTILE], "ToRelease": first["ToRelease"]}
+    sent = []
+
+    def post(request):
+        body = request.post_data_json
+        sent.append(body)
+        # Unconfirmed, the server names the libraries; confirmed with the first list, it finds one more (D48).
+        if not body["Enabled"] and body.get("ToDelete") != second["ToDelete"]:
+            names = second if body.get("Confirmed") else first
+            return 409, dict(names, Outcome="ConfirmationRequired", Message="Confirm to delete the shared libraries the plugin made and release the adopted ones.")
+        state[0] = dict(SHARED_STATE, Enabled=body["Enabled"], Libraries=[])
+        return 202, state[0]
+
+    def routes(context):
+        fulfill_json(context, "SharedLibraries", lambda request: (200, state[0]))
+        fulfill_json(context, "SharedLibraries", post, "POST")
+
+    page = s.open("fresh", width, tab="settings", route=routes)
+    box = page.locator(u.SHARED)
+    notes = page.locator(u.SHARED_NOTES)
+    check(name + " shows the option on", until(page, lambda: box.is_checked() and box.is_enabled()))
+    check(name + " marks the adopted library", "Tutti i server - Film (adopted)" in notes.inner_text(), notes.inner_text())
+    check(name + " explains the title in two libraries (D29)", "one watch state" in text(page, u.SHARED_GROUP), text(page, u.SHARED_GROUP))
+    check(name + " says the switch-off was not confirmed", notes.locator(u.ALERT, has_text="changed before the switch-off").count() == 1, notes.inner_text())
+    unblocked = notes.locator(u.ALERT, has_text="holds its library scans")
+    check(name + " names the libraries without their blocks as text", unblocked.count() == 1 and HOSTILE in unblocked.inner_text(), notes.inner_text())
+    conflict = notes.locator(u.ALERT, has_text="together with other folders")
+    check(name + " says what is in the way (D43)", conflict.count() == 1 and "set the library mode" not in conflict.inner_text(), notes.inner_text())
+    check(name + " lists the released libraries", "Vecchia" in notes.inner_text(), notes.inner_text())
+    check(name + " a library name renders no markup", page.locator(u.SHARED_GROUP + " b").count() == 0)
+    healthy(page, name)
+    u.shot(page, f"shared-{width}")
+
+    u.tick(box, False)
+    u.wait_confirm(page)
+    shown = text(page, u.CONFIRM_TEXT)
+    check(name + " lists the libraries to delete with the crash one (D55)", all(library in shown for library in first["ToDelete"]), shown)
+    check(name + " lists the libraries to release", "Tutti i server - Film" in shown and "no longer manages" in shown, shown)
+    u.answer_confirm(page, False)
+    check(name + " a cancel keeps the option on", until(page, lambda: box.is_checked() and box.is_enabled()) and len(sent) == 1, sent)
+
+    u.tick(box, False)
+    u.wait_confirm(page)
+    u.answer_confirm(page, True)
+    check(name + " resends the names shown (D48)", until(page, lambda: len(sent) == 3)
+          and sent[2] == {"Enabled": False, "Confirmed": True, "ToDelete": first["ToDelete"], "ToRelease": first["ToRelease"]}, sent)
+    u.wait_confirm(page)
+    again = text(page, u.CONFIRM_TEXT)
+    check(name + " asks again with the new list", HOSTILE in again and page.locator(u.CONFIRM_MARKUP).count() == 0, again)
+    u.answer_confirm(page, True)
+    check(name + " resends the new list", until(page, lambda: len(sent) == 4) and sent[3]["ToDelete"] == second["ToDelete"], sent)
+    check(name + " shows the option off", until(page, lambda: not box.is_checked() and box.is_enabled()))
+    healthy(page, name)
+    u.close(page)
+
+    page = s.open("fresh", width, tab="settings", route=routes, language="it")
+    check(width + " Italian shared libraries", until(page, lambda: "una sola libreria per tipo" in text(page, u.SHARED_GROUP).lower()), text(page, u.SHARED_GROUP))
+    u.close(page)
+
+
+def shared_errors(s, width):
+    """Each error of the libraries of all servers says what failed, and a busy state holds the option."""
+    name = width + " shared errors"
+    state = [dict(SHARED_STATE, Error="NameTaken")]
+
+    def routes(context):
+        fulfill_json(context, "SharedLibraries", lambda request: (200, state[0]))
+
+    for error, words in [("NameTaken", "name was taken"), ("Failed", "change failed"), ("RemoveFailed", "refused to delete")]:
+        state[0] = dict(SHARED_STATE, Error=error)
+        page = s.open("fresh", width, tab="settings", route=routes)
+        notes = page.locator(u.SHARED_NOTES)
+        check(name + " says " + words, until(page, lambda: notes.locator(u.ALERT, has_text=words).count() == 1), notes.inner_text())
+        u.close(page)
+
+    state[0] = dict(SHARED_STATE, Busy=True)
+    page = s.open("fresh", width, tab="settings", route=routes)
+    notes = page.locator(u.SHARED_NOTES)
+    check(name + " holds the option while busy", until(page, lambda: page.locator(u.SHARED).is_disabled() and "Being updated" in notes.inner_text()), notes.inner_text())
+    state[0] = dict(SHARED_STATE)
+    check(name + " reads again soon while busy", until(page, lambda: page.locator(u.SHARED).is_enabled() and "Being updated" not in notes.inner_text()), notes.inner_text())
+    healthy(page, name)
+    u.close(page)
 
 
 def server_notes(s, width):
@@ -3646,6 +3742,8 @@ SCENARIOS = {
     "adopted": (adopted, WIDTHS),
     "mode-change": (mode_change, WIDTHS),
     "recreate": (recreate, ["1280"]),
+    "shared-libraries": (shared_libraries, WIDTHS),
+    "shared-errors": (shared_errors, ["1280"]),
     "server-notes": (server_notes, WIDTHS),
     "store": (store_notices, WIDTHS),
 }
