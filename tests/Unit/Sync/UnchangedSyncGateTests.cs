@@ -70,6 +70,7 @@ public sealed class UnchangedSyncGateTests : IDisposable
         "a merge is made",
         "the stub registry is saved",
         "an item is added",
+        "a book is made again",
         "a stub is removed",
         "a local film is updated",
         "the administrator splits the versions of a stub"
@@ -132,6 +133,7 @@ public sealed class UnchangedSyncGateTests : IDisposable
         RaiseUpdated(new Movie { Path = Root + "/a/Film/A/A.strm" }, ItemUpdateType.MetadataImport);
         RaiseUpdated(new Movie { Path = Root + "/a/Film/A/A.strm" }, ItemUpdateType.ImageUpdate);
         RaiseAdded(new Person { Name = "Someone" });
+        RaiseUpdated(new Book { Path = Root + "/a/Libri/A/A.epub" }, ItemUpdateType.MetadataImport);
 
         Assert.True(_gate.IsUnchanged(_gate.Capture()));
     }
@@ -208,6 +210,9 @@ public sealed class UnchangedSyncGateTests : IDisposable
                 break;
             case "an item is added":
                 RaiseAdded(new Movie { Path = "/media/film/B.mkv" });
+                break;
+            case "a book is made again":
+                RaiseAdded(new Book { Path = Root + "/a/Libri/A/A.epub" });
                 break;
             case "a stub is removed":
                 RaiseRemoved(new Movie { Path = Root + "/a/Film/A/A.strm" });

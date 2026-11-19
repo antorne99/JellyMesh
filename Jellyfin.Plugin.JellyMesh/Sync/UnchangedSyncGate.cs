@@ -131,7 +131,7 @@ public sealed class UnchangedSyncGate : IUnchangedSyncGate, IDisposable
         _library.ItemUpdated -= OnItemUpdated;
     }
 
-    private static bool IsTitle(BaseItem? item) => item is Video or Series;
+    private static bool IsTitle(BaseItem? item) => item is Video or Series or Book;
 
     // A stub too: one deleted and made again keeps its id but loses its links.
     private void OnItemAddedOrRemoved(object? sender, ItemChangeEventArgs e)
