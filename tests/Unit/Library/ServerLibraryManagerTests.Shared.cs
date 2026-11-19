@@ -676,6 +676,22 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_numbered_shared_library_kept_for_its_failed_blocks_is_deleted_once_the_switch_off_is_confirmed()
+    {
+        var fixture = await WithNumberedPendingFilm();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        Assert.DoesNotContain(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+
+        await fixture.Manager.DisableShared(Shown(fixture.Manager.DisableShared(null))).Job;
+
+        Assert.Contains(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+        Assert.False(Shared(fixture).Enabled);
+        Assert.Empty(Shared(fixture).Libraries);
+    }
+
+    [Fact]
     public async Task A_numbered_shared_library_never_recorded_that_cannot_be_deleted_keeps_the_option_on_and_is_listed_again()
     {
         var fixture = await WithNumberedPendingFilm();
