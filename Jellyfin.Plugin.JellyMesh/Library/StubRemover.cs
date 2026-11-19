@@ -244,7 +244,7 @@ public sealed class StubRemover
     {
         var strm = FederatedPaths.Resolve(root, stub.RelativePath);
         DeleteRow(strm, false);
-        if (stub.Kind is StubKind.Movie or StubKind.MusicVideo)
+        if (stub.Kind is StubKind.Movie or StubKind.MusicVideo or StubKind.Book)
         {
             DeleteFolder(root, Path.GetDirectoryName(stub.RelativePath)!);
         }
