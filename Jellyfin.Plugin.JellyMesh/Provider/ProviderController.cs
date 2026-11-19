@@ -83,7 +83,7 @@ public class ProviderController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden);
         }
 
-        if (startIndex < 0 || limit < 1)
+        if (startIndex < 0 || limit < 1 || !ProviderCatalog.Shares(includeItemTypes))
         {
             return BadRequest();
         }

@@ -75,6 +75,14 @@ public static class RemoteItemMapper
         RemoteItemType.Series => IndexedItemKind.Series,
         RemoteItemType.Season => IndexedItemKind.Season,
         RemoteItemType.Episode => IndexedItemKind.Episode,
+        RemoteItemType.Audio => IndexedItemKind.Audio,
+        RemoteItemType.MusicVideo => IndexedItemKind.MusicVideo,
+        RemoteItemType.Video => IndexedItemKind.Video,
+        RemoteItemType.Photo => IndexedItemKind.Photo,
+        RemoteItemType.PhotoAlbum => IndexedItemKind.PhotoAlbum,
+        RemoteItemType.Folder => IndexedItemKind.Folder,
+        RemoteItemType.Book => IndexedItemKind.Book,
+        RemoteItemType.AudioBook => IndexedItemKind.AudioBook,
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

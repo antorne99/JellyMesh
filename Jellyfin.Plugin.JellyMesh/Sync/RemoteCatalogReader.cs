@@ -49,7 +49,6 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     public const int MaxCollections = 10_000;
 
     private const int MaxReadAttempts = 3;
-    private const string MoviesCollection = "movies";
 
     private readonly IRemoteServerRegistry _registry;
     private readonly IJellyfinRemoteClient _client;
@@ -536,9 +535,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         DateTimeOffset seenUtc,
         CancellationToken cancellationToken)
     {
-        var types = string.Equals(library.CollectionType, MoviesCollection, StringComparison.OrdinalIgnoreCase)
-            ? new[] { RemoteItemType.Movie }
-            : [RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode];
+        var types = RemoteCollectionTypes.ItemTypesOf(library.CollectionType);
 
         foreach (var type in types)
         {

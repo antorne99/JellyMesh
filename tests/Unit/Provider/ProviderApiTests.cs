@@ -512,6 +512,16 @@ public class ProviderControllerTests
         Assert.IsType<BadRequestResult>((await _controller.GetItems(RemoteItemType.Movie, null, ids)).Result);
     }
 
+    [Theory]
+    [InlineData(RemoteItemType.Audio)]
+    [InlineData(RemoteItemType.Folder)]
+    [InlineData((RemoteItemType)99)]
+    public async Task A_type_the_provider_does_not_share_is_refused(RemoteItemType type)
+    {
+        Assert.IsType<BadRequestResult>((await _controller.GetItems(type, ProviderFixture.SharedLibrary, null)).Result);
+        Assert.IsType<BadRequestResult>((await _controller.GetItems(type, null, Guid.NewGuid().ToString("N"))).Result);
+    }
+
     [Fact]
     public async Task A_lookup_with_a_bad_identifier_is_refused()
     {

@@ -213,6 +213,13 @@ public sealed class ProviderCatalog
     /// <returns>Whether it is a film, series, season or episode.</returns>
     public static bool IsCatalogItem(BaseItem item) => item is Movie or Series or Season or Episode;
 
+    /// <summary>
+    /// Tells whether peers may ask for items of a type.
+    /// </summary>
+    /// <param name="type">The item type.</param>
+    /// <returns>Whether it is a film, series, season or episode.</returns>
+    public static bool Shares(RemoteItemType type) => type is RemoteItemType.Movie or RemoteItemType.Series or RemoteItemType.Season or RemoteItemType.Episode;
+
     private static BaseItemKind KindOf(RemoteItemType type) => type switch
     {
         RemoteItemType.Movie => BaseItemKind.Movie,
