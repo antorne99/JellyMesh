@@ -215,8 +215,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         {
             try
             {
-                // A shared library that lacks its blocks gets them first, also while libraries have no id (D42).
-                await SharedBlocksMissingAsync(cancellationToken).ConfigureAwait(false);
+                // A shared library that lacks its blocks or its record gets them first, also while libraries have no id,
+                // and the scan held back meanwhile runs then (D42).
+                if (_sharedScanOwed || SharedScanHeld())
+                {
+                    await QueueScanAsync(cancellationToken).ConfigureAwait(false);
+                }
 
                 // Before a follow drops the record of a deleted library, its key marks it as made.
                 var serverIds = _store.Read(config => config.Servers.Where(server => server.AutomaticLibraries).Select(server => server.Id).ToList());
@@ -284,7 +288,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             if (_scanLimit.TryClaim(unready))
             {
                 _logger.LogWarning("A library has no id after {Minutes} minutes, so a library scan runs before the sync", ReadyLimit.TotalMinutes);
-                await QueueScanAsync(cancellationToken).ConfigureAwait(false);
+                await ScanAsync(cancellationToken).ConfigureAwait(false);
             }
             else if (unready.Count > 0)
             {

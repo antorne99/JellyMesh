@@ -79,6 +79,14 @@ public interface IServerLibraryManager
     Task ReconcileAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Queues a library scan and waits for it, unless a shared library still lacks its blocks or is not recorded after a
+    /// new try: then no scan runs, and the next check scans once they are written (D42).
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the scan ran.</returns>
+    Task<bool> ScanAsync(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Waits, for at most a bounded time, until no library scan runs and every library has its id, when a check would
     /// follow a library (decision 213). It never fails but for a cancellation.
     /// </summary>

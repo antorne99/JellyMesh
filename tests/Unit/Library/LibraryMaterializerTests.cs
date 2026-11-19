@@ -576,6 +576,31 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(5, strm.Count(character => character == Path.DirectorySeparatorChar) + 1);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NoScanIsQueuedWhileASharedLibraryLacksItsBlocksOrIsNotRecorded(bool unblocked)
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+        var shared = _fixture.Sync.Store.Configuration.SharedLibraries;
+        if (unblocked)
+        {
+            shared.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", Unblocked = true });
+        }
+        else
+        {
+            shared.PendingLibraries.Add(new PendingLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film" });
+        }
+
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(1, report.Created);
+        Assert.True(report.ScanQueued);
+        _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Never);
+    }
+
     [Fact]
     public async Task ASecondRunChangesNothing()
     {

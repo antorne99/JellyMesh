@@ -18,7 +18,6 @@ public sealed class ServerRenamerTests : IDisposable
     private readonly Mock<IRemoteServerRegistry> _registry = new();
     private readonly Mock<IServerStubRenamer> _stubs = new();
     private readonly Mock<IServerLibraryManager> _libraries = new();
-    private readonly Mock<ILibraryScans> _scans = new();
     private readonly Mock<IVersionLinker> _linker = new();
     private readonly Mock<IFederatedFolderLinkChecker> _links = new();
     private readonly RetiredLibraryIds _retired = new();
@@ -48,7 +47,7 @@ public sealed class ServerRenamerTests : IDisposable
             [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Casa - Film"), new AutomaticLibraryStatus(ServerLibraryKind.Series, "Casa - Serie")],
             [],
             AutomaticLibrariesError.None));
-        _scans.Setup(scans => scans.QueueAndWaitAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("scan")).Returns(Task.CompletedTask);
+        _libraries.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("scan")).ReturnsAsync(true);
         _linker.Setup(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("link")).Returns(Task.CompletedTask);
         _stubs.Setup(stubs => stubs.CancelAsync(_server, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("cancel")).ReturnsAsync(true);
         _links.Setup(links => links.Check(It.IsAny<string>(), It.IsAny<IReadOnlyList<Guid>>())).Returns(Report(FederatedPathLink.Linked, FederatedPathLink.NotLinked));
@@ -67,7 +66,7 @@ public sealed class ServerRenamerTests : IDisposable
     // A renamer over the same saved configuration, as after a restart.
     private ServerRenamer NewRenamer()
     {
-        var renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _scans.Object, _linker.Object, _retired, _links.Object, _store, _logger);
+        var renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _linker.Object, _retired, _links.Object, _store, _logger);
         _made.Add(renamer);
         return renamer;
     }

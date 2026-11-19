@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -239,7 +240,7 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(notScanned ? null : Guid.Parse(fixture.Libraries.IdOf(made)), carry.Id);
         Assert.All(scansWhenBlocked, count => Assert.Equal(0, count));
         Assert.False(Shared(fixture).Libraries.Single(record => record.Name == made).Unblocked);
-        Assert.Equal(!notScanned, fixture.Scans.Steps.Contains("scan"));
+        Assert.Contains("scan", fixture.Scans.Steps);
     }
 
     [Fact]
@@ -264,6 +265,56 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Contains(fixture.Libraries.Folders, folder => folder.Name == "Casa - Serie");
         Assert.DoesNotContain("scan", fixture.Scans.Steps);
+    }
+
+    [Fact]
+    public async Task A_scan_another_part_of_the_plugin_asks_for_waits_until_the_shared_library_has_its_blocks()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.RenameOnCreate = name => name + "2";
+        fixture.Renamer.OnBlock = () =>
+        {
+            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "2"))
+            {
+                fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+            }
+        };
+        fixture.Libraries.RemoveFailure = new InvalidOperationException("boom");
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.False(await fixture.Manager.ScanAsync(CancellationToken.None));
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+
+        fixture.Renamer.BlockFailure = null;
+        var scansWhenBlocked = new List<int>();
+        fixture.Renamer.OnBlock = () => scansWhenBlocked.Add(fixture.Scans.Steps.Count(step => step == "scan"));
+
+        Assert.True(await fixture.Manager.ScanAsync(CancellationToken.None));
+        Assert.Single(fixture.Scans.Steps, step => step == "scan");
+        Assert.NotEmpty(scansWhenBlocked);
+        Assert.All(scansWhenBlocked, count => Assert.Equal(0, count));
+    }
+
+    [Fact]
+    public async Task No_library_scan_runs_while_a_shared_library_is_not_recorded_and_a_check_with_no_ids_records_and_scans_it()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.NoIdOnCreate = true;
+        fixture.Libraries.OnCreate = () => fixture.Libraries.ReadFailure ??= new IOException("unreadable");
+        await fixture.Manager.EnableShared().Job;
+        Assert.NotEmpty(Shared(fixture).PendingLibraries);
+
+        Assert.False(await fixture.Manager.ScanAsync(CancellationToken.None));
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+
+        fixture.Libraries.ReadFailure = null;
+        fixture.Libraries.OnCreate = null;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Empty(Shared(fixture).PendingLibraries);
+        Assert.Contains(Shared(fixture).Libraries, record => record.Name == SharedFilm);
+        Assert.Contains("scan", fixture.Scans.Steps);
     }
 
     [Fact]

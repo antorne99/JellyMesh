@@ -148,7 +148,7 @@ public sealed partial class LayoutMigration
         SavePlaced(servers, done);
         if (added)
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            await _automaticLibraries.ScanAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

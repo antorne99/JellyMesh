@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
@@ -47,4 +48,10 @@ public class SharedLibrariesConfig
     /// Gets the names of the libraries left to the admin because they changed.
     /// </summary>
     public Collection<string> ReleasedLibraries { get; } = [];
+
+    /// <summary>
+    /// Tells whether a shared library lacks its blocks or is not recorded yet, which holds back every library scan (D42).
+    /// </summary>
+    /// <returns>Whether no library scan may run.</returns>
+    public bool HoldsScans() => Libraries.Any(library => library.Unblocked) || PendingLibraries.Count > 0;
 }

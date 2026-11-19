@@ -19,6 +19,9 @@ public sealed partial class LayoutMigrationTests
     private readonly Mock<ILibraryRenamer> _renamer = new();
     private ServerLibraryManager? _manager;
 
+    // When set, the migration asks this manager instead of the real one.
+    private IServerLibraryManager? _managerOverride;
+
     // A library rename left halfway, which keeps the manager busy.
     private bool _managerBusy;
 

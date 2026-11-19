@@ -293,20 +293,40 @@ public sealed partial class ServerLibraryManager
         return changed && !SharedScanHeld();
     }
 
-    // Queues a library scan and waits for it, unless a shared library still lacks its blocks after a new try (D42).
-    private async Task QueueScanAsync(CancellationToken cancellationToken)
+    /// <inheritdoc />
+    public async Task<bool> ScanAsync(CancellationToken cancellationToken)
     {
-        if (!await SharedBlocksMissingAsync(cancellationToken).ConfigureAwait(false))
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
-            _sharedScanOwed = false;
+            return await QueueScanAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
-    // Writes again the blocks a shared library lacks; true when one still lacks them, which holds back every scan (D42).
-    private async Task<bool> SharedBlocksMissingAsync(CancellationToken cancellationToken)
+    // Queues a library scan and waits for it, unless a shared library still lacks its blocks or is not recorded after a
+    // new try: the scan is then owed to the next check (D42). Called under the gate.
+    private async Task<bool> QueueScanAsync(CancellationToken cancellationToken)
     {
-        if (!_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
+        if (await SharedScanStillHeldAsync(cancellationToken).ConfigureAwait(false))
+        {
+            _sharedScanOwed = true;
+            return false;
+        }
+
+        await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+        _sharedScanOwed = false;
+        return true;
+    }
+
+    // Writes again the blocks a shared library lacks and records the shared libraries asked for and not recorded; true
+    // when one still lacks them or is not recorded, which holds back every scan (D42).
+    private async Task<bool> SharedScanStillHeldAsync(CancellationToken cancellationToken)
+    {
+        if (!SharedScanHeld())
         {
             return false;
         }
@@ -314,21 +334,29 @@ public sealed partial class ServerLibraryManager
         if (ReadFolders() is { } folders)
         {
             await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false);
+            var root = _store.Read(config => config.FederatedFolderPath);
+            if (root.Length > 0)
+            {
+                await ResolveSharedPendingAsync(root, folders, cancellationToken).ConfigureAwait(false);
+            }
         }
 
-        if (!_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
+        if (!SharedScanHeld())
         {
             return false;
         }
 
-        _logger.LogWarning("A shared library still lacks the blocks of the users who block a library on its folders, so no library scan runs");
-        _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+        _logger.LogWarning("A shared library still lacks the blocks of the users who block a library on its folders, or is not recorded yet, so no library scan runs");
+        if (_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
+        {
+            _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+        }
+
         return true;
     }
 
-    // Whether a shared library lacks its blocks or is not told apart yet, which holds back the scan of a shared check (D42).
-    private bool SharedScanHeld()
-        => _store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked) || config.SharedLibraries.PendingLibraries.Count > 0);
+    // Whether a shared library lacks its blocks or is not recorded yet, which holds back every scan (D42).
+    private bool SharedScanHeld() => _store.Read(config => config.SharedLibraries.HoldsScans());
 
     // Adds to a shared library the folders it lacks and removes the server folders no longer planned that hold no titles.
     private bool KeepSharedFolders(AutomaticLibraryConfig record, PlannedLibrary planned, string root, bool olderLayout, IReadOnlySet<Guid> configured, List<VirtualFolderInfo> folders)
