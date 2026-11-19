@@ -230,6 +230,29 @@ public sealed class LegacyImportTests : IDisposable
         Assert.Equal(step, migration.Step);
     }
 
+    // §10 row 445: the switch of 0.5 on gives "by type" with the same libraries, off gives "none".
+    [Theory]
+    [InlineData(true, LibraryMode.ByType)]
+    [InlineData(false, LibraryMode.None)]
+    public async Task TheSwitchOfVersion05GivesTheModeOfTheServerAndKeepsItsLibraries(bool automatic, LibraryMode mode)
+    {
+        CopyFixtures();
+        var xml = (await File.ReadAllTextAsync(ConfigurationFile))
+            .Replace("<AutomaticLibraries>false</AutomaticLibraries>", "<AutomaticLibraries>" + (automatic ? "true" : "false") + "</AutomaticLibraries>", StringComparison.Ordinal)
+            .Replace("<AutomaticLibraryRegistry />", """
+                <AutomaticLibraryRegistry>
+                  <AutomaticLibraryConfig><Kind>Movies</Kind><Name>remote - Film</Name><ItemId>5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a</ItemId></AutomaticLibraryConfig>
+                </AutomaticLibraryRegistry>
+                """, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(ConfigurationFile, xml);
+
+        var server = Assert.Single((await ConfigurationOf(Open())).Servers);
+
+        Assert.Equal(mode, server.LibraryMode);
+        var library = Assert.Single(server.AutomaticLibraryRegistry);
+        Assert.Equal(("remote - Film", "5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a", ServerLibraryKind.Movies), (library.Name, library.ItemId, library.Kind));
+    }
+
     // The fixtures with the folder migration of 0.5 at the given mode, step and error, done with the fixture server.
     private void CopyFixtures(LayoutMigrationMode mode, AutomaticMigrationStep step, AutomaticMigrationError error)
     {
