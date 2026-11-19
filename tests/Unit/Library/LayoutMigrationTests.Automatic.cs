@@ -47,6 +47,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task TheAutomaticMigrationAddsTheFoldersOfTheSameKindCarriesAndRemovesTheOldPaths()
     {
+        BothServersImport();
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.None;
         var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
@@ -66,9 +67,9 @@ public sealed partial class LayoutMigrationTests
         await choice.Job;
 
         Assert.Equal(LayoutMigrationChoiceOutcome.Started, choice.Outcome);
-        Assert.Equal([LocalFilms, ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
-        Assert.Equal([LocalSeries, ServerSeries(_serverA), ServerSeries(_serverB)], Locations("Serie"));
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB), ServerSeries(_serverA), ServerSeries(_serverB)], Locations("Misto"));
+        Assert.Equal([LocalFilms, NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
+        Assert.Equal([LocalSeries, NewSeries(_serverA), NewSeries(_serverB)], Locations("Serie"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB), NewSeries(_serverA), NewSeries(_serverB)], Locations("Misto"));
         Assert.Equal([Path.Combine(_data, "media", "musica")], Locations("Musica"));
         Assert.True(Row(_mario, a).IsFavorite);
         Assert.True(Row(_luigi, newShowItem).IsFavorite);
@@ -84,6 +85,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task OnlyTheOldKindOfALibraryGetsServerFolders()
     {
+        BothServersImport();
         // Each library gets the server folders of the old kinds it holds, and no other kind (Q56).
         var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
         OldEpisode(oldShow, (_serverA, "e1"));
@@ -96,8 +98,8 @@ public sealed partial class LayoutMigrationTests
 
         await (await MigrationAsync()).Choose(LayoutMigrationMode.Automatic).Job;
 
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
-        Assert.Equal([ServerSeries(_serverA), ServerSeries(_serverB)], Locations("Serie"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewSeries(_serverA), NewSeries(_serverB)], Locations("Serie"));
     }
 
     [Fact]
@@ -177,18 +179,20 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task AServerFolderAlreadyInTheLibraryIsNotAddedAgain()
     {
+        BothServersImport();
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, ServerFilms(_serverA) + Path.DirectorySeparatorChar));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, NewFilms(_serverA) + Path.DirectorySeparatorChar));
 
         await (await MigrationAsync()).Choose(LayoutMigrationMode.Automatic).Job;
 
-        Assert.Equal([("Film", ServerFilms(_serverB))], _addedPaths);
+        Assert.Equal([("Film", NewFilms(_serverB))], _addedPaths);
     }
 
     [Fact]
     public async Task AFailedAddStopsThereWithTheOldPathsAndARetryResumes()
     {
+        BothServersImport();
         var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
@@ -204,7 +208,7 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal("Altri film", status.ErrorLibrary);
         Assert.Equal(AutomaticMigrationStep.AddPaths, status.AutomaticStep);
         Assert.Equal(LayoutMigrationStep.AddPaths, status.Step);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Assert.Single(status.Libraries, library => library.Name == "Altri film").MissingPaths);
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Assert.Single(status.Libraries, library => library.Name == "Altri film").MissingPaths);
         Assert.Contains(OldFilms, Locations("Altri film"));
         Assert.NotNull(_registry.Find(old.Id));
         Assert.Equal(0, _scansQueued);
@@ -225,7 +229,7 @@ public sealed partial class LayoutMigrationTests
 
         Assert.Equal(LayoutMigrationChoiceOutcome.Started, retry.Outcome);
         Assert.True(Row(_mario, a).IsFavorite);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Altri film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Altri film"));
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
         Assert.Equal(AutomaticMigrationError.None, _store.Configuration.LayoutMigration.Error);
     }
@@ -233,6 +237,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task AFailedRemovalStopsThereAndARetryRedoesNothingElse()
     {
+        BothServersImport();
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
@@ -253,7 +258,7 @@ public sealed partial class LayoutMigrationTests
         _failingRemovals.Clear();
         await migration.Choose(LayoutMigrationMode.Automatic).Job;
 
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
         Assert.Equal(added, _addedPaths.Count);
         Assert.Equal(2, _scansQueued);
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
@@ -262,6 +267,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task StubFilesInTheOldFoldersWithNoOldTitleStopTheMigrationBeforeTheRemoval()
     {
+        BothServersImport();
         // An unreadable registry loads empty while the old folders still hold stubs: removing the paths would lose their state (§10 row 371).
         NewFilm(_serverA, "a1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
@@ -283,7 +289,7 @@ public sealed partial class LayoutMigrationTests
         File.Delete(stray);
         await migration.Choose(LayoutMigrationMode.Automatic).Job;
 
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
     }
 
@@ -309,6 +315,7 @@ public sealed partial class LayoutMigrationTests
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
         var manager = new Mock<IServerLibraryManager>();
         manager.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        manager.Setup(libraries => libraries.FollowForPlacement()).Returns(new PlacementLibraries([], new HashSet<VirtualFolderInfo>()));
         _managerOverride = manager.Object;
         var migration = await MigrationAsync();
 
@@ -322,6 +329,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task AStepThatThrowsStopsWithAnErrorAndARetryResumesFromIt()
     {
+        BothServersImport();
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
@@ -345,7 +353,7 @@ public sealed partial class LayoutMigrationTests
     public async Task AfterARestartTheHooksResumeTheSavedStep()
     {
         NewFilm(_serverA, "a1");
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, NewFilms(_serverA), NewFilms(_serverB)));
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
         _store.Configuration.LayoutMigration.Step = AutomaticMigrationStep.RemoveOldPaths;
         var migration = await MigrationAsync();
@@ -354,7 +362,7 @@ public sealed partial class LayoutMigrationTests
         await migration.Running;
 
         Assert.Empty(_addedPaths);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
         Assert.Equal(1, _scansQueued);
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
     }
@@ -362,6 +370,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task TitlesThatWaitKeepTheMigrationAtTheCarryUntilAHookFinishesIt()
     {
+        BothServersImport();
         var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         _items.Remove(a.Id);
@@ -381,16 +390,17 @@ public sealed partial class LayoutMigrationTests
         await migration.Running;
 
         Assert.True(Row(_mario, a).IsFavorite);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
     }
 
     [Fact]
     public async Task AServerFolderLeavingTheLibrariesBeforeTheCarryStopsTheMigration()
     {
+        BothServersImport();
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, ServerFilms(_serverA)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, NewFilms(_serverA)));
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
         _store.Configuration.LayoutMigration.Step = AutomaticMigrationStep.Carry;
         var migration = await MigrationAsync();
@@ -405,6 +415,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task ServerFoldersWithNoLibraryOnAnOldPathStopTheMigration()
     {
+        BothServersImport();
         // No library holds the old Film path, so the plugin has nowhere to add the server Film folders (Q215).
         var (old, _) = OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
@@ -415,7 +426,7 @@ public sealed partial class LayoutMigrationTests
 
         var status = migration.GetStatus(Root)!;
         Assert.Equal(AutomaticMigrationError.FoldersInNoLibrary, status.Error);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], status.UnlinkedFolders);
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], status.UnlinkedFolders);
         Assert.NotNull(_registry.Find(old.Id));
         Assert.Equal(0, _scansQueued);
         Assert.Single(_libraries);
@@ -440,9 +451,10 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task ManualCanSwitchToAutomaticButNotBack()
     {
+        BothServersImport();
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, ServerFilms(_serverA)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, NewFilms(_serverA)));
         var migration = await MigrationAsync();
 
         var automatic = migration.Choose(LayoutMigrationMode.Automatic);
@@ -452,12 +464,13 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal(LayoutMigrationChoiceOutcome.Started, automatic.Outcome);
         Assert.Equal(LayoutMigrationChoiceOutcome.NotAllowed, manual.Outcome);
         Assert.Equal(LayoutMigrationMode.Automatic, _store.Configuration.LayoutMigration.Mode);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
     }
 
     [Fact]
     public async Task AnOldPathAddedAfterTheEndIsShownAndANewRunRemovesIt()
     {
+        BothServersImport();
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
@@ -473,7 +486,7 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal(AutomaticMigrationStep.Done, status.AutomaticStep);
         Assert.False(status.Running);
         Assert.Equal(LayoutMigrationChoiceOutcome.Started, again.Outcome);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
         Assert.Null(migration.GetStatus(Root));
     }
 

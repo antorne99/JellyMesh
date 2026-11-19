@@ -47,7 +47,8 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal(1, _scansQueued);
         Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
         _materializer.Verify(materializer => materializer.PrepareServerFolders(), Times.Once);
-        Assert.Null(migration.GetStatus(Root));
+        // The 0.5 folders in the admin's libraries are old paths, which the banner shows.
+        Assert.Equal(AutomaticMigrationError.None, migration.GetStatus(Root)!.Error);
     }
 
     [Fact]
@@ -346,7 +347,7 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
         Assert.Contains(ServerFilms(_serverC), Locations("Film"));
         Assert.Equal(1, _scansQueued);
-        Assert.Null(migration.GetStatus(Root));
+        Assert.Equal(AutomaticMigrationError.None, migration.GetStatus(Root)!.Error);
 
         _failingAdds.Clear();
         await migration.RunAsync(CancellationToken.None);
@@ -457,7 +458,7 @@ public sealed partial class LayoutMigrationTests
     public async Task TheSettingsGoBackToManualOnceTheAutomaticRunIsDone()
     {
         Migrated();
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, TestLibraries.Films, TypeFolder.Movies), TypeFolderOf(_serverB, TestLibraries.Films, TypeFolder.Movies)));
         var migration = await MigrationAsync();
 
         var choice = migration.SetMode(LayoutMigrationMode.Manual);
@@ -501,6 +502,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task WhileTheBannerAsksTheSettingsMakeTheSameChoice()
     {
+        BothServersImport();
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.None;
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
@@ -511,7 +513,7 @@ public sealed partial class LayoutMigrationTests
         await choice.Job;
 
         Assert.Equal(LayoutMigrationChoiceOutcome.Started, choice.Outcome);
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], Locations("Film"));
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
     }
 
@@ -1165,8 +1167,10 @@ public sealed partial class LayoutMigrationTests
     // An automatic migration done with servers A and B.
     private void Migrated()
     {
-        // A title of A in its 0.5 server folder keeps the stubs in the older layout.
-        NewFilm(_serverA, "a0");
+        // A stub file of A in its 0.5 server folder, with an empty registry, keeps the stubs in the older layout.
+        var stray = Path.Combine(ServerFilms(_serverA), "a0", "a0.strm");
+        Directory.CreateDirectory(Path.GetDirectoryName(stray)!);
+        File.WriteAllText(stray, "x");
         var migration = _store.Configuration.LayoutMigration;
         migration.Mode = LayoutMigrationMode.Automatic;
         migration.Step = AutomaticMigrationStep.Done;

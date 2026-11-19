@@ -274,8 +274,8 @@ public sealed partial class LayoutMigration
         }
     });
 
-    // Records the servers whose folders the migration added, so only those linked later, and the libraries imported later,
-    // are placed.
+    // Records the servers whose folders the migration added, so only those linked later, and the libraries imported later
+    // or not read yet, are placed.
     private void SeedPlaced(IReadOnlyCollection<Guid> servers) => _store.Update(config =>
     {
         foreach (var server in servers.Where(server => !config.LayoutMigration.PlacedServers.Contains(server)))
@@ -285,7 +285,12 @@ public sealed partial class LayoutMigration
 
         foreach (var server in config.Servers.Where(server => servers.Contains(server.Id)))
         {
+            var unread = server.ImportedLibraryIds.Where(id => IsUnread(server, id)).ToList();
             server.LibrariesToPlace.Clear();
+            foreach (var id in unread)
+            {
+                server.LibrariesToPlace.Add(id);
+            }
         }
     });
 

@@ -133,7 +133,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         }
 
         var state = _registry.State;
-        var old = state.Stubs.Count(stub => stub.ServerId is null) + state.Series.Count(series => series.ServerId is null);
+        var old = state.Stubs.Count(stub => IsOld(stub.RelativePath)) + state.Series.Count(series => IsOld(series.RelativePath));
         var read = LibrariesOf(root, state);
         var libraries = read?.OnOldPaths ?? [];
         var migration = _store.Read(config => Copy(config.LayoutMigration));
@@ -161,7 +161,15 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     }
 
     private static bool HasOldTitles(StubState state) =>
-        state.Stubs.Any(stub => stub.ServerId is null) || state.Series.Any(series => series.ServerId is null);
+        state.Stubs.Any(stub => IsOld(stub.RelativePath)) || state.Series.Any(series => IsOld(series.RelativePath));
+
+    // Whether old titles of one type are left.
+    private static bool HasOldTitlesOf(StubState state, TypeFolder type) => type == TypeFolder.Movies
+        ? state.Stubs.Any(stub => stub.Kind == StubKind.Movie && IsOld(stub.RelativePath))
+        : state.Series.Any(series => IsOld(series.RelativePath)) || state.Stubs.Any(stub => stub.Kind == StubKind.Episode && IsOld(stub.RelativePath));
+
+    // A stub or series of the flat layout or of the 0.5 server folders, which the migration carries to the remote library layout.
+    private static bool IsOld(string relativePath) => FederatedPaths.RemoteLibraryOf(relativePath) is null;
 
     // Done for every user, left only for users who see none of the new items (decision 166), or refused for good (Q216, Q259).
     private static bool IsDone(WatchStateMoveOutcome outcome, bool unsettled) =>
@@ -226,35 +234,35 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
             sources.Count > 0 && sources.All(source => !catalog.Configured.ContainsKey(source.ServerId) && catalog.Removed.Contains(source.ServerId));
 
         return (
-            state.Stubs.Where(stub => stub.ServerId is null && Removed(stub.Sources)).ToList(),
-            state.Series.Where(series => series.ServerId is null && Removed(series.Sources)).ToList());
+            state.Stubs.Where(stub => IsOld(stub.RelativePath) && Removed(stub.Sources)).ToList(),
+            state.Series.Where(series => IsOld(series.RelativePath) && Removed(series.Sources)).ToList());
     }
 
     private static HashSet<(Guid ServerId, string ItemId)> ItemsOf(IReadOnlyList<StubSource> sources) =>
         sources.Select(source => (source.ServerId, source.ItemId)).ToHashSet();
 
-    // The stubs of the server folders with a remote item or the identity of the old stub.
+    // The stubs of the remote library layout with a remote item or the identity of the old stub.
     private static List<StubEntry> NewStubsOf(StubState state, StubEntry old)
     {
         var items = ItemsOf(old.Sources);
         return state.Stubs
-            .Where(stub => stub.ServerId is not null && stub.Kind == old.Kind
+            .Where(stub => stub.ServerId is not null && !IsOld(stub.RelativePath) && stub.Kind == old.Kind
                 && (string.Equals(stub.IdentityKey, old.IdentityKey, StringComparison.Ordinal) || stub.Sources.Any(source => items.Contains((source.ServerId, source.ItemId)))))
             .ToList();
     }
 
-    // The series of the server folders with a remote item or the work of the old series, or holding one of its new episodes.
+    // The series of the remote library layout with a remote item or the work of the old series, or holding one of its new episodes.
     private static List<SeriesStub> NewSeriesOf(StubState state, SeriesStub old)
     {
         var items = ItemsOf(old.Sources);
         var episodes = state.Stubs
-            .Where(stub => stub.ServerId is null && string.Equals(stub.SeriesStubId, old.Id, StringComparison.Ordinal))
+            .Where(stub => IsOld(stub.RelativePath) && string.Equals(stub.SeriesStubId, old.Id, StringComparison.Ordinal))
             .SelectMany(stub => NewStubsOf(state, stub))
             .Select(stub => stub.SeriesStubId)
             .OfType<string>()
             .ToHashSet(StringComparer.Ordinal);
         return state.Series
-            .Where(series => series.ServerId is not null
+            .Where(series => series.ServerId is not null && !IsOld(series.RelativePath)
                 && (string.Equals(series.WorkKey, old.WorkKey, StringComparison.Ordinal)
                     || series.Sources.Any(source => items.Contains((source.ServerId, source.ItemId)))
                     || episodes.Contains(series.Id)))
@@ -302,12 +310,12 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         var waiting = 0;
         var blocked = 0;
         var heldTitles = 0;
-        foreach (var stub in state.Stubs.Where(stub => stub.ServerId is null))
+        foreach (var stub in state.Stubs.Where(stub => IsOld(stub.RelativePath)))
         {
             Add(TitleMoveOf(root, state, stub, catalog, automatic), moves, held, ref waiting, ref heldTitles);
         }
 
-        foreach (var series in state.Series.Where(series => series.ServerId is null))
+        foreach (var series in state.Series.Where(series => IsOld(series.RelativePath)))
         {
             Add(SeriesMoveOf(root, state, series, catalog, automatic), moves, held, ref waiting, ref heldTitles);
         }
@@ -477,8 +485,8 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     // Removes every old stub and series, with their folders and items; what fails stays for the next run.
     private async Task EmptyAsync(string root, StubState state)
     {
-        var stubs = _remover.RemoveAll(root, state, state.Stubs.Where(stub => stub.ServerId is null).ToList());
-        var series = _remover.RemoveSeries(root, stubs.State, stubs.State.Series.Where(entry => entry.ServerId is null).ToList());
+        var stubs = _remover.RemoveAll(root, state, state.Stubs.Where(stub => IsOld(stub.RelativePath)).ToList());
+        var series = _remover.RemoveSeries(root, stubs.State, stubs.State.Series.Where(entry => IsOld(entry.RelativePath)).ToList());
 
         // The files are gone by now, so the registry must say so even if the run is being cancelled.
         await _registry.SaveAsync(series.State, CancellationToken.None).ConfigureAwait(false);
@@ -493,9 +501,9 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         }
     }
 
-    // The libraries on an old path, with the server folders of the same kind they lack, whether every server folder is in
-    // some library, and the ones that are in none; only the kinds with old titles count (Q249). Null when unreadable.
-    private Libraries? LibrariesOf(string root, StubState state)
+    // The admin's libraries on an old path, with the new folders of the same type they lack, whether the new folders of each
+    // server are in some library, and those in none; only the types with old titles count (Q249). Null when unreadable.
+    private Libraries? LibrariesOf(string root, StubState state, IReadOnlySet<string>? skipped = null)
     {
         List<VirtualFolderInfo> folders;
         try
@@ -508,36 +516,80 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
             return null;
         }
 
-        var servers = _servers.GetServers();
-        var kinds = new (string Old, Func<Guid, string> New, bool Needed)[]
-        {
-            (FederatedFolderLayout.MoviesPath(root), server => FederatedFolderLayout.ServerMoviesPath(root, server), state.Stubs.Any(stub => stub.ServerId is null && stub.Kind == StubKind.Movie)),
-            (FederatedFolderLayout.SeriesPath(root), server => FederatedFolderLayout.ServerSeriesPath(root, server), state.Series.Any(series => series.ServerId is null) || state.Stubs.Any(stub => stub.ServerId is null && stub.Kind == StubKind.Episode))
-        };
-        var libraries = new List<LayoutMigrationLibrary>();
-        var unlinked = servers
-            .SelectMany(server => kinds.Where(kind => kind.Needed).Select(kind => kind.New(server.Id)))
-            .Where(path => !folders.Any(folder => (folder.Locations ?? []).Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))))
-            .ToList();
-        foreach (var folder in folders)
-        {
-            var locations = folder.Locations ?? [];
-            bool Holds(string path) => locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path));
+        var servers = _servers.GetServers().Select(server => server.Id).Distinct().ToList();
+        var (imported, keptByPlugin, own) = _store.Read(config => (
+            config.Servers.Where(server => servers.Contains(server.Id)).DistinctBy(server => server.Id).ToDictionary(server => server.Id, LibraryPlan.TypeFolders),
+            config.Servers.Where(server => server.AutomaticLibraries && server.LibraryMode != LibraryMode.None).Select(server => server.Id).ToHashSet(),
+            OwnLibraries(config)));
+        var needed = TypeFolder.Written.Where(type => HasOldTitlesOf(state, type)).ToList();
+        List<string> NewOf(Guid? server, TypeFolder type) =>
+            servers.Where(id => server is null || id == server).SelectMany(id => NewFoldersOf(root, state, imported, id, type)).ToList();
+        bool Linked(string path) => folders.Any(folder => Holds(folder, path));
 
-            var old = kinds.Where(kind => Holds(kind.Old)).ToList();
+        // The plugin adds the new folders of a server to its own libraries by itself (§10 row 445).
+        var unlinked = servers
+            .Where(server => !keptByPlugin.Contains(server))
+            .SelectMany(server => needed.SelectMany(type => NewFoldersOf(root, state, imported, server, type)))
+            .Where(path => !Linked(path))
+            .ToList();
+        var libraries = new List<LayoutMigrationLibrary>();
+        var adds = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var folder in folders.Where(folder => !(skipped?.Contains(KeyOf(folder)) ?? false) && !IsOwn(folder, own)))
+        {
+            var old = (folder.Locations ?? []).Select(location => OldFolderOf(root, location)).OfType<OldFolder>().DistinctBy(found => found.Path).ToList();
             if (old.Count > 0)
             {
-                var missing = old.Where(kind => kind.Needed).SelectMany(kind => servers.Select(server => kind.New(server.Id))).Where(path => !Holds(path)).ToList();
-                libraries.Add(new LayoutMigrationLibrary(folder.Name, old.Select(kind => kind.Old).ToList(), missing));
+                var missing = old.Where(found => needed.Contains(found.Type)).SelectMany(found => NewOf(found.Server, found.Type)).Distinct(StringComparer.Ordinal).Where(path => !Holds(folder, path)).ToList();
+                libraries.Add(new LayoutMigrationLibrary(folder.Name, old.Select(found => found.Path).ToList(), missing));
+                adds[folder.Name] = old.SelectMany(found => NewOf(found.Server, found.Type)).Distinct(StringComparer.Ordinal).Where(path => !Holds(folder, path)).ToList();
             }
         }
 
         var listed = libraries.SelectMany(library => library.MissingPaths).ToHashSet(StringComparer.Ordinal);
-        return new Libraries(libraries, unlinked.Count == 0, unlinked.Where(path => !listed.Contains(path)).ToList());
+        return new Libraries(libraries, unlinked.Count == 0, unlinked.Where(path => !listed.Contains(path)).Distinct(StringComparer.Ordinal).ToList(), adds);
     }
 
-    // Unlinked: the server folders in no library, less those listed as missing from a library on an old path.
-    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked, List<string> Unlinked);
+    // The new folders of a server for the old folders of one type: those holding its titles and those of its imported libraries.
+    private static IEnumerable<string> NewFoldersOf(string root, StubState state, IReadOnlyDictionary<Guid, IReadOnlyList<string>> imported, Guid server, TypeFolder type) =>
+        StubLayout.TypeFoldersOf(state, server, type)
+            .Concat(imported.GetValueOrDefault(server, []).Where(folder => string.Equals(Path.GetFileName(folder), type.Name, StringComparison.Ordinal)))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .Select(folder => FederatedPaths.Resolve(root, folder));
+
+    // The flat Film or Serie, or a 0.5 folder of a server, as the path the plugin knows it by; null for any other location.
+    private static OldFolder? OldFolderOf(string root, string location)
+    {
+        var relative = FederatedPaths.RelativeTo(root, Path.TrimEndingDirectorySeparator(location));
+        if (TypeFolder.Written.FirstOrDefault(type => string.Equals(relative, type.Name, StringComparison.Ordinal)) is { } flat)
+        {
+            return new OldFolder(null, flat, Path.Combine(root, flat.Name));
+        }
+
+        return relative?.Split(Path.DirectorySeparatorChar) is [_, _] && LayoutFolderOf(root, location) is { } found
+            ? new OldFolder(found.Server, found.Type, Path.Combine(FederatedFolderLayout.ServerPath(root, found.Server), found.Type.Name))
+            : null;
+    }
+
+    // The libraries the plugin made, adopted or shares, by id or else by name, which the plugin itself keeps (§10 rows 437-442).
+    private static List<(string ItemId, string Name)> OwnLibraries(PluginConfiguration config) =>
+        config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
+            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+            .Concat(config.SharedLibraries.Libraries)
+            .Select(record => (record.ItemId ?? string.Empty, record.Name ?? string.Empty))
+            .ToList();
+
+    // Found as the manager of the libraries finds a record: by id, or else by name.
+    private static bool IsOwn(VirtualFolderInfo folder, List<(string ItemId, string Name)> own) => own.Any(record =>
+        (record.ItemId.Length > 0 && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase))
+        || string.Equals(folder.Name, record.Name, StringComparison.Ordinal));
+
+    // Unlinked: the new folders in no library, less those listed as missing from a library on an old path. Adds: per
+    // library, the new folders of every old folder it holds, also of types with no old titles.
+    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked, List<string> Unlinked, Dictionary<string, List<string>> Adds);
+
+    // An old folder: flat when it has no server.
+    private sealed record OldFolder(Guid? Server, TypeFolder Type, string Path);
 
     private sealed record LastRun(int Waiting, int Blocked, int Held);
 

@@ -277,8 +277,9 @@ public sealed partial class LayoutMigration
         }
     }
 
-    // Adds the server folders of each kind to every library holding the old path of that kind (Q56), then checks each
-    // server folder of the kinds with old titles is in some library (Q215, Q249). False when it stops or waits.
+    // Adds to every admin library on an old folder the new folders of the same type of that server, or of every server for a
+    // flat folder (Q56, §10 row 445), then checks each new folder of the types with old titles is in some library (Q215, Q249).
+    // False when it stops or waits.
     private async Task<bool> AddPathsAsync(string root, CancellationToken cancellationToken)
     {
         // With no server there is nothing to add or carry to (Q260).
@@ -290,38 +291,38 @@ public sealed partial class LayoutMigration
 
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
         _materializer.PrepareServerFolders();
-        if (ReadFolders() is not { } folders)
+        if (PluginLibraries() is not { } automatic)
+        {
+            return false;
+        }
+
+        if (LibrariesOf(root, _registry.State, automatic) is not { } libraries)
         {
             Stop(AutomaticMigrationError.ReadFailed, null);
             return false;
         }
 
-        var kinds = new (string Old, Func<Guid, string> New)[]
+        foreach (var library in libraries.OnOldPaths)
         {
-            (FederatedFolderLayout.MoviesPath(root), server => FederatedFolderLayout.ServerMoviesPath(root, server)),
-            (FederatedFolderLayout.SeriesPath(root), server => FederatedFolderLayout.ServerSeriesPath(root, server))
-        };
-        foreach (var folder in folders)
-        {
-            foreach (var path in kinds.Where(kind => Holds(folder, kind.Old)).SelectMany(kind => servers.Select(kind.New)))
+            foreach (var path in libraries.Adds[library.Name])
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!IsDone(_paths.Add(root, folder.Name, path)))
+                if (!IsDone(_paths.Add(root, library.Name, path)))
                 {
-                    Stop(AutomaticMigrationError.AddFailed, folder.Name);
+                    Stop(AutomaticMigrationError.AddFailed, library.Name);
                     return false;
                 }
             }
         }
 
-        if (LibrariesOf(root, _registry.State) is not { } libraries)
+        if (LibrariesOf(root, _registry.State, automatic) is not { } added)
         {
             Stop(AutomaticMigrationError.ReadFailed, null);
             return false;
         }
 
-        // No library holds the old path of a kind with old titles, so its server folders have nowhere to go.
-        if (!libraries.ServerFoldersLinked)
+        // No library holds an old folder of a type with old titles, so its new folders have nowhere to go.
+        if (!added.ServerFoldersLinked)
         {
             Stop(AutomaticMigrationError.FoldersInNoLibrary, null);
             return false;
@@ -329,6 +330,18 @@ public sealed partial class LayoutMigration
 
         SeedPlaced(servers);
         return true;
+    }
+
+    // The keys of the libraries the plugin keeps, read under the lock of their changes; null, and the step waits, while they change.
+    private HashSet<string>? PluginLibraries()
+    {
+        if (_automaticLibraries.FollowForPlacement() is { } libraries && !_automaticLibraries.IsBusy)
+        {
+            return libraries.Automatic.Select(KeyOf).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        _logger.LogInformation("Migration to the server folders: the libraries are changing or not ready, so the migration waits for the next sync");
+        return null;
     }
 
     // The carry and the emptying of the manual migration, with its checks; true once no old title is left.
@@ -370,7 +383,12 @@ public sealed partial class LayoutMigration
             return null;
         }
 
-        if (LibrariesOf(root, _registry.State) is not { } libraries)
+        if (PluginLibraries() is not { } automatic)
+        {
+            return null;
+        }
+
+        if (LibrariesOf(root, _registry.State, automatic) is not { } libraries)
         {
             Stop(AutomaticMigrationError.ReadFailed, null);
             return null;
@@ -388,12 +406,16 @@ public sealed partial class LayoutMigration
         return AutomaticMigrationStep.Finish;
     }
 
-    // Whether a .strm is left under the flat Film or Serie; true as well when they cannot be read.
+    // Whether a .strm is left under the flat Film or Serie or a 0.5 folder of a server; true as well when they cannot be read.
     private bool OldFoldersHoldStubs(string root)
     {
         try
         {
-            return new[] { FederatedFolderLayout.MoviesPath(root), FederatedFolderLayout.SeriesPath(root) }
+            var parents = Directory.Exists(root)
+                ? Directory.EnumerateDirectories(root).Where(folder => Guid.TryParseExact(Path.GetFileName(folder), "D", out _)).Prepend(root)
+                : [];
+            return parents
+                .SelectMany(parent => TypeFolder.Written.Select(type => Path.Combine(parent, type.Name)))
                 .Where(Directory.Exists)
                 .Any(folder => Directory.EnumerateFiles(folder, "*.strm", SearchOption.AllDirectories).Any());
         }
