@@ -66,6 +66,19 @@ public sealed class UnchangedSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task AnIncrementalSyncWithNothingChangedStillRunsTheMigrationThatPlacesNewFolders()
+    {
+        _gate.Unchanged = true;
+        var migration = new Mock<ILayoutMigration>();
+        migration.Setup(run => run.RunAsync(It.IsAny<CancellationToken>())).Callback(() => _calls.Add("migrate")).Returns(Task.CompletedTask);
+        using var sync = NewSync(migration.Object);
+
+        await sync.RunIncrementalAsync(CancellationToken.None);
+
+        Assert.Equal(["capture", "migrate"], _calls);
+    }
+
+    [Fact]
     public async Task TheNightlyRunNeverSkips()
     {
         _gate.Unchanged = true;
