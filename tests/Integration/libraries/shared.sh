@@ -181,7 +181,7 @@ check "no title of the removed server is left on disk" "" "$(docker exec "$PREFI
 echo "--- switch-off: a confirmation names the libraries, then they are deleted and the server libraries stay [row 442]"
 answer=$(switch '{"Enabled":false}')
 check "the switch-off asks to confirm" 409 "$(status)"
-check "it names the libraries it deletes" "[\"Film di tutti\",\"$SERIES\"]" "$(echo "$answer" | jq -c '.ToDelete | sort')"
+check "it names the libraries it deletes, and none to release" "[\"Film di tutti\",\"$SERIES\"] []" "$(echo "$answer" | jq -c '.ToDelete | sort' | tr -d '\n'; echo -n ' '; echo "$answer" | jq -c .ToRelease)"
 check "nothing is deleted yet" "yes true" "$(exists 'Film di tutti') $(shared | jq -r .Enabled)"
 switch '{"Enabled":false,"Confirmed":true}' >/dev/null
 check "the confirmed switch-off answers 202" 202 "$(status)"
