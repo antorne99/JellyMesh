@@ -18,6 +18,9 @@ using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -67,6 +70,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly ITranscodeManager _transcodes;
     private readonly StreamSlots _peerSlots;
     private readonly Func<string, IReadOnlyList<string>> _listFolder;
+    private readonly ILogger<StockRouteGuardFilter> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
@@ -78,6 +82,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="refusal">The refusal.</param>
     /// <param name="transcodes">The transcode manager.</param>
     /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
+    /// <param name="logger">The logger.</param>
     public StockRouteGuardFilter(
         StubLookup stubs,
         IAuthorizationContext authorization,
@@ -85,8 +90,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackSessionStore sessions,
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
-        StreamSlots peerSlots)
-        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, ListFolder)
+        StreamSlots peerSlots,
+        ILogger<StockRouteGuardFilter> logger)
+        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, ListFolder, logger)
     {
     }
 
@@ -99,8 +105,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
-        Func<string, IReadOnlyList<string>> listFolder)
+        Func<string, IReadOnlyList<string>> listFolder,
+        ILogger<StockRouteGuardFilter>? logger = null)
     {
+        _logger = logger ?? NullLogger<StockRouteGuardFilter>.Instance;
         _stubs = stubs;
         _authorization = authorization;
         _coordinator = coordinator;
@@ -128,6 +136,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 ? HasJobWithoutDevice(_sessions.LocalSessionsOfOthers(caller).Concat(_peerSlots.SessionsOfOthers(caller)))
                 : _sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
             {
+                _logger.LogWarning("{Controller}.{Action} without a play session names a device that plays for another user: 404", controller, action);
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
             }
@@ -136,6 +145,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         if (IsAnonymousLegacy(controller, action) && (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is null)
         {
             // D9: stock ignores the item of the route, so naming one proves nothing.
+            _logger.LogDebug("{Controller}.{Action} came without a user: 401", controller, action);
             context.Result = new StatusCodeResult(StatusCodes.Status401Unauthorized);
             return;
         }
@@ -143,6 +153,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var named = IsMedia(controller, action) ? MediaPlaySessionsOf(context, controller, action) : [];
         if (await VersionRefusalAsync(context, controller, action, named).ConfigureAwait(false) is { } hidden)
         {
+            _logger.LogInformation("{Controller}.{Action} names a version the user may not play: {Status}", controller, action, StatusOf(hidden));
             await RefuseAsync(context, next, hidden, controller, action).ConfigureAwait(false);
             return;
         }
@@ -154,6 +165,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             if (caller is { } user && (_sessions.IsLocalOfAnother(user, playSessionId) || _peerSlots.IsOfAnother(user, playSessionId)))
             {
                 // What stock answers for a play session it does not know.
+                _logger.LogInformation("{Controller}.{Action} for a play session of another user is ignored", controller, action);
                 context.Result = new NoContentResult();
                 return;
             }
@@ -178,6 +190,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 // A report of another user would keep the stock job of the owner alive.
                 if (_sessions.IsLocalOfAnother(reporter.Id, PlaySessionOf(context)) || _peerSlots.IsOfAnother(reporter.Id, PlaySessionOf(context)))
                 {
+                    _logger.LogInformation("{Controller}.{Action} for a play session of another user is ignored", controller, action);
                     context.Result = new NoContentResult();
                     return;
                 }
@@ -187,6 +200,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
         else if (IsMedia(controller, action) && await PeerSessionRefusalAsync(context, named).ConfigureAwait(false) is { } refusal)
         {
+            _logger.LogInformation("{Controller}.{Action} names the play session of a peer it does not belong to: {Status}", controller, action, StatusOf(refusal));
             await RefuseAsync(context, next, refusal, controller, action).ConfigureAwait(false);
             return;
         }
@@ -203,6 +217,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
             if (authorization.User is not { } user)
             {
+                _logger.LogDebug("{Controller}.{Action} on a stub came without a user: 401", controller, action);
                 context.Result = new StatusCodeResult(StatusCodes.Status401Unauthorized);
                 return;
             }
@@ -210,6 +225,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
             if (stubs.Keys.Any(id => !_stubs.Sees(user, id)) || named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)))
             {
+                _logger.LogWarning(
+                    "{Controller}.{Action} names a title the user does not see ({Unseen}) or a play session of another user ({OfAnother}): 404",
+                    controller,
+                    action,
+                    stubs.Keys.Any(id => !_stubs.Sees(user, id)),
+                    named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)));
                 await RefuseAsync(context, next, new StatusCodeResult(StatusCodes.Status404NotFound), controller, action).ConfigureAwait(false);
                 return;
             }
@@ -222,13 +243,24 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             var executed = await next().ConfigureAwait(false);
 
             // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
+            if (executed.Exception is not null && !executed.ExceptionHandled)
+            {
+                _logger.LogWarning("{Controller}.{Action} of a federated title failed in stock: {Error}", controller, action, executed.Exception.GetType().Name);
+            }
+            else if (StatusOf(executed.Result) is >= 400 and var status)
+            {
+                _logger.LogInformation("{Controller}.{Action} of a federated title answered {Status}", controller, action, status);
+            }
+
             if (executed.Exception is FfmpegException && !string.IsNullOrWhiteSpace(PlaySessionOf(context)))
             {
+                _logger.LogWarning("ffmpeg failed for a federated title: the jobs of its play session are stopped");
                 await _transcodes.KillTranscodingJobs(authorization.DeviceId ?? string.Empty, PlaySessionOf(context), _ => true).ConfigureAwait(false);
             }
 
             if (executed.Exception is not null && !executed.ExceptionHandled && stubs.Values.Any(stub => _coordinator.TakeFileRefusal(stub.Id)))
             {
+                _logger.LogWarning("The local transcode of a federated title failed because every source was at its stream limit");
                 executed.Exception = null;
                 executed.ExceptionHandled = true;
                 executed.Result = _refusal.Refuse(context.HttpContext, authorization.DeviceId ?? string.Empty, PlaybackRefusal.LimitText);
@@ -238,6 +270,16 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         await next().ConfigureAwait(false);
+    }
+
+    // Reads the status of a result, null when it has none.
+    private static int? StatusOf(IActionResult? result)
+    {
+        return result switch
+        {
+            IStatusCodeActionResult { StatusCode: { } status } => status,
+            _ => null
+        };
     }
 
     // Answers a refusal. A legacy file route that is not found reaches stock with a name no file has, so that it answers
@@ -261,21 +303,25 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
         if (authorization.User is not { } user)
         {
+            _logger.LogDebug("{Action} of a federated title came without a user: 401", action);
             return new StatusCodeResult(StatusCodes.Status401Unauthorized);
         }
 
         if (!_stubs.Sees(user, itemId))
         {
+            _logger.LogInformation("{Action} of a federated title the user does not see: 404", action);
             return new StatusCodeResult(StatusCodes.Status404NotFound);
         }
 
         if (action == DownloadAction && !user.HasPermission(PermissionKind.EnableContentDownloading))
         {
+            _logger.LogInformation("Download of a federated title by a user without the download permission: 403");
             return new StatusCodeResult(StatusCodes.Status403Forbidden);
         }
 
         if (_stubs.Find(itemId) is not { } stub)
         {
+            _logger.LogWarning("{Action} of a federated title whose stub is gone: 503", action);
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -285,12 +331,18 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         using var opened = await _coordinator.OpenFileAsync(stub, method, string.IsNullOrEmpty(range) ? null : range, http.RequestAborted).ConfigureAwait(false);
         if (opened is null)
         {
+            _logger.LogWarning("{Action} of stub {StubId}: no source opened its file", action, stub.Id);
             return _coordinator.TakeFileRefusal(stub.Id)
                 ? _refusal.Refuse(http, authorization.DeviceId ?? string.Empty, PlaybackRefusal.LimitText)
                 : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
-        await StreamRelay.CopyAsync(opened, http, _coordinator.StallLimit, http.RequestAborted).ConfigureAwait(false);
+        var relayed = await StreamRelay.RelayAsync(opened, http, _coordinator.StallLimit, http.RequestAborted).ConfigureAwait(false);
+        if (relayed.IsAbnormal)
+        {
+            _logger.LogInformation("{Action} of stub {StubId} broke off: {End} after {Bytes} bytes in {Elapsed}", action, stub.Id, relayed.End, relayed.Bytes, relayed.Elapsed);
+        }
+
         return new EmptyResult();
     }
 

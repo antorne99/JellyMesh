@@ -98,7 +98,8 @@ public class PlaybackFiltersTests
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
             new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
-            _offer);
+            _offer,
+            NullLogger<PlaybackInfoFilter>.Instance);
     }
 
     private StubSegments Segments(StubLookup lookup, InMemoryConfigurationStore store)

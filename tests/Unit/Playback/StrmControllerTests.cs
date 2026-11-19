@@ -41,7 +41,7 @@ public sealed class StrmControllerTests : IDisposable
             context.Request.Headers[header] = "203.0.113.9";
         }
 
-        var controller = new StrmController(_stubs.Object, _fixture.Coordinator, _signer)
+        var controller = new StrmController(_stubs.Object, _fixture.Coordinator, _signer, Microsoft.Extensions.Logging.Abstractions.NullLogger<StrmController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

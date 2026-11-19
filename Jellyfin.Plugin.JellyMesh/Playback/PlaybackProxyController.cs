@@ -8,6 +8,7 @@ using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -31,6 +32,7 @@ public class PlaybackProxyController : ControllerBase
     private readonly IAuthorizationContext _authorization;
     private readonly TimeProvider _clock;
     private readonly PlaybackRefusal _refusal;
+    private readonly ILogger<PlaybackProxyController> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackProxyController"/> class.
@@ -41,14 +43,17 @@ public class PlaybackProxyController : ControllerBase
     /// <param name="authorization">The authorization context.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="refusal">The refusal of a playback.</param>
+    /// <param name="logger">The logger.</param>
     public PlaybackProxyController(
         PlaybackSessionStore sessions,
         PlaybackCoordinator coordinator,
         StubLookup stubs,
         IAuthorizationContext authorization,
         TimeProvider clock,
-        PlaybackRefusal refusal)
+        PlaybackRefusal refusal,
+        ILogger<PlaybackProxyController> logger)
     {
+        _logger = logger;
         _sessions = sessions;
         _coordinator = coordinator;
         _stubs = stubs;
@@ -79,7 +84,7 @@ public class PlaybackProxyController : ControllerBase
         using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+            return TooManyRequests(session);
         }
 
         return await RelayPlaylistAsync(session, session.UpstreamPath, session.UpstreamFolder(), MasterToFolder, access.Token, cancellationToken).ConfigureAwait(false);
@@ -109,7 +114,7 @@ public class PlaybackProxyController : ControllerBase
         using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+            return TooManyRequests(session);
         }
 
         return await RelayStreamAsync(session, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
@@ -142,13 +147,14 @@ public class PlaybackProxyController : ControllerBase
             .Select(pair => new System.Collections.Generic.KeyValuePair<string, string>(pair.Key, pair.Value.ToString()));
         if (session.FindUpstream(folder, file, clientQuery) is not { } upstream)
         {
+            _logger.LogDebug("Play session {PlaySessionId} handed out no such file: 404", session.Id);
             return NotFound();
         }
 
         using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+            return TooManyRequests(session);
         }
 
         if (file.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
@@ -157,6 +163,16 @@ public class PlaybackProxyController : ControllerBase
         }
 
         return await RelayStreamAsync(session, upstream, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Names the part of a stream a path is, for the logs.
+    private static string PartOf(string path, bool isMaster = false)
+    {
+        var plain = path.Split('?')[0];
+        return isMaster ? "master playlist"
+            : IsSubtitle(path) ? "subtitle"
+            : plain.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase) ? "playlist"
+            : "segment";
     }
 
     private static bool IsSubtitle(string path)
@@ -173,12 +189,21 @@ public class PlaybackProxyController : ControllerBase
     private async Task<SessionAccess> AuthorizeAsync(string sessionId)
     {
         var authorization = await _authorization.GetAuthorizationInfo(HttpContext).ConfigureAwait(false);
-        if (authorization.User is not { } user
-            || string.IsNullOrEmpty(authorization.Token)
-            || _sessions.Find(sessionId) is not { } session
-            || session.Identity.UserId != user.Id
-            || !_stubs.Sees(user, session.Identity.ItemId))
+        if (authorization.User is not { } user || string.IsNullOrEmpty(authorization.Token))
         {
+            _logger.LogDebug("A playback request came without a user: 404");
+            return new SessionAccess(null, string.Empty);
+        }
+
+        if (_sessions.Find(sessionId) is not { } session)
+        {
+            _logger.LogDebug("A playback request named a play session that does not exist or was closed: 404");
+            return new SessionAccess(null, string.Empty);
+        }
+
+        if (session.Identity.UserId != user.Id || !_stubs.Sees(user, session.Identity.ItemId))
+        {
+            _logger.LogWarning("A user asked for play session {PlaySessionId} of another user or of a title they do not see: 404", session.Id);
             return new SessionAccess(null, string.Empty);
         }
 
@@ -187,28 +212,34 @@ public class PlaybackProxyController : ControllerBase
 
     private async Task<ActionResult> RelayPlaylistAsync(PlaybackSession session, string path, string remoteFolder, string prefix, string token, CancellationToken cancellationToken)
     {
+        var part = PartOf(path, prefix == MasterToFolder);
         if (session.HasFailed)
         {
-            return StatusCode(StatusCodes.Status502BadGateway);
+            return FailedBefore(session, part);
         }
 
         var playlist = await _coordinator.ReadPlaylistAsync(session.Source.ServerId, path, cancellationToken).ConfigureAwait(false);
         if (!playlist.IsSuccess)
         {
-            return RelayFailed(session, path, playlist.Failure);
+            return RelayFailed(session, path, part, playlist);
         }
 
         var text = HlsPlaylistRewriter.Rewrite(playlist.Value!, session, remoteFolder, prefix, token, PlaybackCoordinator.SecretsOf(session));
-        return text is null
-            ? StatusCode(StatusCodes.Status502BadGateway)
-            : Content(text, PlaylistType);
+        if (text is null)
+        {
+            _logger.LogWarning("The {Part} of play session {PlaySessionId} on server {ServerId} could not be rewritten for the client: 502", part, session.Id, session.Source.ServerId);
+            return StatusCode(StatusCodes.Status502BadGateway);
+        }
+
+        return Content(text, PlaylistType);
     }
 
     private async Task<ActionResult> RelayStreamAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
     {
+        var part = path == session.UpstreamPath ? "stream" : PartOf(path);
         if (session.HasFailed)
         {
-            return StatusCode(StatusCodes.Status502BadGateway);
+            return FailedBefore(session, part);
         }
 
         var method = HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get;
@@ -217,11 +248,29 @@ public class PlaybackProxyController : ControllerBase
         var opened = await _coordinator.OpenAsync(session.Source.ServerId, request, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {
-            return RelayFailed(session, path, opened.Failure);
+            return RelayFailed(session, path, part, opened);
         }
 
         using var stream = opened.Value!;
-        if (await StreamRelay.CopyAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken, _clock).ConfigureAwait(false) && !IsSubtitle(path))
+        var relayed = await StreamRelay.RelayAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken, _clock).ConfigureAwait(false);
+        var ends = relayed.CountsAsFailure && !IsSubtitle(path);
+        if (relayed.IsAbnormal)
+        {
+            _logger.Log(
+                ends ? LogLevel.Warning : relayed.End == RelayEnd.ClientDropped ? LogLevel.Debug : LogLevel.Information,
+                "The {Part} of play session {PlaySessionId} ({Kind}, server {ServerId}) broke off: {End} after {Bytes} bytes in {Elapsed}, {Playing} into playback. Ends the session: {Ends}",
+                part,
+                session.Id,
+                session.Kind,
+                session.Source.ServerId,
+                relayed.End,
+                relayed.Bytes,
+                relayed.Elapsed,
+                _clock.GetUtcNow() - session.Opened,
+                ends);
+        }
+
+        if (ends)
         {
             _coordinator.ReportFailure(session);
         }
@@ -229,16 +278,41 @@ public class PlaybackProxyController : ControllerBase
         return new EmptyResult();
     }
 
+    // A retry of the player after its session failed (row 57): it gets 502 until it asks PlaybackInfo again.
+    private StatusCodeResult FailedBefore(PlaybackSession session, string part)
+    {
+        _logger.LogDebug("The {Part} of failed play session {PlaySessionId} is refused: 502", part, session.Id);
+        return StatusCode(StatusCodes.Status502BadGateway);
+    }
+
+    private StatusCodeResult TooManyRequests(PlaybackSession session)
+    {
+        _logger.LogWarning("Play session {PlaySessionId} already has {Count} requests running: one more is refused with 503", session.Id, PlaybackLimits.RequestsPerSession);
+        return StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+
     // A stream that lost its slot and came back to a full server: the same refusal as a new PlaybackInfo gets. Any other
     // failure but a missing subtitle or a full queue here ends the session, so that the player reconnects (row 57).
-    private ActionResult RelayFailed(PlaybackSession session, string path, RemoteFailure failure)
+    private ActionResult RelayFailed<T>(PlaybackSession session, string path, string part, RemoteResult<T> result)
     {
+        var failure = result.Failure;
+        var ends = failure is not (RemoteFailure.StreamLimitReached or RemoteFailure.Busy) && !IsSubtitle(path);
+        _logger.Log(
+            ends ? LogLevel.Warning : LogLevel.Information,
+            "The {Part} of play session {PlaySessionId} ({Kind}, server {ServerId}) did not open: {Failure}, {Playing} into playback. Ends the session: {Ends}",
+            part,
+            session.Id,
+            session.Kind,
+            session.Source.ServerId,
+            result.Describe(),
+            _clock.GetUtcNow() - session.Opened,
+            ends);
         if (failure == RemoteFailure.StreamLimitReached)
         {
             return _refusal.Refuse(HttpContext, session.Identity.DeviceId, PlaybackRefusal.LimitText);
         }
 
-        if (failure != RemoteFailure.Busy && !IsSubtitle(path))
+        if (ends)
         {
             _coordinator.ReportFailure(session);
         }

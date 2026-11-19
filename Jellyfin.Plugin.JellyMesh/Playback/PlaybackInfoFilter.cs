@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -14,7 +15,9 @@ using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -35,6 +38,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     private readonly LocalCopyLookup _localCopies;
     private readonly PlaybackVersions _versions;
     private readonly SegmentOffer _segments;
+    private readonly ILogger<PlaybackInfoFilter> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackInfoFilter"/> class.
@@ -46,6 +50,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     /// <param name="localCopies">The lookup of local copies.</param>
     /// <param name="versions">The versions of a title.</param>
     /// <param name="segments">Whether a playback offers the segments of its item.</param>
+    /// <param name="logger">The logger.</param>
     public PlaybackInfoFilter(
         StubLookup stubs,
         IAuthorizationContext authorization,
@@ -53,8 +58,10 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         LocalCopyLookup localCopies,
         PlaybackVersions versions,
-        SegmentOffer segments)
+        SegmentOffer segments,
+        ILogger<PlaybackInfoFilter> logger)
     {
+        _logger = logger;
         _stubs = stubs;
         _authorization = authorization;
         _coordinator = coordinator;
@@ -114,6 +121,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         var authorization = await _authorization.GetAuthorizationInfo(http).ConfigureAwait(false);
         if (authorization.User is not { } user || string.IsNullOrEmpty(authorization.Token))
         {
+            _logger.LogDebug("PlaybackInfo of a federated title came without a user: 401");
             context.Result = new StatusCodeResult(StatusCodes.Status401Unauthorized);
             return;
         }
@@ -122,6 +130,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         if (!_stubs.Sees(user, route)
             || (asked is { } version && (!_stubs.Sees(user, version) || !_versions.IsVersionOf(route, version))))
         {
+            _logger.LogInformation("PlaybackInfo of item {ItemId} names a title or version the user does not see: 404", route);
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
         }
@@ -250,11 +259,27 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         // A local copy in no library is not one to fall back on for a non-admin (D17).
         if (_localCopies.Find(request.Stub, user) is not { } local || !_stubs.Sees(user, local.Id))
         {
+            _logger.LogWarning(
+                "Playback of title {StubId} is refused: at stream limit {AtLimit}, a source reachable {Reachable}, no local copy to play",
+                request.Stub.Id,
+                outcome.AtStreamLimit,
+                outcome.AnyReachable);
             context.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.TextOf(outcome));
             return;
         }
 
+        _logger.LogInformation("No source of title {StubId} can play: its local copy {LocalItemId} plays instead", request.Stub.Id, local.Id);
         await PlayLocalCopyAsync(context, next, request, local.Id, route).ConfigureAwait(false);
+    }
+
+    // Says why stock gave no usable PlaybackInfo, without any text of the answer.
+    private static string StockFailureOf(ActionExecutedContext executed)
+    {
+        return executed.Exception is { } exception ? exception.GetType().Name
+            : executed.Result is ObjectResult { Value: PlaybackInfoResponse response }
+                ? response.ErrorCode?.ToString() ?? (response.MediaSources.Count == 0 ? "no media source" : "no transcoding URL")
+            : executed.Result is IStatusCodeActionResult { StatusCode: { } status } ? "status " + status.ToString(CultureInfo.InvariantCulture)
+            : "no answer";
     }
 
     private async Task PlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, Guid localItemId, Guid route)
@@ -265,12 +290,14 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         var executed = await next().ConfigureAwait(false);
         if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, request, localItemId))
         {
+            _logger.LogWarning("Stock gave no PlaybackInfo for the local copy {LocalItemId} of title {StubId}: {Failure}", localItemId, request.Stub.Id, StockFailureOf(executed));
             executed.Exception = null;
             executed.ExceptionHandled = true;
             executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
             return;
         }
 
+        _logger.LogInformation("Title {StubId} plays from its local copy {LocalItemId}, play session {PlaySessionId}", request.Stub.Id, localItemId, response.PlaySessionId);
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
         _segments.RecordLocalCopy(request.Identity, response.PlaySessionId, localItemId, route);
     }
@@ -302,6 +329,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
         if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalResponse(response, request, outcome))
         {
+            _logger.LogWarning("Stock gave no PlaybackInfo for the local transcode of title {StubId}: {Failure}", request.Stub.Id, StockFailureOf(executed));
             executed.Exception = null;
             executed.ExceptionHandled = true;
             executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
@@ -309,6 +337,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
+        _logger.LogInformation("Title {StubId} plays from a local transcode, play session {PlaySessionId}", request.Stub.Id, response.PlaySessionId);
         _coordinator.RecordLocalTranscode(response.PlaySessionId, outcome.FileSource);
         _segments.OfferOnLocal(response, request.Identity, outcome.FileSource, route);
     }
