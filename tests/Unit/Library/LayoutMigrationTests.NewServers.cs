@@ -51,6 +51,96 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task InTheRemoteLibraryLayoutANewServerJoinsWithOneTypeFolderPerImportedRemoteLibrary()
+    {
+        // §10 row 443: a library holding a 0.5 folder or a type folder of another server gets the type folders of that type.
+        MigratedToRemoteLibraries();
+        var (films, films4K, shows) = (Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
+        var c = Imported(_serverC, (films, "movies"), (shows, "tvshows"), (films4K, "movies"));
+        var otherFilms = Guid.NewGuid().ToString("N");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, LocalFilms, TypeFolderOf(_serverA, otherFilms, TypeFolder.Movies)));
+        _libraries.Add(Library("Vecchio", CollectionTypeOptions.movies, ServerFilms(_serverB)));
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, TypeFolderOf(_serverA, otherFilms, TypeFolder.Series)));
+        _libraries.Add(Library("Locale", CollectionTypeOptions.movies, LocalFilms));
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([LocalFilms, TypeFolderOf(_serverA, otherFilms, TypeFolder.Movies), TypeFolderOf(_serverC, films, TypeFolder.Movies), TypeFolderOf(_serverC, films4K, TypeFolder.Movies)], Locations("Film"));
+        Assert.Equal([ServerFilms(_serverB), TypeFolderOf(_serverC, films, TypeFolder.Movies), TypeFolderOf(_serverC, films4K, TypeFolder.Movies)], Locations("Vecchio"));
+        Assert.Equal([TypeFolderOf(_serverA, otherFilms, TypeFolder.Series), TypeFolderOf(_serverC, shows, TypeFolder.Series)], Locations("Serie"));
+        Assert.Equal([LocalFilms], Locations("Locale"));
+        Assert.DoesNotContain(_addedPaths, added => added.Path == ServerFilms(_serverC) || added.Path == ServerSeries(_serverC));
+        Assert.Equal(1, _scansQueued);
+        Assert.Contains(c.Id, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task ANewServerWhoseRemoteLibrariesAreNotReadYetWaitsForTheNextHook()
+    {
+        MigratedToRemoteLibraries();
+        var films = Guid.NewGuid().ToString("N");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, Guid.NewGuid().ToString("N"), TypeFolder.Movies)));
+        var c = Imported(_serverC);
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+
+        c.RemoteLibraries.Add(new RemoteLibraryConfig { Id = films, Name = "Film", CollectionType = "movies" });
+        c.ImportedLibraryIds.Add(films);
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, films, TypeFolder.Movies))], _addedPaths);
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task ANewServerWithNoImportedLibraryOfATypeIsPlacedWithNothingAdded()
+    {
+        // Its remote libraries are read and none is imported: there is nothing of it to place.
+        MigratedToRemoteLibraries();
+        var c = Imported(_serverC, (Guid.NewGuid().ToString("N"), "movies"));
+        c.ImportedLibraryIds.Clear();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, Guid.NewGuid().ToString("N"), TypeFolder.Movies)));
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.Equal(0, _scansQueued);
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task StubFilesLeftInTheServerFoldersKeepTheNewServerOnItsServerFolders()
+    {
+        // The registry is on the remote library layout, but the materializer keeps the older one while such files are left.
+        MigratedToRemoteLibraries();
+        var stub = FederatedPaths.Resolve(Root, FederatedPaths.MovieStub(_serverA, "Dune (2021)", "A"));
+        Directory.CreateDirectory(Path.GetDirectoryName(stub)!);
+        await File.WriteAllTextAsync(stub, "stub");
+        Imported(_serverC, (Guid.NewGuid().ToString("N"), "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", ServerFilms(_serverC))], _addedPaths);
+    }
+
+    [Fact]
     public async Task TheAutomaticLibrariesOfTheOtherServersGetNoFolderOfTheNewServer()
     {
         // D24: an automatic library holds only its own server, so the plugin leaves it so; D21: the switch makes the
@@ -206,9 +296,12 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task TheSettingsTurnANewInstallToAutomaticWithTheServersThereAlreadyPlaced()
     {
-        // D23: a new install starts manual; the servers there when the settings choose automatic are the admin's.
+        // D23: a new install starts manual; the servers there when the settings choose automatic are the admin's. Its
+        // titles are in the remote library layout, so the new server joins with its type folders (§10 row 443).
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.None;
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        var (films, filmsOfC) = (Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
+        Imported(_serverC, (filmsOfC, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, films, TypeFolder.Movies)));
         var migration = await MigrationAsync();
         Assert.Equal(LayoutMigrationMode.Manual, migration.NewServerMode);
 
@@ -220,7 +313,7 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal(LayoutMigrationChoiceOutcome.Chosen, choice.Outcome);
         Assert.Equal(LayoutMigrationMode.Automatic, migration.NewServerMode);
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
-        Assert.Equal([ServerFilms(_serverA)], Locations("Film"));
+        Assert.Equal([TypeFolderOf(_serverA, films, TypeFolder.Movies)], Locations("Film"));
         Assert.Equal(0, _scansQueued);
         Assert.Null(migration.GetStatus(Root));
 
@@ -228,7 +321,7 @@ public sealed partial class LayoutMigrationTests
         await migration.RunAsync(CancellationToken.None);
         await migration.Running;
 
-        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverC)], Locations("Film"));
+        Assert.Equal([TypeFolderOf(_serverA, films, TypeFolder.Movies), TypeFolderOf(_serverC, filmsOfC, TypeFolder.Movies)], Locations("Film"));
     }
 
     [Fact]
@@ -615,9 +708,37 @@ public sealed partial class LayoutMigrationTests
         library.ItemId = IdOf(newName);
     }
 
+    // A server whose remote libraries were read, each given as its id and remote type, all imported, in "none" mode.
+    private RemoteServerConfig Imported(Guid server, params (string Id, string Type)[] libraries)
+    {
+        var config = new RemoteServerConfig { Id = server };
+        foreach (var (id, type) in libraries)
+        {
+            config.RemoteLibraries.Add(new RemoteLibraryConfig { Id = id, Name = "Libreria " + id[..4], CollectionType = type });
+            config.ImportedLibraryIds.Add(id);
+        }
+
+        _store.Configuration.Servers.Add(config);
+        return config;
+    }
+
+    private string TypeFolderOf(Guid server, string library, TypeFolder type) => FederatedFolderLayout.TypeFolderPath(Root, server, library, type);
+
+    // An automatic migration done with servers A and B, whose titles are in the remote library layout.
+    private void MigratedToRemoteLibraries()
+    {
+        var migration = _store.Configuration.LayoutMigration;
+        migration.Mode = LayoutMigrationMode.Automatic;
+        migration.Step = AutomaticMigrationStep.Done;
+        migration.PlacedServers.Add(_serverA);
+        migration.PlacedServers.Add(_serverB);
+    }
+
     // An automatic migration done with servers A and B.
     private void Migrated()
     {
+        // A title of A in its 0.5 server folder keeps the stubs in the older layout.
+        NewFilm(_serverA, "a0");
         var migration = _store.Configuration.LayoutMigration;
         migration.Mode = LayoutMigrationMode.Automatic;
         migration.Step = AutomaticMigrationStep.Done;

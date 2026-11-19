@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,7 +11,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 // The servers linked after the automatic migration (Q58, D21, D23, D24): their folders join the libraries holding a
-// folder of the same kind of another server, and the settings set the mode, the field of the banner (§10 row 368).
+// folder of the same type of another server (§10 row 443), and the settings set the mode, the field of the banner (§10 row 368).
 public sealed partial class LayoutMigration
 {
     // Set when the scan after the folders of new servers were added was held back; the next run asks for it again.
@@ -86,8 +87,8 @@ public sealed partial class LayoutMigration
         return new LayoutMigrationChoice(LayoutMigrationChoiceOutcome.Chosen, Task.CompletedTask);
     }
 
-    // Adds the folders of each server not placed yet to every library holding a folder of the same kind of another server,
-    // but not to the automatic libraries (D24). A failed addition is retried by the next hook, with no error.
+    // Adds the folders of each server not placed yet to every library holding a folder of the same type of another server,
+    // but not to the plugin libraries (D24, §10 row 443). A failed addition is retried by the next hook, with no error.
     private async Task PlaceNewServersAsync(string root, CancellationToken cancellationToken)
     {
         var servers = _servers.GetServers().Select(server => server.Id).Distinct().ToList();
@@ -105,6 +106,13 @@ public sealed partial class LayoutMigration
 
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
         _materializer.PrepareServerFolders();
+        if (_registry.UsesOlderLayout() is not { } usesOlder)
+        {
+            _logger.LogInformation("Migration to the server folders: the stubs are not read yet, so the new servers wait for the next sync");
+            return;
+        }
+
+        var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
 
         // The follow first, so a renamed automatic library is known as one (§10 row 385); busy is checked after the read,
         // so that a job started before it is seen (row 384).
@@ -115,21 +123,20 @@ public sealed partial class LayoutMigration
         }
 
         var (folders, automatic) = (libraries.Folders, libraries.Automatic);
-        var kinds = new Func<Guid, string>[]
-        {
-            server => FederatedFolderLayout.ServerMoviesPath(root, server),
-            server => FederatedFolderLayout.ServerSeriesPath(root, server)
-        };
         var done = new List<Guid>();
         var added = false;
         foreach (var server in fresh)
         {
-            var failed = false;
-            foreach (var pathOf in kinds)
+            if (FoldersToPlace(root, server, olderLayout) is not { } paths)
             {
-                var path = pathOf(server);
-                var others = servers.Where(other => other != server).Select(pathOf).ToList();
-                foreach (var folder in folders.Where(folder => !automatic.Contains(folder) && !Holds(folder, path) && others.Any(other => Holds(folder, other))))
+                _logger.LogInformation("Migration to the server folders: the remote libraries of a new server are not read yet, so it waits for the next sync");
+                continue;
+            }
+
+            var failed = false;
+            foreach (var (path, type) in paths)
+            {
+                foreach (var folder in folders.Where(folder => !automatic.Contains(folder) && !Holds(folder, path) && HoldsOther(folder, root, server, type, servers)))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var outcome = _paths.Add(root, folder.Name, path);
@@ -159,6 +166,47 @@ public sealed partial class LayoutMigration
 
         _placementScanOwed = false;
         SavePlaced(servers, done);
+    }
+
+    // The folders of a new server with their type: its 0.5 folders while the stubs keep the older layout, otherwise one type
+    // folder per imported remote library (§10 row 443). Null while its remote libraries are not read yet.
+    private List<(string Path, TypeFolder Type)>? FoldersToPlace(string root, Guid server, bool olderLayout)
+    {
+        if (olderLayout)
+        {
+            return [(FederatedFolderLayout.ServerMoviesPath(root, server), TypeFolder.Movies), (FederatedFolderLayout.ServerSeriesPath(root, server), TypeFolder.Series)];
+        }
+
+        var typeFolders = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server) is { RemoteLibraries.Count: > 0 } found
+            ? LibraryPlan.TypeFolders(found)
+            : null);
+        return typeFolders?
+            .Select(folder => (FederatedPaths.Resolve(root, folder), TypeFolder.All.First(type => string.Equals(type.Name, Path.GetFileName(folder), StringComparison.Ordinal))))
+            .ToList();
+    }
+
+    // Whether a library holds a folder of the given type of another configured server, in either layout.
+    private static bool HoldsOther(VirtualFolderInfo folder, string root, Guid server, TypeFolder type, IReadOnlyCollection<Guid> servers) =>
+        (folder.Locations ?? []).Any(location => LayoutFolderOf(root, location) is { } found
+            && found.Server != server
+            && servers.Contains(found.Server)
+            && found.Type == type);
+
+    // The server and type of a 0.5 server folder or of a type folder of a remote library; null for any other path.
+    private static (Guid Server, TypeFolder Type)? LayoutFolderOf(string root, string location)
+    {
+        var parts = FederatedPaths.RelativeTo(root, Path.TrimEndingDirectorySeparator(location))?.Split(Path.DirectorySeparatorChar);
+        var (serverPart, typePart, typeFolders) = parts switch
+        {
+            [var server, var type] => (server, type, TypeFolder.Written),
+            [var server, var library, var type] when FederatedPaths.IsLibraryId(library) => (server, type, TypeFolder.All),
+            _ => (null, null, (IReadOnlyList<TypeFolder>)[])
+        };
+        return Guid.TryParseExact(serverPart, "D", out var id)
+            && string.Equals(serverPart, FederatedPaths.ServerFolder(id), StringComparison.Ordinal)
+            && typeFolders.FirstOrDefault(folder => string.Equals(folder.Name, typePart, StringComparison.Ordinal)) is { } found
+            ? (id, found)
+            : null;
     }
 
     // Keeps the placed servers still configured, with those just placed.
