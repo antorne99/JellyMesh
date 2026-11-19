@@ -228,6 +228,8 @@ public class TypeStubPlannerTests
     [InlineData("featurettes")]
     [InlineData("clips")]
     [InlineData("other")]
+    [InlineData("theme-music")]
+    [InlineData("backdrops")]
     [InlineData("Trailers")]
     public void AFolderNamedLikeAnExtrasFolderGetsANameReadAsAPlainFolder(string name)
     {
