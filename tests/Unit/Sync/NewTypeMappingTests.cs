@@ -124,6 +124,16 @@ public class NewTypeMappingTests
     [InlineData("/media/books/F48 Author/F48 Comic.CBZ", "cbz")]
     [InlineData("D:\\Libri\\Autore\\Libro.azw3", "azw3")]
     [InlineData("/media/books/a.b/Libro.pdf", "pdf")]
+    [InlineData("/media/books/Libro.mobi", "mobi")]
+    [InlineData("/media/books/Libro.azw", "azw")]
+    [InlineData("/media/books/Libro.cbr", "cbr")]
+    [InlineData("/media/books/Libro.cb7", "cb7")]
+    [InlineData("/media/books/Libro.cbt", "cbt")]
+    [InlineData("/media/books/Libro.strm", null)]
+    [InlineData("/media/books/Libro.nfo", null)]
+    [InlineData("/media/books/Libro.html", null)]
+    [InlineData("/media/books/Libro.jpg", null)]
+    [InlineData("/media/books/x.epub?k=a.b12c", null)]
     [InlineData("/media/books/Libro", null)]
     [InlineData("/media/books.d/Libro", null)]
     [InlineData("/media/books/Libro.", null)]
@@ -153,6 +163,33 @@ public class NewTypeMappingTests
 
         Assert.Equal("jpg", photo.Extension);
         Assert.DoesNotContain("/secret", JsonSerializer.Serialize(photo), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("a.jpeg", "jpeg")]
+    [InlineData("a.PNG", "png")]
+    [InlineData("a.gif", "gif")]
+    [InlineData("a.webp", "webp")]
+    [InlineData("a.bmp", "bmp")]
+    [InlineData("a.tif", "tif")]
+    [InlineData("a.tiff", "tiff")]
+    [InlineData("a.heic", "heic")]
+    [InlineData("a.heif", "heif")]
+    [InlineData("a.avif", "avif")]
+    [InlineData("a.dng", "dng")]
+    [InlineData("a.cr2", "cr2")]
+    [InlineData("a.nef", "nef")]
+    [InlineData("a.arw", "arw")]
+    [InlineData("a.svg", null)]
+    [InlineData("a.strm", null)]
+    [InlineData("a.nfo", null)]
+    [InlineData("a.html", null)]
+    [InlineData("a.epub", null)]
+    public void APhotoKeepsOnlyAnImageExtension(string name, string? extension)
+    {
+        var photo = RemoteItemMapper.ToIndexedItem(new RemoteItem { Id = "p1", Path = "/home/" + name }, RemoteItemType.Photo, "lib", DateTimeOffset.UnixEpoch);
+
+        Assert.Equal(extension, photo.Extension);
     }
 
     [Theory]

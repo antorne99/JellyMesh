@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -13,6 +14,14 @@ namespace Jellyfin.Plugin.JellyMesh.Sync;
 public static class RemoteItemMapper
 {
     private const string VideoStream = "Video";
+
+    // The book formats Jellyfin reads, and the image formats of a photo; nothing that means more to Jellyfin as a file.
+    private static readonly FrozenSet<string> _bookExtensions = FrozenSet.Create(StringComparer.Ordinal, "azw", "azw3", "cb7", "cbr", "cbt", "cbz", "epub", "mobi", "pdf");
+
+    private static readonly FrozenSet<string> _photoExtensions = new[]
+    {
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "dng", "cr2", "nef", "arw", "orf", "rw2", "raf", "pef", "srw"
+    }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
     /// Maps an item.
@@ -86,7 +95,12 @@ public static class RemoteItemMapper
         AlbumArtists = NullIfEmpty(item.AlbumArtists?.Select(artist => artist.Name).OfType<string>().ToList())
             ?? (string.IsNullOrEmpty(item.AlbumArtist) ? null : [item.AlbumArtist]),
         HasLyrics = item.HasLyrics,
-        Extension = entry.Kind is IndexedItemKind.Book or IndexedItemKind.Photo ? ExtensionOf(item.Path) : null,
+        Extension = entry.Kind switch
+        {
+            IndexedItemKind.Book => ExtensionOf(item.Path, _bookExtensions),
+            IndexedItemKind.Photo => ExtensionOf(item.Path, _photoExtensions),
+            _ => null
+        },
         Photo = entry.Kind is IndexedItemKind.Photo ? PhotoOf(item) : null
     };
 
@@ -108,8 +122,8 @@ public static class RemoteItemMapper
         IsoSpeedRating = item.IsoSpeedRating
     };
 
-    // Gets the lowercase extension of the last path segment when it is 1 to 5 ASCII letters or digits, else null.
-    private static string? ExtensionOf(string? path)
+    // Gets the lowercase extension of the last path segment when it is one of the allowed ones, else null.
+    private static string? ExtensionOf(string? path, FrozenSet<string> allowed)
     {
         if (string.IsNullOrEmpty(path))
         {
@@ -119,7 +133,9 @@ public static class RemoteItemMapper
         var name = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
         var dot = name.LastIndexOf('.');
         var extension = dot < 0 ? string.Empty : name[(dot + 1)..];
-        return extension.Length is >= 1 and <= 5 && extension.All(char.IsAsciiLetterOrDigit) ? extension.ToLowerInvariant() : null;
+        return extension.Length is >= 1 and <= 5 && extension.All(char.IsAsciiLetterOrDigit) && allowed.Contains(extension.ToLowerInvariant())
+            ? extension.ToLowerInvariant()
+            : null;
     }
 
     private static IndexedItemKind KindOf(RemoteItemType type) => type switch
