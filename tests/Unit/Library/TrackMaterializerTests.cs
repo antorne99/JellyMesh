@@ -92,6 +92,17 @@ public sealed class TrackMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task TheAlbumIsLookedUpOnlyForTheTrackThatCarriesItsCover()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Music, RemoteItemType.Audio, Track("t1", "Song", 1), Track("t2", "Other", 2), Track("t3", "Third", 3));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Music);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        _fixture.Library.Verify(library => library.FindByPath(AlbumPath(a), true), Times.Once);
+    }
+
+    [Fact]
     public async Task ATrackThatIsTheStubOfAnotherJellyMeshGetsNoStub()
     {
         var federated = Track("t1", "Song", 1);
