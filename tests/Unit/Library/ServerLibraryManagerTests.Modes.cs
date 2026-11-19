@@ -154,13 +154,16 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(true);
         await fixture.Manager.Enable(_serverId).Job;
         Assert.Equal([_movies], fixture.Libraries.Find("Casa - Film").Locations);
+        var kept = fixture.Server.AutomaticLibraryRegistry.Select(library => (library.Name, library.ItemId)).ToList();
         fixture.Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(false);
 
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
+        // Same libraries, with the same names and ids: only their paths change (§10 row 445).
         Assert.Equal([Absolute(_filmsFolder), Absolute(_filmsBFolder)], fixture.Libraries.Find("Casa - Film").Locations);
         Assert.Equal([("Casa - Film", _movies), ("Casa - Serie", _series)], fixture.Libraries.RemovedPaths);
-        Assert.Equal(2, fixture.Server.AutomaticLibraryRegistry.Count);
+        Assert.Equal(kept, fixture.Server.AutomaticLibraryRegistry.Select(library => (library.Name, library.ItemId)));
+        Assert.Equal(2, fixture.Libraries.Created.Count);
     }
 
     [Fact]
