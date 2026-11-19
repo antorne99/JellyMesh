@@ -990,6 +990,62 @@ public sealed partial class LayoutMigrationTests
         Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
     }
 
+    [Fact]
+    public async Task AFolderAddedBeforeAnotherAdditionFailedIsNotAddedAgainOnceTheAdminRemovedIt()
+    {
+        // §10 row 496: a folder counts as placed in a library as soon as its addition there succeeds.
+        MigratedToRemoteLibraries();
+        var (films, filmsOfA) = (NewId(), NewId());
+        var c = Imported(_serverC, (films, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _libraries.Add(Library("Altri film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _failingAdds.Add("Altri film");
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+        Assert.Contains(TypeFolderOf(_serverC, films, TypeFolder.Movies), Locations("Film"));
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+
+        var film = _libraries.Single(library => library.Name == "Film");
+        film.Locations = [TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)];
+        _failingAdds.Clear();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)], Locations("Film"));
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies), TypeFolderOf(_serverC, films, TypeFolder.Movies)], Locations("Altri film"));
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+        Assert.Empty(c.PlacedFolders);
+    }
+
+    [Fact]
+    public async Task AFolderAddedBeforeAHeldScanIsNotAddedAgainOnceTheAdminRemovedIt()
+    {
+        Migrated();
+        var c = Imported(_serverC);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _configured.Add(_serverC);
+        var held = 1;
+        var manager = new Mock<IServerLibraryManager>();
+        manager.Setup(libraries => libraries.FollowForPlacement()).Returns(() => new PlacementLibraries(_libraries.ToList(), new HashSet<VirtualFolderInfo>()));
+        manager.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => held-- <= 0);
+        _managerOverride = manager.Object;
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+        Assert.Contains(ServerFilms(_serverC), Locations("Film"));
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+
+        _libraries.Single(library => library.Name == "Film").Locations = [ServerFilms(_serverA), ServerFilms(_serverB)];
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB)], Locations("Film"));
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+        Assert.Empty(c.PlacedFolders);
+    }
+
     private static string NewId() => Guid.NewGuid().ToString("N");
 
     // A remote library the admin imports on a server already linked, as the edit saves it and a sync reads it.

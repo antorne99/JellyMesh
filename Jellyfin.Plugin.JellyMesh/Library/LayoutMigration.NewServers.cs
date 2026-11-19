@@ -144,14 +144,23 @@ public sealed partial class LayoutMigration
             }
 
             var failed = false;
+            var recorded = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server)?.PlacedFolders.Select(placed => (placed.Library, placed.Folder)).ToHashSet() ?? []);
             foreach (var (path, type) in toPlace.Folders)
             {
-                foreach (var folder in folders.Where(folder => !automatic.Contains(folder) && !Holds(folder, path) && HoldsOther(folder, root, server, type, servers)))
+                var relative = FederatedPaths.RelativeTo(root, path) ?? path;
+                foreach (var folder in folders.Where(folder => !automatic.Contains(folder)
+                    && !Holds(folder, path)
+                    && !recorded.Contains((KeyOf(folder), relative))
+                    && HoldsOther(folder, root, server, type, servers)))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var outcome = _paths.Add(root, folder.Name, path);
                     added |= outcome == LibraryPathOutcome.Done;
-                    if (!IsDone(outcome))
+                    if (IsDone(outcome))
+                    {
+                        RecordPlaced(server, KeyOf(folder), relative);
+                    }
+                    else
                     {
                         _logger.LogWarning("Cannot add the folder of a new server to the library {Library}; the next sync tries again", LogText.Clean(folder.Name));
                         failed = true;
@@ -199,6 +208,13 @@ public sealed partial class LayoutMigration
         return folders.Count == 0 && !placed ? null : (folders, settled);
     }
 
+    // Records at once a folder added to a library, so one the admin removes before the server is placed stays out (§10 row 496).
+    private void RecordPlaced(Guid server, string library, string folder) => _store.Update(config =>
+        config.Servers.FirstOrDefault(entry => entry.Id == server)?.PlacedFolders.Add(new PlacedFolderConfig { Library = library, Folder = folder }));
+
+    // The id of a library, or its name when it has none.
+    private static string KeyOf(VirtualFolderInfo folder) => string.IsNullOrEmpty(folder.ItemId) ? folder.Name : folder.ItemId;
+
     // Whether a library is imported and has not been read by a sync yet.
     private static bool IsUnread(RemoteServerConfig server, string id) =>
         server.ImportedLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase)
@@ -228,7 +244,8 @@ public sealed partial class LayoutMigration
             : null;
     }
 
-    // Keeps the placed servers still configured, with those just placed, and drops the libraries imported later they settled.
+    // Keeps the placed servers still configured, with those just placed, and drops the libraries imported later they settled
+    // and the folders recorded for them.
     private void SavePlaced(IReadOnlyCollection<Guid> servers, IReadOnlyCollection<Guid> done, IReadOnlyDictionary<Guid, IReadOnlyList<string>>? settled = null) => _store.Update(config =>
     {
         var placed = config.LayoutMigration.PlacedServers;
@@ -239,12 +256,14 @@ public sealed partial class LayoutMigration
             placed.Add(server);
         }
 
-        foreach (var server in config.Servers)
+        foreach (var server in config.Servers.Where(server => done.Contains(server.Id)))
         {
             foreach (var id in settled?.GetValueOrDefault(server.Id) ?? [])
             {
                 server.LibrariesToPlace.Remove(id);
             }
+
+            server.PlacedFolders.Clear();
         }
     });
 

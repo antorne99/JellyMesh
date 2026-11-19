@@ -61,6 +61,12 @@ public class RemoteServerConfig
     public Collection<string> LibrariesToPlace { get; } = [];
 
     /// <summary>
+    /// Gets the folders the automatic migration added to libraries of the admin while placing this server is not finished,
+    /// so that one the admin removes meanwhile is not added again (§10 row 496).
+    /// </summary>
+    public Collection<PlacedFolderConfig> PlacedFolders { get; } = [];
+
+    /// <summary>
     /// Gets the imported libraries one correct answer of the remote did not list: a second one in a row drops them (§10 row 436).
     /// </summary>
     public Collection<string> AbsentLibraryIds { get; } = [];

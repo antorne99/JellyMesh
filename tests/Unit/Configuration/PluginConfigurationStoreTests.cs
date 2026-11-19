@@ -179,6 +179,25 @@ public sealed class PluginConfigurationStoreTests : IDisposable
     }
 
     [Fact]
+    public void TheFoldersPlacedOfAServerSurviveARestart()
+    {
+        var serverId = Guid.NewGuid();
+        Store().Update(config =>
+        {
+            var server = new RemoteServerConfig { Id = serverId, Name = "Casa", Url = TestValues.Url };
+            server.PlacedFolders.Add(new PlacedFolderConfig { Library = "0f1e2d3c4b5a69788796a5b4c3d2e1f0", Folder = "a/library-1/Film" });
+            server.PlacedFolders.Add(new PlacedFolderConfig { Library = "Film di casa", Folder = "a/Serie" });
+            config.Servers.Add(server);
+        });
+
+        var loaded = Store().Read(config => config);
+
+        Assert.Equal(
+            [("0f1e2d3c4b5a69788796a5b4c3d2e1f0", "a/library-1/Film"), ("Film di casa", "a/Serie")],
+            loaded.Servers[0].PlacedFolders.Select(placed => (placed.Library, placed.Folder)));
+    }
+
+    [Fact]
     public void AnAdoptedLibraryStaysAdoptedAfterARestartForAServerAndARemovedOne()
     {
         var serverId = Guid.NewGuid();
