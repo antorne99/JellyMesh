@@ -41,7 +41,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, ILibraryChangeTracker? changes = null, IServerRenamer? renamer = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, ILibraryChangeTracker? changes = null, IServerRenamer? renamer = null, IPluginDatabase? database = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -55,7 +55,8 @@ public class FederationAdminControllerTests
             new CapturingLogger<FederationAdminController>(),
             migration,
             changes,
-            renamer);
+            renamer,
+            database: database);
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -566,7 +567,7 @@ public class FederationAdminControllerTests
         var state = new AutomaticLibrariesState(true, true, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None);
         libraries.Setup(manager => manager.GetState(id)).Returns(state);
 
-        Assert.Same(state, Assert.Single(controller.GetStatus().Value!.Servers).AutomaticLibraries);
+        Assert.Same(state, Assert.Single((await controller.GetStatus(CancellationToken.None)).Value!.Servers).AutomaticLibraries);
     }
 
     [Fact]
@@ -671,7 +672,7 @@ public class FederationAdminControllerTests
         renamer.Setup(r => r.GetState(id)).Returns(state);
         renamer.Setup(r => r.NeedsRestart).Returns(true);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
 
         Assert.True(status.RenamedLibrariesNeedRestart);
         Assert.Same(state, Assert.Single(status.Servers).Rename);
@@ -687,7 +688,7 @@ public class FederationAdminControllerTests
         var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
         renamer.Setup(r => r.GetState(id)).Returns(new ServerRenameState(false, true, false) { Stuck = true });
 
-        var json = ToJson(controller.GetStatus().Value);
+        var json = ToJson((await controller.GetStatus(CancellationToken.None)).Value);
 
         Assert.Contains("\"Rename\":{\"Busy\":false,\"Pending\":true,\"Failed\":false,\"Stuck\":true}", json, StringComparison.Ordinal);
         Assert.DoesNotContain(".strm", json, StringComparison.Ordinal);
@@ -704,7 +705,7 @@ public class FederationAdminControllerTests
         var test = await controller.TestServer(id, CancellationToken.None);
         var form = new ServerEditRequest { Name = added.Value.Name, Url = added.Value.Url, Username = TestValues.Username, Password = TestValues.Password };
         var libraries = await controller.CheckServerEdit(id, form, CancellationToken.None);
-        var status = controller.GetStatus();
+        var status = await controller.GetStatus(CancellationToken.None);
 
         var api = ToJson(added.Value) + ToJson(test.Value) + ToJson(libraries.Value) + ToJson(status.Value);
         AssertNoSecret(api);
@@ -772,7 +773,7 @@ public class FederationAdminControllerTests
         Assert.NotEqual(first.Id, again.Value!.Id);
         Assert.Equal("Renamed", again.Value.Name);
         Assert.DoesNotContain("Recognized", ToJson(again.Value), StringComparison.Ordinal);
-        Assert.Equal(again.Value.Id, controller.GetStatus().Value!.Servers.Single().Id);
+        Assert.Equal(again.Value.Id, (await controller.GetStatus(CancellationToken.None)).Value!.Servers.Single().Id);
     }
 
     [Fact]
@@ -820,7 +821,7 @@ public class FederationAdminControllerTests
         var logs = string.Join('\n', fixture.Logger.Lines);
         Assert.Contains("Unreachable", logs, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Host, logs, StringComparison.Ordinal);
-        Assert.Equal("Offline", ControllerFor(fixture).GetStatus().Value!.Servers.Single().Connection);
+        Assert.Equal("Offline", (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!.Servers.Single().Connection);
     }
 
     [Theory]
@@ -831,7 +832,7 @@ public class FederationAdminControllerTests
         using var fixture = new RegistryFixture(key: key);
         var controller = ControllerFor(fixture);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
         var add = await controller.AddServer(_request, CancellationToken.None);
 
         Assert.Equal(expected, status.KeyState);
@@ -850,7 +851,7 @@ public class FederationAdminControllerTests
         fixture.KeySource.Key = TestValues.OtherKey;
         var controller = ControllerFor(fixture);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
         var test = await controller.TestServer(server.Id, CancellationToken.None);
 
         Assert.Equal(KeyState.Wrong, status.KeyState);
@@ -868,24 +869,24 @@ public class FederationAdminControllerTests
         var server = await fixture.AddServerAsync();
         fixture.KeySource.Key = TestValues.OtherKey;
         var controller = ControllerFor(fixture);
-        Assert.True(controller.GetStatus().Value!.Servers.Single().NeedsPassword);
+        Assert.True((await controller.GetStatus(CancellationToken.None)).Value!.Servers.Single().NeedsPassword);
 
         var form = new ServerEditRequest { Name = server.Name, Url = server.Url, Username = TestValues.Username, Password = TestValues.Password };
         var result = await controller.SaveServerEdit(server.Id, form, CancellationToken.None);
 
         Assert.False(result.Value!.NeedsPassword);
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
         Assert.Equal(KeyState.Ok, status.KeyState);
         Assert.False(status.Suspended);
         Assert.DoesNotContain(TestValues.Password, System.Text.Json.JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AGoodKeyShowsNoWarning()
+    public async Task AGoodKeyShowsNoWarning()
     {
         using var fixture = new RegistryFixture();
 
-        var status = ControllerFor(fixture).GetStatus().Value!;
+        var status = (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(KeyState.Ok, status.KeyState);
         Assert.False(status.Suspended);
@@ -893,12 +894,12 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public void WithNoFolderNothingIsChecked()
+    public async Task WithNoFolderNothingIsChecked()
     {
         using var fixture = new RegistryFixture();
         var checker = new RecordingChecker(FederatedFolderLinkState.NotLinked);
 
-        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(FederatedFolderLinkState.NotChecked, folder.Link);
         Assert.False(checker.Called);
@@ -909,11 +910,11 @@ public class FederationAdminControllerTests
     [InlineData("relative/path", false)]
     [InlineData("  ", false)]
     [InlineData(null, false)]
-    public void TheFolderSaysWhetherAUsableVariableSetsIt(string? federatedRoot, bool expected)
+    public async Task TheFolderSaysWhetherAUsableVariableSetsIt(string? federatedRoot, bool expected)
     {
         using var fixture = new RegistryFixture();
 
-        var folder = ControllerFor(fixture, federatedRoot: federatedRoot).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, federatedRoot: federatedRoot).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(expected, folder.FromEnvironment);
     }
@@ -926,7 +927,7 @@ public class FederationAdminControllerTests
         var server = await fixture.AddServerAsync();
         var checker = new RecordingChecker(FederatedFolderLinkState.NotLinked);
 
-        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal([server.Id], checker.Servers);
         var shown = Assert.Single(folder.Servers);
@@ -953,7 +954,7 @@ public class FederationAdminControllerTests
             .Returns(new AutomaticLibrariesState(true, false, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None));
         var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Friend - Film", "Mia"] };
 
-        var folder = ControllerFor(fixture, checker, libraries: libraries.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker, libraries: libraries.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(["Mia"], Assert.Single(folder.Servers).Unregistered);
     }
@@ -968,7 +969,7 @@ public class FederationAdminControllerTests
         fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = server.Id, Name = "Copia", Url = saved.Url, EncryptedCredentials = saved.EncryptedCredentials });
         var checker = new RecordingChecker(FederatedFolderLinkState.Linked);
 
-        var status = ControllerFor(fixture, checker).GetStatus().Value!;
+        var status = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(server.Name, Assert.Single(status.Servers).Name);
         Assert.Equal(server.Name, Assert.Single(status.FederatedFolder.Servers).Name);
@@ -983,19 +984,19 @@ public class FederationAdminControllerTests
         await fixture.AddServerAsync();
         var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Mia"] };
 
-        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Empty(Assert.Single(folder.Servers).Unregistered);
     }
 
     [Fact]
-    public void TheLibrariesLeftByRemovedServersAreListed()
+    public async Task TheLibrariesLeftByRemovedServersAreListed()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Vecchio - Film" } });
         fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Altro - Serie" } });
 
-        var status = ControllerFor(fixture).GetStatus().Value!;
+        var status = (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(["Vecchio - Film", "Altro - Serie"], status.ReleasedLibraries.Select(library => library.Name));
         Assert.Equal(fixture.Store.Configuration.RemovedServerLibraries.Select(held => held.ServerId), status.ReleasedLibraries.Select(library => library.ServerId));
@@ -1003,7 +1004,7 @@ public class FederationAdminControllerTests
 
     // Row 416: each removed server whose removal waits for its watch state, by name only.
     [Fact]
-    public void TheStatusListsTheRemovalsHeldForTheirWatchState()
+    public async Task TheStatusListsTheRemovalsHeldForTheirWatchState()
     {
         using var fixture = new RegistryFixture();
         var keeper = new Mock<IWatchStateKeeper>();
@@ -1021,15 +1022,15 @@ public class FederationAdminControllerTests
             new CapturingLogger<FederationAdminController>(),
             keeper: keeper.Object);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(["Vecchio", null], status.HeldRemovals.Select(held => held.Name));
         Assert.Contains("\"HeldRemovals\":[{\"Name\":\"Vecchio\"},{", ToJson(status), StringComparison.Ordinal);
-        Assert.Empty(ControllerFor(fixture).GetStatus().Value!.HeldRemovals);
+        Assert.Empty((await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!.HeldRemovals);
     }
 
     [Fact]
-    public void HidingReleasedLibrariesTakesThemOffTheStatusAndLeavesTheLibrariesAlone()
+    public async Task HidingReleasedLibrariesTakesThemOffTheStatusAndLeavesTheLibrariesAlone()
     {
         using var fixture = new RegistryFixture();
         var removed = Guid.NewGuid();
@@ -1040,15 +1041,16 @@ public class FederationAdminControllerTests
         var result = controller.HideReleasedLibraries(new HideReleasedLibrariesRequest([new ReleasedLibrary(removed, "Vecchio - Film")]));
 
         Assert.IsType<NoContentResult>(result);
-        Assert.Equal(["Vecchio - Serie"], controller.GetStatus().Value!.ReleasedLibraries.Select(library => library.Name));
+        Assert.Equal(["Vecchio - Serie"], (await controller.GetStatus(CancellationToken.None)).Value!.ReleasedLibraries.Select(library => library.Name));
         var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
         Assert.Equal(["Vecchio - Film", "Vecchio - Serie"], held.ReleasedLibraries);
         Assert.Equal(["Vecchio - Film"], held.HiddenReleasedLibraries);
+        libraries.Verify(item => item.GetSharedState());
         libraries.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public void HidingAReleasedLibraryTwiceKeepsOneMark()
+    public async Task HidingAReleasedLibraryTwiceKeepsOneMark()
     {
         using var fixture = new RegistryFixture();
         var removed = Guid.NewGuid();
@@ -1061,14 +1063,14 @@ public class FederationAdminControllerTests
 
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(["Vecchio - Film"], Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
-        Assert.Empty(controller.GetStatus().Value!.ReleasedLibraries);
+        Assert.Empty((await controller.GetStatus(CancellationToken.None)).Value!.ReleasedLibraries);
     }
 
     [Theory]
     [InlineData(false, "Vecchio - Film")]
     [InlineData(true, "Vecchio - Serie")]
     [InlineData(true, "vecchio - film")]
-    public void HidingAReleasedLibraryThatIsNotListedHidesNothing(bool sameServer, string name)
+    public async Task HidingAReleasedLibraryThatIsNotListedHidesNothing(bool sameServer, string name)
     {
         using var fixture = new RegistryFixture();
         var removed = Guid.NewGuid();
@@ -1080,11 +1082,11 @@ public class FederationAdminControllerTests
 
         Assert.Equal(404, Assert.IsAssignableFrom<ObjectResult>(result).StatusCode);
         Assert.Empty(Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
-        Assert.Equal(2, controller.GetStatus().Value!.ReleasedLibraries.Count);
+        Assert.Equal(2, (await controller.GetStatus(CancellationToken.None)).Value!.ReleasedLibraries.Count);
     }
 
     [Fact]
-    public void TheFolderCarriesTheMigrationOfItsPaths()
+    public async Task TheFolderCarriesTheMigrationOfItsPaths()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.FederatedFolderPath = "/federata";
@@ -1092,13 +1094,13 @@ public class FederationAdminControllerTests
         var migration = new Mock<ILayoutMigration>();
         migration.Setup(item => item.GetStatus("/federata")).Returns(status);
 
-        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, migration: migration.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Same(status, folder.Migration);
     }
 
     [Fact]
-    public void TheFolderSaysWhichLibrariesChangedOnItSinceTheSync()
+    public async Task TheFolderSaysWhichLibrariesChangedOnItSinceTheSync()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.FederatedFolderPath = "/federata";
@@ -1106,19 +1108,19 @@ public class FederationAdminControllerTests
         var found = new LibraryChanges(["Tutto"], ["Film"]);
         changes.Setup(tracker => tracker.Compare()).Returns(found);
 
-        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, changes: changes.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Same(found, folder.Changes);
         changes.Verify(tracker => tracker.Record(), Times.Never);
     }
 
     [Fact]
-    public void WithNoFolderThereAreNoChanges()
+    public async Task WithNoFolderThereAreNoChanges()
     {
         using var fixture = new RegistryFixture();
         var changes = new Mock<ILibraryChangeTracker>(MockBehavior.Strict);
 
-        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, changes: changes.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(LibraryChanges.None, folder.Changes);
     }
@@ -1229,23 +1231,50 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public void TheStatusCarriesTheModeOfTheNewServers()
+    public async Task TheStatusCarriesTheStateOfTheDatabase()
+    {
+        var kept = new DateTimeOffset(2026, 12, 18, 3, 0, 0, TimeSpan.Zero);
+        var recovery = new StoreRecovery(kept.AddDays(-30), "jellymesh.db.damaged-20261118", kept.AddDays(-31));
+        var database = new Mock<IPluginDatabase>();
+        database.Setup(item => item.Health).Returns(StoreHealth.Healthy);
+        database.Setup(item => item.Recovery).Returns(recovery);
+        database.Setup(item => item.MigratedKeptUntilAsync(It.IsAny<CancellationToken>())).ReturnsAsync(kept);
+
+        var status = (await ControllerFor(new RegistryFixture(), database: database.Object).GetStatus(CancellationToken.None)).Value!;
+
+        Assert.Equal(new StoreStatus(StoreState.Healthy, null, recovery, kept), status.Store);
+    }
+
+    [Fact]
+    public async Task TheStatusCarriesTheLibrariesOfAllServers()
+    {
+        var state = new SharedLibrariesState(true, false, [], ["Vecchia"], AutomaticLibrariesError.None) { Unblocked = ["Tutti i server - Film"] };
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.GetSharedState()).Returns(state);
+
+        var status = (await ControllerFor(new RegistryFixture(), libraries: libraries.Object).GetStatus(CancellationToken.None)).Value!;
+
+        Assert.Same(state, status.SharedLibraries);
+    }
+
+    [Fact]
+    public async Task TheStatusCarriesTheModeOfTheNewServers()
     {
         using var fixture = new RegistryFixture();
         var migration = new Mock<ILayoutMigration>();
         migration.Setup(item => item.NewServerMode).Returns(LayoutMigrationMode.Automatic);
 
-        Assert.Equal(LayoutMigrationMode.Automatic, ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder.NewServerMode);
-        Assert.Equal(LayoutMigrationMode.Manual, ControllerFor(fixture).GetStatus().Value!.FederatedFolder.NewServerMode);
+        Assert.Equal(LayoutMigrationMode.Automatic, (await ControllerFor(fixture, migration: migration.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder.NewServerMode);
+        Assert.Equal(LayoutMigrationMode.Manual, (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!.FederatedFolder.NewServerMode);
     }
 
     [Fact]
-    public void WithNoFolderThereIsNoMigration()
+    public async Task WithNoFolderThereIsNoMigration()
     {
         using var fixture = new RegistryFixture();
         var migration = new Mock<ILayoutMigration>();
 
-        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, migration: migration.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Null(folder.Migration);
         migration.Verify(item => item.GetStatus(It.IsAny<string>()), Times.Never);

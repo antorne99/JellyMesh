@@ -45,6 +45,7 @@ public class FederationAdminController : ControllerBase
     private readonly ILibraryChangeTracker? _changes;
     private readonly IServerRenamer? _renamer;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly IPluginDatabase? _database;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -63,6 +64,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="changes">The libraries that changed on the federated folder since the last sync.</param>
     /// <param name="renamer">The server rename.</param>
     /// <param name="keeper">The watch state kept for removed servers, for the removals it holds.</param>
+    /// <param name="database">The plugin database, whose state the status carries.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -77,7 +79,8 @@ public class FederationAdminController : ControllerBase
         ILayoutMigration? migration = null,
         ILibraryChangeTracker? changes = null,
         IServerRenamer? renamer = null,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        IPluginDatabase? database = null)
     {
         _registry = registry;
         _vault = vault;
@@ -93,15 +96,17 @@ public class FederationAdminController : ControllerBase
         _changes = changes;
         _renamer = renamer;
         _keeper = keeper;
+        _database = database;
     }
 
     /// <summary>
     /// Gets the state shown on the configuration page.
     /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The status.</returns>
     [HttpGet("Status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<FederationStatus> GetStatus()
+    public async Task<ActionResult<FederationStatus>> GetStatus(CancellationToken cancellationToken)
     {
         var keyState = _vault.GetKeyState();
 
@@ -121,7 +126,9 @@ public class FederationAdminController : ControllerBase
                     .Where(name => !held.HiddenReleasedLibraries.Contains(name, StringComparer.Ordinal))
                     .Select(name => new ReleasedLibrary(held.ServerId, name)))
                 .ToList()),
-            HeldRemovals = _keeper?.HeldRemovals ?? []
+            HeldRemovals = _keeper?.HeldRemovals ?? [],
+            Store = _database is null ? null : await StoreStatus.ReadAsync(_database, cancellationToken).ConfigureAwait(false),
+            SharedLibraries = _libraries.GetSharedState()
         };
     }
 

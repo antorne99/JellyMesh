@@ -1,4 +1,3 @@
-using System;
 using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
@@ -65,22 +64,5 @@ public class FederationStoreController : ControllerBase
         return NoContent();
     }
 
-    private async Task<StoreStatus> StatusAsync(CancellationToken cancellationToken)
-    {
-        var health = _database.Health;
-        DateTimeOffset? kept = null;
-        if (!health.Suspended)
-        {
-            try
-            {
-                kept = await _database.MigratedKeptUntilAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (StoreSuspendedException)
-            {
-                // Suspended since the health was read: the old files are not shown.
-            }
-        }
-
-        return new StoreStatus(health.State, health.Reason, _database.Recovery, kept);
-    }
+    private Task<StoreStatus> StatusAsync(CancellationToken cancellationToken) => StoreStatus.ReadAsync(_database, cancellationToken);
 }
