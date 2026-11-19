@@ -140,6 +140,71 @@ public sealed partial class LayoutMigrationTests
         Assert.Equal([("Film", ServerFilms(_serverC))], _addedPaths);
     }
 
+    [Theory]
+    [InlineData(LibraryMode.ByType, false)]
+    [InlineData(LibraryMode.ByRemoteLibrary, false)]
+    [InlineData(LibraryMode.ByType, true)]
+    public async Task ThePluginLibrariesOfAnotherServerGetNoTypeFolderOfTheNewServer(LibraryMode mode, bool adopted)
+    {
+        // §10 row 443: the libraries by type, by remote library and adopted are the plugin's, so only the admin's gets it.
+        MigratedToRemoteLibraries();
+        var (filmsOfA, filmsOfC) = (Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
+        var a = Imported(_serverA, (filmsOfA, "movies"));
+        a.LibraryMode = mode;
+        Imported(_serverC, (filmsOfC, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, LocalFilms, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _libraries.Add(Library("Di A", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        a.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig
+        {
+            Kind = ServerLibraryKind.Movies,
+            Name = "Di A",
+            ItemId = IdOf("Di A"),
+            RemoteLibraryId = mode == LibraryMode.ByRemoteLibrary ? filmsOfA : string.Empty,
+            Adopted = adopted
+        });
+        foreach (var library in _libraries)
+        {
+            a.FollowedLibraryIds.Add(library.ItemId!);
+        }
+
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, filmsOfC, TypeFolder.Movies))], _addedPaths);
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)], Locations("Di A"));
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
+    [Fact]
+    public async Task ASharedLibraryGetsNoTypeFolderOfTheNewServerFromPlacement()
+    {
+        // §10 row 443: the shared library is the plugin's; it takes the new server through its own check (row 442).
+        MigratedToRemoteLibraries();
+        var (filmsOfA, filmsOfC) = (Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
+        Imported(_serverC, (filmsOfC, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, LocalFilms, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _libraries.Add(Library("Tutti i server - Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        var shared = _store.Configuration.SharedLibraries;
+        shared.Enabled = true;
+        shared.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", ItemId = IdOf("Tutti i server - Film") });
+        foreach (var library in _libraries)
+        {
+            shared.FollowedLibraryIds.Add(library.ItemId!);
+        }
+
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, filmsOfC, TypeFolder.Movies))], _addedPaths);
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)], Locations("Tutti i server - Film"));
+    }
+
     [Fact]
     public async Task TheAutomaticLibrariesOfTheOtherServersGetNoFolderOfTheNewServer()
     {
