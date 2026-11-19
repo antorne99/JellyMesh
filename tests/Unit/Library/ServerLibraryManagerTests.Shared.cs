@@ -177,6 +177,24 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_the_admin_makes_while_a_shared_one_is_made_is_not_taken_for_it()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.OnCreate = () =>
+        {
+            if (!fixture.Libraries.Folders.Any(folder => folder.Name == "Bambini"))
+            {
+                fixture.Libraries.Add("Bambini", CollectionTypeOptions.movies, _movies);
+            }
+        };
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.Equal([SharedFilm, SharedSeries], Shared(fixture).Libraries.Select(record => record.Name).Order(StringComparer.Ordinal));
+        Assert.Equal([_movies], fixture.Libraries.Find("Bambini").Locations);
+    }
+
+    [Fact]
     public async Task A_failed_block_leaves_the_shared_library_unmade()
     {
         var fixture = WithTwoServers();

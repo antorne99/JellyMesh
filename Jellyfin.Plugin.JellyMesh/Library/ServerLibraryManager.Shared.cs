@@ -356,8 +356,12 @@ public sealed partial class ServerLibraryManager
             return ReadFolders() is { } after && ResolveShared(intent, root, after);
         }
 
-        // The server may add a number to the name, so the new library is found by its paths among those not there before.
-        var made = ReadFolders()?.FirstOrDefault(folder => !taken.Contains(folder.Name) && Passes(folder, planned.Kind, string.Empty, root, _sharedOwner));
+        // The server may add a number to the name, so the new library is found by exactly its paths among those not there
+        // before, by its name first; none is taken when that leaves more than one.
+        var fresh = ReadFolders()?
+            .Where(folder => !taken.Contains(folder.Name) && Passes(folder, planned.Kind, string.Empty, root, _sharedOwner) && SameLocations(folder.Locations ?? [], planned.Paths))
+            .ToList() ?? [];
+        var made = fresh.FirstOrDefault(folder => string.Equals(folder.Name, name, StringComparison.Ordinal)) ?? (fresh is [var only] ? only : null);
         if (made is not null
             && !string.Equals(made.Name, name, StringComparison.Ordinal)
             && !await BlockSharedAsync(made.Name, Guid.TryParse(made.ItemId, out var madeId) ? madeId : null, planned, sources, cancellationToken).ConfigureAwait(false))
