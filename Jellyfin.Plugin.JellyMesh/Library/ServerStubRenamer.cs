@@ -350,8 +350,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         outcome.Status == WatchStateMoveStatus.Carried
         || (outcome.Status == WatchStateMoveStatus.UsersLeft && outcome.SkippedUsers.All(user => user.Reason == WatchStateUserSkipReason.NoVisibleVersion));
 
-    // The path with the new label, null for a stub whose name does not end with the old one.
-    private static string? NewPath(string relative, string old, string label)
+    // The path with the new label, null for a stub whose name does not end with the old one.    private static string? NewPath(string relative, string old, string label)
     {
         var suffix = " - " + old + ".strm";
         var name = Path.GetFileName(relative);
@@ -448,8 +447,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     private Video? ItemAt(string root, string relative, StubKind kind)
     {
         var path = FederatedPaths.Resolve(root, relative);
-        var type = kind == StubKind.Episode ? typeof(Episode) : typeof(Movie);
-        return _library.GetItemById(_library.GetNewItemId(path, type)) as Video
+        return _library.GetItemById(_library.GetNewItemId(path, StubItemTypes.Of(kind))) as Video
             ?? _library.GetItemById(_library.GetNewItemId(path, typeof(Video))) as Video;
     }
 

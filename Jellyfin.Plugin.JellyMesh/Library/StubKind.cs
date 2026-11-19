@@ -12,5 +12,11 @@ public enum StubKind
     Episode,
 
     /// <summary>A music track.</summary>
-    Track
+    Track,
+
+    /// <summary>A music video, in a title folder like a film.</summary>
+    MusicVideo,
+
+    /// <summary>A home video, in the folders of its remote library.</summary>
+    HomeVideo
 }
