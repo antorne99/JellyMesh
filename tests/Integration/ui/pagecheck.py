@@ -3424,6 +3424,29 @@ def edit_locks(s, width):
     u.close(page)
 
 
+def edit_gone(s, width):
+    """An imported library the user no longer sees shows in the edit form, marked as going at the save (row 434)."""
+    name = width + " edit gone"
+
+    def gone(context):
+        fake(context, "Servers/*/Edit/Check", lambda data: data["Consequences"]["RemovedLibraries"].extend([
+            {"Id": "gone-1", "Name": HOSTILE, "NoLongerVisible": True}, {"Id": "gone-2", "Name": None, "NoLongerVisible": True}]), "POST")
+
+    page = s.open("fresh", width, tab="servers", route=gone)
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    marks = stock.locator(u.LIBRARY + ":disabled")
+    check(name + " marks each library no longer visible", until(page, lambda: marks.count() == 2), form.inner_text())
+    check(name + " names it as text", HOSTILE + ": no longer visible, will be removed" in form.inner_text() and form.locator("b, i").count() == 0, form.inner_text())
+    check(name + " marks one with no name", "A library no longer visible, will be removed" in form.inner_text(), form.inner_text())
+    check(name + " leaves the marks unticked", stock.locator(u.LIBRARY + ":disabled:checked").count() == 0)
+    check(name + " keeps the libraries the user sees", stock.locator(u.LIBRARY + ":enabled").count() == 2)
+    healthy(page, name)
+    u.shot(page, f"edit-gone-{width}")
+    u.close(page)
+
+
 def mode_change(s, width):
     """The confirmation of a mode change names the libraries it deletes and releases and who loses titles, as the check
     answers them, with every name escaped."""
@@ -3783,6 +3806,7 @@ SCENARIOS = {
     "cards-restart": (cards_restart, WIDTHS),
     "edit-form": (edit_form, WIDTHS),
     "edit-locks": (edit_locks, WIDTHS),
+    "edit-gone": (edit_gone, WIDTHS),
     "adopted": (adopted, WIDTHS),
     "mode-change": (mode_change, WIDTHS),
     "recreate": (recreate, ["1280"]),

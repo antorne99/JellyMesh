@@ -1721,6 +1721,8 @@
                     "Deleting the libraries of all servers that JellyMesh made, and releasing the adopted ones.": "Eliminazione delle librerie di tutti i server create da JellyMesh e rilascio di quelle adottate in corso.",
                     "JellyMesh stops keeping one library per type with the folders of all servers.": "JellyMesh smette di tenere una libreria per tipo con le cartelle di tutti i server.",
                     "Turn off the libraries of all servers?": "Spegnere le librerie di tutti i server?",
+                    "{library}: no longer visible, will be removed": "{library}: non più visibile, verrà tolta",
+                    "A library no longer visible, will be removed": "Una libreria non più visibile, verrà tolta",
                     "{server} answered with a problem ({problem}). The edit can still be saved.": "{server} ha risposto con un problema ({problem}). La modifica si può salvare comunque.",
                     "{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.": "{server} non risponde. Finché non risponde, l'accesso e le librerie restano come sono. Un nuovo URL si salva solo se il server risponde a quell'indirizzo.",
                     "Add the folders of each remote library to the libraries": "Aggiungi alle librerie le cartelle di ogni libreria remota",
@@ -3137,8 +3139,14 @@
                         heading.className = 'jmLibrariesTitle';
                         libraries.appendChild(heading);
                         boxes = [];
+                        var gone = (check.Consequences ? check.Consequences.RemovedLibraries : []).filter(function (library) {
+                            return library.NoLongerVisible;
+                        });
                         if (check.Libraries.length === 0) {
                             addFormNote(libraries, t('This user sees no film or series libraries. Give it access on that server, then open Edit again.'));
+                        }
+
+                        if (check.Libraries.length === 0 && gone.length === 0) {
                             return;
                         }
 
@@ -3150,7 +3158,15 @@
                             box.checked = library.Selected;
                             return box;
                         });
-                        if (!check.Libraries.some(function (library) {
+
+                        // An imported library the user no longer sees goes at the save, whatever is ticked (row 434).
+                        gone.forEach(function (library) {
+                            var mark = addCheckbox(list, library.Id, library.Name
+                                ? t('{library}: no longer visible, will be removed', { library: library.Name })
+                                : t('A library no longer visible, will be removed'));
+                            mark.disabled = true;
+                        });
+                        if (check.Libraries.length > 0 && !check.Libraries.some(function (library) {
                             return library.Selected;
                         })) {
                             addFormNote(libraries, t('Nothing is imported from this server until you choose its libraries and save.'));
