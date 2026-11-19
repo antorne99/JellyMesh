@@ -10,8 +10,8 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
-// The servers linked after the automatic migration (Q58, D21, D23, D24): their folders join the libraries holding a
-// folder of the same type of another server (§10 row 443), and the settings set the mode, the field of the banner (§10 row 368).
+// Places the folders of servers linked and remote libraries imported after the automatic migration (D24, D57, §10 rows 443,
+// 496) in the libraries holding a folder of their type of another server; the settings set the mode (§10 row 368).
 public sealed partial class LayoutMigration
 {
     // Set when the scan after the folders of new servers were added was held back; the next run asks for it again.
@@ -82,19 +82,28 @@ public sealed partial class LayoutMigration
             {
                 migration.PlacedServers.Add(server);
             }
+
+            foreach (var server in config.Servers)
+            {
+                server.LibrariesToPlace.Clear();
+            }
         });
         _logger.LogInformation("Migration to the server folders: the admin set the new servers to automatic");
         return new LayoutMigrationChoice(LayoutMigrationChoiceOutcome.Chosen, Task.CompletedTask);
     }
 
-    // Adds the folders of each server not placed yet to every library holding a folder of the same type of another server,
-    // but not to the plugin libraries (D24, §10 row 443). A failed addition is retried by the next hook, with no error.
+    // Adds the folders of new servers and of libraries imported later on placed ones to every admin library holding a folder
+    // of their type of another server (§10 rows 443, 496); a failed addition is retried by the next hook.
     private async Task PlaceNewServersAsync(string root, CancellationToken cancellationToken)
     {
         var servers = _servers.GetServers().Select(server => server.Id).Distinct().ToList();
         var placed = _store.Read(config => config.LayoutMigration.PlacedServers.ToList());
         var fresh = servers.Where(server => !placed.Contains(server)).ToList();
-        if (fresh.Count == 0)
+        var later = _store.Read(config => config.Servers
+            .Where(server => server.LibrariesToPlace.Count > 0 && placed.Contains(server.Id) && servers.Contains(server.Id))
+            .Select(server => server.Id)
+            .ToList());
+        if (fresh.Count == 0 && later.Count == 0)
         {
             if (placed.Any(server => !servers.Contains(server)))
             {
@@ -124,17 +133,18 @@ public sealed partial class LayoutMigration
 
         var (folders, automatic) = (libraries.Folders, libraries.Automatic);
         var done = new List<Guid>();
+        var settled = new Dictionary<Guid, IReadOnlyList<string>>();
         var added = false;
-        foreach (var server in fresh)
+        foreach (var server in fresh.Concat(later))
         {
-            if (FoldersToPlace(root, server, olderLayout) is not { } paths)
+            if (ToPlace(root, server, olderLayout, placed.Contains(server)) is not { } toPlace)
             {
                 _logger.LogInformation("Migration to the server folders: a new server has no imported library read yet, so it waits for the next sync");
                 continue;
             }
 
             var failed = false;
-            foreach (var (path, type) in paths)
+            foreach (var (path, type) in toPlace.Folders)
             {
                 foreach (var folder in folders.Where(folder => !automatic.Contains(folder) && !Holds(folder, path) && HoldsOther(folder, root, server, type, servers)))
                 {
@@ -152,6 +162,7 @@ public sealed partial class LayoutMigration
             if (!failed)
             {
                 done.Add(server);
+                settled[server] = toPlace.Settled;
             }
         }
 
@@ -165,23 +176,33 @@ public sealed partial class LayoutMigration
         }
 
         _placementScanOwed = false;
-        SavePlaced(servers, done);
+        SavePlaced(servers, done, settled);
     }
 
-    // The folders of a new server with their type: its 0.5 folders while the stubs keep the older layout, otherwise one type
-    // folder per imported remote library (§10 row 443). Null until a sync has read an imported library of it.
-    private List<(string Path, TypeFolder Type)>? FoldersToPlace(string root, Guid server, bool olderLayout)
+    // The folders to place with their type and the libraries imported later they settle: for a new server all its folders,
+    // null until one is read; for a placed one the type folders of libraries imported later, none in the older layout.
+    private (List<(string Path, TypeFolder Type)> Folders, IReadOnlyList<string> Settled)? ToPlace(string root, Guid server, bool olderLayout, bool placed)
     {
+        var (typeFolders, toPlace, waiting) = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server) is { } found
+            ? (LibraryPlan.TypeFolders(found), found.LibrariesToPlace.ToList(), found.LibrariesToPlace.Where(id => !olderLayout && IsUnread(found, id)).ToList())
+            : ([], [], []));
+        var settled = toPlace.Except(waiting, StringComparer.Ordinal).ToList();
         if (olderLayout)
         {
-            return [(FederatedFolderLayout.ServerMoviesPath(root, server), TypeFolder.Movies), (FederatedFolderLayout.ServerSeriesPath(root, server), TypeFolder.Series)];
+            return (placed ? [] : [(FederatedFolderLayout.ServerMoviesPath(root, server), TypeFolder.Movies), (FederatedFolderLayout.ServerSeriesPath(root, server), TypeFolder.Series)], settled);
         }
 
-        var typeFolders = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server) is { } found ? LibraryPlan.TypeFolders(found) : []);
-        return typeFolders.Count == 0 ? null : typeFolders
+        var folders = typeFolders
+            .Where(folder => !placed || toPlace.Contains(Path.GetFileName(Path.GetDirectoryName(folder)), StringComparer.OrdinalIgnoreCase))
             .Select(folder => (FederatedPaths.Resolve(root, folder), TypeFolder.All.First(type => string.Equals(type.Name, Path.GetFileName(folder), StringComparison.Ordinal))))
             .ToList();
+        return folders.Count == 0 && !placed ? null : (folders, settled);
     }
+
+    // Whether a library is imported and has not been read by a sync yet.
+    private static bool IsUnread(RemoteServerConfig server, string id) =>
+        server.ImportedLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase)
+        && !server.RemoteLibraries.Any(library => string.Equals(library.Id, id, StringComparison.OrdinalIgnoreCase));
 
     // Whether a library holds a folder of the given type of another configured server, in either layout.
     private static bool HoldsOther(VirtualFolderInfo folder, string root, Guid server, TypeFolder type, IReadOnlyCollection<Guid> servers) =>
@@ -207,8 +228,8 @@ public sealed partial class LayoutMigration
             : null;
     }
 
-    // Keeps the placed servers still configured, with those just placed.
-    private void SavePlaced(IReadOnlyCollection<Guid> servers, IReadOnlyCollection<Guid> done) => _store.Update(config =>
+    // Keeps the placed servers still configured, with those just placed, and drops the libraries imported later they settled.
+    private void SavePlaced(IReadOnlyCollection<Guid> servers, IReadOnlyCollection<Guid> done, IReadOnlyDictionary<Guid, IReadOnlyList<string>>? settled = null) => _store.Update(config =>
     {
         var placed = config.LayoutMigration.PlacedServers;
         var kept = placed.Where(servers.Contains).Concat(done).Distinct().ToList();
@@ -217,14 +238,28 @@ public sealed partial class LayoutMigration
         {
             placed.Add(server);
         }
+
+        foreach (var server in config.Servers)
+        {
+            foreach (var id in settled?.GetValueOrDefault(server.Id) ?? [])
+            {
+                server.LibrariesToPlace.Remove(id);
+            }
+        }
     });
 
-    // Records the servers whose folders the migration added, so only those linked later are placed.
+    // Records the servers whose folders the migration added, so only those linked later, and the libraries imported later,
+    // are placed.
     private void SeedPlaced(IReadOnlyCollection<Guid> servers) => _store.Update(config =>
     {
         foreach (var server in servers.Where(server => !config.LayoutMigration.PlacedServers.Contains(server)))
         {
             config.LayoutMigration.PlacedServers.Add(server);
+        }
+
+        foreach (var server in config.Servers.Where(server => servers.Contains(server.Id)))
+        {
+            server.LibrariesToPlace.Clear();
         }
     });
 }

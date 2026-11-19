@@ -782,6 +782,188 @@ public sealed partial class LayoutMigrationTests
     }
 
     // A server whose remote libraries were read, each given as its id and remote type, all imported, in "none" mode.
+[Fact]
+    public async Task ARemoteLibraryImportedLaterOnAPlacedServerJoinsTheAdminLibrariesOfItsTypeOnce()
+    {
+        // D57, §10 row 496: placed like the folders of a new server, and a folder the admin removes stays out.
+        MigratedToRemoteLibraries();
+        var (filmsOfA, showsOfB, filmsOfC, films4KOfC, showsOfC) = (NewId(), NewId(), NewId(), NewId(), NewId());
+        var a = Imported(_serverA, (filmsOfA, "movies"));
+        a.LibraryMode = LibraryMode.ByType;
+        var c = Imported(_serverC, (filmsOfC, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, LocalFilms, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, TypeFolderOf(_serverB, showsOfB, TypeFolder.Series)));
+        _libraries.Add(Library("Di A", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _libraries.Add(Library("Locale", CollectionTypeOptions.movies, LocalFilms));
+        a.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Di A", ItemId = IdOf("Di A") });
+        foreach (var library in _libraries)
+        {
+            a.FollowedLibraryIds.Add(library.ItemId!);
+        }
+
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+        Assert.Equal([("Film", TypeFolderOf(_serverC, filmsOfC, TypeFolder.Movies))], _addedPaths);
+        _addedPaths.Clear();
+
+        ImportLater(c, films4KOfC, "movies");
+        ImportLater(c, showsOfC, "tvshows");
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, films4KOfC, TypeFolder.Movies)), ("Serie", TypeFolderOf(_serverC, showsOfC, TypeFolder.Series))], _addedPaths);
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)], Locations("Di A"));
+        Assert.Empty(c.LibrariesToPlace);
+        Assert.Equal(2, _scansQueued);
+
+        var film = _libraries.Single(library => library.Name == "Film");
+        film.Locations = film.Locations.Where(location => location != TypeFolderOf(_serverC, films4KOfC, TypeFolder.Movies)).ToArray();
+        _addedPaths.Clear();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+    }
+
+    [Fact]
+    public async Task APlacedServerWithNoLibraryImportedSinceGetsNoFolder()
+    {
+        MigratedToRemoteLibraries();
+        Imported(_serverC, (NewId(), "movies"));
+        _store.Configuration.LayoutMigration.PlacedServers.Add(_serverC);
+        _configured.Add(_serverC);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, NewId(), TypeFolder.Movies)));
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        _materializer.Verify(materializer => materializer.PrepareServerFolders(), Times.Never);
+    }
+
+    [Fact]
+    public async Task ALibraryImportedLaterWaitsForItsReadAndOneLeftOutOrWithNoTypeFolderIsDropped()
+    {
+        MigratedToRemoteLibraries();
+        var (unread, leftOut, playlists) = (NewId(), NewId(), NewId());
+        var c = Imported(_serverC, (NewId(), "movies"), (playlists, "playlists"));
+        _store.Configuration.LayoutMigration.PlacedServers.Add(_serverC);
+        _configured.Add(_serverC);
+        c.ImportedLibraryIds.Add(unread);
+        c.LibrariesToPlace.Add(unread);
+        c.LibrariesToPlace.Add(leftOut);
+        c.LibrariesToPlace.Add(playlists);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, NewId(), TypeFolder.Movies)));
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.Equal([unread], c.LibrariesToPlace);
+
+        c.RemoteLibraries.Add(new RemoteLibraryConfig { Id = unread, Name = "Film 4K", CollectionType = "movies" });
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, unread, TypeFolder.Movies))], _addedPaths);
+        Assert.Empty(c.LibrariesToPlace);
+    }
+
+    [Fact]
+    public async Task InTheOlderLayoutALibraryImportedLaterAddsNothingAndStopsWaiting()
+    {
+        // D57 covers the remote library layout: before it, the 0.5 folders of the server hold the new library already.
+        Migrated();
+        var films = NewId();
+        var c = Imported(_serverC, (films, "movies"));
+        c.LibrariesToPlace.Add(films);
+        _store.Configuration.LayoutMigration.PlacedServers.Add(_serverC);
+        _configured.Add(_serverC);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.Empty(c.LibrariesToPlace);
+    }
+
+    [Fact]
+    public async Task AFailedAdditionKeepsTheLibraryImportedLaterForTheNextHook()
+    {
+        MigratedToRemoteLibraries();
+        var (films, filmsOfA) = (NewId(), NewId());
+        var c = Imported(_serverC);
+        _store.Configuration.LayoutMigration.PlacedServers.Add(_serverC);
+        _configured.Add(_serverC);
+        ImportLater(c, films, "movies");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _failingAdds.Add("Film");
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([films], c.LibrariesToPlace);
+
+        _failingAdds.Clear();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies), TypeFolderOf(_serverC, films, TypeFolder.Movies)], Locations("Film"));
+        Assert.Empty(c.LibrariesToPlace);
+    }
+
+    [Fact]
+    public async Task TheSettingsTurningAutomaticLeaveTheLibrariesImportedBeforeToTheAdmin()
+    {
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.None;
+        var films = NewId();
+        var a = Imported(_serverA);
+        ImportLater(a, films, "movies");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverB, NewId(), TypeFolder.Movies)));
+        var migration = await MigrationAsync();
+
+        await migration.SetMode(LayoutMigrationMode.Automatic).Job;
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.Empty(a.LibrariesToPlace);
+    }
+
+    [Fact]
+    public async Task TheAutomaticMigrationLeavesTheLibrariesImportedBeforeItToTheAdmin()
+    {
+        _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.None;
+        OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, LocalFilms, OldFilms));
+        var a = Imported(_serverA);
+        ImportLater(a, NewId(), "movies");
+        var migration = await MigrationAsync();
+
+        await migration.Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
+        Assert.Empty(a.LibrariesToPlace);
+    }
+
+    private static string NewId() => Guid.NewGuid().ToString("N");
+
+    // A remote library the admin imports on a server already linked, as the edit saves it and a sync reads it.
+    private static void ImportLater(RemoteServerConfig server, string id, string type)
+    {
+        server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = id, Name = "Libreria " + id[..4], CollectionType = type });
+        server.ImportedLibraryIds.Add(id);
+        server.LibrariesToPlace.Add(id);
+    }
+
     private RemoteServerConfig Imported(Guid server, params (string Id, string Type)[] libraries)
     {
         var config = new RemoteServerConfig { Id = server };
