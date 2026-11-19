@@ -281,13 +281,13 @@ public sealed partial class ServerLibraryManager
         var changed = await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false) | _sharedScanOwed;
         changed |= await ResolveSharedPendingAsync(root, folders, cancellationToken).ConfigureAwait(false);
         var (servers, records, created) = _store.Read(config => (
-            config.Servers.Select(server => (server.Id, Folders: _kinds.ToDictionary(kind => kind, kind => SharedLibraries.FoldersOf(server, kind, root, olderLayout)))).ToList(),
+            config.Servers.Select(server => (server.Id, Folders: ServerLibraryKinds.OfOneType.ToDictionary(kind => kind, kind => SharedLibraries.FoldersOf(server, kind, root, olderLayout)))).ToList(),
             config.SharedLibraries.Libraries.Select(Copy).ToList(),
             config.SharedLibraries.CreatedLibraryKeys.ToHashSet(StringComparer.OrdinalIgnoreCase)));
         var configured = servers.Select(server => server.Id).ToHashSet();
         var conflicts = new List<LibraryConflict>();
         var waited = false;
-        foreach (var kind in _kinds)
+        foreach (var kind in ServerLibraryKinds.OfOneType)
         {
             // The type folders that came to hold titles count too, as during a folder migration.
             var planned = SharedLibraries.Plan(kind, servers.Select(server => server.Folders[kind].Concat(TypeFolderPaths(kind, root, server.Id) ?? [])));
@@ -297,7 +297,8 @@ public sealed partial class ServerLibraryManager
                 continue;
             }
 
-            if (!recreate && created.Contains(planned.Key))
+            // Film and Serie are made even empty; a new type waits until a server has it, then stays.
+            if ((!recreate && created.Contains(planned.Key)) || (planned.Paths.Count == 0 && !ServerLibraryKinds.OfOlderLayout.Contains(kind)))
             {
                 continue;
             }

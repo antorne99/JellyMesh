@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -34,6 +35,19 @@ public sealed partial class ServerLibraryManagerTests
         Import(fixture.Server, TestLibraries.Mixed, "Tutto", "mixed");
         return fixture;
     }
+
+    // The libraries made when each block was written, in the order of the blocks.
+    private static List<List<string>> TrackMadeAtBlocks(Fixture fixture)
+    {
+        var made = new List<List<string>>();
+        fixture.Renamer.OnBlock = () => made.Add([.. fixture.Libraries.Created.Select(call => call.Name)]);
+        return made;
+    }
+
+    // The carries of the blocks written for who blocks a library, with the index of their block.
+    private static List<(int Block, AccessCarry Carry)> BlocksOf(Fixture fixture, Guid source) =>
+        [.. fixture.Renamer.Blocked.SelectMany((carries, block) => carries.Select(carry => (block, carry)))
+            .Where(pair => pair.carry.Folders.SelectMany(ids => ids).Contains(source))];
 
     private static void Import(RemoteServerConfig server, string id, string name, string type)
     {
@@ -186,5 +200,86 @@ public sealed partial class ServerLibraryManagerTests
             Assert.False(call.Options.EnableLUFSScan);
             Assert.False(call.Options.EnableRealtimeMonitor);
         });
+    }
+
+    [Fact]
+    public async Task A_shared_library_of_a_new_type_is_made_only_once_a_server_has_that_type()
+    {
+        var fixture = OnTypeFolders();
+        await fixture.Manager.EnableShared().Job;
+        Assert.Equal([SharedFilm, SharedSeries], fixture.Libraries.Created.Select(call => call.Name).Order(StringComparer.Ordinal));
+
+        Import(fixture.Server, TestLibraries.Music, "Dischi", "music");
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        var music = Assert.Single(fixture.Libraries.Created, call => call.Name == "Tutti i server - Musica");
+        Assert.Equal((CollectionTypeOptions.music, Absolute(_musicFolder)), (music.Type!.Value, Assert.Single(music.Options.PathInfos).Path));
+        Assert.Equal(3, fixture.Libraries.Created.Count);
+    }
+
+    [Fact]
+    public async Task Switching_on_makes_a_shared_library_for_each_new_type_present_with_its_options()
+    {
+        var fixture = WithNewTypes();
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.Equal(
+            [
+                (SharedFilm, CollectionTypeOptions.movies),
+                ("Tutti i server - Libri", CollectionTypeOptions.books),
+                ("Tutti i server - Musica", CollectionTypeOptions.music),
+                (SharedSeries, CollectionTypeOptions.tvshows),
+                ("Tutti i server - Video domestici", CollectionTypeOptions.homevideos),
+                ("Tutti i server - Video musicali", CollectionTypeOptions.musicvideos)
+            ],
+            fixture.Libraries.Created.Select(call => (call.Name, call.Type!.Value)).OrderBy(call => call.Name, StringComparer.Ordinal));
+        Assert.True(fixture.Libraries.Created.Single(call => call.Type == CollectionTypeOptions.homevideos).Options.EnablePhotos);
+        Assert.False(fixture.Libraries.Created.Single(call => call.Type == CollectionTypeOptions.music).Options.EnablePhotos);
+        Assert.Single(fixture.Scans.Steps, step => step == "scan");
+    }
+
+    [Fact]
+    public async Task The_shared_Film_and_Serie_take_the_film_and_serie_folders_of_a_mixed_library()
+    {
+        var fixture = WithMixed();
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.Equal([SharedFilm, SharedSeries], fixture.Libraries.Created.Select(call => call.Name).Order(StringComparer.Ordinal));
+        Assert.Contains(Absolute(_mixedFilmFolder), fixture.Libraries.Created.Single(call => call.Name == SharedFilm).Options.PathInfos.Select(info => info.Path));
+        Assert.Contains(Absolute(_mixedSerieFolder), fixture.Libraries.Created.Single(call => call.Name == SharedSeries).Options.PathInfos.Select(info => info.Path));
+    }
+
+    [Fact]
+    public async Task Before_they_exist_the_shared_Film_and_Serie_are_blocked_for_who_blocks_the_library_of_a_mixed_library()
+    {
+        var fixture = WithMixed();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+        var mixed = Guid.Parse(fixture.Libraries.IdOf("Casa - Tutto"));
+        var madeWhenBlocked = TrackMadeAtBlocks(fixture);
+
+        await fixture.Manager.EnableShared().Job;
+
+        var carries = BlocksOf(fixture, mixed);
+        Assert.Equal([SharedFilm, SharedSeries], carries.Select(carry => carry.Carry.Name).Order(StringComparer.Ordinal));
+        Assert.All(carries, carry => Assert.DoesNotContain(carry.Carry.Name, madeWhenBlocked[carry.Block]));
+    }
+
+    [Fact]
+    public async Task Before_it_exists_the_shared_library_of_a_new_type_is_blocked_for_who_blocks_a_library_on_its_folders()
+    {
+        var fixture = OnTypeFolders();
+        Import(fixture.Server, TestLibraries.Music, "Dischi", "music");
+        Import(fixture.Server, "a0d1000000000000000000000000000b", "Vinili", "music");
+        fixture.Libraries.Add("Mia musica", CollectionTypeOptions.music, Absolute(_musicFolder));
+        var madeWhenBlocked = TrackMadeAtBlocks(fixture);
+
+        await fixture.Manager.EnableShared().Job;
+
+        var (block, carry) = Assert.Single(BlocksOf(fixture, Guid.Parse(fixture.Libraries.IdOf("Mia musica"))));
+        Assert.Equal("Tutti i server - Musica", carry.Name);
+        Assert.DoesNotContain(carry.Name, madeWhenBlocked[block]);
+        Assert.Contains(fixture.Libraries.Created, call => call.Name == "Tutti i server - Musica");
     }
 }

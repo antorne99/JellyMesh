@@ -32,8 +32,6 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// </summary>
     public static readonly TimeSpan ReadyLimit = TimeSpan.FromMinutes(10);
 
-    private static readonly ServerLibraryKind[] _kinds = [ServerLibraryKind.Movies, ServerLibraryKind.Series];
-
     private readonly IPluginConfigurationStore _store;
     private readonly ILibraryManager _libraries;
     private readonly IFileSystem _fileSystem;
