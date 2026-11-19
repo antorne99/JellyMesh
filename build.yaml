@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.5.0.1"
+version: "0.5.0.2"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -20,7 +20,9 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - After you choose to migrate automatically, JellyMesh now syncs the servers before it scans, so the migration no longer waits for the next scheduled sync with every old title waiting for a scan.
-  - A migration left waiting that way on 0.5.0.0 carries on by itself after the update, with no action.
+  - JellyMesh 0.5.0.0 and 0.5.0.1 stopped Jellyfin 12.1, 12.2 and 12.3 from starting; 0.5.0.2 starts on every Jellyfin from 12.1 on.
+  - If your server stopped, start Jellyfin again: it turns JellyMesh off by itself and starts. Then install 0.5.0.2 from the catalog.
+  - Downloading a film or an episode from another server now gives the video itself, as playing it does, instead of a small text file with an internal link; a download still needs the user's download permission.
+  - When playback of a federated title fails, stops or falls back, the server log now says why: which server and step failed, the error with its HTTP status, how a stream broke off and after how long, and whether the playback session ended. No password, token or server address goes into the log.
 
-  Not verified: a remote server that is offline or fails during that sync, checked only in unit tests.
+  Not verified: Jellyfin 12.2, installs outside Docker such as Windows and macOS, and the install from the catalog after the server stopped, checked by copying the plugin into place. The log of a stream that breaks off midway and of HLS or transcoded playback, checked only in unit tests.

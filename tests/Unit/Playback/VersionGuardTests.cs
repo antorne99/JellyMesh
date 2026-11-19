@@ -21,6 +21,7 @@ using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -41,6 +42,7 @@ public class VersionGuardTests
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StreamSlots _peerSlots = new(TimeProvider.System, new InMemoryConfigurationStore());
+    private readonly CapturingLogger<StockRouteGuardFilter> _log = new();
     private readonly InMemoryConfigurationStore _store = new();
     private readonly Dictionary<Guid, BaseItem> _items = [];
     private readonly Movie _stub;
@@ -121,7 +123,8 @@ public class VersionGuardTests
             _fixture.Sessions,
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
-            _peerSlots);
+            _peerSlots,
+            _log);
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
@@ -354,6 +357,7 @@ public class VersionGuardTests
 
         Assert.False(await RunAsync(Guard(), anonymous));
         Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(anonymous));
+        Assert.Equal([LogLevel.Debug], _log.Levels);
         _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
             .ReturnsAsync(new AuthorizationInfo { User = _user, Token = PlaybackValues.LocalToken, DeviceId = "device" });
         Assert.False(await RunAsync(Guard(), hidden));

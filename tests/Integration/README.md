@@ -307,6 +307,31 @@ What Jellyfin 12.4 was observed to do with these tabs:
 - The router pushes that address without an event, while Back and Forward fire `popstate` and `hashchange`.
 - The header empties itself when the next page appears, and tabs must be set again at each `pageshow`. Calling `setTabs(null)` at `pagehide` runs after the next page set its own, and removes the tabs of Home.
 
+## Release check
+
+Run `scripts/release-check.sh` before every release, on the zip that will be published. It catches a package that does not start on the oldest supported Jellyfin, as 0.5.0.0 and 0.5.0.1 did on 12.1 (plan §10, row 421).
+
+```sh
+./scripts/release-check.sh                                  # builds the zip from this tree, as the release workflow does
+./scripts/release-check.sh ../../artifacts/jellymesh_0.5.0.2.zip   # or checks a given zip
+```
+
+Without an argument it builds the Release DLL in the `jellymesh-sdk` container and packs it with `.github/scripts/package.sh` into `artifacts/`. Then it checks:
+
+- the DLL asks for `Microsoft.Data.Sqlite` 10.0.11.0, the version Jellyfin 12.1 carries (`EXPECTED_SQLITE`), read from its metadata with `pwsh` in `jellymesh-sdk`;
+- Jellyfin 12.1 starts with the plugin installed;
+- the log says `Loaded plugin: JellyMesh <version>` and `/Plugins` shows it as `Active` at that version. 12.1 lists a plugin it skipped, for example for a `targetAbi` above its own, as `Active` too, so the status alone proves nothing;
+- the plugin's store opens: the file holds a SQLite schema after the start, or else after a library scan, which runs the post-scan task;
+- the server log has no assembly load error, no SQLite error and no error from JellyMesh.
+
+It runs every check and exits 1 if any fails, with the reason and, when the server does not start, the end of its log. The whole log is saved to `${TMPDIR:-/tmp}/jellymesh-release-check.log`.
+
+The server is the `release-12-1` service of `docker-compose.yml`, on port 8099 (`RELEASE_PORT`). Its `release` profile keeps it out of `docker compose up`. The script creates it with fresh `jellymesh-test_release-12-1-*` volumes, puts the plugin in `/config/plugins` before the first start, and removes the container and volumes at the end (`KEEP=1` leaves it running). It touches no other service of the stack. The service sets `JELLYMESH_FEDERATED_ROOT` to a tmpfs, because the first sync and the post-scan task do nothing without a federated folder.
+
+0.5 opens `watch-state.db` only when the file exists, so the script seeds an empty one in the plugin's data folder and checks SQLite wrote its schema there. With 0.5.0.2 that happens in the first sync after the start, so no scan is needed. When a release makes its own database at start, as `jellymesh.db` in 0.6, set `STORE_FILE` and `SEED_STORE=0`, or change their defaults in the script.
+
+The zip of v0.5.0.1, built from its tag, fails: it asks for `Microsoft.Data.Sqlite` 10.0.14.0, and Jellyfin 12.1 stops at start with `FileNotFoundException` for that assembly, so the plugin and its store are not checked. The 0.5.0.2 zip with `targetAbi` 99.0.0.0 fails the plugin check (`Skipping disabled plugin`) and the store check. With `STORE_FILE=jellymesh.db SEED_STORE=0` the 0.5.0.2 zip fails the store check, as it should.
+
 ## Not covered here
 
 - **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so it cannot test QSV. Antonio verified it on the OPS pc: it works.

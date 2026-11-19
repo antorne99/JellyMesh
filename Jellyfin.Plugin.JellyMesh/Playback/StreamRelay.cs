@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -46,6 +47,20 @@ public static class StreamRelay
     /// soon after a pause of the client (row 273).</returns>
     public static async Task<bool> CopyAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null)
     {
+        return (await RelayAsync(stream, context, stallLimit, cancellationToken, clock).ConfigureAwait(false)).CountsAsFailure;
+    }
+
+    /// <summary>
+    /// Copies a stream and tells how the copy ended, for the logs and for whether the source stopped serving.
+    /// </summary>
+    /// <param name="stream">The remote stream.</param>
+    /// <param name="context">The request.</param>
+    /// <param name="stallLimit">The longest the remote may send nothing.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="clock">The clock that times the client, the system clock if null.</param>
+    /// <returns>How the copy ended.</returns>
+    public static async Task<RelayResult> RelayAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null)
+    {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(context);
 
@@ -67,18 +82,20 @@ public static class StreamRelay
         context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
         if (HttpMethods.IsHead(context.Request.Method))
         {
-            return false;
+            return new RelayResult(RelayEnd.Head, 0, TimeSpan.Zero);
         }
 
+        var started = Stopwatch.GetTimestamp();
+        RelayResult Ended(RelayEnd end) => new(end, stream.BytesCopied, Stopwatch.GetElapsedTime(started));
         try
         {
             await stream.CopyToAsync(response.Body, stallLimit, cancellationToken, clock).ConfigureAwait(false);
-            return false;
+            return Ended(RelayEnd.Completed);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // The client went away.
-            return false;
+            return Ended(RelayEnd.ClientLeft);
         }
         catch (Exception exception) when (exception is IOException or TimeoutException)
         {
@@ -87,8 +104,14 @@ public static class StreamRelay
             context.Abort();
 
             // A break soon after a pause of the client is put down to the pause, not to the source (row 273).
-            return exception is TimeoutException
-                || (exception is RemoteStreamBrokenException broken && !(broken.SinceClientPause < PlaybackTimeouts.AfterClientPause));
+            return Ended(exception switch
+            {
+                TimeoutException => RelayEnd.RemoteStalled,
+                RemoteStreamBrokenException broken when broken.SinceClientPause < PlaybackTimeouts.AfterClientPause => RelayEnd.RemoteBrokeAfterClientPause,
+                RemoteStreamBrokenException => RelayEnd.RemoteBroke,
+                RemoteStreamClosedException => RelayEnd.ServerRemoved,
+                _ => RelayEnd.ClientDropped
+            });
         }
     }
 

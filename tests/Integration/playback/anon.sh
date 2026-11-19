@@ -10,7 +10,7 @@ echo "item $IT stub $STUB"
 code() { # label curl-args
   l=$1; shift; : > "$G/b"
   printf '%-50s %s\n' "$l" "$(curl -sS -o "$G/b" -w '%{http_code} %{size_download}' -m 25 -H 'Range: bytes=0-99' "$@")"
-  if grep -qaE ':8097|:8098|host.docker|tailnet|/media/' "$G/b"; then echo "   LEAK in body"; fi
+  if grep -qaE ':8097|:8098|host.docker|/media/|/JellyMesh/Play|sig=' "$G/b"; then echo "   LEAK in body"; fi
 }
 for who in anon nolib viewer; do
   if [ $who = anon ]; then A=(); else login $who; A=(-H "$(hdr)"); fi

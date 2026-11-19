@@ -111,7 +111,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
         if (!document.IsSuccess)
         {
-            return RemoteResult.Fail<PlaybackInfoResponse>(document.Failure);
+            return document.FailAs<PlaybackInfoResponse>();
         }
 
         // Besides invalid JSON, the converters of the server throw what they like on a value of the wrong shape.
@@ -163,7 +163,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
         return document.IsSuccess
             ? RemoteResult.Success(Encoding.UTF8.GetString(document.Value!))
-            : RemoteResult.Fail<string>(document.Failure);
+            : document.FailAs<string>();
     }
 
     /// <inheritdoc />
@@ -203,8 +203,9 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.RequestedRangeNotSatisfiable)
         {
             var failure = FailureOf(response);
+            var status = (int)response.StatusCode;
             response.Dispose();
-            return RemoteResult.Fail<RemoteContent>(failure);
+            return RemoteResult.FailWithStatus<RemoteContent>(failure, status);
         }
 
         var content = response.Content.Headers;
@@ -401,7 +402,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return (RemoteResult.Fail<byte[]>(FailureOf(response)), response.StatusCode);
+                return (RemoteResult.FailWithStatus<byte[]>(FailureOf(response), (int)response.StatusCode), response.StatusCode);
             }
 
             var body = await RemoteBody.ReadLimitedAsync(response.Content, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);

@@ -198,6 +198,24 @@ public sealed class StubLookup
     }
 
     /// <summary>
+    /// Tells whether an item is a stub by the URL of its <c>.strm</c>, even one the registry no longer knows,
+    /// or by a <c>.strm</c> path in the federated folder before Jellyfin has read it.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a stub.</returns>
+    public bool IsStub(Guid itemId)
+    {
+        if (_libraryManager.GetItemById(itemId) is not Video video)
+        {
+            return false;
+        }
+
+        return PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _)
+            || (video.Path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true
+                && FederatedPaths.IsInside(_store.Read(config => config.FederatedFolderPath), video.Path));
+    }
+
+    /// <summary>
     /// Finds the stub of an item.
     /// </summary>
     /// <param name="itemId">The item.</param>

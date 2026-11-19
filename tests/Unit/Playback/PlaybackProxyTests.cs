@@ -33,6 +33,7 @@ public class PlaybackProxyTests
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly CompletionFeature _response = new();
     private readonly PlaybackProxyController _controller;
+    private readonly CapturingLogger<PlaybackProxyController> _logger = new();
 
     public PlaybackProxyTests()
     {
@@ -47,7 +48,8 @@ public class PlaybackProxyTests
             new StubLookup(_library.Object, _stubs.Object, new InMemoryConfigurationStore()),
             _authorization.Object,
             _fixture.Clock,
-            new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance))
+            new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
+            _logger)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
         };
@@ -244,6 +246,52 @@ public class PlaybackProxyTests
 
         Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(result).StatusCode);
         Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_stream_that_does_not_open_logs_the_part_the_failure_its_status_and_no_remote_value()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.FailWithStatus<RemoteContent>(RemoteFailure.ServerError, 500));
+
+        await _controller.GetStream(session.Id, CancellationToken.None);
+
+        var line = Assert.Single(_logger.Lines, line => line.Contains("did not open", StringComparison.Ordinal));
+        Assert.Contains("The stream of play session " + session.Id, line, StringComparison.Ordinal);
+        Assert.Contains("ServerError (HTTP 500)", line, StringComparison.Ordinal);
+        Assert.Contains("Ends the session: True", line, StringComparison.Ordinal);
+        PlaybackLogAssert.NoRemoteValue(_logger.Lines);
+    }
+
+    [Fact]
+    public async Task A_remote_that_drops_in_the_middle_of_a_stream_logs_how_it_broke_and_its_retries_only_at_debug()
+    {
+        var session = Session(PlaybackStreamKind.Direct);
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(
+            System.Net.HttpStatusCode.OK,
+            new RemoteContentHeaders("video/mp4", null, null, null),
+            new DroppingStream())));
+
+        await _controller.GetStream(session.Id, CancellationToken.None);
+        await _controller.GetStream(session.Id, CancellationToken.None);
+
+        Assert.Contains(_logger.Lines, line => line.Contains("broke off: RemoteBroke", StringComparison.Ordinal) && line.Contains("Ends the session: True", StringComparison.Ordinal));
+        Assert.Single(_logger.Levels, level => level >= Microsoft.Extensions.Logging.LogLevel.Information);
+        PlaybackLogAssert.NoRemoteValue(_logger.Lines);
+    }
+
+    [Fact]
+    public async Task A_missing_subtitle_is_logged_as_no_end_of_the_session()
+    {
+        var session = Session(PlaybackStreamKind.Hls);
+        var url = session.MapRootedUrl("/Videos/remote-item/ms/Subtitles/0/0/Stream.vtt", PlaybackValues.LocalToken)!;
+        var parts = url.Split('?')[0].Split('/');
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.FailWithStatus<RemoteContent>(RemoteFailure.ServerError, 404));
+
+        await _controller.GetFile(session.Id, int.Parse(parts[^2], System.Globalization.CultureInfo.InvariantCulture), parts[^1], CancellationToken.None);
+
+        Assert.Contains(_logger.Lines, line => line.Contains("The subtitle of play session", StringComparison.Ordinal) && line.Contains("HTTP 404", StringComparison.Ordinal) && line.Contains("Ends the session: False", StringComparison.Ordinal));
+        PlaybackLogAssert.NoRemoteValue(_logger.Lines);
     }
 
     [Theory]

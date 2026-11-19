@@ -17,7 +17,7 @@
     <PackageReference Include="Jellyfin.Model" Version="$(JellyfinPackageVersion)">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
-    <!-- The version Jellyfin 12.4 loads; compile only, so the server's own copy is used (decision 414). -->
+    <!-- The lowest version Jellyfin 12.x loads; compile only, so the server's own copy is used (decisions 414, 421). -->
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="$(SqlitePackageVersion)">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
