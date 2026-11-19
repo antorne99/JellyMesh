@@ -299,7 +299,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 : Unavailable(itemId);
         }
 
-        await StreamRelay.CopyAsync(opened, http, _coordinator.StallLimit, http.RequestAborted).ConfigureAwait(false);
+        // A book goes with the type of its format, never the remote's (D62).
+        var mediaType = stub.Kind == StubKind.Book ? BookPlaceholders.MediaTypeOf(stub.RelativePath) : null;
+        await StreamRelay.CopyAsync(opened, http, _coordinator.StallLimit, http.RequestAborted, mediaType: mediaType).ConfigureAwait(false);
         return new EmptyResult();
     }
 

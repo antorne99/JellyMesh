@@ -2025,6 +2025,33 @@ public class PlaybackFiltersTests
         Assert.Equal("bytes=0-4", asked?.Range);
     }
 
+    // The type comes from the format of the placeholder, never from the remote, which says video/x-matroska here.
+    [Theory]
+    [InlineData("GetFile", "epub", "application/epub+zip")]
+    [InlineData("GetDownload", "epub", "application/epub+zip")]
+    [InlineData("GetFile", "pdf", "application/pdf")]
+    [InlineData("GetFile", "cbz", "application/vnd.comicbook+zip")]
+    [InlineData("GetFile", "cbr", "application/vnd.comicbook-rar")]
+    [InlineData("GetFile", "cb7", "application/x-cb7")]
+    [InlineData("GetFile", "cbt", "application/x-cbt")]
+    [InlineData("GetFile", "mobi", "application/x-mobipocket-ebook")]
+    [InlineData("GetFile", "azw", "application/vnd.amazon.ebook")]
+    [InlineData("GetFile", "azw3", "application/vnd.amazon.ebook")]
+    [InlineData("GetFile", "html", "application/octet-stream")]
+    public async Task A_book_goes_with_the_media_type_of_its_format(string action, string extension, string mediaType)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = BookPlaceholder();
+        _stubs.Setup(stubs => stubs.FindByPath(BookPath)).Returns(_stub with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965)." + extension });
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.Equal(mediaType, context.HttpContext.Response.ContentType);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
     [Fact]
     public async Task A_book_needs_the_download_permission_only_on_Download()
     {

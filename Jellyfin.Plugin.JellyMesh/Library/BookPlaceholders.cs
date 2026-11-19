@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -36,6 +38,20 @@ public static class BookPlaceholders
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"2.0\">"
         + "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"></metadata><manifest/><spine/></package>\n";
 
+    // The type each book format goes with; any other goes as bytes.
+    private static readonly FrozenDictionary<string, string> _mediaTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        [".epub"] = "application/epub+zip",
+        [".pdf"] = "application/pdf",
+        [".cbz"] = "application/vnd.comicbook+zip",
+        [".cbr"] = "application/vnd.comicbook-rar",
+        [".cb7"] = "application/x-cb7",
+        [".cbt"] = "application/x-cbt",
+        [".mobi"] = "application/x-mobipocket-ebook",
+        [".azw"] = "application/vnd.amazon.ebook",
+        [".azw3"] = "application/vnd.amazon.ebook"
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
     private static readonly string[] _pdfObjects =
     [
         "<< /Type /Catalog /Pages 2 0 R >>",
@@ -43,6 +59,12 @@ public static class BookPlaceholders
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] >>"
     ];
+
+    /// <summary>Gives the media type a book goes with, from the extension of its placeholder.</summary>
+    /// <param name="path">The path of the placeholder.</param>
+    /// <returns>The type of its format, application/octet-stream for any other.</returns>
+    public static string MediaTypeOf(string path)
+        => _mediaTypes.TryGetValue(Path.GetExtension(path), out var type) ? type : "application/octet-stream";
 
     /// <summary>
     /// Returns the placeholder of a book format: the minimal valid file for PDF, CBZ and EPUB (D47), an empty one for the
