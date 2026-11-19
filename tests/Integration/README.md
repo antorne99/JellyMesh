@@ -17,7 +17,7 @@ Accounts, for testing only:
 
 ## Usage
 
-Run from this folder. It needs Docker, `curl` and `jq`, plus about 1.2 GB of disk. Encoding uses the ffmpeg inside the Jellyfin image, so no host ffmpeg is needed.
+Run from this folder. It needs Docker, `curl` and `jq`, plus about 1.6 GB of disk. Encoding uses the ffmpeg inside the Jellyfin image, so no host ffmpeg is needed.
 
 ```sh
 ./scripts/prepare-media.sh     # download sources and encode clips, takes several minutes
@@ -44,7 +44,7 @@ Copy `.env.example` to `.env` to set `BIND_ADDRESS`. Ports bind to loopback by d
 
 ## Folders
 
-- `media/<instance>/film` and `media/<instance>/serie` are mounted read-only at `/media`.
+- `media/<instance>` is mounted read-only at `/media`: `film` and `serie`, and for 0.7 `musica`, `videomusicali`, `videodomestici`, `libri` and `mista` (see "0.7 types").
 - `federata/` is mounted writable at `/federata` on `locale` only. It stands in for the federated folder and is empty until something writes to it.
 - On `locale`, the `Film` library has the paths `/media/film` and `/federata/Film`, and `Serie` has `/media/serie` and `/federata/Serie`. These are the two-path libraries the Phase 0 spikes need. The plugin writes stubs only into `/federata/<server id>/Film` and `/Serie`, made when a server is added, so run `provision.sh` again after adding servers: it adds those folders to the libraries.
 
@@ -120,6 +120,50 @@ These have no IDs and their invented titles match nothing on TMDb, so `report.sh
 | E07-E08 | E07, 720p | Double, 720p | | E07 local, E08 standard on a plain stub that plays the double |
 | E09-E10 | | Double, 720p | E10, 1080p | E09 standard on a plain stub, E10 JellyMesh with the double as backup |
 
+### 0.7 types
+
+Added for the 0.7 phases (integration test 11 of the spec). They are small and fully generated, so `prepare-media.sh` builds them in a few minutes: audio is a two-tone sine from ffmpeg, pictures are single frames of the films with a burned-in label, and `scripts/media-types.py` writes EXIF, EPUB, PDF and CBZ with the Python standard library, in the Playwright image the proof scripts already use. Audio, pictures and books come out byte-identical on every run (bitexact ffmpeg, fixed ZIP times, no dates in the PDF). The video clips are not: like the films above they go through libx264 and Matroska or MP4, which differ between runs.
+
+Each server plays its own tone, a little higher per track: `locale` 659 Hz, `remoto-standard` 440 Hz, `remoto-jellymesh` 554 Hz. The pitch tells which copy is really served, as the label does on video.
+
+Invented MusicBrainz IDs have the form `99000000-0000-4000-8000-0000000NNNNN` and are written below by their last four digits. Track files carry them under the tag names Picard writes: Vorbis keys such as `MUSICBRAINZ_TRACKID` in FLAC, ID3 `TXXX` descriptions such as `MusicBrainz Track Id` in MP3. The artist is `JM Artista` (`…0001`) everywhere.
+
+**Music** (`musica/JM Artista/`, library `Musica`, type `music`):
+
+| Album | locale | remoto-standard | remoto-jellymesh | Case |
+|---|---|---|---|---|
+| JM Album Federato (2026), 3 tracks of 20 s, album `…0101`, release group `…0201`, recordings `…0301`-`…0303`, tracks `…0401`-`…0403` | MP3 128k | FLAC 16/44.1, `.lrc` on track 1 | MP3 320k | The same IDs on three servers |
+| JM Album Doppio (2025), 2 discs of 2 tracks of 15 s in `Disc 1` and `Disc 2`, album `…0102` | | FLAC 24/96 | FLAC 16/44.1 | Multi-disc; the copies differ in bit depth and sample rate only |
+| JM Album Senza ID (2024), 2 tracks | | MP3 320k, track 1 `L'Ultima Nota`, track 2 25 s | MP3 128k, track 1 `Ultima Nota`, track 2 26 s | No IDs; the first titles differ by an article, the second durations by a second |
+
+Every album folder has a `folder.jpg`.
+
+**Music videos** (`videomusicali/`, library `Video musicali`, type `musicvideos`): `JM Video Musicale (2026)`, 30 s, with a `<musicvideo>` .nfo naming the artist and the first album above, and no provider IDs. 720p 2 Mbit/s on `remoto-standard`, 1080p 4 Mbit/s on `remoto-jellymesh`.
+
+**Home videos and photos** (`videodomestici/`, only on `remoto-standard`, library `Video domestici`, type `homevideos`, which shows photos by default). Jellyfin 12 has no `photos` library type to create, so photos live here.
+
+| Path | What | EXIF |
+|---|---|---|
+| `2025/Estate/Spiaggia.mp4`, `2025/Inverno/Neve.mkv`, `2026/Compleanno.mp4` | 20 s clips in nested folders | None; `creation_time` 2025-07-14, 2025-12-20, 2026-03-02 |
+| `2025/Estate/Tramonto.jpg` | A photo beside a video, 1600x900 | Camera, date, GPS 44.4056, 8.9463, 12 m |
+| `Album Vacanze 2025/IMG_0001.jpg` | A photo album, 1600x1200 | Camera, date, exposure, GPS 43.7731, 11.2560, 50 m |
+| `Album Vacanze 2025/IMG_0002.jpg` | Portrait, 900x1200 | Camera, date, exposure, no GPS |
+| `Album Vacanze 2025/IMG_0003.jpg`, `IMG_0004.png` | JPEG and PNG | None |
+
+**Books** (`libri/`, library `Libri`, type `books`). Each book is alone in its folder, as Jellyfin's book resolver wants.
+
+| Book | remoto-standard | remoto-jellymesh | Notes |
+|---|---|---|---|
+| JM Libro Epub | EPUB 3, 44 KB | The same file | ISBN 9790000000014 in the package document, a cover, 3 chapters |
+| JM Libro Pdf | PDF, 8 pages, 430 KB | | Over 128 KiB, so pdf.js reads it by Range; `JM Libro Pdf.opf` beside it carries ISBN 9790000000021 |
+| JM Fumetto | CBZ, 6 pages, with `ComicInfo.xml` | | Series `JM Serie a Fumetti`, number 1 |
+| JM Audiolibro Capitoli | M4B, AAC, 90 s, 3 chapters | The same, with its own tone | One file with chapters |
+| JM Audiolibro Parti | 3 MP3 of 40 s, with 2 chapters each | | One book in several files |
+
+**Mixed library** (`mista/`, only on `remoto-standard`, library `Mista`, created without a collection type): `JM Film Misto (2026)` (TMDb 999000301, IMDb tt99000301) and `JM Serie Mista (2026)` with two episodes (TMDb 999000401, TVDB 999000402), 720p.
+
+`provision.sh` adds each of these libraries only where the server has the folder, so a media folder from before 0.7 provisions as before. On `locale` it adds only `Musica`, for the local copy, and links no federated folder for these types.
+
 ## What 12.4 showed
 
 Observed while building this environment, on Jellyfin 12.4.0.
@@ -136,6 +180,47 @@ Observed while building this environment, on Jellyfin 12.4.0.
 - **`.nfo` of several episodes:** `<episodenumberend>` sets `IndexNumberEnd` even when the file name holds one number, and `<lockdata>` keeps it. Several `<episodedetails>` blocks work too, joining their titles. "Replace all metadata" on an unlocked item keeps `IndexNumber` but clears `IndexNumberEnd`, so the stub provider restores it, also on a stub whose file name holds one number.
 
 These observations led to the three decisions recorded in §10 of the plan: a 5% bitrate tolerance, removing the year from `Name`, and using Jellyfin's video bitrate uncorrected.
+
+Seen on the 0.7 types, with the stock `remoto-standard` and the non-admin user:
+
+- **Views:** the mixed library is a `CollectionFolder` in `/UserViews` with no `CollectionType`. Home videos answer `homevideos`, and photo folders under them become `PhotoAlbum`.
+- **Music IDs:** both tag styles fill the same keys. A track gets `MusicBrainzRecording` from the track ID, `MusicBrainzTrack` from the release track ID, and the album, album artist, artist and release group; the album gets album, album artist and release group. `ParentIndexNumber` is the disc. FLAC reports `BitDepth` and `SampleRate`, MP3 no bit depth.
+- **Audiobooks:** an audiobook in several files becomes one `AudioBook` per file, named after its title tag (`Parte 1`…), with `IndexNumber` from the track number. Chapters come from the M4B and from ID3 `CHAP` frames.
+- **Books:** the EPUB and the `.opf` beside the PDF give an `ISBN` provider ID; the CBZ gets none, and `IndexNumber` 1 from `ComicInfo.xml`.
+- **Music videos:** artists come from the .nfo and also from the file's own artist tag, so the clips are written without the source's tags.
+- **Photos:** `Latitude`, `Longitude` and `Altitude` appear only on the photos with GPS, with `CameraMake`, `CameraModel` and the size. The EXIF date is read as the server's local time (`TZ` is Europe/Rome here), so `PremiereDate` is two hours earlier in UTC. A home video's `PremiereDate` is its `creation_time`.
+- **Original files on image routes:** `/Items/{id}/Images/Primary` of a photo with no size, as the web slideshow asks for it, returns the original file byte for byte, EXIF and GPS included, like `/Items/{id}/Download`. With a size it is re-encoded.
+- **Ranges:** `/Audio/{id}/universal`, `/Items/{id}/File`, `/Items/{id}/Download` and `/Audio/{id}/stream?static=true` answer `Accept-Ranges: bytes`, and `206` to a `Range`, also to `bytes=0-`. The unauthenticated HEAD of `universal` with `ApiKey` in the query answers `200` with the type and length.
+- **Audio transcoding:** `universal` under a 64 kbit/s cap answers an HLS master playlist (`application/vnd.apple.mpegurl`) whose segments are MPEG-TS; Finamp's `main.m3u8` with `segmentContainer=mp4` gives an fMP4 init segment and fMP4 segments.
+- **Lyrics:** an `.lrc` beside the track makes `/Audio/{id}/Lyrics` answer `200` with the lines.
+
+## Client routes
+
+`play/clients.sh` calls the audio, book and photo routes the way the main clients do, against any server URL, so the 0.7 phases can compare a stock server with the federated copy of the same item. It makes no containers and asserts nothing: it prints one tab-separated line per request with the status, content type, length, content range, accept ranges, bytes received and their SHA-256, and with `--file` whether the body matches that file, or the slice of it a `206` names. `OUT=<dir>` keeps every header and body. Each client logs in with its own `Authorization` identity, and the item is an id or an exact name. It exits non-zero only when a request got no answer.
+
+```sh
+play/clients.sh <base URL> <user> <password> <command> <item id or name> [--file <path>]
+play/clients.sh http://127.0.0.1:8097 jellymesh jellymesh-test web-audio "Prima Traccia" \
+  --file "media/remoto-standard/musica/JM Artista/JM Album Federato (2026)/01 - Prima Traccia.flac"
+```
+
+| Command | Client | Requests |
+|---|---|---|
+| `web-audio` | jellyfin-web `<audio>` (`playbackmanager.js`, `browserDeviceProfile.js`) | HEAD of `/Audio/{id}/universal` with the browser's direct-play containers, `ApiKey` in the query and no auth header; then GET with `Range: bytes=0-` and a seek from the middle, or, when the HEAD says HLS, the playlists and the first segment |
+| `web-audio-hls` | the same | the same with `MaxStreamingBitrate=64000`, so the server transcodes |
+| `finamp-file` | Finamp direct play | `/Items/{id}/File?ApiKey`, then a `Range` from the middle |
+| `finamp-hls` | Finamp transcoding, default AAC in fMP4 | `/Audio/{id}/main.m3u8?audioCodec=aac&segmentContainer=mp4&…`, its init segment and first segment; `TRANSCODE_BITRATE` sets `audioBitRate` (default 320000) |
+| `stream` | older clients | `/Audio/{id}/stream?static=true` with the auth header, then a `Range` |
+| `playbackinfo` | jellyfin-web | POST `/Items/{id}/PlaybackInfo` with the browser's audio profile; the media sources go to stderr, with the token hidden |
+| `lyrics` | jellyfin-web | `/Audio/{id}/Lyrics` |
+| `download` | the web Download button (SDK `getDownloadUrl`) | `/Items/{id}/Download?ApiKey` |
+| `epub`, `comic` | the web readers (epub.js, the comics reader) | one GET of the download URL |
+| `pdf` | the web reader (pdf.js 3.11) | a GET dropped after the headers, then 64 KiB ranges from the start and the end when the server answers `Accept-Ranges: bytes` and a length over 128 KiB, else the whole file |
+| `jellybook` | JellyBook | `/Items/{id}/Download` with the auth header |
+| `photo-web` | the web grid and slideshow | an anonymous `Images/Primary` with `fillWidth`, `fillHeight`, `quality=96` and the tag; then `Download?ApiKey` (users with downloads) and `Images/Primary?quality=100` with no size (users without) |
+| `photo-tv` | Android TV | an anonymous `Images/Primary` with the tag and `maxWidth=1920&maxHeight=1080` |
+
+The stock answers are in "What 12.4 showed" above. Against stock `remoto-standard`, every direct body matches its file.
 
 ## Spikes
 
@@ -335,6 +420,7 @@ The zip of v0.5.0.1, built from its tag, fails: it asks for `Microsoft.Data.Sqli
 ## Not covered here
 
 - **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so it cannot test QSV. Antonio verified it on the OPS pc: it works.
+- **0.7 types through JellyMesh:** the media, libraries and `play/clients.sh` cover the stock side. The federated side, stubs of these types and the plugin's routes, comes with the phases that build it, from F50.
 - **Slow network, offline server, stream limit (§8):** belong to the Phase 6 task. To simulate an offline server, stop its service with `docker compose stop remoto-standard`.
 
 ## Licences
