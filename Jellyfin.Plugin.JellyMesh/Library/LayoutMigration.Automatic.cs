@@ -246,6 +246,8 @@ public sealed partial class LayoutMigration
                 await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
                 return RemoveOldPaths(root);
             case AutomaticMigrationStep.Finish:
+                // The libraries the plugin keeps leave the old folders now, not at the next sync (§10 row 445).
+                await _automaticLibraries.ReconcileAsync(cancellationToken).ConfigureAwait(false);
                 if (!await _automaticLibraries.ScanAsync(cancellationToken).ConfigureAwait(false))
                 {
                     return null;

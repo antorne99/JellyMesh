@@ -94,6 +94,25 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task ALibraryThePluginKeepsIsOnTheTypeFoldersWhenTheMigrationEnds()
+    {
+        BothServersImport();
+        var a = _store.Configuration.Servers.Single(server => server.Id == _serverA);
+        a.LibraryMode = LibraryMode.ByType;
+        a.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "A - Film", ItemId = IdOf("A - Film") });
+        var old = ServerFolderFilm(_serverA, "a1");
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        Row(_mario, old).IsFavorite = true;
+
+        await (await MigrationAsync()).Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
+        Assert.Equal([NewFilms(_serverA)], Locations("A - Film"));
+    }
+
+    [Fact]
     public async Task AStubFileLeftInAServerFolderStopsTheMigrationBeforeTheRemoval()
     {
         BothServersImport();

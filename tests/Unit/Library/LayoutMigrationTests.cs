@@ -1148,12 +1148,20 @@ public sealed partial class LayoutMigrationTests : IDisposable
         _manager?.Dispose();
         _renamer.Setup(renamer => renamer.HasPending).Returns(() => _managerBusy);
         _manager = new ServerLibraryManager(
-            _store, _library.Object, Mock.Of<IFileSystem>(), _scans.Object, _materializer.Object, _renamer.Object, _registry,
+            _store, _library.Object, FileSystem(), _scans.Object, _materializer.Object, _renamer.Object, _registry,
             new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), Mock.Of<MediaBrowser.Controller.IServerApplicationHost>(), new CapturingLogger<ServerLibraryManager>());
         _migration = new LayoutMigration(
             _registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object,
             new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _managerOverride ?? _manager, _logger, _keeper?.Object, _sync.Object);
         return _migration;
+    }
+
+    // A file system that keeps library names as they are.
+    private static IFileSystem FileSystem()
+    {
+        var fileSystem = new Mock<IFileSystem>();
+        fileSystem.Setup(files => files.GetValidFilename(It.IsAny<string>())).Returns((string name) => name);
+        return fileSystem.Object;
     }
 
     private UserItemData Row(User user, BaseItem item) => _userData.Object.GetUserData(user, item)!;
