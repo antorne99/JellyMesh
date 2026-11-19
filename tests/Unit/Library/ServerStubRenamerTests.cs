@@ -199,6 +199,19 @@ public sealed class ServerStubRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task AHomeVideoWhoseNameEndsWithTheLabelKeepsItsFiles()
+    {
+        var home = Path.Combine(_server.ToString("D"), TestLibraries.HomeVideos, "Video domestici", "Trip - Casa.strm");
+        await SeedAsync(Film("h", home) with { Kind = StubKind.HomeVideo });
+        Write(home, "url-h");
+
+        Assert.Equal(0, await _renamer.RelabelInPlaceAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal("url-h", Read(home));
+        Assert.Equal(home, _registry.State.Stubs.Single().RelativePath);
+    }
+
+    [Fact]
     public async Task ALabelTakenByAnotherServerGetsTheGuidDigits()
     {
         await SeedAsync(Film("f", FilmPath("Casa")));
