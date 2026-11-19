@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Emby.Naming.Common;
+using Emby.Naming.Video;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -22,6 +24,14 @@ public static partial class StubPlanner
 
     // The extensions of the files written next to a home video.
     private static readonly HashSet<string> _fileExtensions = new([".strm", ".nfo", ".jpg", ".png", ".webp", ".gif"], StringComparer.OrdinalIgnoreCase);
+
+    // Jellyfin's own naming rules, which tell an extra from a main video.
+    private static readonly NamingOptions _naming = new();
+
+    // The folder names whose videos Jellyfin reads as extras, such as trailers or extras.
+    private static readonly HashSet<string> _extraFolders = new(
+        _naming.VideoExtraRules.Where(rule => rule.RuleType == ExtraRuleType.DirectoryName).Select(rule => rule.Token),
+        StringComparer.OrdinalIgnoreCase);
 
     private static bool IsVideoKind(StubKind kind) => kind is StubKind.MusicVideo or StubKind.HomeVideo;
 
@@ -138,7 +148,7 @@ public static partial class StubPlanner
     {
         var folder = Path.Combine([typeFolder, .. FolderChain(catalog, serverId, item)]);
         var stem = Path.Combine(folder, FederatedPaths.Sanitize(item.Name));
-        if (IsTaken(taken, stem))
+        if (IsTaken(taken, stem) || IsReadAsExtra(stem + ".strm"))
         {
             stem = string.Create(CultureInfo.InvariantCulture, $"{stem} [{id[..8]}]");
         }
@@ -153,11 +163,14 @@ public static partial class StubPlanner
             || taken.Contains(stem + ThumbSuffix)
             || (stem.EndsWith(ThumbSuffix, StringComparison.OrdinalIgnoreCase) && taken.Contains(stem[..^ThumbSuffix.Length]));
 
-    // A remote folder name that ends like a stub file or image, so that it never meets the file of a home video.
+    // Whether Jellyfin would read a file as an extra of another video, and not as a video of its own.
+    private static bool IsReadAsExtra(string path) => ExtraRuleResolver.GetExtraInfo(path, _naming).ExtraType is not null;
+
+    // A remote folder name that ends like a stub file or image, or names an extras folder, gets its id.
     private static string FolderName(IndexedItem folder)
     {
         var name = FederatedPaths.Sanitize(folder.Name);
-        return _fileExtensions.Contains(Path.GetExtension(name))
+        return _fileExtensions.Contains(Path.GetExtension(name)) || _extraFolders.Contains(name)
             ? string.Create(CultureInfo.InvariantCulture, $"{name} [{folder.ItemId[..Math.Min(8, folder.ItemId.Length)]}]")
             : name;
     }

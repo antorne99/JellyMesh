@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
+using Emby.Naming.Common;
+using Emby.Naming.Video;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -82,6 +84,10 @@ public class TypeStubPlannerTests
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
             _ => null));
     }
+
+    private static readonly NamingOptions _naming = new();
+
+    private static bool IsExtra(string path) => ExtraRuleResolver.GetExtraInfo(path, _naming).ExtraType is not null;
 
     private static string In(string library, params string[] parts) => Path.Combine(FederatedPaths.LibraryFolder(_serverA, library), Path.Combine(parts));
 
@@ -173,6 +179,56 @@ public class TypeStubPlannerTests
         var paths = plan.Stubs.Select(work => work.Entry.RelativePath).ToList();
         Assert.Contains(In(HomeVideos, "Video domestici", "Clip.strm"), paths);
         Assert.Contains(In(HomeVideos, "Video domestici", "Clip.strm [f1]", "Inside.strm"), paths);
+    }
+
+    [Theory]
+    [InlineData("Beach-trailer")]
+    [InlineData("Beach.trailer")]
+    [InlineData("Beach_trailer2")]
+    [InlineData("trailer")]
+    [InlineData("Beach-sample")]
+    [InlineData("sample")]
+    [InlineData("Beach-featurette")]
+    [InlineData("Beach-behindthescenes")]
+    [InlineData("Beach-deleted")]
+    [InlineData("Beach-deletedscene")]
+    [InlineData("Beach-interview")]
+    [InlineData("Beach-scene")]
+    [InlineData("Beach-short")]
+    [InlineData("Beach-clip")]
+    [InlineData("Beach-other")]
+    [InlineData("Beach-extra")]
+    public void AHomeVideoNamedLikeAnExtraGetsANameReadAsAMainVideo(string name)
+    {
+        Assert.True(IsExtra(In(HomeVideos, "Video domestici", name + ".strm")));
+
+        var work = Assert.Single(Plan(Catalog(HomeVideo("v1", name, HomeVideos))).Stubs);
+
+        Assert.StartsWith(name + " [", Path.GetFileName(work.Entry.RelativePath), StringComparison.Ordinal);
+        Assert.False(IsExtra(work.Entry.RelativePath));
+    }
+
+    [Theory]
+    [InlineData("trailers")]
+    [InlineData("extras")]
+    [InlineData("behind the scenes")]
+    [InlineData("deleted scenes")]
+    [InlineData("interviews")]
+    [InlineData("scenes")]
+    [InlineData("samples")]
+    [InlineData("shorts")]
+    [InlineData("featurettes")]
+    [InlineData("clips")]
+    [InlineData("other")]
+    [InlineData("Trailers")]
+    public void AFolderNamedLikeAnExtrasFolderGetsANameReadAsAPlainFolder(string name)
+    {
+        Assert.True(IsExtra(In(HomeVideos, "Video domestici", name, "Beach day.strm")));
+
+        var work = Assert.Single(Plan(Catalog(Folder("f1", name, HomeVideos), HomeVideo("v1", "Beach day", "f1"))).Stubs);
+
+        Assert.Equal(In(HomeVideos, "Video domestici", name + " [f1]", "Beach day.strm"), work.Entry.RelativePath);
+        Assert.False(IsExtra(work.Entry.RelativePath));
     }
 
     [Fact]
