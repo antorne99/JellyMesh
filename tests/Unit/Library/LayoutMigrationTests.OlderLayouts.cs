@@ -1,9 +1,11 @@
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Model.Entities;
 using Xunit;
 
@@ -125,5 +127,65 @@ public sealed partial class LayoutMigrationTests
 
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
         Assert.Equal([unread], a.LibrariesToPlace);
+    }
+
+    // §10 row 445 [D19]: the placement of a title in two remote libraries is row 439, so the tests give its stubs.
+    [Fact]
+    public async Task ATitleInTwoRemoteLibrariesInDifferentLocalLibrariesGetsTheStateOnBothStubs()
+    {
+        BothServersImport();
+        var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var films = NewFilm(_serverA, "a1");
+        var other = NewFilmIn(_serverA, TestLibraries.FilmsB, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, NewFilms(_serverA), NewFilms(_serverB)));
+        _libraries.Add(Library("Altri film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, TestLibraries.FilmsB, TypeFolder.Movies)));
+        var row = Row(_mario, oldItem);
+        row.PlayCount = 1;
+        row.Played = true;
+        row.IsFavorite = true;
+
+        await (await MigrationAsync()).RunAsync(CancellationToken.None);
+
+        Assert.All([films, other], item => Assert.Equal((1, true, true), (Row(_mario, item).PlayCount, Row(_mario, item).Played, Row(_mario, item).IsFavorite)));
+        Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
+    }
+
+    [Fact]
+    public async Task ATitleInTwoRemoteLibrariesInTheSameLocalLibraryGetsTheStateOnce()
+    {
+        // One stub with the second remote library as an internal source.
+        BothServersImport();
+        var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
+        var films = NewFilm(_serverA, "a1");
+        var stub = _stubs.Single(entry => entry.ServerId == _serverA);
+        _stubs[_stubs.IndexOf(stub)] = stub with { Sources = [.. stub.Sources, Source((_serverA, "a1")) with { LibraryId = TestLibraries.FilmsB }] };
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, NewFilms(_serverA), NewFilms(_serverB)));
+        var row = Row(_mario, oldItem);
+        row.PlayCount = 1;
+        row.Played = true;
+
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.RunAsync(CancellationToken.None);
+
+        Assert.Equal((1, true), (Row(_mario, films).PlayCount, Row(_mario, films).Played));
+        Assert.DoesNotContain(_registry.State.Stubs, entry => entry.ServerId is null);
+    }
+
+    // A film of a server in the type folder of the given remote library.
+    private Movie NewFilmIn(Guid server, string library, string itemId)
+    {
+        var name = Id();
+        var stub = new StubEntry
+        {
+            Id = name,
+            ServerId = server,
+            Kind = StubKind.Movie,
+            RelativePath = Path.Combine(FederatedPaths.TypeFolderOf(server, library, TypeFolder.Movies), name, name + ".strm"),
+            IdentityKey = "new:" + itemId,
+            Sources = [Source((server, itemId)) with { LibraryId = library }]
+        };
+        _stubs.Add(stub);
+        return Add(new Movie { Path = FederatedPaths.Resolve(Root, stub.RelativePath) });
     }
 }
