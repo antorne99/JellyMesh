@@ -1875,7 +1875,7 @@ public sealed partial class ServerLibraryManagerTests
         public ServerLibraryManager NewManager()
         {
             Renamer.Libraries = Libraries;
-            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, new LibraryPaths(Libraries.Object, new CapturingLogger<LibraryPaths>()), Logger, Clock);
+            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, new LibraryPaths(Libraries.Object, new CapturingLogger<LibraryPaths>()), Logger, Clock, SystemId);
         }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.

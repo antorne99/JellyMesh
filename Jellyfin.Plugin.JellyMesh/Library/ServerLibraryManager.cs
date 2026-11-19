@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
@@ -42,6 +43,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     private readonly IStubRegistry _stubs;
     private readonly ILibraryPaths _paths;
     private readonly ILogger<ServerLibraryManager> _logger;
+    private readonly Func<string> _systemId;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Lock _jobsLock = new();
@@ -64,6 +66,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <param name="renamer">The renamer of libraries.</param>
     /// <param name="stubs">The stub registry, which tells whether a removed server still has titles and where they are.</param>
     /// <param name="paths">The paths of the libraries, which take the type folders of the remote libraries.</param>
+    /// <param name="host">The server, whose id names a shared library when its name is taken.</param>
     /// <param name="logger">The logger.</param>
     public ServerLibraryManager(
         IPluginConfigurationStore store,
@@ -74,17 +77,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         ILibraryRenamer renamer,
         IStubRegistry stubs,
         ILibraryPaths paths,
+        IServerApplicationHost host,
         ILogger<ServerLibraryManager> logger)
+        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, paths, () => host.SystemId, logger)
     {
-        _store = store;
-        _libraries = libraries;
-        _fileSystem = fileSystem;
-        _scans = scans;
-        _materializer = materializer;
-        _renamer = renamer;
-        _stubs = stubs;
-        _paths = paths;
-        _logger = logger;
     }
 
     internal ServerLibraryManager(
@@ -97,10 +93,35 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         IStubRegistry stubs,
         ILibraryPaths paths,
         ILogger<ServerLibraryManager> logger,
-        TimeProvider time)
-        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, paths, logger)
+        TimeProvider time,
+        string systemId = "")
+        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, paths, () => systemId, logger)
     {
         _scanLimit = new(time);
+    }
+
+    private ServerLibraryManager(
+        IPluginConfigurationStore store,
+        ILibraryManager libraries,
+        IFileSystem fileSystem,
+        ILibraryScans scans,
+        ILibraryMaterializer materializer,
+        ILibraryRenamer renamer,
+        IStubRegistry stubs,
+        ILibraryPaths paths,
+        Func<string> systemId,
+        ILogger<ServerLibraryManager> logger)
+    {
+        _systemId = systemId;
+        _store = store;
+        _libraries = libraries;
+        _fileSystem = fileSystem;
+        _scans = scans;
+        _materializer = materializer;
+        _renamer = renamer;
+        _stubs = stubs;
+        _paths = paths;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -204,7 +225,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 ForgetPendingInNone();
                 if (FollowAll() is { } folders)
                 {
-                    var scanned = await ConvergeAsync(serverIds, folders, false, cancellationToken).ConfigureAwait(false);
+                    var scanned = await ConvergeAsync(serverIds, folders, false, cancellationToken, shared: true).ConfigureAwait(false);
 
                     // A change of library mode stopped halfway goes on here.
                     foreach (var serverId in _store.Read(config => config.Servers.Where(server => server.AutomaticLibraryRegistry.Any(record => Retires(server.LibraryMode, record))).Select(server => server.Id).ToList()))
@@ -235,7 +256,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <inheritdoc />
     public async Task WaitReadyAsync(CancellationToken cancellationToken)
     {
-        if (_store.Read(config => config.FederatedFolderPath.Length == 0 || FollowedServers(config).Count == 0))
+        if (_store.Read(config => config.FederatedFolderPath.Length == 0 || (FollowedServers(config).Count == 0 && SharedRegistry(config) is null)))
         {
             return;
         }
@@ -280,7 +301,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <inheritdoc />
     public void MarkFollowSkipped() => MarkSkipped(config => config.Servers
         .Select(server => LiveRegistry(config, server.Id))
-        .Concat(config.RemovedServerLibraries.Select(held => HeldRegistry(config, held.ServerId))));
+        .Concat(config.RemovedServerLibraries.Select(held => HeldRegistry(config, held.ServerId)))
+        .Append(SharedRegistry(config)));
 
     /// <inheritdoc />
     public async Task<bool> RenameAsync(Guid serverId, CancellationToken cancellationToken)
@@ -366,7 +388,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             server.AutomaticLibraryRegistry,
             server.ReleasedAutomaticLibraries,
             IdSet(server.PreexistingLibraryIds),
-            IdSet(HeldOf(config, serverId)?.Libraries.Select(record => record.ItemId) ?? []),
+            IdSet((HeldOf(config, serverId)?.Libraries ?? []).Concat(config.SharedLibraries.Libraries).Select(record => record.ItemId)),
             IdSet([]),
             server.FollowedLibraryIds,
             server.FollowSkipped,
@@ -392,7 +414,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             held.Libraries,
             held.ReleasedLibraries,
             IdSet(held.PreexistingLibraryIds.Concat(live).Concat(preexisting)),
-            IdSet([]),
+            IdSet(config.SharedLibraries.Libraries.Select(record => record.ItemId)),
             IdSet(preexisting.Except(live, StringComparer.OrdinalIgnoreCase)),
             held.FollowedLibraryIds,
             held.FollowSkipped,
@@ -412,7 +434,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // libraries (of the one remote library it holds alone, if any), and its type is the expected one.
     private static bool Passes(VirtualFolderInfo folder, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
         folder.CollectionType == TypeOf(kind)
-        && folder.Locations is { Length: > 0 } locations
+        && (folder.Locations ?? []) is var locations
+        && (locations.Length > 0 || serverId == _sharedOwner)
         && locations.All(location => IsServerFolder(location, kind, remoteLibraryId, root, serverId));
 
     // An adopted library stays adopted while it keeps its type and a folder of the server; any other folder is the admin's.
@@ -421,9 +444,11 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             ? folder.CollectionType == TypeOf(record.Kind) && folder.Locations.Any(location => IsServerFolder(location, record.Kind, record.RemoteLibraryId, root, serverId))
             : Passes(folder, record, root, serverId);
 
-    // The 0.5 folder of the server or a type folder of its remote libraries.
+    // The 0.5 folder of the server or a type folder of its remote libraries; for the shared libraries, those of any server.
     private static bool IsServerFolder(string location, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
-        FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)) || IsTypeFolderOf(location, kind, remoteLibraryId, root, serverId);
+        serverId == _sharedOwner
+            ? ServerOfFolder(location, root) is { } server && IsServerFolder(location, kind, string.Empty, root, server)
+            : FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)) || IsTypeFolderOf(location, kind, remoteLibraryId, root, serverId);
 
     // A type folder of the given kind in a remote library folder of the server, that of the given remote library if one is given.
     private static bool IsTypeFolderOf(string location, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
@@ -595,10 +620,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // Gives each server the libraries its mode wants: those it never had, or all missing on a switch-on, are created with no
     // refresh, and those it has take the folders they lack and drop the 0.5 server folder; then one scan (§10 row 437).
     // Tells whether that scan ran.
-    private async Task<bool> ConvergeAsync(IReadOnlyList<Guid> serverIds, List<VirtualFolderInfo> folders, bool prepared, CancellationToken cancellationToken, bool recreate = false)
+    private async Task<bool> ConvergeAsync(IReadOnlyList<Guid> serverIds, List<VirtualFolderInfo> folders, bool prepared, CancellationToken cancellationToken, bool recreate = false, bool shared = false)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
-        if (root.Length == 0 || serverIds.Count == 0)
+        if (root.Length == 0 || (serverIds.Count == 0 && !shared))
         {
             return false;
         }
@@ -676,6 +701,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             _conflicts[serverId] = conflicts;
         }
 
+        // The shared libraries take the folders of every server, those just made included (§10 row 442).
+        if (shared)
+        {
+            changed |= await ConvergeSharedAsync(folders, prepared || waited, false, cancellationToken).ConfigureAwait(false);
+        }
+
         if (changed)
         {
             if (!await BlockNewAsync(serverIds, cancellationToken).ConfigureAwait(false))
@@ -695,8 +726,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // The libraries no registry holds, live or held, of any server: only these may be adopted or be in the way.
     private List<VirtualFolderInfo> Unclaimed(List<VirtualFolderInfo> folders)
     {
-        var claimed = _store.Read(config => config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
-            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+        var claimed = _store.Read(config => AllRecords(config)
             .Select(record => FindRecorded(record, folders))
             .OfType<VirtualFolderInfo>()
             .ToHashSet());
@@ -712,19 +742,18 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     }
 
     // Tells which adopted libraries are switched off in the dashboard, on a fresh read.
-    private AutomaticLibrariesState WithDisabled(AutomaticLibrariesState state)
+    private AutomaticLibrariesState WithDisabled(AutomaticLibrariesState state) => state with { Libraries = WithDisabled(state.Libraries) };
+
+    private IReadOnlyList<AutomaticLibraryStatus> WithDisabled(IReadOnlyList<AutomaticLibraryStatus> libraries)
     {
-        if (!state.Libraries.Any(library => library.Adopted) || ReadFolders() is not { } folders)
+        if (!libraries.Any(library => library.Adopted) || ReadFolders() is not { } folders)
         {
-            return state;
+            return libraries;
         }
 
-        return state with
-        {
-            Libraries = state.Libraries
-                .Select(library => library with { Disabled = library.Adopted && folders.Any(folder => string.Equals(folder.Name, library.Name, StringComparison.Ordinal) && folder.LibraryOptions is { Enabled: false }) })
-                .ToList()
-        };
+        return libraries
+            .Select(library => library with { Disabled = library.Adopted && folders.Any(folder => string.Equals(folder.Name, library.Name, StringComparison.Ordinal) && folder.LibraryOptions is { Enabled: false }) })
+            .ToList();
     }
 
     // A library in the registry counts as made, so that one the admin deletes is not made again; gives the server, if there.
@@ -866,13 +895,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             // An adopted library is no longer one a switch-on found, for any server (§10 row 441).
             if (record.Adopted)
             {
-                foreach (var ids in config.Servers.Select(server => server.PreexistingLibraryIds).Concat(config.RemovedServerLibraries.Select(other => other.PreexistingLibraryIds)))
-                {
-                    foreach (var id in ids.Where(id => string.Equals(id, record.ItemId, StringComparison.OrdinalIgnoreCase)).ToList())
-                    {
-                        ids.Remove(id);
-                    }
-                }
+                ForgetPreexisting(config, record.ItemId);
             }
 
             // A server removed meanwhile, even if added back, leaves the library to delete after it, in the same save (decision 140).
@@ -884,7 +907,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     server.CreatedLibraryKeys.Add(key);
                 }
 
-                RemovePending(server, key);
+                RemovePending(server.PendingLibraries, key);
             }
             else
             {
@@ -914,26 +937,13 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // Records the library of an intent if the server has it, with its name, type and exactly its folders; drops the intent.
     private bool Resolve(Guid serverId, RemoteServerConfig owner, PendingLibraryConfig intent, string root, List<VirtualFolderInfo> folders)
     {
-        var made = _store.Read(config =>
-        {
-            var known = config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
-                .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
-                .Select(record => FindRecorded(record, folders))
-                .OfType<VirtualFolderInfo>()
-                .ToHashSet();
-            return folders.FirstOrDefault(folder => !known.Contains(folder)
-                && string.Equals(folder.Name, intent.Name, StringComparison.OrdinalIgnoreCase)
-                && Passes(folder, intent.Kind, intent.RemoteLibraryId, root, serverId)
-                && folder.Locations.Length == intent.Paths.Count
-                && intent.Paths.All(path => folder.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))));
-        });
-        if (made is null)
+        if (FindMade(intent, root, serverId, folders) is not { } made)
         {
             _store.Update(config =>
             {
                 if (Owned(config, owner) is { } server)
                 {
-                    RemovePending(server, intent.KeyOf());
+                    RemovePending(server.PendingLibraries, intent.KeyOf());
                 }
             });
             return false;
@@ -944,11 +954,40 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         return true;
     }
 
-    private static void RemovePending(RemoteServerConfig server, string key)
+    // The library of an intent no registry holds, with its name, type and exactly its folders.
+    private VirtualFolderInfo? FindMade(PendingLibraryConfig intent, string root, Guid serverId, List<VirtualFolderInfo> folders) => _store.Read(config =>
     {
-        foreach (var intent in server.PendingLibraries.Where(intent => string.Equals(intent.KeyOf(), key, StringComparison.OrdinalIgnoreCase)).ToList())
+        var known = AllRecords(config)
+            .Select(record => FindRecorded(record, folders))
+            .OfType<VirtualFolderInfo>()
+            .ToHashSet();
+        return folders.FirstOrDefault(folder => !known.Contains(folder)
+            && string.Equals(folder.Name, intent.Name, StringComparison.OrdinalIgnoreCase)
+            && Passes(folder, intent.Kind, intent.RemoteLibraryId, root, serverId)
+            && (folder.Locations ?? []).Length == intent.Paths.Count
+            && intent.Paths.All(path => folder.Locations!.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))));
+    });
+
+    // An adopted library is no longer one a switch-on found, for any registry (§10 row 441).
+    private static void ForgetPreexisting(PluginConfiguration config, string itemId)
+    {
+        var lists = config.Servers.Select(server => server.PreexistingLibraryIds)
+            .Concat(config.RemovedServerLibraries.Select(other => other.PreexistingLibraryIds))
+            .Append(config.SharedLibraries.PreexistingLibraryIds);
+        foreach (var ids in lists)
         {
-            server.PendingLibraries.Remove(intent);
+            foreach (var id in ids.Where(id => string.Equals(id, itemId, StringComparison.OrdinalIgnoreCase)).ToList())
+            {
+                ids.Remove(id);
+            }
+        }
+    }
+
+    private static void RemovePending(Collection<PendingLibraryConfig> pending, string key)
+    {
+        foreach (var intent in pending.Where(intent => string.Equals(intent.KeyOf(), key, StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            pending.Remove(intent);
         }
     }
 
@@ -1127,6 +1166,9 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 try
                 {
                     await DeleteHeldAsync(token).ConfigureAwait(false);
+
+                    // The folders of a removed server leave the shared libraries once its titles are gone (D44).
+                    await ConvergeSharedOnlyAsync(token).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -1261,7 +1303,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             // The server may have been removed meanwhile, so its record may now be among those it left.
             _store.Update(config =>
             {
-                foreach (var registry in new[] { LiveRegistry(config, next.ServerId), HeldRegistry(config, next.ServerId) })
+                var registries = next.ServerId == _sharedOwner ? [SharedRegistry(config)] : new[] { LiveRegistry(config, next.ServerId), HeldRegistry(config, next.ServerId) };
+                foreach (var registry in registries)
                 {
                     if (registry?.Libraries.FirstOrDefault(record => record.Kind == next.Kind && record.RemoteLibraryId == next.RemoteLibraryId && string.Equals(record.Name, next.Name, StringComparison.Ordinal)) is { } record)
                     {
@@ -1345,7 +1388,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
         var visible = registry.Visible(folders);
         var others = config.Servers.Where(other => !ReferenceEquals(other, server)).SelectMany(other => other.AutomaticLibraryRegistry)
-            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries));
+            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+            .Concat(config.SharedLibraries.Libraries);
         var owned = registry.Libraries.Select(record => FindRecorded(record, visible))
             .Concat(others.Select(record => FindRecorded(record, folders)))
             .OfType<VirtualFolderInfo>()
@@ -1380,8 +1424,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // Gives the libraries the check saw, null when it did not run.
     private List<VirtualFolderInfo>? FollowAll()
     {
-        var (serverIds, root) = _store.Read(config => (FollowedServers(config), config.FederatedFolderPath));
-        if (serverIds.Count == 0)
+        var (serverIds, root, shared) = _store.Read(config => (FollowedServers(config), config.FederatedFolderPath, SharedRegistry(config) is not null));
+        if (serverIds.Count == 0 && !shared)
         {
             return null;
         }
@@ -1389,7 +1433,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         var folders = root.Length == 0 ? null : ReadFolders();
         if (folders is null)
         {
-            MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)));
+            MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)).Append(SharedRegistry(config)));
             return null;
         }
 
@@ -1398,7 +1442,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         if (unready > 0)
         {
             _logger.LogWarning("{Count} libraries have no id yet, so their check is skipped", unready);
-            MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)));
+            MarkSkipped(config => serverIds.Select(serverId => LiveRegistry(config, serverId)).Append(SharedRegistry(config)));
             return null;
         }
 
@@ -1407,6 +1451,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             Follow(serverId, folders);
         }
 
+        Follow(SharedRegistry, folders);
         return folders;
     }
 

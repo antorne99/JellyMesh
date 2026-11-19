@@ -21,12 +21,26 @@ internal static class LibraryAdoption
     /// <param name="serverId">The server the library is for.</param>
     /// <returns>The library to adopt, whether to wait, and what is in the way.</returns>
     public static AdoptionOutcome Classify(PlannedLibrary planned, CollectionTypeOptions type, IEnumerable<VirtualFolderInfo> folders, string root, Guid serverId)
+        => ClassifyBy(planned, folders, folder => ReasonOf(planned, type, folder, root, serverId));
+
+    /// <summary>
+    /// Classifies the libraries of the admin against a shared library (D43): one on a parent path, of another type or with
+    /// all its paths and others blocks it, one with only some of its paths is ignored, one with exactly them is adopted.
+    /// </summary>
+    /// <param name="planned">The shared library, with the folders of every server.</param>
+    /// <param name="type">The local type it would have.</param>
+    /// <param name="folders">The libraries of the server no registry holds.</param>
+    /// <returns>The library to adopt, whether to wait, and what is in the way; nothing with no paths.</returns>
+    public static AdoptionOutcome ClassifyShared(PlannedLibrary planned, CollectionTypeOptions type, IEnumerable<VirtualFolderInfo> folders)
+        => planned.Paths.Count == 0 ? new AdoptionOutcome(null, false, []) : ClassifyBy(planned, folders, folder => SharedReasonOf(planned, type, folder));
+
+    private static AdoptionOutcome ClassifyBy(PlannedLibrary planned, IEnumerable<VirtualFolderInfo> folders, Func<VirtualFolderInfo, LibraryConflictReason?> reasonOf)
     {
         var exact = new List<VirtualFolderInfo>();
         var conflicts = new List<LibraryConflict>();
         foreach (var folder in folders)
         {
-            if (ReasonOf(planned, type, folder, root, serverId) is not { } reason)
+            if (reasonOf(folder) is not { } reason)
             {
                 continue;
             }
@@ -80,6 +94,35 @@ internal static class LibraryAdoption
             && planned.Paths.All(path => locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path)))
             && locations.All(location => planned.Paths.Any(path => FederatedFolderLinkChecker.IsSamePath(location, path)));
         return same ? LibraryConflictReason.SamePaths : LibraryConflictReason.OtherPaths;
+    }
+
+    // The type is checked before the paths, so one of another type on any of the paths blocks.
+    private static LibraryConflictReason? SharedReasonOf(PlannedLibrary planned, CollectionTypeOptions type, VirtualFolderInfo folder)
+    {
+        var locations = (folder.Locations ?? []).Where(FederatedFolderLinkChecker.IsPath).ToArray();
+        if (locations.Any(location => planned.Paths.Any(path => IsStrictAncestor(location, path))))
+        {
+            return LibraryConflictReason.ParentPath;
+        }
+
+        if (!locations.Any(location => planned.Paths.Any(path => FederatedFolderLinkChecker.IsAncestorOrSame(path, location))))
+        {
+            return null;
+        }
+
+        if (folder.CollectionType != type)
+        {
+            return LibraryConflictReason.OtherType;
+        }
+
+        if (!planned.Paths.All(path => locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))))
+        {
+            return null;
+        }
+
+        return locations.All(location => planned.Paths.Any(path => FederatedFolderLinkChecker.IsSamePath(location, path)))
+            ? LibraryConflictReason.SamePaths
+            : LibraryConflictReason.OtherPaths;
     }
 
     // A folder under the federated folder of a server other than the given one.

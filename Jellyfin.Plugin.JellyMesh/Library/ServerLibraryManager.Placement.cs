@@ -60,14 +60,14 @@ public sealed partial class ServerLibraryManager
     // A follow that cannot run marks nothing skipped, unless a sync left its mark to it (decision 173, §10 row 394).
     private (List<VirtualFolderInfo> Folders, string Root)? FollowLive()
     {
-        var (serverIds, root) = _store.Read(config => (FollowedServers(config), config.FederatedFolderPath));
+        var (serverIds, root, shared) = _store.Read(config => (FollowedServers(config), config.FederatedFolderPath, SharedRegistry(config) is not null));
         if (root.Length == 0 || ReadFolders() is not { } folders)
         {
             return null;
         }
 
         // A library with no id may be a renamed one the follow cannot match yet (decision 213).
-        if (serverIds.Count > 0 && folders.Any(folder => string.IsNullOrEmpty(folder.ItemId)))
+        if ((serverIds.Count > 0 || shared) && folders.Any(folder => string.IsNullOrEmpty(folder.ItemId)))
         {
             return null;
         }
@@ -77,6 +77,8 @@ public sealed partial class ServerLibraryManager
             Follow(serverId, folders);
         }
 
+        Follow(SharedRegistry, folders);
+
         return (folders, root);
     }
 
@@ -84,8 +86,7 @@ public sealed partial class ServerLibraryManager
     private PlacementLibraries? FindAutomatic(List<VirtualFolderInfo> folders, string root) => _store.Read(config =>
     {
         // A held library renamed in the dashboard is not followed, so it is found by its folder too (§10 row 395).
-        var automatic = config.Servers.SelectMany(server => server.AutomaticLibraryRegistry)
-            .Concat(config.RemovedServerLibraries.SelectMany(held => held.Libraries))
+        var automatic = AllRecords(config)
             .Select(record => FindRecorded(record, folders))
             .Concat(folders.Where(folder => config.RemovedServerLibraries.Any(held => PassesAsHeld(folder, held, root))))
             .OfType<VirtualFolderInfo>()
@@ -107,6 +108,10 @@ public sealed partial class ServerLibraryManager
                     && !server.ReleasedAutomaticLibraries.Contains(folder.Name, StringComparer.Ordinal)
                     && Passes(folder, planned.Kind, planned.RemoteLibraryId, root, server.Id)));
         });
+
+        // A shared library made and never recorded is found by the name of its intent.
+        unrecorded |= config.SharedLibraries.PendingLibraries.Any(intent => folders.Any(folder => !automatic.Contains(folder)
+            && string.Equals(folder.Name, intent.Name, StringComparison.OrdinalIgnoreCase)));
         return unrecorded ? null : new PlacementLibraries(folders, automatic);
     });
 
@@ -130,7 +135,7 @@ public sealed partial class ServerLibraryManager
             else if (_skipDeferred && _placementFollows == 0)
             {
                 _skipDeferred = false;
-                MarkSkipped(config => FollowedServers(config).Select(serverId => LiveRegistry(config, serverId)));
+                MarkSkipped(FollowedRegistries);
             }
         }
     }
@@ -160,7 +165,7 @@ public sealed partial class ServerLibraryManager
                 return;
             }
 
-            MarkSkipped(config => FollowedServers(config).Select(serverId => LiveRegistry(config, serverId)));
+            MarkSkipped(FollowedRegistries);
         }
     }
 }
