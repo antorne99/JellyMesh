@@ -713,9 +713,15 @@ public sealed partial class ServerLibraryManager
         return true;
     }
 
-    // Whether a name is the other followed by a number, as the server stores a library whose name is taken.
+    // Whether a name is the other followed by a number from 2, with no leading zero, as Jellyfin 12.4 stores a library
+    // whose folder name is taken.
     private static bool IsNumbered(string name, string other)
-        => name.Length > other.Length && name.StartsWith(other, StringComparison.OrdinalIgnoreCase) && name[other.Length..].All(char.IsAsciiDigit);
+        => name.Length > other.Length
+            && name.StartsWith(other, StringComparison.Ordinal)
+            && name[other.Length..] is var number
+            && number.All(char.IsAsciiDigit)
+            && number[0] != '0'
+            && number != "1";
 
     // Called after the follow: the libraries there at switch-on, other than those of a registry, are never deleted.
     private void RecordSharedPreexisting(IReadOnlyList<VirtualFolderInfo> folders) => _store.Update(config =>

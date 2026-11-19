@@ -6,6 +6,7 @@
 # versions follow what each user sees. A type folder also stays in its server library, so a title shows in both with one
 # watch state. A rename in the Dashboard is followed, a removed server leaves once its
 # titles are gone, the settings save leaves the option alone, and the switch-off deletes the libraries after a confirmation.
+# Last, 12.4 numbers a taken library name from 2, as the plugin looks for it, and the plugin takes its other name.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-f42] [PORT=8290] shared.sh
 # The containers are stopped at the end, not removed; the next run makes them again.
 set -euo pipefail
@@ -191,5 +192,33 @@ wait_busy shared
 check "the shared libraries are deleted, the server libraries stay" '["Casa - Film","Casa - Serie"]' "$(get local /Library/VirtualFolders | jq -c '[.[].Name] | sort')"
 check "the option is off with an empty registry" "false []" "$(shared | jq -rc '"\(.Enabled) \(.Libraries)"')"
 check "the film keeps its id and its watch state" "true" "$(in_library "$CASA_FILM" "$ME" | jq -r --arg id "$TEARS" '.[] | select(startswith($id)) | split(" ")[1]')"
+
+echo "--- a taken name: 12.4 numbers the folder of a new library from 2, case-sensitive, and the plugin takes its other name [D42]"
+named() { get local /Library/VirtualFolders | jq -c --arg n "$1" '[.[].Name | select(ascii_downcase | startswith($n | ascii_downcase))] | sort'; }
+unlibrary() { req local DELETE "/Library/VirtualFolders?name=$(jq -rn --arg v "$1" '$v | @uri')&refreshLibrary=false" >/dev/null; }
+LOWER=$(echo "$FILM" | tr '[:upper:]' '[:lower:]')
+library local "$FILM" movies /media
+library local "$FILM" movies /media
+library local "$FILM" movies /media
+library local "$LOWER" movies /media
+check "the server stores a taken name with the numbers 2 and 3, and another case as it is" "[\"$FILM\",\"${FILM}2\",\"${FILM}3\",\"$LOWER\"]" "$(named "$FILM")"
+unlibrary "${FILM}2"
+unlibrary "${FILM}3"
+unlibrary "$LOWER"
+check "the admin keeps one library of that name" "[\"$FILM\"]" "$(named "$FILM")"
+switch '{"Enabled":true}' >/dev/null
+wait_busy shared
+scan local
+TAKEN_FILM=$(shared | jq -r '[.Libraries[] | select(.Name | endswith("- Film")) | .Name][0]')
+check "the plugin makes its film library under its other name, not a numbered one" true "$(jq -rn --arg n "$TAKEN_FILM" '$n | test("^Tutti i server [0-9A-Za-z]{8} - Film$")')"
+check "no numbered library is left" "[\"$FILM\",\"$TAKEN_FILM\"]" "$(get local /Library/VirtualFolders | jq -c --arg a "$FILM" --arg b "$TAKEN_FILM" '[.[].Name | select(. == $a or . == $b or startswith($a))] | sort')"
+check "the library of the admin keeps its folder" '["/media"]' "$(locations "$FILM")"
+check "who blocks the server film library blocks the one under the other name [D42]" '{"Blocked":true}' "$(access "$(id_of "$TAKEN_FILM")" bloccato)"
+answer=$(switch '{"Enabled":false}')
+switch "$(echo "$answer" | jq -c '{Enabled: false, Confirmed: true, ToDelete, ToRelease}')" >/dev/null
+check "the switch-off of the libraries under the other name answers 202" 202 "$(status)"
+wait_busy shared
+unlibrary "$FILM"
+check "only the server libraries are left" '["Casa - Film","Casa - Serie"]' "$(get local /Library/VirtualFolders | jq -c '[.[].Name] | sort')"
 
 [ "$FAILED" = 0 ] && echo "all passed" || { echo "some checks failed"; exit 1; }

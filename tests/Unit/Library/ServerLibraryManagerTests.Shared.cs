@@ -146,13 +146,13 @@ public sealed partial class ServerLibraryManagerTests
     {
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
-        fixture.Libraries.RenameOnCreate = name => name + "1";
+        fixture.Libraries.RenameOnCreate = name => name + "2";
         var scansWhenBlocked = new List<int>();
         fixture.Renamer.OnBlock = () => scansWhenBlocked.Add(fixture.Scans.Steps.Count(step => step == "scan"));
 
         await fixture.Manager.EnableShared().Job;
 
-        var made = SharedFilm + "1";
+        var made = SharedFilm + "2";
         var carry = Assert.Single(fixture.Renamer.Blocked.SelectMany(carries => carries), carry => carry.Name == made);
         Assert.Equal(Guid.Parse(fixture.Libraries.IdOf(made)), carry.Id);
         Assert.Equal([[Guid.Parse(fixture.Libraries.IdOf("Mio"))], []], carry.Folders.Select(folder => folder.ToList()));
@@ -165,10 +165,10 @@ public sealed partial class ServerLibraryManagerTests
     {
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
-        fixture.Libraries.RenameOnCreate = name => name + "1";
+        fixture.Libraries.RenameOnCreate = name => name + "2";
         fixture.Renamer.OnBlock = () =>
         {
-            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "1"))
+            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "2"))
             {
                 fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
             }
@@ -176,10 +176,10 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.EnableShared().Job;
 
-        Assert.Equal([SharedFilm + "1"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal([SharedFilm + "2"], fixture.Libraries.Removed.Select(call => call.Name));
         Assert.Equal(
-            [(PreferenceKind.EnabledFolders, Guid.Parse(fixture.Libraries.IdOf(SharedFilm + "1"))), (PreferenceKind.EnableContentDeletionFromFolders, Guid.Parse(fixture.Libraries.IdOf(SharedFilm + "1")))],
-            fixture.Renamer.Removed.Where(call => call.Name == SharedFilm + "1").Select(call => (call.List, call.Id!.Value)));
+            [(PreferenceKind.EnabledFolders, Guid.Parse(fixture.Libraries.IdOf(SharedFilm + "2"))), (PreferenceKind.EnableContentDeletionFromFolders, Guid.Parse(fixture.Libraries.IdOf(SharedFilm + "2")))],
+            fixture.Renamer.Removed.Where(call => call.Name == SharedFilm + "2").Select(call => (call.List, call.Id!.Value)));
         Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Kind == ServerLibraryKind.Movies);
         Assert.Empty(Shared(fixture).PendingLibraries);
         Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
@@ -211,8 +211,8 @@ public sealed partial class ServerLibraryManagerTests
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
         fixture.Libraries.NoIdOnCreate = notScanned;
-        fixture.Libraries.RenameOnCreate = name => name + "1";
-        var made = SharedFilm + "1";
+        fixture.Libraries.RenameOnCreate = name => name + "2";
+        var made = SharedFilm + "2";
         fixture.Renamer.OnBlock = () =>
         {
             if (fixture.Libraries.Folders.Any(folder => folder.Name == made))
@@ -248,10 +248,10 @@ public sealed partial class ServerLibraryManagerTests
     {
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
-        fixture.Libraries.RenameOnCreate = name => name + "1";
+        fixture.Libraries.RenameOnCreate = name => name + "2";
         fixture.Renamer.OnBlock = () =>
         {
-            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "1"))
+            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "2"))
             {
                 fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
             }
@@ -322,7 +322,7 @@ public sealed partial class ServerLibraryManagerTests
     {
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
-        fixture.Libraries.RenameOnCreate = name => name + "1";
+        fixture.Libraries.RenameOnCreate = name => name + "2";
         fixture.Libraries.OnCreate = () =>
         {
             if (!fixture.Libraries.Folders.Any(folder => folder.Name == "Copia"))
@@ -335,7 +335,7 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.EnableShared().Job;
 
-        var made = SharedFilm + "1";
+        var made = SharedFilm + "2";
         var carry = Assert.Single(fixture.Renamer.Blocked.SelectMany(carries => carries), carry => carry.Name == made);
         Assert.Equal(Guid.Parse(fixture.Libraries.IdOf(made)), carry.Id);
         Assert.All(scansWhenBlocked, count => Assert.Equal(0, count));
@@ -349,9 +349,9 @@ public sealed partial class ServerLibraryManagerTests
     {
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
-        fixture.Libraries.RenameOnCreate = name => name + "1";
+        fixture.Libraries.RenameOnCreate = name => name + "2";
         await fixture.Manager.EnableShared().Job;
-        var made = SharedFilm + "1";
+        var made = SharedFilm + "2";
         fixture.Store.Update(config =>
         {
             config.SharedLibraries.Libraries.Remove(config.SharedLibraries.Libraries.Single(record => record.Kind == ServerLibraryKind.Movies));
@@ -373,6 +373,35 @@ public sealed partial class ServerLibraryManagerTests
         Assert.All(scansWhenBlocked, count => Assert.Equal(scans, count));
         var record = Shared(fixture).Libraries.Single(library => library.Kind == ServerLibraryKind.Movies);
         Assert.Equal((made, false), (record.Name, record.Adopted));
+        Assert.Empty(Shared(fixture).PendingLibraries);
+    }
+
+    [Theory]
+    [InlineData("Tutti i server - Film1")]
+    [InlineData("Tutti i server - Film02")]
+    [InlineData("tutti i server - film2")]
+    public async Task A_library_whose_name_is_not_the_one_the_server_numbers_is_not_taken_for_a_shared_one_asked_for_before_a_crash(string made)
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Libraries.RenameOnCreate = name => name == SharedFilm ? made : name;
+        await fixture.Manager.EnableShared().Job;
+        fixture.Store.Update(config =>
+        {
+            config.SharedLibraries.Libraries.Remove(config.SharedLibraries.Libraries.Single(record => record.Kind == ServerLibraryKind.Movies));
+            config.SharedLibraries.CreatedLibraryKeys.Remove("Movies");
+            var intent = new PendingLibraryConfig { Kind = ServerLibraryKind.Movies, Name = SharedFilm };
+            intent.Paths.Add(_movies);
+            intent.Paths.Add(_otherMovies);
+            config.SharedLibraries.PendingLibraries.Add(intent);
+        });
+        fixture.Renamer.Blocked.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        // Taken for one of the admin, it is at most adopted, as one with exactly its paths and type is.
+        Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Name == made && !record.Adopted);
+        Assert.DoesNotContain(fixture.Renamer.Blocked.SelectMany(carries => carries), carry => carry.Name == made);
         Assert.Empty(Shared(fixture).PendingLibraries);
     }
 
