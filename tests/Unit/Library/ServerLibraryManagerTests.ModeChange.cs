@@ -502,6 +502,25 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_check_that_makes_the_libraries_a_change_could_not_make_blocks_them_before_it_scans_them()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Libraries.CreateFailure = new InvalidOperationException("refused");
+        await fixture.Manager.ApplyMode(_serverId).Job;
+        Assert.Empty(fixture.Libraries.Removed);
+        fixture.Libraries.CreateFailure = null;
+        RecordBlockOrder(fixture);
+        fixture.Libraries.NoIdOnCreate = false;
+        fixture.Renamer.Blocked.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["create", "create", "block", "scan"], fixture.Scans.Steps.Where(step => step is "create" or "block" or "scan").Take(4));
+        Assert.Equal(["Casa - Film 4K", "Casa 1a2b3c4d - Film"], fixture.Renamer.Blocked[0].Select(carry => carry.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
     public async Task A_change_stalled_by_a_library_of_the_admin_blocks_the_libraries_already_made_before_their_scan()
     {
         var fixture = OnTypeFolders();
