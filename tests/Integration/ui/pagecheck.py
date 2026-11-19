@@ -3550,7 +3550,7 @@ def adopted(s, width):
 
     page = s.open("fresh", width, tab="servers", route=libraries)
     stock = u.server_row(page, "stock")
-    stock.locator("summary").click()
+    check(name + " a conflict opens the card", until(page, lambda: stock.evaluate("node => node.open")))
     check(name + " marks the adopted library", until(page, lambda: u.card_fact(stock, "Server libraries") == "Film miei (adopted)"), u.card_fact(stock, "Server libraries"))
     check(name + " shows the mode", u.card_fact(stock, u.MODE_LABEL) == "By type", u.card_fact(stock, u.MODE_LABEL))
     conflict = stock.locator(u.ALERT, has_text="together with other folders")
@@ -3559,6 +3559,9 @@ def adopted(s, width):
     check(name + " a library name renders no markup", stock.locator("b").count() == 0)
     healthy(page, name)
     u.shot(page, f"adopted-{width}")
+    stock.locator("summary").click()
+    page.wait_for_timeout(16000)
+    check(name + " a closed card stays closed while the conflict is the same", not stock.evaluate("node => node.open"))
     u.close(page)
 
 

@@ -3388,9 +3388,14 @@
                             episodes: count(currentReport.Episodes, 'episode', 'episodes')
                         }) : t('Not read yet');
                         var problem = health.tone === 'jmStateBad' || health.tone === 'jmStateWarn' ? health.state : '';
-                        if (problem !== problemShown) {
-                            problemShown = problem;
-                            row.open = row.open || !!problem;
+                        var ownCurrent = ownState(server);
+                        var conflicts = ownCurrent.Conflicts || [];
+
+                        // A new problem or library conflict opens the card once; the admin can close it again.
+                        var shown = JSON.stringify([problem, conflicts]);
+                        if (shown !== problemShown) {
+                            problemShown = shown;
+                            row.open = row.open || !!problem || conflicts.length > 0;
                         }
 
                         setText(title, server.Name);
@@ -3407,7 +3412,6 @@
                         setText(catalog, catalogText);
                         setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : t('Not since this server started'));
                         setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : t('Not read yet'));
-                        var ownCurrent = ownState(server);
                         setText(libraryMode, libraryModeLabel(ownCurrent.Mode || 'None'));
                         var ownNames = ownCurrent.Libraries.map(function (library) {
                             return library.Adopted ? t('{library} (adopted)', { library: library.Name }) : library.Name;
