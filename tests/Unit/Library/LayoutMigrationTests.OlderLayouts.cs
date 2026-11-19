@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -7,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Model.Entities;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -110,6 +112,24 @@ public sealed partial class LayoutMigrationTests
 
         Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
         Assert.Equal([NewFilms(_serverA)], Locations("A - Film"));
+    }
+
+    [Fact]
+    public async Task APluginLibraryCheckThatFailsAtTheEndLeavesTheMigrationDone()
+    {
+        BothServersImport();
+        ServerFolderFilm(_serverA, "a1");
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        var manager = new Mock<IServerLibraryManager>();
+        manager.Setup(libraries => libraries.FollowForPlacement()).Returns(() => new PlacementLibraries(_libraries.ToList(), new HashSet<VirtualFolderInfo>()));
+        manager.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        manager.Setup(libraries => libraries.ReconcileAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException());
+        _managerOverride = manager.Object;
+
+        await (await MigrationAsync()).Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal((AutomaticMigrationStep.Done, AutomaticMigrationError.None), (_store.Configuration.LayoutMigration.Step, _store.Configuration.LayoutMigration.Error));
     }
 
     [Fact]

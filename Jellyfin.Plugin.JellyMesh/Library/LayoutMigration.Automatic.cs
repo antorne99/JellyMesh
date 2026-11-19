@@ -246,8 +246,7 @@ public sealed partial class LayoutMigration
                 await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
                 return RemoveOldPaths(root);
             case AutomaticMigrationStep.Finish:
-                // The libraries the plugin keeps leave the old folders now, not at the next sync (§10 row 445).
-                await _automaticLibraries.ReconcileAsync(cancellationToken).ConfigureAwait(false);
+                await ReconcilePluginLibrariesAsync(cancellationToken).ConfigureAwait(false);
                 if (!await _automaticLibraries.ScanAsync(cancellationToken).ConfigureAwait(false))
                 {
                     return null;
@@ -257,6 +256,20 @@ public sealed partial class LayoutMigration
                 return AutomaticMigrationStep.Done;
             default:
                 return null;
+        }
+    }
+
+    // Moves the libraries the plugin keeps off the old folders now (§10 row 445); a failure leaves it to the next sync.
+    private async Task ReconcilePluginLibrariesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _automaticLibraries.ReconcileAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The type only: a message could hold a path.
+            _logger.LogWarning("Migration to the server folders: the plugin libraries move at the next sync: {Error}", exception.GetType().Name);
         }
     }
 
