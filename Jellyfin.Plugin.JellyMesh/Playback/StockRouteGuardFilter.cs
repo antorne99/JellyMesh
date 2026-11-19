@@ -18,6 +18,7 @@ using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Net.Http.Headers;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -299,8 +300,19 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 : Unavailable(itemId);
         }
 
-        // A book goes with the type of its format, never the remote's (D62).
+        // A book goes with the type of its format, never the remote's (D62), and as a file with its local name on Download.
         var mediaType = stub.Kind == StubKind.Book ? BookPlaceholders.MediaTypeOf(stub.RelativePath) : null;
+        if (stub.Kind == StubKind.Book)
+        {
+            http.Response.Headers.XContentTypeOptions = "nosniff";
+            if (action == DownloadAction)
+            {
+                var disposition = new ContentDispositionHeaderValue("attachment");
+                disposition.SetHttpFileName(Path.GetFileName(stub.RelativePath));
+                http.Response.Headers.ContentDisposition = disposition.ToString();
+            }
+        }
+
         await StreamRelay.CopyAsync(opened, http, _coordinator.StallLimit, http.RequestAborted, mediaType: mediaType).ConfigureAwait(false);
         return new EmptyResult();
     }

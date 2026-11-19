@@ -2053,6 +2053,27 @@ public class PlaybackFiltersTests
     }
 
     [Fact]
+    public async Task A_book_is_an_attachment_with_its_local_name_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = BookPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        var disposition = download.HttpContext.Response.Headers.ContentDisposition.ToString();
+        Assert.StartsWith("attachment", disposition, StringComparison.Ordinal);
+        Assert.Contains("Dune (1965).epub", disposition, StringComparison.Ordinal);
+        Assert.Equal("nosniff", download.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Empty(file.HttpContext.Response.Headers.ContentDisposition.ToString());
+        Assert.Equal("nosniff", file.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+    }
+
+    [Fact]
     public async Task A_book_needs_the_download_permission_only_on_Download()
     {
         CanSeeItem();
