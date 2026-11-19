@@ -33,6 +33,13 @@ internal sealed class ConfigurationRows
 
     // The positions of the adopted libraries in the list of a server, so no schema step is needed (§10 row 441).
     private const string AdoptedLibrary = "adopted_library";
+
+    // The imported libraries the automatic migration has not placed yet, so no schema step is needed (§10 row 496).
+    private const string LibraryToPlace = "library_to_place";
+
+    // The folders added while placing a server, by library and folder at the same positions (§10 row 496).
+    private const string PlacedFolderLibrary = "placed_folder_library";
+    private const string PlacedFolderPath = "placed_folder_path";
     private const string UnblockedLibrary = "unblocked_library";
 
     // The owner of the shared libraries in the tables of the servers: not a GUID, so no server reads its rows (§10 row 442).
@@ -106,6 +113,9 @@ internal sealed class ConfigurationRows
             automatic.AddRange(Libraries(id, server.AutomaticLibraryRegistry));
             serverValues.AddRange(Values(id, AdoptedLibrary, AdoptedPositions(server.AutomaticLibraryRegistry)));
             serverValues.AddRange(Values(id, AbsentLibrary, server.AbsentLibraryIds));
+            serverValues.AddRange(Values(id, LibraryToPlace, server.LibrariesToPlace));
+            serverValues.AddRange(Values(id, PlacedFolderLibrary, server.PlacedFolders.Select(placed => placed.Library)));
+            serverValues.AddRange(Values(id, PlacedFolderPath, server.PlacedFolders.Select(placed => placed.Folder)));
             serverValues.AddRange(Values(id, VanishedLibrary, server.VanishedLibraries.Select(library => library.Id)));
             serverValues.AddRange(Values(id, VanishedLibraryName, server.VanishedLibraries.Select(library => library.Name)));
             serverValues.AddRange(Values(id, LostAccessLibrary, server.LostAccess.Select(lost => lost.Library)));
@@ -251,6 +261,8 @@ internal sealed class ConfigurationRows
             Fill(server.AutomaticLibraryRegistry, automatic, id);
             MarkAdopted(server.AutomaticLibraryRegistry, serverValues, id);
             Fill(server.AbsentLibraryIds, serverValues, id, AbsentLibrary);
+            Fill(server.LibrariesToPlace, serverValues, id, LibraryToPlace);
+            FillPlacedFolders(server.PlacedFolders, serverValues, id);
             FillVanished(server.VanishedLibraries, serverValues, id);
             FillLostAccess(server.LostAccess, serverValues, id);
 
@@ -398,6 +410,18 @@ internal sealed class ConfigurationRows
         foreach (var row in lists[(owner, VanishedLibrary)].OrderBy(row => (long)row[2]))
         {
             target.Add(new VanishedLibraryConfig { Id = (string)row[3], Name = names.GetValueOrDefault((long)row[2], string.Empty) });
+        }
+    }
+
+    private static void FillPlacedFolders(Collection<PlacedFolderConfig> target, ILookup<(string Owner, string List), object[]> lists, string owner)
+    {
+        var paths = lists[(owner, PlacedFolderPath)].ToDictionary(row => (long)row[2], row => (string)row[3]);
+        foreach (var row in lists[(owner, PlacedFolderLibrary)].OrderBy(row => (long)row[2]))
+        {
+            if (paths.TryGetValue((long)row[2], out var path))
+            {
+                target.Add(new PlacedFolderConfig { Library = (string)row[3], Folder = path });
+            }
         }
     }
 

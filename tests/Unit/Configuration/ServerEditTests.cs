@@ -138,7 +138,7 @@ public sealed partial class ServerEditTests : IDisposable
     private string Snapshot(Guid? id = null)
     {
         var server = _fixture.Store.Configuration.Servers.Single(candidate => id is null || candidate.Id == id);
-        return string.Join('|', server.Name, server.Url, server.EncryptedCredentials, server.JellyfinServerId, string.Join(',', server.ImportedLibraryIds), server.LibraryMode);
+        return string.Join('|', server.Name, server.Url, server.EncryptedCredentials, server.JellyfinServerId, string.Join(',', server.ImportedLibraryIds), string.Join(',', server.LibrariesToPlace), server.LibraryMode);
     }
 
     [Fact]
@@ -583,6 +583,28 @@ public sealed partial class ServerEditTests : IDisposable
         _fixture.Handler.Requests.Clear();
         await _fixture.Registry.RunWithSessionAsync(id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
         Assert.DoesNotContain(Requests, request => request.Uri.AbsolutePath == "/Users/AuthenticateByName");
+    }
+
+    [Fact]
+    public async Task A_library_imported_by_a_save_waits_to_be_placed()
+    {
+        var id = await AddAsync("1");
+        var server = _fixture.Store.Configuration.Servers.Single();
+        server.LibrariesToPlace.Clear();
+
+        await Controller().SaveServerEdit(id, Edit(libraries: ["1", "2"]), CancellationToken.None);
+
+        Assert.Equal(["2"], server.LibrariesToPlace);
+    }
+
+    [Fact]
+    public async Task A_library_left_out_by_a_save_no_longer_waits_to_be_placed()
+    {
+        var id = await AddAsync("1", "2");
+
+        await Controller().SaveServerEdit(id, Edit(libraries: ["1"]), CancellationToken.None);
+
+        Assert.Equal(["1"], _fixture.Store.Configuration.Servers.Single().LibrariesToPlace);
     }
 
     [Fact]
