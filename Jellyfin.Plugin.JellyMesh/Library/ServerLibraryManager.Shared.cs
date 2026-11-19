@@ -461,7 +461,7 @@ public sealed partial class ServerLibraryManager
             return _stubs.HasTitlesOf(serverId);
         }
 
-        if (FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)))
+        if (PathOf(kind, root, serverId) is { } serverFolder && FederatedFolderLinkChecker.IsSamePath(location, serverFolder))
         {
             return olderLayout;
         }

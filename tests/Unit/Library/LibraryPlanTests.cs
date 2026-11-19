@@ -13,6 +13,11 @@ public sealed class LibraryPlanTests
     private const string Films = "a1000000000000000000000000000001";
     private const string Films4K = "a1000000000000000000000000000002";
     private const string Shows = "b2000000000000000000000000000001";
+    private const string Music = "c3000000000000000000000000000002";
+    private const string MusicVideos = "c3000000000000000000000000000003";
+    private const string HomeVideos = "c3000000000000000000000000000004";
+    private const string Books = "c3000000000000000000000000000005";
+    private const string Mixed = "d4000000000000000000000000000001";
     private static readonly Guid _serverId = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000001");
 
     private static RemoteServerConfig Server(LibraryMode mode, params (string Id, string Name, string Type)[] libraries)
@@ -65,6 +70,82 @@ public sealed class LibraryPlanTests
     }
 
     [Fact]
+    public void PerTypeMakesALibraryForEachNewTypePresentWithTheNameOfItsTypeFolder()
+    {
+        var plan = LibraryPlan.For(
+            Server(LibraryMode.ByType, (Books, "Libri", "books"), (Music, "Musica", "music"), (HomeVideos, "Casa", "homevideos"), (MusicVideos, "Clip", "musicvideos"), (Films, "Film", "movies")),
+            Root,
+            olderLayout: false);
+
+        Assert.Equal(
+            [
+                ("Movies", ServerLibraryKind.Movies, "Film", new[] { Folder(Films, "Film") }),
+                ("Music", ServerLibraryKind.Music, "Musica", new[] { Folder(Music, "Musica") }),
+                ("MusicVideos", ServerLibraryKind.MusicVideos, "Video musicali", new[] { Folder(MusicVideos, "Video musicali") }),
+                ("HomeVideos", ServerLibraryKind.HomeVideos, "Video domestici", new[] { Folder(HomeVideos, "Video domestici") }),
+                ("Books", ServerLibraryKind.Books, "Libri", new[] { Folder(Books, "Libri") })
+            ],
+            plan.Select(library => (library.Key, library.Kind, library.Suffix, library.Paths.ToArray())));
+    }
+
+    [Fact]
+    public void PerTypePutsTheFilmAndSerieFoldersOfAMixedLibraryInFilmAndSerie()
+    {
+        var plan = LibraryPlan.For(Server(LibraryMode.ByType, (Films, "Film", "movies"), (Mixed, "Tutto", "mixed")), Root, olderLayout: false);
+
+        Assert.Equal(
+            [
+                (ServerLibraryKind.Movies, new[] { Folder(Films, "Film"), Folder(Mixed, "Film") }),
+                (ServerLibraryKind.Series, new[] { Folder(Mixed, "Serie") })
+            ],
+            plan.Select(library => (library.Kind, library.Paths.ToArray())));
+    }
+
+    [Fact]
+    public void PerRemoteLibraryMakesOneMixedLibraryOnAllTheTypeFoldersOfAMixedLibrary()
+    {
+        var plan = LibraryPlan.For(Server(LibraryMode.ByRemoteLibrary, (Mixed, "Tutto", "mixed"), (Music, "Musica", "music")), Root, olderLayout: false);
+
+        Assert.Equal(
+            [
+                (Mixed, ServerLibraryKind.Mixed, Mixed, "Tutto", new[] { Folder(Mixed, "Film"), Folder(Mixed, "Serie") }),
+                (Music, ServerLibraryKind.Music, Music, "Musica", new[] { Folder(Music, "Musica") })
+            ],
+            plan.Select(library => (library.Key, library.Kind, library.RemoteLibraryId, library.Suffix, library.Paths.ToArray())));
+    }
+
+    [Fact]
+    public void InTheOlderLayoutNewTypesWaitForTheMigrationAndAMixedLibraryCountsAsFilmAndSerie()
+    {
+        var plan = LibraryPlan.For(Server(LibraryMode.ByType, (Music, "Musica", "music"), (Mixed, "Tutto", "mixed")), Root, olderLayout: true);
+
+        Assert.Equal(
+            [
+                (ServerLibraryKind.Movies, new[] { $"{Root}/{_serverId:D}/Film" }),
+                (ServerLibraryKind.Series, new[] { $"{Root}/{_serverId:D}/Serie" })
+            ],
+            plan.Select(library => (library.Kind, library.Paths.ToArray())));
+    }
+
+    [Fact]
+    public void TheTypeFoldersOfAMixedLibraryAreFilmAndSerieAndANewTypeHasItsOwn()
+    {
+        Assert.Equal(
+            [$"{_serverId:D}/{Mixed}/Film", $"{_serverId:D}/{Mixed}/Serie", $"{_serverId:D}/{Books}/Libri"],
+            LibraryPlan.TypeFolders(Server(LibraryMode.None, (Mixed, "Tutto", "mixed"), (Books, "Libri", "books"))));
+    }
+
+    [Fact]
+    public void TheManualPathsOfANewTypeHaveItsLocalType()
+    {
+        var paths = LibraryPlan.ManualPaths(Server(LibraryMode.None, (HomeVideos, "Casa", "homevideos"), (Music, "Musica", "music")), Root, olderLayout: false);
+
+        Assert.Equal(
+            [(Folder(HomeVideos, "Video domestici"), "homevideos", "Casa"), (Folder(Music, "Musica"), "music", "Musica")],
+            paths.Select(path => (path.Path, path.LibraryType, path.RemoteLibrary)));
+    }
+
+    [Fact]
     public void NoneMakesNoLibrary()
     {
         Assert.Empty(LibraryPlan.For(Server(LibraryMode.None, (Films, "Film", "movies")), Root, olderLayout: false));
@@ -73,7 +154,7 @@ public sealed class LibraryPlanTests
     [Fact]
     public void OnlyImportedLibrariesOfAKnownTypeCount()
     {
-        var server = Server(LibraryMode.ByRemoteLibrary, (Films, "Film", "movies"), (Shows, "Musica", "music"));
+        var server = Server(LibraryMode.ByRemoteLibrary, (Films, "Film", "movies"), (Shows, "Collezioni", "boxsets"));
         server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = Films4K, Name = "Film 4K", CollectionType = "movies" });
         server.ImportedLibraryIds.Add("c3000000000000000000000000000001");
 

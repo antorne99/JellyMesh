@@ -432,7 +432,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             added);
     }
 
-    private static string PathOf(ServerLibraryKind kind, string root, Guid serverId) => LibraryPlan.ServerFolderOf(kind, root, serverId);
+    private static string? PathOf(ServerLibraryKind kind, string root, Guid serverId) => LibraryPlan.ServerFolderOf(kind, root, serverId);
 
     private static CollectionTypeOptions TypeOf(ServerLibraryKind kind) => kind == ServerLibraryKind.Movies ? CollectionTypeOptions.movies : CollectionTypeOptions.tvshows;
 
@@ -457,7 +457,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     private static bool IsServerFolder(string location, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
         serverId == _sharedOwner
             ? ServerOfFolder(location, root) is { } server && IsServerFolder(location, kind, string.Empty, root, server)
-            : FederatedFolderLinkChecker.IsSamePath(location, PathOf(kind, root, serverId)) || IsTypeFolderOf(location, kind, remoteLibraryId, root, serverId);
+            : (PathOf(kind, root, serverId) is { } serverFolder && FederatedFolderLinkChecker.IsSamePath(location, serverFolder)) || IsTypeFolderOf(location, kind, remoteLibraryId, root, serverId);
 
     // A type folder of the given kind in a remote library folder of the server, that of the given remote library if one is given.
     private static bool IsTypeFolderOf(string location, ServerLibraryKind kind, string remoteLibraryId, string root, Guid serverId) =>
@@ -819,7 +819,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
 
         var serverFolder = PathOf(record.Kind, root, serverId);
-        if (olderLayout || !kept.Any(location => FederatedFolderLinkChecker.IsSamePath(location, serverFolder)) || !kept.Any(location => IsTypeFolderOf(location, record.Kind, record.RemoteLibraryId, root, serverId)))
+        if (olderLayout || serverFolder is null || !kept.Any(location => FederatedFolderLinkChecker.IsSamePath(location, serverFolder)) || !kept.Any(location => IsTypeFolderOf(location, record.Kind, record.RemoteLibraryId, root, serverId)))
         {
             return changed;
         }
