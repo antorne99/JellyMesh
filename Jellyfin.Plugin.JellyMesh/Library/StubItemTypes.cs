@@ -1,5 +1,6 @@
 using System;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 
@@ -17,6 +18,7 @@ public static class StubItemTypes
     {
         StubKind.Movie => typeof(Movie),
         StubKind.Episode => typeof(Episode),
+        StubKind.Track => typeof(Audio),
         StubKind.MusicVideo => typeof(MusicVideo),
         StubKind.HomeVideo => typeof(Video),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
