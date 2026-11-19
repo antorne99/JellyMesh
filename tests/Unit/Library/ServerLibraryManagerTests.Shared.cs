@@ -344,6 +344,22 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_shared_library_whose_blocks_keep_failing_is_taken_from_the_users_and_deleted_once_it_can_be()
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        Assert.Equal([SharedFilm + "2"], fixture.Manager.GetSharedState().Unblocked);
+        fixture.Libraries.RemoveFailure = null;
+        fixture.Renamer.Removed.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Contains(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2" && !call.Refresh);
+        Assert.Contains(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
+        Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Name == SharedFilm + "2");
+        Assert.Empty(fixture.Manager.GetSharedState().Unblocked);
+    }
+
+    [Fact]
     public async Task Deleting_libraries_starts_no_library_scan_while_a_shared_library_lacks_its_blocks()
     {
         var fixture = await WithUnblockedSharedFilm();

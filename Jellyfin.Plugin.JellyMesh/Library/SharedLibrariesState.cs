@@ -19,4 +19,7 @@ public sealed record SharedLibrariesState(
 {
     /// <summary>Gets the libraries of the admin that kept the last check from making or adopting a shared library, and why (D43).</summary>
     public IReadOnlyList<LibraryConflict> Conflicts { get; init; } = [];
+
+    /// <summary>Gets the shared libraries whose blocks could not be written and that could not be deleted, so no scan runs (D42).</summary>
+    public IReadOnlyList<string> Unblocked { get; init; } = [];
 }

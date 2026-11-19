@@ -29,7 +29,10 @@ public sealed partial class ServerLibraryManager
             false,
             config.SharedLibraries.Libraries.Select(record => new AutomaticLibraryStatus(record.Kind, record.Name) { Adopted = record.Adopted }).ToList(),
             config.SharedLibraries.ReleasedLibraries.ToList(),
-            AutomaticLibrariesError.None));
+            AutomaticLibrariesError.None)
+        {
+            Unblocked = config.SharedLibraries.Libraries.Where(record => record.Unblocked).Select(record => record.Name).ToList()
+        });
         return state with
         {
             Libraries = WithDisabled(state.Libraries),
@@ -621,41 +624,58 @@ public sealed partial class ServerLibraryManager
     private async Task<bool> DropUnblockedAsync(PendingLibraryConfig intent, VirtualFolderInfo made, CancellationToken cancellationToken)
     {
         _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
-        var id = Guid.TryParse(made.ItemId, out var found) ? found : (Guid?)null;
-        if (await RemoveFromUsersAsync(made.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false)
-            && await RemoveFromUsersAsync(made.Name, id, PreferenceKind.EnableContentDeletionFromFolders, cancellationToken).ConfigureAwait(false))
+        if (await RemoveSharedAsync(made, cancellationToken).ConfigureAwait(false))
         {
-            try
-            {
-                await _libraries.RemoveVirtualFolder(made.Name, false).ConfigureAwait(false);
-                _store.Update(config => RemovePending(config.SharedLibraries.PendingLibraries, intent.KeyOf()));
-                return false;
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                _logger.LogError("Cannot delete the shared library {Library}, which could not be blocked: {Error}", LogText.Clean(made.Name), exception.GetType().Name);
-            }
+            _store.Update(config => RemovePending(config.SharedLibraries.PendingLibraries, intent.KeyOf()));
+            return false;
         }
 
         RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty, Unblocked = true }, made.Locations ?? []));
         return false;
     }
 
-    // Writes the blocks a shared library still lacks, by its id or else the id of its name (D42). Tells whether one got them.
+    // Takes a shared library that could not be blocked from the users, then deletes it with no refresh. False when either
+    // step failed.
+    private async Task<bool> RemoveSharedAsync(VirtualFolderInfo library, CancellationToken cancellationToken)
+    {
+        var id = Guid.TryParse(library.ItemId, out var found) ? found : (Guid?)null;
+        if (!await RemoveFromUsersAsync(library.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false)
+            || !await RemoveFromUsersAsync(library.Name, id, PreferenceKind.EnableContentDeletionFromFolders, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        try
+        {
+            await _libraries.RemoveVirtualFolder(library.Name, false).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot delete the shared library {Library}, which could not be blocked: {Error}", LogText.Clean(library.Name), exception.GetType().Name);
+            return false;
+        }
+    }
+
+    // Writes the blocks a shared library still lacks, by its id or else the id of its name, or else deletes it (D42). Tells
+    // whether one got them or went.
     private async Task<bool> BlockUnblockedAsync(List<VirtualFolderInfo> folders, CancellationToken cancellationToken)
     {
         var changed = false;
         foreach (var record in _store.Read(config => config.SharedLibraries.Libraries.Where(record => record.Unblocked).Select(Copy).ToList()))
         {
-            if (FindRecorded(record, folders) is { } folder)
+            if (FindRecorded(record, folders) is { } folder && !await BlockFoundAsync(record, folder, folders, cancellationToken).ConfigureAwait(false))
             {
-                var planned = new PlannedLibrary(KeyOf(record), record.Kind, string.Empty, string.Empty, [.. record.Paths]);
-                var id = Guid.TryParse(folder.ItemId, out var found) ? found : (Guid?)null;
-                if (BlockSources(planned, [.. folders.Where(other => other != folder)]) is not { } sources
-                    || !await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false))
+                // Only a library known as ours is deleted.
+                if (IsOwnShared(record, folder) && await RemoveSharedAsync(folder, cancellationToken).ConfigureAwait(false))
                 {
-                    continue;
+                    ForgetShared(record);
+                    _logger.LogInformation("Deleted the shared library {Library}, which could not be blocked", LogText.Clean(folder.Name));
+                    _sharedScanOwed = true;
+                    changed = true;
                 }
+
+                continue;
             }
 
             _store.Update(config =>
@@ -671,6 +691,36 @@ public sealed partial class ServerLibraryManager
 
         return changed;
     }
+
+    // Writes the blocks of a shared library found for its record. False when they could not be written.
+    private async Task<bool> BlockFoundAsync(AutomaticLibraryConfig record, VirtualFolderInfo folder, IReadOnlyList<VirtualFolderInfo> folders, CancellationToken cancellationToken)
+    {
+        var planned = new PlannedLibrary(KeyOf(record), record.Kind, string.Empty, string.Empty, [.. record.Paths]);
+        var id = Guid.TryParse(folder.ItemId, out var found) ? found : (Guid?)null;
+        return BlockSources(planned, [.. folders.Where(other => other != folder)]) is { } sources
+            && await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false);
+    }
+
+    // A shared library found by its recorded id, or by its name with the recorded paths and type.
+    private static bool IsOwnShared(AutomaticLibraryConfig record, VirtualFolderInfo folder) =>
+        (record.ItemId.Length > 0 && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase))
+        || (folder.CollectionType == TypeOf(record.Kind) && SameLocations(folder.Locations ?? [], record.Paths));
+
+    // Drops a deleted shared library from the registry with its key, so that a later check makes it again.
+    private void ForgetShared(AutomaticLibraryConfig record) => _store.Update(config =>
+    {
+        var shared = config.SharedLibraries;
+        foreach (var kept in shared.Libraries.Where(kept => kept.Kind == record.Kind && string.Equals(kept.Name, record.Name, StringComparison.Ordinal)).ToList())
+        {
+            shared.Libraries.Remove(kept);
+        }
+
+        var key = KeyOf(record);
+        foreach (var made in shared.CreatedLibraryKeys.Where(made => string.Equals(made, key, StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            shared.CreatedLibraryKeys.Remove(made);
+        }
+    });
 
     // Saves a shared library and drops its intent.
     private void RecordShared(string key, AutomaticLibraryConfig record) => _store.Update(config =>
