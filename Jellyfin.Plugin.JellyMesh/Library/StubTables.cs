@@ -337,6 +337,11 @@ internal static class StubTables
         }
 
         deletes.AddRange(old.Keys.Where(key => !kept.Contains(key)));
+
+        // Rows go in key order, so that each page of a table is written about once instead of again for every row.
+        rows.Sort((a, b) => string.CompareOrdinal(id(a.Row), id(b.Row)));
+        ordinals.Sort((a, b) => string.CompareOrdinal(a.Id, b.Id));
+        deletes.Sort(StringComparer.Ordinal);
     }
 
     private static bool SameStub(StubEntry a, StubEntry b)
