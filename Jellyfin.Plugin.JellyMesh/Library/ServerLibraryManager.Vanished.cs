@@ -119,7 +119,8 @@ public sealed partial class ServerLibraryManager
         }
 
         var id = Guid.TryParse(record.ItemId, out var found) ? found : (Guid?)null;
-        if (!await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false))
+        if (!await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false)
+            || !await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.EnableContentDeletionFromFolders, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }

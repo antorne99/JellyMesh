@@ -1239,7 +1239,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             else
             {
                 var id = Guid.TryParse(folders.FirstOrDefault(folder => string.Equals(folder.Name, next.Name, StringComparison.Ordinal))?.ItemId, out var found) ? found : (Guid?)null;
-                if (!await RemoveFromUsersAsync(next.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false))
+                if (!await RemoveFromUsersAsync(next.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false)
+                    || !await RemoveFromUsersAsync(next.Name, id, PreferenceKind.EnableContentDeletionFromFolders, cancellationToken).ConfigureAwait(false))
                 {
                     SetError(errorKey, AutomaticLibrariesError.RemoveFailed);
                     return false;
@@ -1311,8 +1312,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         return true;
     }
 
-    // Removes the id of a plugin library being deleted from a list of each user: the given lists before the delete, so a
-    // library made again with the name is not given back, the blocked ones after it, so no block is lifted while it is there.
+    // Removes the id of a plugin library being deleted from a list of each user: the given and deletion lists before the delete,
+    // so a library made again with the name gives nothing back, the blocked ones after it, so no block is lifted while it is there.
     private async Task<bool> RemoveFromUsersAsync(string name, Guid? id, PreferenceKind list, CancellationToken cancellationToken)
     {
         try

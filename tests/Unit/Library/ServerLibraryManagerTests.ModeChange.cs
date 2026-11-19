@@ -591,7 +591,7 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_library_the_plugin_deletes_leaves_the_given_lists_before_it_goes_and_the_blocked_ones_after()
+    public async Task A_library_the_plugin_deletes_leaves_the_given_and_deletion_lists_before_it_goes_and_the_blocked_ones_after()
     {
         var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
         var oldFilms = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
@@ -601,9 +601,13 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.ApplyMode(_serverId).Job;
 
         Assert.Equal(
-            [("Casa - Film", (Guid?)oldFilms, PreferenceKind.EnabledFolders), ("Casa - Film", oldFilms, PreferenceKind.BlockedMediaFolders)],
+            [
+                ("Casa - Film", (Guid?)oldFilms, PreferenceKind.EnabledFolders),
+                ("Casa - Film", oldFilms, PreferenceKind.EnableContentDeletionFromFolders),
+                ("Casa - Film", oldFilms, PreferenceKind.BlockedMediaFolders)
+            ],
             fixture.Renamer.Removed);
-        Assert.Equal([0, 1], removedAt);
+        Assert.Equal([0, 0, 1], removedAt);
     }
 
     [Fact]
@@ -616,7 +620,30 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        Assert.Equal(["Casa - Serie", "Casa - Serie"], fixture.Renamer.Removed.Select(removed => removed.Name));
+        Assert.Equal(["Casa - Serie", "Casa - Serie", "Casa - Serie"], fixture.Renamer.Removed.Select(removed => removed.Name));
+    }
+
+    [Fact]
+    public async Task A_library_a_user_may_still_delete_from_is_not_deleted_and_the_next_check_deletes_it()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Renamer.OnRemove = () =>
+        {
+            if (fixture.Renamer.Removed.LastOrDefault().List == PreferenceKind.EnabledFolders)
+            {
+                throw new InvalidOperationException("database");
+            }
+        };
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Contains(fixture.Server.AutomaticLibraryRegistry, record => record.Name == "Casa - Film");
+
+        fixture.Renamer.OnRemove = null;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
     }
 
     [Fact]

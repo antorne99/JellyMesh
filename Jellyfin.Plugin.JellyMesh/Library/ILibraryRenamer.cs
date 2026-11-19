@@ -57,7 +57,7 @@ public interface ILibraryRenamer
     /// </summary>
     /// <param name="name">The library name.</param>
     /// <param name="itemId">The library id, if known.</param>
-    /// <param name="list">The list, enabled or blocked folders.</param>
+    /// <param name="list">The list: enabled, blocked or content deletion folders.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken);

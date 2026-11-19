@@ -89,9 +89,13 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         Assert.Equal(
-            [("Casa - Film 4K", (Guid?)id, PreferenceKind.EnabledFolders), ("Casa - Film 4K", id, PreferenceKind.BlockedMediaFolders)],
+            [
+                ("Casa - Film 4K", (Guid?)id, PreferenceKind.EnabledFolders),
+                ("Casa - Film 4K", id, PreferenceKind.EnableContentDeletionFromFolders),
+                ("Casa - Film 4K", id, PreferenceKind.BlockedMediaFolders)
+            ],
             fixture.Renamer.Removed);
-        Assert.Equal([0, 1], removedAt);
+        Assert.Equal([0, 0, 1], removedAt);
     }
 
     [Fact]
