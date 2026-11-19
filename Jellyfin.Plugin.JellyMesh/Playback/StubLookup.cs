@@ -244,7 +244,7 @@ public sealed class StubLookup
         return _libraryManager.GetItemById(itemId) switch
         {
             Video video when PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) => _stubs.Find(stubId),
-            Audio audio when IsStrmInFolder(audio.Path) => _stubs.FindByPath(audio.Path),
+            Audio audio when PathInFolder(audio.Path) is { } path => _stubs.FindByPath(path),
             _ => null
         };
     }
@@ -317,8 +317,23 @@ public sealed class StubLookup
     private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
 
     // A .strm in the federated folder; while the folder is not known, any .strm, since stock would send its signed URL.
-    private bool IsStrmInFolder(string? path)
-        => IsStrm(path) && (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path));
+    private bool IsStrmInFolder(string? path) => PathInFolder(path) is not null;
+
+    // The path of a .strm in the federated folder, also through an alias of it, spelled under the folder; else null.
+    private string? PathInFolder(string? path)
+    {
+        if (!IsStrm(path))
+        {
+            return null;
+        }
+
+        if (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path))
+        {
+            return path;
+        }
+
+        return RealPath.Rebase(root, path!);
+    }
 
     private void AddAlternates(Dictionary<Guid, Video> members, Video video)
     {

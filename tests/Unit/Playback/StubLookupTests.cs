@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Controller.Entities;
@@ -71,5 +72,45 @@ public class StubLookupTests
         Assert.Null(Lookup().Find(track.Id));
         Assert.False(Lookup().IsStub(local.Id));
         Assert.Null(Lookup().FindFile(local.Id));
+    }
+
+    // In "none" mode the admin may add the server folder through an alias: the real path is what tells a stub.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ATrackReachedThroughALinkIsStillAStub(bool linkedRoot)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-real-").FullName;
+        try
+        {
+            var real = Path.Combine(temp, "federata");
+            var album = Path.Combine(real, "S", "L", "Musica", "A", "B");
+            Directory.CreateDirectory(album);
+            File.WriteAllText(Path.Combine(album, "01 - X.strm"), "http://127.0.0.1/strm");
+            var alias = Path.Combine(temp, "alias");
+            Directory.CreateSymbolicLink(alias, real);
+            var radio = Path.Combine(temp, "radio");
+            Directory.CreateDirectory(radio);
+            File.WriteAllText(Path.Combine(radio, "station.strm"), "http://radio.example/stream");
+
+            _store.Configuration.FederatedFolderPath = linkedRoot ? alias : real;
+            var seen = Path.Combine(linkedRoot ? real : alias, "S", "L", "Musica", "A", "B", "01 - X.strm");
+            var stub = new StubEntry { Id = "track", Kind = StubKind.Track, IdentityKey = "Track|item:s:t", Sources = [], RelativePath = "S/L/Musica/A/B/01 - X.strm" };
+            var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = seen };
+            var station = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = Path.Combine(radio, "station.strm") };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+            _library.Setup(library => library.GetItemById(station.Id)).Returns(station);
+            var underRoot = Path.Combine(_store.Configuration.FederatedFolderPath, "S", "L", "Musica", "A", "B", "01 - X.strm");
+            _stubs.Setup(stubs => stubs.FindByPath(underRoot)).Returns(stub);
+
+            Assert.True(Lookup().IsAudioStub(track.Id));
+            Assert.True(Lookup().IsStub(track.Id));
+            Assert.Same(stub, Lookup().FindFile(track.Id));
+            Assert.False(Lookup().IsAudioStub(station.Id));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 }
