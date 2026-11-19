@@ -9,7 +9,9 @@
 # A library the plugin deletes leaves the users' given lists, so a user who lost it does not get it back when it is made
 # again, and stays in their blocked lists, so who blocked it still does not see it.
 # A new library gets the id of its name, which the plugin blocks before making it.
-# A stock remote with two film libraries and a series library, and a consumer with the plugin.
+# A mixed remote library is one library of no type per remote library, its folders go in Film and Serie per type,
+# and "none" lists them as films and series paths (D14, D59).
+# A stock remote with two film libraries, a series library and later a mixed one, and a consumer with the plugin.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f40] [PORT=18970] [KEEP=1] modes.sh
 set -euo pipefail
 PREFIX=${PREFIX:-jellymesh-probe-f40}
@@ -267,5 +269,32 @@ check "the children films have their library again" yes "$(exists 'Casa - Film B
 check "no user list gives the library made again" 0 "$(access "$(folder 'Casa - Film Bambini' | jq -r .ItemId)" | jq '[.[] | select(.Enabled)] | length')"
 check "the users with their own lists who lost the films see no federated title" "[] []" "$(sees "$CHILDREN") $(sees "$LIMITED")"
 check "the user who blocked the series library still sees no episode" '["Movie"]' "$(kinds "$BLOCKING")"
+
+echo "--- a mixed remote library: a library of no type with its Film and Serie folders, then its folders in Film and Serie, then listed as both [D14, D59]"
+post remote "/Library/VirtualFolders?name=Mista&refreshLibrary=false&paths=/media/mista" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+scan remote
+MIXED_ID=$(check_server local "$SERVER" | jq -r '.Libraries[] | select(.Name == "Mista") | .Id')
+check "the remote lists the mixed library" true "$([ -n "$MIXED_ID" ] && echo true || echo false)"
+MIXED_FILM="$(server_folder "$SERVER")/$MIXED_ID/Film"
+MIXED_SERIE="$(server_folder "$SERVER")/$MIXED_ID/Serie"
+import_all local "$SERVER"
+sync_now local
+wait_own
+check "per remote library makes a library for the mixed one" '["Casa - Mista",false]' "$(registry | jq -c '.[] | select(.[0] == "Casa - Mista")')"
+check "the mixed library has no type" null "$(folder 'Casa - Mista' | jq -c .CollectionType)"
+check "the mixed library has its Film and Serie folders" "$(jq -nc --arg f "$MIXED_FILM" --arg s "$MIXED_SERIE" '[$f, $s] | sort')" "$(locations 'Casa - Mista')"
+save_edit '{"LibraryMode":"ByType"}' >/dev/null
+check "the save answers 200" 200 "$(status)"
+wait_own
+check "per type makes no library for the mixed one" no "$(exists 'Casa - Mista')"
+check "its Film folder is in the film library" true "$(locations 'Casa - Film' | jq --arg p "$MIXED_FILM" 'index($p) != null')"
+check "its Serie folder is in the series library" true "$(locations 'Casa - Serie' | jq --arg p "$MIXED_SERIE" 'index($p) != null')"
+check "the film library is of films and the series library of series" "movies tvshows" "$(folder 'Casa - Film' | jq -r .CollectionType) $(folder 'Casa - Serie' | jq -r .CollectionType)"
+save_edit '{"LibraryMode":"None"}' >/dev/null
+check "the save answers 200" 200 "$(status)"
+wait_own
+check "none lists its Film folder as films and its Serie folder as series" \
+  "$(jq -nc --arg f "$MIXED_FILM" --arg s "$MIXED_SERIE" '[{Path: $f, LibraryType: "movies"}, {Path: $s, LibraryType: "tvshows"}]')" \
+  "$(own | jq -c --arg d "$(dirname "$MIXED_FILM")/" '[.ManualPaths[] | select(.Path | startswith($d)) | {Path, LibraryType}] | sort_by(.Path)')"
 
 [ "$FAILED" = 0 ] && echo "all passed" || { echo "some checks failed"; exit 1; }
