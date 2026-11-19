@@ -57,6 +57,25 @@ public sealed partial class ServerLibraryManagerTests
         return fixture;
     }
 
+    // A shared library on the folder of a library of the admin, recorded without its blocks, which cannot be written or
+    // the library deleted.
+    private static void HoldScans(Fixture fixture)
+    {
+        const string Other = "/media/altro";
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, Other);
+        fixture.Libraries.Add(SharedFilm + "2", CollectionTypeOptions.movies, Other);
+        fixture.Store.Update(config =>
+        {
+            var record = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = SharedFilm + "2", ItemId = fixture.Libraries.IdOf(SharedFilm + "2"), Unblocked = true };
+            record.Paths.Add(Other);
+            config.SharedLibraries.Libraries.Add(record);
+        });
+        fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+        fixture.Renamer.BlockFailureFor = carries => carries.Any(carry => carry.Name == SharedFilm + "2");
+        fixture.Libraries.RemoveFailure = new InvalidOperationException("boom");
+        fixture.Libraries.RemoveFailureFor = name => name == SharedFilm + "2";
+    }
+
     // Lets the blocks of the shared library be written.
     private static void LetBlocks(Fixture fixture)
     {
@@ -362,6 +381,28 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         Assert.Equal([2], validationsAtScan);
+    }
+
+    [Fact]
+    public async Task A_mode_change_keeps_the_old_libraries_until_a_scan_runs_once_the_shared_library_has_its_blocks()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        HoldScans(fixture);
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Contains(fixture.Libraries.Created, call => call.Name == "Casa - Film 4K");
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+
+        LetBlocks(fixture);
+        var removedAtScan = new List<int>();
+        fixture.Scans.DuringScan = () => removedAtScan.Add(fixture.Libraries.Removed.Count);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(0, removedAtScan.First());
     }
 
     [Fact]

@@ -2111,12 +2111,15 @@ public sealed partial class ServerLibraryManagerTests
 
         public Exception? BlockFailure { get; set; }
 
+        // When set, only the blocks it takes fail.
+        public Func<IReadOnlyList<AccessCarry>, bool>? BlockFailureFor { get; set; }
+
         public Action? OnBlock { get; set; }
 
         public Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
         {
             OnBlock?.Invoke();
-            if (BlockFailure is not null)
+            if (BlockFailure is not null && (BlockFailureFor?.Invoke(carries) ?? true))
             {
                 throw BlockFailure;
             }

@@ -721,10 +721,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 return false;
             }
 
-            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
+            return await QueueScanAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        return changed;
+        return false;
     }
 
     private static AutomaticLibraryConfig Copy(AutomaticLibraryConfig record)

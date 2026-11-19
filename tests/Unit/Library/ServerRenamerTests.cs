@@ -180,6 +180,17 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task AScanHeldBackForASharedLibraryLeavesTheStubsToTheScanItOwes()
+    {
+        _libraries.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("held scan")).ReturnsAsync(false);
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(["name Mare", "stubs Mare", "libraries", "held scan"], _steps);
+        Assert.False(_renamer.GetState(_server).Failed);
+    }
+
+    [Fact]
     public async Task WhenTheLibraryRenameThrows_TheScanStillRuns_AndTheFailureIsLoggedByItsTypeOnly()
     {
         _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/config/root/default/Casa - Film"));

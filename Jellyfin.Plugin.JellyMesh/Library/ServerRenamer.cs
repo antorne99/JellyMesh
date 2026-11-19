@@ -227,6 +227,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
 
         await _stubs.RelabelAsync(serverId, name, cancellationToken).ConfigureAwait(false);
         bool done;
+        bool scanned;
         try
         {
             done = await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
@@ -234,14 +235,21 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         finally
         {
             // The scan also starts the library monitor the rename stopped, and makes the new stubs.
-            await _libraries.ScanAsync(cancellationToken).ConfigureAwait(false);
+            scanned = await _libraries.ScanAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // A scan held back for a shared library without its blocks is owed: the stubs finish after it (D42).
+        if (!scanned)
+        {
+            _logger.LogInformation("The library scan waits for a shared library, so the stubs of the server finish after it");
+            return done;
         }
 
         await FinishAsync(cancellationToken).ConfigureAwait(false);
-        if (_stubs.IsPending(serverId))
+
+        // The old items go with this scan, which then links their groups again (row 85).
+        if (_stubs.IsPending(serverId) && await _libraries.ScanAsync(cancellationToken).ConfigureAwait(false))
         {
-            // The old items go with this scan, which then links their groups again (row 85).
-            await _libraries.ScanAsync(cancellationToken).ConfigureAwait(false);
             await FinishAsync(cancellationToken).ConfigureAwait(false);
         }
 

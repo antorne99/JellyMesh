@@ -180,9 +180,11 @@ public sealed partial class ServerLibraryManager
             return;
         }
 
-        if (!scanned && !none)
+        // A scan held back for a shared library without its blocks keeps them too (D42).
+        if (!scanned && !none && !await QueueScanAsync(cancellationToken).ConfigureAwait(false))
         {
-            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("The libraries of the previous library mode stay until a library scan shows those of the new mode");
+            return;
         }
 
         if (!none && !await CarryAccessAsync(serverId, root, cancellationToken).ConfigureAwait(false))
