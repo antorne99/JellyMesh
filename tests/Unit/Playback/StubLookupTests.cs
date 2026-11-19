@@ -53,4 +53,23 @@ public class StubLookupTests
         Assert.True(Lookup().HasVersions(local.Id));
         Assert.False(Lookup().HasVersions(alone.Id));
     }
+
+    // A track stub has no plugin URL: the file routes find it by its path, playback does not until F56.
+    [Fact]
+    public void ATrackStrmInTheFolderIsAStubFoundForItsFileOnly()
+    {
+        var stub = new StubEntry { Id = "track", Kind = StubKind.Track, IdentityKey = "Track|item:s:t", Sources = [], RelativePath = "S/L/Musica/A/B/01 - X.strm" };
+        var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = "/federata/S/L/Musica/A/B/01 - X.strm" };
+        var local = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = "/media/music/01 - X.strm" };
+        _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+        _library.Setup(library => library.GetItemById(local.Id)).Returns(local);
+        _stubs.Setup(stubs => stubs.FindByPath(track.Path)).Returns(stub);
+
+        Assert.True(Lookup().IsStub(track.Id));
+        Assert.True(Lookup().IsAudioStub(track.Id));
+        Assert.Same(stub, Lookup().FindFile(track.Id));
+        Assert.Null(Lookup().Find(track.Id));
+        Assert.False(Lookup().IsStub(local.Id));
+        Assert.Null(Lookup().FindFile(local.Id));
+    }
 }
