@@ -189,6 +189,55 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal([("Film di via", true), ("Via - Film", false)], loaded.RemovedServerLibraries[0].Libraries.Select(library => (library.Name, library.Adopted)));
     }
 
+[Fact]
+    public void TheSharedLibrariesSurviveARestart()
+    {
+        var serverId = Guid.NewGuid();
+        Store().Update(config =>
+        {
+            config.Servers.Add(new RemoteServerConfig { Id = serverId, Name = "Casa", Url = TestValues.Url });
+            var shared = config.SharedLibraries;
+            shared.Enabled = true;
+            shared.FollowSkipped = true;
+            shared.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" });
+            shared.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Serie di tutti", Adopted = true });
+            shared.CreatedLibraryKeys.Add("Movies");
+            var pending = new PendingLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Tutti i server - Serie" };
+            pending.Paths.Add("/federata/a/library-1/Serie");
+            shared.PendingLibraries.Add(pending);
+            shared.PreexistingLibraryIds.Add("9a8b7c6d5e4f30211203f4e5d6c7b8a9");
+            shared.FollowedLibraryIds.Add("5d6c7b8a99a8b7c6d5e4f30211203f4e");
+            shared.ReleasedLibraries.Add("Tutti i server - Vecchia");
+        });
+
+        var loaded = Store().Read(config => config);
+
+        var shared = loaded.SharedLibraries;
+        Assert.Equal((true, true), (shared.Enabled, shared.FollowSkipped));
+        Assert.Equal(
+            [(ServerLibraryKind.Movies, "Tutti i server - Film", "0f1e2d3c4b5a69788796a5b4c3d2e1f0", false), (ServerLibraryKind.Series, "Serie di tutti", string.Empty, true)],
+            shared.Libraries.Select(library => (library.Kind, library.Name, library.ItemId, library.Adopted)));
+        Assert.Equal(["Movies", "Series"], shared.CreatedLibraryKeys);
+        var loadedPending = Assert.Single(shared.PendingLibraries);
+        Assert.Equal((ServerLibraryKind.Series, "Tutti i server - Serie"), (loadedPending.Kind, loadedPending.Name));
+        Assert.Equal(["/federata/a/library-1/Serie"], loadedPending.Paths);
+        Assert.Equal(["9a8b7c6d5e4f30211203f4e5d6c7b8a9"], shared.PreexistingLibraryIds);
+        Assert.Equal(["5d6c7b8a99a8b7c6d5e4f30211203f4e"], shared.FollowedLibraryIds);
+        Assert.Equal(["Tutti i server - Vecchia"], shared.ReleasedLibraries);
+        var server = Assert.Single(loaded.Servers);
+        Assert.Empty(server.AutomaticLibraryRegistry);
+        Assert.Empty(server.PendingLibraries);
+    }
+
+    [Fact]
+    public void TheSharedLibrariesAreOffByDefault()
+    {
+        var loaded = Store().Read(config => config);
+
+        Assert.False(loaded.SharedLibraries.Enabled);
+        Assert.Empty(loaded.SharedLibraries.Libraries);
+    }
+
     [Fact]
     public void AbsentAndVanishedLibrariesSurviveARestart()
     {

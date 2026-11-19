@@ -34,6 +34,9 @@ internal sealed class ConfigurationRows
     // The positions of the adopted libraries in the list of a server, so no schema step is needed (§10 row 441).
     private const string AdoptedLibrary = "adopted_library";
 
+    // The owner of the shared libraries in the tables of the servers: not a GUID, so no server reads its rows (§10 row 442).
+    private const string SharedOwner = "shared";
+
     private static readonly Setting[] _settings =
     [
         Number(nameof(PluginConfiguration.SyncIntervalSeconds), config => config.SyncIntervalSeconds, (config, value) => config.SyncIntervalSeconds = value),
@@ -50,7 +53,9 @@ internal sealed class ConfigurationRows
         Text(
             nameof(PluginConfiguration.NewServerLibraryMode),
             config => config.NewServerLibraryMode.ToString(),
-            (config, value) => config.NewServerLibraryMode = Enum.TryParse<LibraryMode>(value, out var mode) && Enum.IsDefined(mode) ? mode : config.NewServerLibraryMode)
+            (config, value) => config.NewServerLibraryMode = Enum.TryParse<LibraryMode>(value, out var mode) && Enum.IsDefined(mode) ? mode : config.NewServerLibraryMode),
+        Flag("SharedLibraries", config => config.SharedLibraries.Enabled, (config, value) => config.SharedLibraries.Enabled = value),
+        Flag("SharedLibrariesFollowSkipped", config => config.SharedLibraries.FollowSkipped, (config, value) => config.SharedLibraries.FollowSkipped = value)
     ];
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<object[]>> _tables;
@@ -104,6 +109,16 @@ internal sealed class ConfigurationRows
             pendingLibraries.AddRange(server.PendingLibraries.Select((library, position)
                 => Row(id, position, library.Kind.ToString(), library.Name, library.RemoteLibraryId, JsonSerializer.Serialize(library.Paths))));
         }
+
+        var shared = config.SharedLibraries;
+        serverValues.AddRange(Values(SharedOwner, PreexistingLibrary, shared.PreexistingLibraryIds));
+        serverValues.AddRange(Values(SharedOwner, FollowedLibrary, shared.FollowedLibraryIds));
+        serverValues.AddRange(Values(SharedOwner, ReleasedLibrary, shared.ReleasedLibraries));
+        serverValues.AddRange(Values(SharedOwner, CreatedLibrary, shared.CreatedLibraryKeys));
+        automatic.AddRange(Libraries(SharedOwner, shared.Libraries));
+        serverValues.AddRange(Values(SharedOwner, AdoptedLibrary, AdoptedPositions(shared.Libraries)));
+        pendingLibraries.AddRange(shared.PendingLibraries.Select((library, position)
+            => Row(SharedOwner, position, library.Kind.ToString(), library.Name, library.RemoteLibraryId, JsonSerializer.Serialize(library.Paths))));
 
         var removed = new List<object[]>();
         var removedValues = new List<object[]>();
@@ -252,6 +267,26 @@ internal sealed class ConfigurationRows
             config.Servers.Add(server);
         }
 
+        var shared = config.SharedLibraries;
+        Fill(shared.PreexistingLibraryIds, serverValues, SharedOwner, PreexistingLibrary);
+        Fill(shared.FollowedLibraryIds, serverValues, SharedOwner, FollowedLibrary);
+        Fill(shared.ReleasedLibraries, serverValues, SharedOwner, ReleasedLibrary);
+        Fill(shared.CreatedLibraryKeys, serverValues, SharedOwner, CreatedLibrary);
+        Fill(shared.Libraries, automatic, SharedOwner);
+        MarkAdopted(shared.Libraries, serverValues, SharedOwner);
+        foreach (var key in shared.Libraries.Select(record => record.KeyOf()).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
+        {
+            if (!shared.CreatedLibraryKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                shared.CreatedLibraryKeys.Add(key);
+            }
+        }
+
+        foreach (var library in pending[SharedOwner].OrderBy(library => (long)library[1]))
+        {
+            shared.PendingLibraries.Add(Pending(library));
+        }
+
         var removedValues = Lists(ConfigurationTables.RemovedServerValues);
         var removedLibraries = LibrariesOf(ConfigurationTables.RemovedServerLibraries);
         foreach (var row in Rows(ConfigurationTables.RemovedServers).OrderBy(row => (long)row[1]))
@@ -280,11 +315,11 @@ internal sealed class ConfigurationRows
             config.LayoutMigration.PlacedServers.Add(Guid.Parse((string)row[0]));
         }
 
-        var shared = Rows(ConfigurationTables.PeerSharedLibraries).ToLookup(row => (string)row[0], StringComparer.Ordinal);
+        var peerLibraries = Rows(ConfigurationTables.PeerSharedLibraries).ToLookup(row => (string)row[0], StringComparer.Ordinal);
         foreach (var row in Rows(ConfigurationTables.Peers).OrderBy(row => (long)row[1]))
         {
             var peer = new ProviderPeerConfig { UserId = Guid.Parse((string)row[0]), MaxStreams = (int)(long)row[2] };
-            foreach (var library in shared[(string)row[0]].OrderBy(library => (long)library[1]))
+            foreach (var library in peerLibraries[(string)row[0]].OrderBy(library => (long)library[1]))
             {
                 peer.SharedLibraryIds.Add((string)library[2]);
             }
