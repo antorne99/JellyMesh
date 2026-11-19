@@ -1533,6 +1533,14 @@
                             </div>
                         </div>
                         <div class="jmGroup">
+                            <h3 class="sectionTitle">Libraries</h3>
+                            <div class="selectContainer">
+                                <label class="selectLabel" for="jmNewServerLibraryMode">Library mode of a server linked later</label>
+                                <select id="jmNewServerLibraryMode" is="emby-select"></select>
+                                <div class="fieldDescription">Chosen in the form when a server is added. A server already linked keeps its own mode, which Edit changes.</div>
+                            </div>
+                        </div>
+                        <div class="jmGroup">
                             <h3 class="sectionTitle">Metadata</h3>
                             <div>
                                 <div class="checkboxContainer checkboxContainer-withDescription">
@@ -1685,6 +1693,9 @@
                     "Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library for them. Take them out of {library}, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} con un altro tipo di contenuto, quindi JellyMesh non ha né creato né adottato una libreria per questi percorsi. Toglili da {library}, oppure imposta su Nessuna la modalità delle librerie di questo server.",
                     "{library} (adopted)": "{library} (adottata)",
                     "Libraries of all servers": "Librerie di tutti i server",
+                    "Libraries": "Librerie",
+                    "Library mode of a server linked later": "Modalità delle librerie di un server collegato in seguito",
+                    "Chosen in the form when a server is added. A server already linked keeps its own mode, which Edit changes.": "Scelta nel modulo quando si aggiunge un server. Un server già collegato tiene la sua modalità, che si cambia con Modifica.",
                     "One library per type with all servers": "Una sola libreria per tipo con tutti i server",
                     "JellyMesh makes or adopts one library per type that holds the folders of every server, in any library mode. Saved when chosen; turning it off asks first.": "JellyMesh crea o adotta una libreria per tipo che contiene le cartelle di ogni server, in qualsiasi modalità delle librerie. Si salva quando la scegli; per spegnerla chiede prima conferma.",
                     "In library mode By type or By remote library, a folder of a server is also in the library of that server, so its titles show in both libraries. Each is one title, with one watch state, as in Jellyfin when two libraries share a folder.": "Nella modalità delle librerie Per tipo o Per libreria remota, una cartella di un server sta anche nella libreria di quel server, quindi i suoi titoli compaiono in entrambe le librerie. Ognuno è un solo titolo, con un solo stato di visione, come in Jellyfin quando due librerie condividono una cartella.",
@@ -2328,7 +2339,8 @@
                     StreamOpenTimeoutSeconds: 'jmStreamOpenTimeout',
                     PlaybackIdleSeconds: 'jmPlaybackIdle',
                     SessionRetentionHours: 'jmSessionRetention',
-                    PolicyCacheMinutes: 'jmPolicyCache'
+                    PolicyCacheMinutes: 'jmPolicyCache',
+                    NewServerLibraryMode: 'jmNewServerLibraryMode'
                 };
                 var serverCount = null;
 
@@ -4893,6 +4905,7 @@
                     el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
                     el('#jmSessionRetention').value = config.SessionRetentionHours;
                     el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                    el('#jmNewServerLibraryMode').value = config.NewServerLibraryMode || 'ByType';
                     fixedSettings = (config.FixedByEnvironment || []).map(function (setting) {
                         return setting.Field;
                     });
@@ -4910,7 +4923,7 @@
                 }
 
                 function settingInputs() {
-                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input'));
+                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input, select'));
                 }
 
                 // Remembers the form as the server holds it, so that the page can tell when it has changed.
@@ -5981,6 +5994,12 @@
                     });
                 });
 
+                libraryModes.forEach(function (value) {
+                    var option = create('option', libraryModeLabel(value));
+                    option.value = value;
+                    el('#jmNewServerLibraryMode').appendChild(option);
+                });
+
                 el('#jmSettingsForm').addEventListener('input', showSaveBar);
                 el('#jmSettingsForm').addEventListener('change', showSaveBar);
 
@@ -6002,6 +6021,7 @@
                     config.PlaybackIdleSeconds = parseInt(el('#jmPlaybackIdle').value, 10);
                     config.SessionRetentionHours = parseInt(el('#jmSessionRetention').value, 10);
                     config.PolicyCacheMinutes = parseInt(el('#jmPolicyCache').value, 10);
+                    config.NewServerLibraryMode = el('#jmNewServerLibraryMode').value;
                     // A setting of the environment is left out, so it keeps the value of the variable.
                     fixedSettings.forEach(function (field) {
                         delete config[field];

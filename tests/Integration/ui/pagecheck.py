@@ -3276,6 +3276,39 @@ def save_bar(s, width):
     u.close(page)
 
 
+def new_library_mode(s, width):
+    """The library mode of a server linked later: saved with Save, and preselected in the add form (row 437)."""
+    name = width + " new library mode"
+    saved = u.config("fresh")["NewServerLibraryMode"]
+    chosen = "ByRemoteLibrary" if saved != "ByRemoteLibrary" else "ByType"
+    page = s.open("fresh", width, tab="settings")
+    select = page.locator(u.NEW_SERVER_LIBRARY_MODE)
+    check(name + " shows the saved mode", select.input_value() == saved, select.input_value())
+    options = select.locator("option").all_inner_texts()
+    check(name + " offers the three modes", options == ["By type", "By remote library", "None"], options)
+    select.select_option(chosen)
+    check(name + " a change shows Save", page.locator(u.SAVE_BAR).is_visible())
+    select.scroll_into_view_if_needed()
+    u.shot(page, f"new-library-mode-{width}", full_page=False)
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " saves", until(page, lambda: u.config("fresh")["NewServerLibraryMode"] == chosen), u.config("fresh"))
+    u.wait_idle(page)
+    check(name + " a save hides Save", page.locator(u.SAVE_BAR).is_hidden())
+    u.show_tab(page, "servers")
+    if not page.locator(u.ADD_PART).evaluate("node => node.open"):
+        page.locator(u.ADD_PART + " > summary").click()
+    mode = page.locator(u.ADD_FORM).get_by_label(u.MODE_LABEL, exact=True)
+    check(name + " preselects it in the add form", until(page, lambda: mode.input_value() == chosen), mode.input_value())
+    u.settings("fresh", lambda config: config.update(NewServerLibraryMode=saved))
+    healthy(page, name)
+    u.close(page)
+
+    page = s.open("fresh", width, tab="settings", language="it")
+    group = page.locator(u.NEW_SERVER_LIBRARY_MODE).locator("xpath=ancestor::div[contains(@class,'jmGroup')]")
+    check(name + " speaks Italian", "Modalità delle librerie di un server collegato in seguito" in group.inner_text(), group.inner_text())
+    u.close(page)
+
+
 def edit_form(s, width):
     """The edit form of a server: its fields, a refusal shown on its field, and a confirmation listing only what happens."""
     name = width + " edit form"
@@ -3745,6 +3778,7 @@ SCENARIOS = {
     "shared-libraries": (shared_libraries, WIDTHS),
     "shared-errors": (shared_errors, ["1280"]),
     "server-notes": (server_notes, WIDTHS),
+    "new-library-mode": (new_library_mode, WIDTHS),
     "store": (store_notices, WIDTHS),
 }
 

@@ -100,6 +100,7 @@ SHARED_GROUP = "#jmShared"
 SHARED_NOTES = "#jmSharedNotes"
 STORE = "#jmStore"
 MIGRATED = "#jmMigrated"
+NEW_SERVER_LIBRARY_MODE = "#jmNewServerLibraryMode"
 ADD_PART = "#jmAddServerPart"
 ADD_BLOCKED = "#jmAddBlocked"
 LIBRARIES_NOTE = ".jmLibrariesNote"
@@ -127,6 +128,7 @@ SETTINGS = {
     "#jmPlaybackIdle": "PlaybackIdleSeconds",
     "#jmSessionRetention": "SessionRetentionHours",
     "#jmPolicyCache": "PolicyCacheMinutes",
+    "#jmNewServerLibraryMode": "NewServerLibraryMode",
 }
 BUTTON = {
     "test": "Test connection",
