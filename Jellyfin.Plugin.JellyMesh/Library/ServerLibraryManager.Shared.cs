@@ -540,7 +540,7 @@ public sealed partial class ServerLibraryManager
             return await ResolveSharedAsync(intent, root, after, cancellationToken).ConfigureAwait(false);
         }
 
-        if (!await RecordMadeAsync(intent, made, after, cancellationToken).ConfigureAwait(false))
+        if (!await RecordMadeAsync(intent, made, after, true, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
@@ -550,8 +550,8 @@ public sealed partial class ServerLibraryManager
     }
 
     // Records a shared library made for an intent; one stored under another name is first blocked by its own id, or else
-    // deleted (D42). False when it was not recorded as blocked.
-    private async Task<bool> RecordMadeAsync(PendingLibraryConfig intent, VirtualFolderInfo made, IReadOnlyList<VirtualFolderInfo> folders, CancellationToken cancellationToken)
+    // deleted when just made, or kept unblocked when found later (D42, D54). False when it was not recorded as blocked.
+    private async Task<bool> RecordMadeAsync(PendingLibraryConfig intent, VirtualFolderInfo made, IReadOnlyList<VirtualFolderInfo> folders, bool justMade, CancellationToken cancellationToken)
     {
         if (!string.Equals(made.Name, intent.Name, StringComparison.Ordinal))
         {
@@ -560,7 +560,15 @@ public sealed partial class ServerLibraryManager
             if (BlockSources(planned, [.. folders.Where(folder => folder != made)]) is not { } sources
                 || !await BlockSharedAsync(made.Name, id, planned, sources, cancellationToken).ConfigureAwait(false))
             {
-                return await DropUnblockedAsync(intent, made, cancellationToken).ConfigureAwait(false);
+                if (justMade)
+                {
+                    return await DropUnblockedAsync(intent, made, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Found by its name and folders only, it is recorded with no id, so it is never deleted with no confirmation (D54).
+                _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+                RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, Unblocked = true }, made.Locations ?? []));
+                return false;
             }
         }
 
@@ -806,7 +814,7 @@ public sealed partial class ServerLibraryManager
             return false;
         }
 
-        if (!await RecordMadeAsync(intent, made, folders, cancellationToken).ConfigureAwait(false))
+        if (!await RecordMadeAsync(intent, made, folders, false, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }

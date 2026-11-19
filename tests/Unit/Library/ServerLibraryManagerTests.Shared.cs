@@ -571,6 +571,36 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(Shared(fixture).PendingLibraries);
     }
 
+// D54: a numbered shared library made before a crash is found by its name and paths, never by a recorded id.
+    [Fact]
+    public async Task A_numbered_shared_library_never_recorded_whose_blocks_fail_is_kept_with_the_scans_held_and_listed_at_switch_off()
+    {
+        var fixture = await WithNumberedPendingFilm();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _movies);
+        fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+        Assert.DoesNotContain(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
+        Assert.True(Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2").Unblocked);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+        var state = fixture.Manager.GetSharedState();
+        Assert.Equal([SharedFilm + "2"], state.Unblocked);
+        Assert.Equal(AutomaticLibrariesError.Failed, state.Error);
+        Assert.Contains(SharedFilm + "2", fixture.Manager.DisableShared(null).ToDelete);
+
+        LetBlocks(fixture);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        var record = Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2");
+        Assert.False(record.Unblocked);
+        Assert.Equal(fixture.Libraries.IdOf(SharedFilm + "2"), record.ItemId);
+        Assert.Contains("scan", fixture.Scans.Steps);
+    }
+
     [Fact]
     public async Task A_numbered_shared_library_never_recorded_that_cannot_be_deleted_keeps_the_option_on_and_is_listed_again()
     {
