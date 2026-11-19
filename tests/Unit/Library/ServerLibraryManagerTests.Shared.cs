@@ -486,6 +486,47 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_library_the_admin_makes_on_the_folders_of_a_deleted_shared_one_survives_a_confirmed_switch_off()
+    {
+        var fixture = WithTwoServers();
+        await fixture.Manager.EnableShared().Job;
+        var series = fixture.Libraries.Find(SharedSeries);
+        fixture.Libraries.Folders.Remove(series);
+        fixture.Libraries.Add("Mie serie", CollectionTypeOptions.tvshows, series.Locations);
+
+        var request = fixture.Manager.DisableShared(true);
+        await request.Job;
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(series.Locations, fixture.Libraries.Find("Mie serie").Locations);
+        Assert.True(Shared(fixture).Enabled);
+        Assert.Equal(AutomaticLibrariesError.Unconfirmed, fixture.Manager.GetSharedState().Error);
+    }
+
+    [Fact]
+    public async Task A_library_the_admin_makes_on_the_folders_of_a_shared_one_during_a_switch_off_is_not_deleted()
+    {
+        var fixture = WithTwoServers();
+        await fixture.Manager.EnableShared().Job;
+        var series = fixture.Libraries.Find(SharedSeries);
+        fixture.Renamer.OnRemove = () =>
+        {
+            if (fixture.Libraries.Folders.Remove(series))
+            {
+                fixture.Libraries.Add("Mie serie", CollectionTypeOptions.tvshows, series.Locations);
+            }
+        };
+
+        var request = fixture.Manager.DisableShared(true);
+        await request.Job;
+
+        Assert.Equal([SharedFilm], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(series.Locations, fixture.Libraries.Find("Mie serie").Locations);
+        Assert.True(Shared(fixture).Enabled);
+        Assert.Equal(AutomaticLibrariesError.Unconfirmed, fixture.Manager.GetSharedState().Error);
+    }
+
+    [Fact]
     public async Task Switching_off_with_nothing_to_delete_or_release_needs_no_confirmation()
     {
         var fixture = WithTwoServers();

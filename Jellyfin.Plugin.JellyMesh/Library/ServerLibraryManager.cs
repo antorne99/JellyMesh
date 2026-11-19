@@ -1235,12 +1235,16 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     // Deletes the libraries of a registry one at a time, or only those the filter takes, each checked again on a fresh
     // read, and scans after a release. False when it had to stop.
-    private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, CancellationToken cancellationToken)
+    private Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, CancellationToken cancellationToken)
+        => DeleteAllAsync(locate, errorKey, only, null, cancellationToken);
+
+    // As above, stopping with Unconfirmed at a library whose current name is not among those the admin confirmed.
+    private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, IReadOnlySet<string>? named, CancellationToken cancellationToken)
     {
         var released = false;
         try
         {
-            return await DeleteEachAsync(locate, errorKey, only, () => released = true, cancellationToken).ConfigureAwait(false);
+            return await DeleteEachAsync(locate, errorKey, only, named, () => released = true, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1252,7 +1256,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
     }
 
-    private async Task<bool> DeleteEachAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, Action onRelease, CancellationToken cancellationToken)
+    private async Task<bool> DeleteEachAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, IReadOnlySet<string>? named, Action onRelease, CancellationToken cancellationToken)
     {
         while (_store.Read(config => locate(config)?.Libraries.Any(record => only is null || only(config, record)) == true))
         {
@@ -1274,6 +1278,14 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             if (next is null)
             {
                 break;
+            }
+
+            // The follow may have taken another library for this one, so a name the admin did not confirm stops the deletes.
+            if (named is not null && !named.Contains(next.Name))
+            {
+                _logger.LogWarning("A library changed after the deletes were confirmed, so it is left alone: {Library}", LogText.Clean(next.Name));
+                SetError(errorKey, AutomaticLibrariesError.Unconfirmed);
+                return false;
             }
 
             if (next.Adopted)

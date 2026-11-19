@@ -135,6 +135,12 @@ public sealed partial class ServerLibraryManager
     // Deletes the shared libraries the plugin made and releases the adopted ones (D36), then turns the option off.
     private async Task DisableSharedAsync(IReadOnlySet<string> named, CancellationToken cancellationToken)
     {
+        // The follow runs first, so that a library taken for a renamed one is checked against the confirmed names too.
+        if (ReadFolders() is { } folders)
+        {
+            Follow(SharedRegistry, folders);
+        }
+
         // A library made or renamed since the admin confirmed was not named, so the option stays on until a new confirmation.
         if (_store.Read(config => config.SharedLibraries.Libraries.Any(record => !named.Contains(record.Name))))
         {
@@ -144,7 +150,7 @@ public sealed partial class ServerLibraryManager
         }
 
         _conflicts.TryRemove(_sharedOwner, out _);
-        if (!await DeleteAllAsync(SharedRegistry, _sharedOwner, null, cancellationToken).ConfigureAwait(false))
+        if (!await DeleteAllAsync(SharedRegistry, _sharedOwner, null, named, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
