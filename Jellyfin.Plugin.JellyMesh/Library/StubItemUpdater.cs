@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -58,15 +59,9 @@ public sealed class StubItemUpdater
         item.IsLocked = metadata.IsProtected && !isSeries;
         item.LockedFields = metadata.IsProtected && isSeries ? NfoDocument.SeriesLockedFields.ToArray() : [];
 
-        // Stock Jellyfin reads nothing from a track stub, so its fields are written with or without protection (D60).
         if (item is Audio audio)
         {
-            audio.Album = metadata.Album;
-            audio.Artists = metadata.Artists.ToArray();
-            audio.AlbumArtists = metadata.AlbumArtists.ToArray();
-            audio.IndexNumber = metadata.TrackNumber;
-            audio.ParentIndexNumber = metadata.DiscNumber;
-            audio.Genres = metadata.Genres.ToArray();
+            WriteTrack(audio, metadata);
         }
 
         if (metadata.IsProtected)
@@ -103,6 +98,32 @@ public sealed class StubItemUpdater
         {
             await _library.UpdatePeopleAsync(item, metadata.People.Select(ToPerson).OfType<PersonInfo>().ToList(), cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Writes the fields of a track and its lock. Stock Jellyfin reads nothing from a track stub, so they are written with
+    /// or without protection (D60). Nothing is saved.
+    /// </summary>
+    /// <param name="audio">The track.</param>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>Whether a field changed.</returns>
+    public static bool WriteTrack(Audio audio, StubMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(audio);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        var before = TrackFieldsOf(audio);
+        audio.Name = metadata.Title ?? audio.Name;
+        audio.ProductionYear = metadata.Year ?? audio.ProductionYear;
+        audio.ProviderIds = new Dictionary<string, string>(metadata.ProviderIds, StringComparer.OrdinalIgnoreCase);
+        audio.Album = metadata.Album;
+        audio.Artists = metadata.Artists.ToArray();
+        audio.AlbumArtists = metadata.AlbumArtists.ToArray();
+        audio.IndexNumber = metadata.TrackNumber;
+        audio.ParentIndexNumber = metadata.DiscNumber;
+        audio.Genres = metadata.Genres.ToArray();
+        audio.IsLocked = metadata.IsProtected;
+        return !string.Equals(before, TrackFieldsOf(audio), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -202,6 +223,20 @@ public sealed class StubItemUpdater
         ArgumentNullException.ThrowIfNull(item);
         return _library.UpdateItemAsync(item, _library.GetItemById(item.ParentId)!, reason, cancellationToken);
     }
+
+    private static string TrackFieldsOf(Audio audio) => JsonSerializer.Serialize(new
+    {
+        audio.Name,
+        audio.ProductionYear,
+        ProviderIds = audio.ProviderIds.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).ToList(),
+        audio.Album,
+        audio.Artists,
+        audio.AlbumArtists,
+        audio.IndexNumber,
+        audio.ParentIndexNumber,
+        audio.Genres,
+        audio.IsLocked
+    });
 
     private static PersonInfo? ToPerson(IndexedPerson person)
     {

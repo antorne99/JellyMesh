@@ -41,8 +41,13 @@ public sealed class StubBeforeProbeProvider : StubMetadataProvider
         }
 
         options.EnableRemoteContentProbe = false;
-        return Registry.FindByPath(item.Path) is { } stub && Technical.WriteItemAndStreams(item, stub, cancellationToken)
-            ? ItemUpdateType.MetadataImport
-            : ItemUpdateType.None;
+        if (Registry.FindByPath(item.Path) is not { } stub)
+        {
+            return ItemUpdateType.None;
+        }
+
+        var changed = Technical.WriteItemAndStreams(item, stub, cancellationToken);
+        changed |= stub.Kind == StubKind.Track && Technical.WriteTrack(item, stub, Store.ReadOr(config => config.MetadataProtection, true));
+        return changed ? ItemUpdateType.MetadataImport : ItemUpdateType.None;
     }
 }
