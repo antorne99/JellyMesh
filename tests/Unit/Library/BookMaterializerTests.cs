@@ -83,6 +83,24 @@ public sealed class BookMaterializerTests : IDisposable
         Assert.Equal("Sand", item.Overview);
     }
 
+    // No .nfo brings the metadata back to an item Jellyfin made again at the same path, so the nightly pass does.
+    [Fact]
+    public async Task AnItemMadeAgainGetsItsMetadataBackAtTheNightlyPass()
+    {
+        var a = await AddBookServerAsync(Dune());
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Library.Setup(library => library.FindByPath(BookPath(a), false)).Returns(new Book { Id = Guid.NewGuid(), Path = BookPath(a) });
+        await _fixture.SyncAndMaterializeAsync();
+        var again = new Book { Id = Guid.NewGuid(), Path = BookPath(a), Name = "Dune (1965)" };
+        _fixture.Library.Setup(library => library.FindByPath(BookPath(a), false)).Returns(again);
+
+        await _fixture.Materializer.MaterializeAsync(false, CancellationToken.None);
+        Assert.False(again.IsLocked);
+        await _fixture.Materializer.MaterializeAsync(true, CancellationToken.None);
+
+        Assert.Equal(("Dune", true), (again.Name, again.IsLocked));
+    }
+
     [Fact]
     public async Task APlaceholderWithNoWorkIsNeverWrittenOverWithAUrl()
     {

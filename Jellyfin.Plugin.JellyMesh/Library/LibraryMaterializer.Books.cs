@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using MediaBrowser.Controller.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -12,8 +13,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed partial class LibraryMaterializer
 {
-    // Writes the placeholder once, then keeps the item on the remote metadata. The hash is kept only once an item took it,
-    // so a new book gets its metadata, people included, at the first run after the scan that creates it.
+    // Writes the placeholder once, then keeps the item on the remote metadata: at the first run after the scan that makes
+    // it, on each change, and at the nightly pass for an item Jellyfin made again, since no .nfo brings it back.
     private async Task WriteBookAsync(Run run, StubWork work, CancellationToken cancellationToken)
     {
         var entry = work.Entry;
@@ -29,7 +30,9 @@ public sealed partial class LibraryMaterializer
                 changed = true;
             }
 
-            if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) && existing.Value is { } item)
+            if ((!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || run.VerifyEveryStub)
+                && existing.Value is { } item
+                && (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || HasLost(item, work.Metadata)))
             {
                 await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
                 entry = entry with { ContentHash = work.ContentHash };
@@ -58,4 +61,8 @@ public sealed partial class LibraryMaterializer
             _logger.LogError("Cannot write a book placeholder: {Error}", exception.GetType().Name);
         }
     }
+
+    // Tells whether an item lost the metadata the plugin gave it: its lock or its title.
+    private static bool HasLost(BaseItem item, StubMetadata metadata)
+        => item.IsLocked != metadata.IsProtected || (metadata.Title is { } title && !string.Equals(item.Name, title, StringComparison.Ordinal));
 }
