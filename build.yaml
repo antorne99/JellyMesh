@@ -23,5 +23,6 @@ changelog: |
   - JellyMesh 0.5.0.0 and 0.5.0.1 stopped Jellyfin 12.1, 12.2 and 12.3 from starting; 0.5.0.2 starts on every Jellyfin from 12.1 on.
   - If your server stopped, start Jellyfin again: it turns JellyMesh off by itself and starts. Then install 0.5.0.2 from the catalog.
   - Downloading a film or an episode from another server now gives the video itself, as playing it does, instead of a small text file with an internal link; a download still needs the user's download permission.
+  - When playback of a federated title fails, stops or falls back, the server log now says why: which server and step failed, the error with its HTTP status, how a stream broke off and after how long, and whether the playback session ended. No password, token or server address goes into the log.
 
   Not verified: Jellyfin 12.2, installs outside Docker such as Windows and macOS, and the install from the catalog after the server stopped, checked by copying the plugin into place.
