@@ -86,9 +86,9 @@ public class PlaybackFiltersTests
         _library.Setup(library => library.GetItemById<BaseItem>(_itemId, _user)).Returns(new Movie());
     }
 
-    private PlaybackInfoFilter InfoFilter()
+    private PlaybackInfoFilter InfoFilter(InMemoryConfigurationStore? store = null)
     {
-        var store = new InMemoryConfigurationStore();
+        store ??= new InMemoryConfigurationStore();
         var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         _offer = new SegmentOffer(_segmentManager.Object, Segments(lookup, store), lookup, _fixture.Sessions);
         return new PlaybackInfoFilter(
@@ -2071,6 +2071,62 @@ public class PlaybackFiltersTests
         Assert.Equal("nosniff", download.HttpContext.Response.Headers.XContentTypeOptions.ToString());
         Assert.Empty(file.HttpContext.Response.Headers.ContentDisposition.ToString());
         Assert.Equal("nosniff", file.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+    }
+
+    // D63: a book is never played, so its PlaybackInfo is refused here and no remote is called.
+    [Fact]
+    public async Task PlaybackInfo_of_a_book_is_refused_here_with_a_text_and_reaches_no_remote()
+    {
+        CanSeeItem();
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(BookPlaceholder()), context));
+
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.BookText, result.Content);
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_book_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(BookPlaceholder()), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("Audio", "GetAudioStream")]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("MediaSegments", "GetItemSegments")]
+    public async Task A_stream_or_segment_of_a_book_is_refused_here_with_a_text(string controller, string action)
+    {
+        CanSeeItem();
+        var context = Context(controller, action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.BookText, result.Content);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_stream_of_a_book_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
     [Fact]

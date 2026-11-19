@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Segments;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -123,6 +124,13 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             || (asked is { } version && (!_stubs.Sees(user, version) || !_versions.IsVersionOf(route, version))))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
+            return;
+        }
+
+        // A book is opened, never played: no remote is called for it (D63).
+        if (routeStub?.Kind == StubKind.Book)
+        {
+            context.Result = _refusal.RefuseBook(http, authorization.DeviceId ?? string.Empty);
             return;
         }
 

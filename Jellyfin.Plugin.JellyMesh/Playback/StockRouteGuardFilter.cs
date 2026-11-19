@@ -224,6 +224,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
+            // A book is opened, never played: no stream or segment of it reaches stock or a remote (D63).
+            if (stubs.Values.Any(stub => stub.Kind == StubKind.Book))
+            {
+                context.Result = _refusal.RefuseBook(context.HttpContext, authorization.DeviceId ?? string.Empty);
+                return;
+            }
+
             foreach (var playSessionId in named)
             {
                 _sessions.UseLocal(user.Id, playSessionId);
