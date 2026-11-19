@@ -34,8 +34,8 @@ public sealed class StubItemUpdater
     }
 
     /// <summary>
-    /// Applies metadata to an item. Without protection only title, year and IDs are the plugin's: the rest belongs to the
-    /// fetchers.
+    /// Applies metadata to an item. Without protection only title, year, IDs, the artists and album of a music video and the
+    /// date of a home video are the plugin's: the rest belongs to the fetchers.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <param name="metadata">The metadata.</param>
