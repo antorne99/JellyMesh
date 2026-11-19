@@ -418,6 +418,43 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
+    /// Gets the state of the shared libraries (§10 row 442).
+    /// </summary>
+    /// <returns>The state.</returns>
+    [HttpGet("SharedLibraries")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<SharedLibrariesState> GetSharedLibraries() => _libraries.GetSharedState();
+
+    /// <summary>
+    /// Turns the shared libraries on, or off once the admin confirmed the deletion of those the plugin made; the work runs
+    /// in the background.
+    /// </summary>
+    /// <param name="request">The switch.</param>
+    /// <returns>The state, accepted, or the reason of a refusal with the libraries a confirmation would delete.</returns>
+    [HttpPost("SharedLibraries")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<SharedLibrariesState> SetSharedLibraries([FromBody] SharedLibrariesRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // A list sent as null is not one with no library.
+        if (request.ToDelete is null || request.ToRelease is null)
+        {
+            var field = request.ToDelete is null ? nameof(SharedLibrariesRequest.ToDelete) : nameof(SharedLibrariesRequest.ToRelease);
+            return BadRequest(new SettingRefusal(field, "Send the libraries to delete and to release as lists, empty when there are none."));
+        }
+
+        var answer = request.Enabled
+            ? _libraries.EnableShared()
+            : _libraries.DisableShared(request.Confirmed ? new SharedLibrariesConfirmation(request.ToDelete, request.ToRelease) : null);
+        return answer.Outcome == AutomaticLibrariesOutcome.Started
+            ? Accepted(_libraries.GetSharedState())
+            : StatusCode(StatusCodes.Status409Conflict, new SharedLibrariesRefusal(answer.Outcome, SharedRefusalMessage(answer.Outcome), answer.ToDelete, answer.ToRelease));
+    }
+
+    /// <summary>
     /// Records the choice in the migration banner: manual, or automatic, which starts or resumes in the background (Q55, Q57).
     /// </summary>
     /// <param name="request">The mode chosen.</param>
@@ -547,6 +584,17 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.BeingRemoved => "This server is being removed.",
             RemoteFailure.NameTaken => "Another server already has this name.",
             RemoteFailure.RenameUnfinished => "A rename of this server has not finished. Wait for it, or save the edit without changing the name.",
+            _ => "The operation failed."
+        };
+    }
+
+    internal static string SharedRefusalMessage(AutomaticLibrariesOutcome outcome)
+    {
+        return outcome switch
+        {
+            AutomaticLibrariesOutcome.NoFederatedFolder => "Set the federated folder first.",
+            AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the shared libraries the plugin made and release the adopted ones.",
+            AutomaticLibrariesOutcome.Busy => "The shared libraries are being updated. Try again when it is done.",
             _ => "The operation failed."
         };
     }

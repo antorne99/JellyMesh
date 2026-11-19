@@ -13,6 +13,9 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 // folder of the same kind of another server, and the settings set the mode, the field of the banner (§10 row 368).
 public sealed partial class LayoutMigration
 {
+    // Set when the scan after the folders of new servers were added was held back; the next run asks for it again.
+    private bool _placementScanOwed;
+
     /// <inheritdoc />
     public LayoutMigrationMode NewServerMode =>
         _store.Read(config => config.LayoutMigration.Mode) == LayoutMigrationMode.Automatic ? LayoutMigrationMode.Automatic : LayoutMigrationMode.Manual;
@@ -145,11 +148,17 @@ public sealed partial class LayoutMigration
             }
         }
 
-        SavePlaced(servers, done);
-        if (added)
+        // The new servers stay to place until the scan runs, which waits while a shared library lacks its blocks (D42).
+        if ((added || _placementScanOwed) && !await _automaticLibraries.ScanAsync(cancellationToken).ConfigureAwait(false))
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            _placementScanOwed = true;
+            SavePlaced(servers, []);
+            _logger.LogInformation("Migration to the server folders: the library scan waits for a shared library, so the new servers wait for the next sync");
+            return;
         }
+
+        _placementScanOwed = false;
+        SavePlaced(servers, done);
     }
 
     // Keeps the placed servers still configured, with those just placed.

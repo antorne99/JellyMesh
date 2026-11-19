@@ -79,6 +79,14 @@ public interface IServerLibraryManager
     Task ReconcileAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Queues a library scan and waits for it, unless a shared library still lacks its blocks or is not recorded after a
+    /// new try: then no scan runs, and the next check scans once they are written (D42).
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the scan ran.</returns>
+    Task<bool> ScanAsync(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Waits, for at most a bounded time, until no library scan runs and every library has its id, when a check would
     /// follow a library (decision 213). It never fails but for a cancellation.
     /// </summary>
@@ -115,4 +123,24 @@ public interface IServerLibraryManager
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task ResumeRenamesAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets what the page shows for the shared libraries (§10 row 442).
+    /// </summary>
+    /// <returns>The state.</returns>
+    SharedLibrariesState GetSharedState();
+
+    /// <summary>
+    /// Turns the shared libraries on, and creates or adopts in the background those missing, with no confirmation.
+    /// </summary>
+    /// <returns>The answer.</returns>
+    AutomaticLibrariesRequest EnableShared();
+
+    /// <summary>
+    /// Deletes in the background the shared libraries the plugin made, releases the adopted ones and turns the option off,
+    /// once confirmed.
+    /// </summary>
+    /// <param name="confirmation">The libraries the admin confirmed, as a refusal named them; null when not confirmed.</param>
+    /// <returns>The answer, with the libraries a confirmation would delete and release when they differ from those.</returns>
+    AutomaticLibrariesRequest DisableShared(SharedLibrariesConfirmation? confirmation);
 }

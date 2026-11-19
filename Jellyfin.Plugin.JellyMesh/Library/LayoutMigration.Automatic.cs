@@ -236,9 +236,9 @@ public sealed partial class LayoutMigration
                 return await AddPathsAsync(root, cancellationToken).ConfigureAwait(false) ? AutomaticMigrationStep.Scan : null;
             case AutomaticMigrationStep.Scan:
                 // The scan finds the new stubs only once a sync wrote them (§10 row 420).
+                // A scan held back for a shared library without its blocks keeps the step for the next scan or sync (D42).
                 await SyncAsync(cancellationToken).ConfigureAwait(false);
-                await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
-                return AutomaticMigrationStep.Carry;
+                return await _automaticLibraries.ScanAsync(cancellationToken).ConfigureAwait(false) ? AutomaticMigrationStep.Carry : null;
             case AutomaticMigrationStep.Carry:
                 // Titles that wait stay for the hooks after the next scan or sync.
                 return await CarryStepAsync(root, cancellationToken).ConfigureAwait(false) ? AutomaticMigrationStep.RemoveOldPaths : null;
@@ -246,7 +246,11 @@ public sealed partial class LayoutMigration
                 await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
                 return RemoveOldPaths(root);
             case AutomaticMigrationStep.Finish:
-                await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+                if (!await _automaticLibraries.ScanAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
                 _logger.LogInformation("Migration to the server folders: the automatic migration is done");
                 return AutomaticMigrationStep.Done;
             default:

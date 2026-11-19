@@ -302,6 +302,24 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task AScanHeldBackForASharedLibraryWithoutItsBlocksKeepsTheMigrationAtTheScan()
+    {
+        OldFilm("Dune", (_serverA, "a1"));
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
+        var manager = new Mock<IServerLibraryManager>();
+        manager.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _managerOverride = manager.Object;
+        var migration = await MigrationAsync();
+
+        await migration.Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal(AutomaticMigrationStep.Scan, _store.Configuration.LayoutMigration.Step);
+        Assert.Equal(AutomaticMigrationError.None, _store.Configuration.LayoutMigration.Error);
+        _scans.Verify(scans => scans.QueueAndWaitAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task AStepThatThrowsStopsWithAnErrorAndARetryResumesFromIt()
     {
         OldFilm("Dune", (_serverA, "a1"));

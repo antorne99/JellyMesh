@@ -180,9 +180,11 @@ public sealed partial class ServerLibraryManager
             return;
         }
 
-        if (!scanned && !none)
+        // A scan held back for a shared library without its blocks keeps them too (D42).
+        if (!scanned && !none && !await QueueScanAsync(cancellationToken).ConfigureAwait(false))
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("The libraries of the previous library mode stay until a library scan shows those of the new mode");
+            return;
         }
 
         if (!none && !await CarryAccessAsync(serverId, root, cancellationToken).ConfigureAwait(false))
@@ -190,19 +192,14 @@ public sealed partial class ServerLibraryManager
             return;
         }
 
-        var before = _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0);
+        // Removing a library drops for a while the titles it shared with the new ones; the scan after the deletes brings
+        // them back (F23).
         await DeleteAllAsync(
             config => LiveRegistry(config, serverId),
             serverId,
             (config, record) => Find(config, serverId) is { } server && Retires(server.LibraryMode, record) && ReadyToRetire(server, root, olderLayout),
             cancellationToken).ConfigureAwait(false);
         ForgetPendingInNone();
-
-        // Removing a library drops for a while the titles it shared with the new ones; a scan brings them back (F23).
-        if (!none && _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0) < before)
-        {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
-        }
     }
 
     // Before a scan shows the new plugin libraries of a mode change, who blocks an old library holding their folders blocks

@@ -56,7 +56,8 @@ public sealed record MaterializationReport(
     public int FoldersPending { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether the run asked Jellyfin for a scan of the libraries.
+    /// Gets a value indicating whether the run asked Jellyfin for a scan of the libraries, or held one back while a shared
+    /// library lacks its blocks or its record (D42).
     /// </summary>
     public bool ScanQueued { get; init; }
 }

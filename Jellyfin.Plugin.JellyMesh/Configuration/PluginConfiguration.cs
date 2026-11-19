@@ -126,6 +126,11 @@ public class PluginConfiguration
     public LayoutMigrationConfig LayoutMigration { get; set; } = new();
 
     /// <summary>
+    /// Gets or sets the shared libraries and their option (§10 row 442).
+    /// </summary>
+    public SharedLibrariesConfig SharedLibraries { get; set; } = new();
+
+    /// <summary>
     /// Keeps libraries of a server that left the configuration, so that they are deleted after it (decision 140).
     /// </summary>
     /// <param name="serverId">The server.</param>

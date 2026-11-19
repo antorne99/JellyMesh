@@ -1285,4 +1285,101 @@ public class FederationAdminControllerTests
             return new FederatedFolderLinkReport(servers, ["Tutto"], true);
         }
     }
+
+    [Fact]
+    public void TheSharedLibrariesShowTheirState()
+    {
+        using var fixture = new RegistryFixture();
+        var state = new SharedLibrariesState(true, false, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Tutti i server - Film")], [], AutomaticLibrariesError.None)
+        {
+            Conflicts = [new LibraryConflict("Tutto", LibraryConflictReason.ParentPath, ServerLibraryKind.Series, string.Empty, ["/federata/x/Serie"])]
+        };
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.GetSharedState()).Returns(state);
+
+        Assert.Same(state, ControllerFor(fixture, libraries: libraries.Object).GetSharedLibraries().Value);
+    }
+
+    [Fact]
+    public void SwitchingTheSharedLibrariesOnStartsWithNoConfirmation()
+    {
+        using var fixture = new RegistryFixture();
+        var state = new SharedLibrariesState(true, true, [], [], AutomaticLibrariesError.None);
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.EnableShared()).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+        libraries.Setup(manager => manager.GetSharedState()).Returns(state);
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = true }).Result;
+
+        var accepted = Assert.IsType<AcceptedResult>(result);
+        Assert.Same(state, accepted.Value);
+        libraries.Verify(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation?>()), Times.Never);
+    }
+
+    [Fact]
+    public void SwitchingTheSharedLibrariesOffAsksToConfirmWithTheLibrariesItWouldDeleteAndRelease()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.DisableShared(null))
+            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Tutti i server - Film"]) { ToRelease = ["Serie di tutti"] });
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = false }).Result;
+
+        var conflict = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(409, conflict.StatusCode);
+        var refusal = Assert.IsType<SharedLibrariesRefusal>(conflict.Value);
+        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, refusal.Outcome);
+        Assert.Equal("Confirm to delete the shared libraries the plugin made and release the adopted ones.", refusal.Message);
+        Assert.Equal(["Tutti i server - Film"], refusal.ToDelete);
+        Assert.Equal(["Serie di tutti"], refusal.ToRelease);
+    }
+
+    [Fact]
+    public void AConfirmedSwitchOffStartsTheDeletion()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation>())).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object)
+            .SetSharedLibraries(new SharedLibrariesRequest { Enabled = false, Confirmed = true, ToDelete = ["Tutti i server - Film"], ToRelease = ["Serie di tutti"] }).Result;
+
+        Assert.IsType<AcceptedResult>(result);
+        libraries.Verify(
+            manager => manager.DisableShared(It.Is<SharedLibrariesConfirmation>(confirmation =>
+                confirmation.ToDelete.SequenceEqual(new[] { "Tutti i server - Film" }) && confirmation.ToRelease.SequenceEqual(new[] { "Serie di tutti" }))),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ASwitchOffWithAListSentAsNullIsRefusedAsABadRequest(bool nullDelete, bool nullRelease)
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+
+        var result = ControllerFor(fixture, libraries: libraries.Object)
+            .SetSharedLibraries(new SharedLibrariesRequest { Enabled = false, Confirmed = true, ToDelete = nullDelete ? null! : [], ToRelease = nullRelease ? null! : [] }).Result;
+
+        var refusal = Assert.IsType<SettingRefusal>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Equal(nullDelete ? nameof(SharedLibrariesRequest.ToDelete) : nameof(SharedLibrariesRequest.ToRelease), refusal.Field);
+        libraries.Verify(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation?>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(AutomaticLibrariesOutcome.NoFederatedFolder, "Set the federated folder first.")]
+    [InlineData(AutomaticLibrariesOutcome.Busy, "The shared libraries are being updated. Try again when it is done.")]
+    public void ARefusedSwitchOnSaysWhy(AutomaticLibrariesOutcome outcome, string message)
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.EnableShared()).Returns(AutomaticLibrariesRequest.Refused(outcome));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = true }).Result;
+
+        var refusal = Assert.IsType<SharedLibrariesRefusal>(Assert.IsType<ObjectResult>(result).Value);
+        Assert.Equal((outcome, message), (refusal.Outcome, refusal.Message));
+    }
 }

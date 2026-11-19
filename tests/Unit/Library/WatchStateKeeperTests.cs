@@ -606,6 +606,7 @@ public sealed class WatchStateKeeperTests : IDisposable
             new ServerLibraryManagerTests.FakeRenamer { Libraries = libraries },
             _fixture.Registry,
             new LibraryPaths(libraries.Object, new CapturingLogger<LibraryPaths>()),
+            Mock.Of<MediaBrowser.Controller.IServerApplicationHost>(),
             new CapturingLogger<ServerLibraryManager>());
         await manager.Enable(a.Id).Job;
         var created = libraries.Folders.Select(folder => folder.Name).ToList();

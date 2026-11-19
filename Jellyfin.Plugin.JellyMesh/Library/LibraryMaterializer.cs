@@ -330,7 +330,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         var scanQueued = run.NeedsScan || plan.MergedStubs > 0;
-        if (scanQueued)
+        if (scanQueued && _store.Read(config => config.SharedLibraries.HoldsScans()))
+        {
+            // No scan before a shared library has its blocks: the check that writes them scans (D42).
+            _logger.LogWarning("A shared library lacks its blocks or is not recorded yet, so the library scan waits for the next check");
+        }
+        else if (scanQueued)
         {
             _library.QueueLibraryScan();
         }

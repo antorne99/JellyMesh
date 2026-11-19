@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -18,6 +19,9 @@ public sealed partial class LayoutMigrationTests
     private static readonly Guid _serverC = Guid.NewGuid();
     private readonly Mock<ILibraryRenamer> _renamer = new();
     private ServerLibraryManager? _manager;
+
+    // When set, the migration asks this manager instead of the real one.
+    private IServerLibraryManager? _managerOverride;
 
     // A library rename left halfway, which keeps the manager busy.
     private bool _managerBusy;
@@ -573,6 +577,34 @@ public sealed partial class LayoutMigrationTests
 
         _store.Configuration.Servers.Add(config);
         return config;
+    }
+
+    [Fact]
+    public async Task ANewServerStaysToPlaceUntilTheScanHeldBackForASharedLibraryRuns()
+    {
+        Migrated();
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _configured.Add(_serverC);
+        var held = 2;
+        var manager = new Mock<IServerLibraryManager>();
+        manager.Setup(libraries => libraries.FollowForPlacement()).Returns(() => new PlacementLibraries(_libraries.ToList(), new HashSet<VirtualFolderInfo>()));
+        manager.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => held-- <= 0);
+        _managerOverride = manager.Object;
+        var migration = await MigrationAsync();
+
+        foreach (var _ in Enumerable.Range(0, 2))
+        {
+            await migration.RunAsync(CancellationToken.None);
+            await migration.Running;
+            Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+        }
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+        Assert.Equal([ServerFilms(_serverA), ServerFilms(_serverB), ServerFilms(_serverC)], Locations("Film"));
+        manager.Verify(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 
     // A rename from the Dashboard, which gives the library a new id too.

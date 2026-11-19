@@ -45,7 +45,7 @@ public sealed partial class ServerLibraryManager
 
         if (changed)
         {
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

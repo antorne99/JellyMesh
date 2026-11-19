@@ -232,6 +232,13 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public void A_library_name_gives_the_id_the_server_gives_it_and_one_leaving_the_folder_none()
+    {
+        Assert.Equal(OldId, _renamer.IdOfName("Casa - Film"));
+        Assert.Null(_renamer.IdOfName("../fuori"));
+    }
+
+    [Fact]
     public async Task A_user_whose_block_cannot_be_saved_keeps_the_list_it_had_and_the_block_fails()
     {
         _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);

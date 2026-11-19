@@ -11,6 +11,9 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <param name="ToDelete">The libraries a confirmation would delete.</param>
 public sealed record AutomaticLibrariesRequest(AutomaticLibrariesOutcome Outcome, Task Job, IReadOnlyList<string> ToDelete)
 {
+    /// <summary>Gets the adopted libraries a confirmation would release.</summary>
+    public IReadOnlyList<string> ToRelease { get; init; } = [];
+
     /// <summary>Builds an answer for which no work started.</summary>
     /// <param name="outcome">The answer.</param>
     /// <returns>The request.</returns>

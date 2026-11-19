@@ -202,13 +202,15 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         fixture.Libraries.Add("Mine on the folder", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
+        fixture.Scans.Steps.Clear();
 
         var request = fixture.Manager.Disable(_serverId, true);
         await request.Job;
 
         Assert.Equal(AutomaticLibrariesOutcome.Started, request.Outcome);
         Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
-        Assert.All(fixture.Libraries.Removed, call => Assert.True(call.Refresh));
+        Assert.All(fixture.Libraries.Removed, call => Assert.False(call.Refresh));
+        Assert.Single(fixture.Scans.Steps, step => step == "scan");
         Assert.Equal(["Film", "Mine on the folder"], fixture.Libraries.Folders.Select(folder => folder.Name));
         Assert.False(fixture.Server.AutomaticLibraries);
         Assert.Empty(fixture.Server.AutomaticLibraryRegistry);
@@ -587,12 +589,14 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.RenameFromDashboard("Casa - Serie", "Serie di casa");
+        fixture.Scans.Steps.Clear();
 
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
 
         Assert.Equal(["Casa - Film", "Serie di casa"], fixture.Libraries.Removed.Select(call => call.Name));
-        Assert.All(fixture.Libraries.Removed, call => Assert.True(call.Refresh));
+        Assert.All(fixture.Libraries.Removed, call => Assert.False(call.Refresh));
+        Assert.Single(fixture.Scans.Steps, step => step == "scan");
         Assert.Equal(["Mine", "Film"], fixture.Libraries.Folders.Select(folder => folder.Name));
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
@@ -1844,6 +1848,7 @@ public sealed partial class ServerLibraryManagerTests
                 .Returns<string>(name => string.Concat(name.Select(character => ":/\\*?\"<>|".Contains(character, StringComparison.Ordinal) ? ' ' : character)));
             FileSystem = fileSystem.Object;
             Hooks = new HookedStore(Store);
+            Libraries.OnRefresh = () => Scans.Steps.Add("scan");
             Manager = NewManager();
         }
 
@@ -1875,7 +1880,7 @@ public sealed partial class ServerLibraryManagerTests
         public ServerLibraryManager NewManager()
         {
             Renamer.Libraries = Libraries;
-            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, new LibraryPaths(Libraries.Object, new CapturingLogger<LibraryPaths>()), Logger, Clock);
+            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, new LibraryPaths(Libraries.Object, new CapturingLogger<LibraryPaths>()), Logger, Clock, SystemId);
         }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.
@@ -1949,13 +1954,24 @@ public sealed partial class ServerLibraryManagerTests
             _mock.Setup(manager => manager.RemoveVirtualFolder(It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns<string, bool>((name, refresh) =>
                 {
-                    if (RemoveFailure is not null)
+                    if (RemoveFailure is not null && (RemoveFailureFor?.Invoke(name) ?? true))
                     {
                         throw RemoveFailure;
                     }
 
                     Removed.Add(new RemoveCall(name, refresh));
                     Folders.Remove(Find(name));
+                    if (refresh)
+                    {
+                        // Like Jellyfin, the refresh validates the libraries, which gives them ids, and starts a scan.
+                        foreach (var folder in Folders.Where(folder => folder.ItemId is null))
+                        {
+                            folder.ItemId = IdOf(folder.Name);
+                        }
+
+                        OnRefresh?.Invoke();
+                    }
+
                     return Task.CompletedTask;
                 });
             _mock.Setup(manager => manager.AddMediaPath(It.IsAny<string>(), It.IsAny<MediaPathInfo>()))
@@ -2010,6 +2026,12 @@ public sealed partial class ServerLibraryManagerTests
         public Exception? CreateFailure { get; set; }
 
         public Exception? RemoveFailure { get; set; }
+
+        // When set, only the libraries it takes fail to be deleted.
+        public Func<string, bool>? RemoveFailureFor { get; set; }
+
+        // Runs when a deletion refreshes the libraries, as the scan Jellyfin starts then.
+        public Action? OnRefresh { get; set; }
 
         public Exception? ReadFailure { get; set; }
 
@@ -2089,12 +2111,15 @@ public sealed partial class ServerLibraryManagerTests
 
         public Exception? BlockFailure { get; set; }
 
+        // When set, only the blocks it takes fail.
+        public Func<IReadOnlyList<AccessCarry>, bool>? BlockFailureFor { get; set; }
+
         public Action? OnBlock { get; set; }
 
         public Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
         {
             OnBlock?.Invoke();
-            if (BlockFailure is not null)
+            if (BlockFailure is not null && (BlockFailureFor?.Invoke(carries) ?? true))
             {
                 throw BlockFailure;
             }
@@ -2120,6 +2145,11 @@ public sealed partial class ServerLibraryManagerTests
             Removed.Add((name, itemId, list));
             return Task.CompletedTask;
         }
+
+        // When set, a library name gives no id, as one that would leave the libraries folder.
+        public bool NoIdOfName { get; set; }
+
+        public Guid? IdOfName(string name) => NoIdOfName || Libraries is null ? null : Guid.Parse(Libraries.IdOf(name));
 
         public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
         {

@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
 /// <summary>
@@ -30,6 +32,17 @@ public class AutomaticLibraryConfig
     /// plugin keeps its paths but never renames or deletes it, and on release removes only its own paths (§10 rows 440-441).
     /// </summary>
     public bool Adopted { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a shared library still lacks the blocks of who blocks a library on its
+    /// folders (D42): no shared check scans until they are written.
+    /// </summary>
+    public bool Unblocked { get; set; }
+
+    /// <summary>
+    /// Gets the paths of the library as last seen, kept for the shared libraries only.
+    /// </summary>
+    public Collection<string> Paths { get; } = [];
 
     /// <summary>
     /// Gets what tells the library apart among those of its server: its remote library, or its kind.
