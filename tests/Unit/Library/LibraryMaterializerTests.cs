@@ -563,6 +563,45 @@ public sealed class LibraryMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task OnceTheRegistryHoldsStubsOfTheServerFoldersTheirTitlesGetStubsInTheRemoteLibraryLayoutBeside()
+    {
+        // §10 row 444: the new layout is written beside the old one, which stays until the migration empties it.
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+        var stray = _fixture.Path_(StubFixture.InServer(a, "Film", "Old (2019)", "Old (2019) - A.strm"));
+        Directory.CreateDirectory(Path.GetDirectoryName(stray)!);
+        await File.WriteAllTextAsync(stray, "http://127.0.0.1/old");
+        await _fixture.SyncAndMaterializeAsync();
+        var old = Assert.Single(_fixture.Registry.State.Stubs);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+        Assert.Contains(old, _fixture.Registry.State.Stubs);
+        var current = Assert.Single(_fixture.Registry.State.Stubs, stub => stub.Id != old.Id);
+        Assert.Equal(StubFixture.InLibrary(a, TestLibraries.Films, "Film", "Film (2020)", "Film (2020) - A.strm"), current.RelativePath);
+        Assert.True(File.Exists(_fixture.Path_(old.RelativePath)));
+        Assert.True(File.Exists(_fixture.Path_(current.RelativePath)));
+    }
+
+    [Fact]
+    public async Task AStrayStubFileInTheServerFoldersKeepsNoOlderLayoutOnceTheRegistryHoldsTitles()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithArt());
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+        await _fixture.SyncAndMaterializeAsync();
+        var stray = _fixture.Path_(StubFixture.InServer(a, "Film", "Old (2019)", "Old (2019) - A.strm"));
+        Directory.CreateDirectory(Path.GetDirectoryName(stray)!);
+        await File.WriteAllTextAsync(stray, "http://127.0.0.1/old");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("n", "Nuovo", 2021, "2"));
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.All(_fixture.Registry.State.Stubs, stub => Assert.NotNull(FederatedPaths.RemoteLibraryOf(stub.RelativePath)));
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count);
+    }
+
+    [Fact]
     public async Task AHostileTitleStaysInsideTheFolder()
     {
         var film = TestItems.Movie("m", "../../../../etc/cron.d/evil", 2020);

@@ -158,7 +158,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     }
 
     // The folders of a server and of its remote libraries exist before any library points at them, and a folder that holds
-    // nothing is never empty. The 0.5 server folders stay for the libraries that still hold them.
+    // nothing is never empty. The 0.5 server folders stay for the libraries that still hold them, beside the new ones.
     private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers, StubState state, IReadOnlyList<string> configured)
     {
         WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
@@ -167,11 +167,6 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             WriteHiddenFile(root, FederatedPaths.MovieFolder(server.Id, string.Empty));
             WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(server.Id, string.Empty));
-        }
-
-        if (StubLayout.IsLegacy(state))
-        {
-            return;
         }
 
         foreach (var folder in servers.SelectMany(server => TypeFolder.Written.SelectMany(type => StubLayout.TypeFoldersOf(state, server.Id, type))).Concat(configured))
@@ -267,7 +262,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, isProtected, _urls.Build, _ => null)
         {
             WritesCollections = writesCollections,
-            KeepsOlderLayout = !StubLayout.IsLegacy(state) && StubLayout.HasOlderStubFiles(root)
+            // Only an empty registry, as after a damage, takes back the stub files of the 0.5 layout it finds.
+            KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root)
         });
 
         WriteServerFolders(root, servers, plan.State, ConfiguredTypeFolders(servers));
