@@ -70,6 +70,20 @@ public sealed class BookMaterializerTests : IDisposable
     }
 
     [Fact]
+    public async Task ABookItemCarriesTheMarkOfAPlaceholderWithTheRemoteIds()
+    {
+        var a = await AddBookServerAsync(Dune() with { ProviderIds = new Dictionary<string, string?> { ["Isbn"] = "9780441013593" } });
+        await _fixture.SyncAndMaterializeAsync();
+        var item = new Book { Id = Guid.NewGuid(), Path = BookPath(a), Name = "Dune (1965)" };
+        _fixture.Library.Setup(library => library.FindByPath(BookPath(a), false)).Returns(item);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(Assert.Single(_fixture.Registry.State.Stubs).Id, item.GetProviderId(FederatedBookMark.ProviderId));
+        Assert.Equal("9780441013593", item.GetProviderId("Isbn"));
+    }
+
+    [Fact]
     public async Task AChangedBookReachesItsItem()
     {
         var a = await AddBookServerAsync(Dune());

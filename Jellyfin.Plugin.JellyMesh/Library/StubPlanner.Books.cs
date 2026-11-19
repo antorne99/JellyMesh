@@ -73,7 +73,7 @@ public static partial class StubPlanner
         };
 
         // A cover named as the file becomes the Primary image of the book, also on a locked item (F48).
-        var metadata = StubMetadata.From(book, input.IsProtected);
+        var metadata = StubMetadata.From(book, input.IsProtected) with { ProviderIds = WithMark(book.ProviderIds, id) };
         var stem = Path.ChangeExtension(relative, null);
         var images = new List<StubImage>();
         AddRemote(images, book, serverId, ImageType.Primary, stem);
@@ -82,4 +82,11 @@ public static partial class StubPlanner
             RemovedImages = Removed(entry.ImageTag, [(ImageType.Primary, stem)], images)
         };
     }
+
+    // The mark tells another JellyMesh that reads this server in standard mode that the book is a placeholder (D62).
+    private static Dictionary<string, string> WithMark(IReadOnlyDictionary<string, string> ids, string stubId)
+        => new(ids.Where(pair => !string.Equals(pair.Key, FederatedBookMark.ProviderId, StringComparison.OrdinalIgnoreCase)), StringComparer.Ordinal)
+        {
+            [FederatedBookMark.ProviderId] = stubId
+        };
 }

@@ -128,11 +128,23 @@ public class BookStubPlannerTests
     }
 
     [Fact]
+    public void TheMetadataCarriesTheMarkOfThePlaceholderOverOneTheIndexHad()
+    {
+        var state = StubState.Empty with { Stubs = [Existing("s1", "b1", Path.Combine(Folder, "Dune (1965)", "Dune (1965).epub"))] };
+        var book = Book("b1") with { ProviderIds = new Dictionary<string, string> { ["Isbn"] = "9780441013593", ["jellymesh"] = "other" } };
+
+        var ids = Assert.Single(Plan(state, items: book).Stubs).Metadata.ProviderIds;
+
+        Assert.Equal(new Dictionary<string, string> { ["Isbn"] = "9780441013593", [FederatedBookMark.ProviderId] = "s1" }, ids);
+    }
+
+    [Fact]
     public void TheHashFollowsTheMetadata()
     {
-        var first = Assert.Single(Plan(items: Book("b1")).Stubs).ContentHash;
-        var same = Assert.Single(Plan(items: Book("b1")).Stubs).ContentHash;
-        var changed = Assert.Single(Plan(items: Book("b1") with { Overview = "Sand" }).Stubs).ContentHash;
+        var state = StubState.Empty with { Stubs = [Existing("s1", "b1", Path.Combine(Folder, "Dune (1965)", "Dune (1965).epub"))] };
+        var first = Assert.Single(Plan(state, items: Book("b1")).Stubs).ContentHash;
+        var same = Assert.Single(Plan(state, items: Book("b1")).Stubs).ContentHash;
+        var changed = Assert.Single(Plan(state, items: Book("b1") with { Overview = "Sand" }).Stubs).ContentHash;
 
         Assert.Equal(first, same);
         Assert.NotEqual(first, changed);
