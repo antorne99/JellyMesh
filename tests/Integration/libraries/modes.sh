@@ -4,6 +4,8 @@
 # libraries and lists the manual paths, and the mode changes with the remote down (§10 row 438, D28). A user with access
 # to the film library only and a user who blocks the series library see the same titles after each change. When two film
 # libraries merge into one, only a user who saw both gets it; who saw one loses it and is named, before and after.
+# A library of the admin with exactly the paths and type of a library the new mode wants is adopted: never renamed or
+# deleted, its permissions untouched, and who loses titles in it is named and kept across a restart (rows 440-441).
 # A stock remote with two film libraries and a series library, and a consumer with the plugin.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f40] [PORT=18970] [KEEP=1] modes.sh
 set -euo pipefail
@@ -65,6 +67,15 @@ policy() { local p; p=$(get local "/Users/$1" | jq -c ".Policy | $2"); post loca
 # seen: what both users see, to compare before and after a change.
 seen() { echo "$(sees "$LIMITED") $(sees "$BLOCKING")"; }
 dashed() { local id=$1; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+# under <user id> <path>: how many federated films under the path the user sees.
+under() { get local "/Items?userId=$1&Recursive=true&IncludeItemTypes=Movie&Fields=Path" | jq --arg p "$2" '[.Items[] | select((.Path // "") | startswith($p))] | length'; }
+# access <library id>: for each user, whether all libraries are open and whether the lists give or block the library.
+access() {
+  get local /Users | jq -c --arg id "$1" 'def has: map(ascii_downcase | gsub("-"; "")) | index($id | ascii_downcase | gsub("-"; "")) != null;
+    [.[] | {Name, All: .Policy.EnableAllFolders, Enabled: (.Policy.EnabledFolders // [] | has), Blocked: (.Policy.BlockedMediaFolders // [] | has)}] | sort_by(.Name)'
+}
+# kept <library name>: what the admin set on a library, to compare before and after a change.
+kept() { folder "$1" | jq -c '{ItemId, Name, CollectionType}'; }
 # block <user id> <library id>: blocks one library with the server stopped; 12.4 does not save BlockedMediaFolders from
 # the policy route.
 block() {
@@ -132,6 +143,7 @@ check "the save answers 200" 200 "$(status)"
 wait_own
 check "the libraries of the remote libraries replace those per type" '[["Casa - Film Bambini",false],["Casa - Film HD",false],["Casa - Telefilm",false]]' "$(registry)"
 check "the old libraries are gone" "no no" "$(exists 'Casa - Film') $(exists 'Casa - Serie')"
+BAMBINI=$(locations 'Casa - Film Bambini')
 check "the film libraries have the film folders" "$(own | jq -c '[.ManualPaths[] | select(.LibraryType == "movies") | .Path] | sort')" \
   "$(jq -nc --argjson a "$(locations 'Casa - Film HD')" --argjson b "$(locations 'Casa - Film Bambini')" '$a + $b | sort')"
 check "the items keep their ids" "$BEFORE" "$(ids)"
@@ -175,13 +187,65 @@ check "the state still names them after a restart" "$LOST" "$(own | jq -c '[.Los
 docker start "$PREFIX-remote" >/dev/null
 wait_ready remote
 
-echo "--- to none: only the plugin's libraries go, an admin library stays, the paths are listed [row 438]"
+echo "--- per type to per remote library: an admin library with the paths of one is adopted as it is, who loses titles is named [rows 438, 440-441]"
+ADOPTED="Bambini di casa"
+CASA_FILM=$(folder 'Casa - Film' | jq -r .ItemId)
+library local "$ADOPTED" movies $(jq -r '.[]' <<<"$BAMBINI")
+ADOPTED_ID=$(folder "$ADOPTED" | jq -r .ItemId)
+check "the admin library has the paths of the children films" "$BAMBINI" "$(locations "$ADOPTED")"
+WITH_FILM=$(user local adottante)
+WITH_BOTH=$(user local ammesso)
+NO_ADOPTED=$(user local senzabambini)
+policy "$WITH_FILM" ".EnableAllFolders = false | .EnabledFolders = [\"$CASA_FILM\"]"
+policy "$WITH_BOTH" ".EnableAllFolders = false | .EnabledFolders = [\"$CASA_FILM\", \"$ADOPTED_ID\"]"
+block "$NO_ADOPTED" "$ADOPTED_ID"
+check "the policy route reads the blocked list" true "$(access "$ADOPTED_ID" | jq '.[] | select(.Name == "senzabambini") | .Blocked')"
+BAMBINI_PATH=$(jq -r '.[0]' <<<"$BAMBINI")
+check "the user with the film library sees the children films" true "$([ "$(under "$WITH_FILM" "$BAMBINI_PATH")" -gt 0 ] && echo true || echo false)"
+KEPT=$(kept "$ADOPTED")
+ACCESS=$(access "$ADOPTED_ID")
+ADOPTED_LOST='[{"Library":"Bambini di casa","Users":["adottante","entrambi","ristretto","senzabambini"]}]'
+answer=$(check_edit '{"LibraryMode":"ByRemoteLibrary"}')
+check "the check answers 200" 200 "$(status)"
+check "it lists the plugin libraries the change deletes" '["Casa - Film","Casa - Serie"]' "$(echo "$answer" | jq -c '.Consequences.ModeChange.Deleted | sort')"
+check "it releases nothing" '[]' "$(echo "$answer" | jq -c '.Consequences.ModeChange.Released')"
+check "the check names who loses titles in the adopted library" "$ADOPTED_LOST" "$(echo "$answer" | jq -c '[.Consequences.ModeChange.LostAccess[] | .Users |= sort]')"
+save_edit '{"LibraryMode":"ByRemoteLibrary"}' >/dev/null
+check "the save answers 200" 200 "$(status)"
+wait_own
+check "the admin library is adopted in place of a new one" '[["Bambini di casa",true],["Casa - Film HD",false],["Casa - Telefilm",false]]' "$(registry)"
+check "no library is made for the children films" no "$(exists 'Casa - Film Bambini')"
+check "the adopted library keeps its id, name and type" "$KEPT" "$(kept "$ADOPTED")"
+check "the adopted library keeps its paths" "$BAMBINI" "$(locations "$ADOPTED")"
+check "no user list changes for the adopted library" "$ACCESS" "$(access "$ADOPTED_ID")"
+check "the old libraries are gone" "no no" "$(exists 'Casa - Film') $(exists 'Casa - Serie')"
+check "the state names who lost titles in the adopted library" "$ADOPTED_LOST" "$(own | jq -c '[.LostAccess[] | .Users |= sort]')"
+check "who is named sees no children film" "0 0" "$(under "$WITH_FILM" "$BAMBINI_PATH") $(under "$NO_ADOPTED" "$BAMBINI_PATH")"
+check "who had the adopted library still sees them" true "$([ "$(under "$WITH_BOTH" "$BAMBINI_PATH")" -gt 0 ] && echo true || echo false)"
+check "who is named keeps the other films" '["Movie"]' "$(kinds "$WITH_FILM")"
+check "the film keeps its id" "$TEARS" "$(film "Tears of Steel")"
+check "the watch state stays" "true true 600000000" "$(watched)"
+docker restart "$PREFIX-local" >/dev/null
+sleep 3
+wait_ready local
+login local
+check "the state still names them after a restart" "$ADOPTED_LOST" "$(own | jq -c '[.LostAccess[] | .Users |= sort]')"
+check "the library is still adopted after a restart" '[["Bambini di casa",true],["Casa - Film HD",false],["Casa - Telefilm",false]]' "$(registry)"
+check "the adopted library is as the admin left it after a restart" "$KEPT $ACCESS" "$(kept "$ADOPTED") $(access "$ADOPTED_ID")"
+
+echo "--- to none: only the plugin's libraries go, an admin library stays, the adopted one is released, the paths are listed [row 438]"
+answer=$(check_edit '{"LibraryMode":"None"}')
+check "the check lists the plugin libraries it deletes" '["Casa - Film HD","Casa - Telefilm"]' "$(echo "$answer" | jq -c '.Consequences.ModeChange.Deleted | sort')"
+check "the check lists the adopted library it releases" '["Bambini di casa"]' "$(echo "$answer" | jq -c '.Consequences.ModeChange.Released')"
 library local "Mie" movies /media
 save_edit '{"LibraryMode":"None"}' >/dev/null
 check "the save answers 200" 200 "$(status)"
 wait_own
 check "the registry is empty" '[]' "$(registry)"
-check "the plugin's libraries are deleted, the admin's stays" '["Mie"]' "$(lib_names)"
+check "the plugin's libraries are deleted, the admin's stay" '["Bambini di casa","Mie"]' "$(lib_names)"
+check "the released library keeps its id, name and type" "$KEPT" "$(kept "$ADOPTED")"
+check "the released library loses only the server paths" '[]' "$(locations "$ADOPTED")"
+check "no user list changes for the released library" "$ACCESS" "$(access "$ADOPTED_ID")"
 check "the state lists the two film paths and a series path" '["movies","movies","tvshows"]' "$(own | jq -c '[.ManualPaths[].LibraryType] | sort')"
 check "the mode is none" None "$(own | jq -r .Mode)"
 check "with the plugin's libraries gone neither user sees a federated title" "[] []" "$(seen)"
