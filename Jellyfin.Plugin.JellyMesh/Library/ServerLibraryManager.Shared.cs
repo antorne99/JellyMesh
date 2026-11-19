@@ -18,6 +18,9 @@ public sealed partial class ServerLibraryManager
     // A scan held back for a shared library without its blocks is owed once they are written; read under the gate.
     private bool _sharedScanOwed;
 
+    // A validation of the top folders held back with it, which runs before the owed scan; read under the gate.
+    private bool _sharedValidationOwed;
+
     /// <inheritdoc />
     public SharedLibrariesState GetSharedState()
     {
@@ -182,17 +185,29 @@ public sealed partial class ServerLibraryManager
         }
 
         _conflicts.TryRemove(_sharedOwner, out _);
-        if (!await DeleteAllAsync(SharedRegistry, _sharedOwner, null, confirmed, cancellationToken).ConfigureAwait(false))
+        var removed = false;
+        try
         {
-            return;
-        }
+            if (!await DeleteEachAsync(SharedRegistry, _sharedOwner, null, confirmed, () => removed = true, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
 
-        _store.Update(config =>
+            _store.Update(config =>
+            {
+                config.SharedLibraries.Enabled = false;
+                config.SharedLibraries.PendingLibraries.Clear();
+                config.SharedLibraries.CreatedLibraryKeys.Clear();
+            });
+        }
+        finally
         {
-            config.SharedLibraries.Enabled = false;
-            config.SharedLibraries.PendingLibraries.Clear();
-            config.SharedLibraries.CreatedLibraryKeys.Clear();
-        });
+            // Once the option is off, so that the scan records no library asked for before a crash and not confirmed.
+            if (removed)
+            {
+                await QueueScanAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     // Follows the shared registry and gives it the folders the servers have now, with a scan after a change, as after the
@@ -315,6 +330,11 @@ public sealed partial class ServerLibraryManager
         {
             _sharedScanOwed = true;
             return false;
+        }
+
+        if (_sharedValidationOwed)
+        {
+            await ValidateTopFoldersAsync(cancellationToken).ConfigureAwait(false);
         }
 
         await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);

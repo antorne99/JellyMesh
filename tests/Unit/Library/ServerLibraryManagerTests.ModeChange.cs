@@ -282,14 +282,17 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task To_none_needs_no_scan()
+    public async Task To_none_scans_only_once_the_old_libraries_are_gone()
     {
         var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.None);
         fixture.Scans.Steps.Clear();
+        var removedAtScan = new List<int>();
+        fixture.Scans.DuringScan = () => removedAtScan.Add(fixture.Libraries.Removed.Count);
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+        Assert.NotEmpty(fixture.Libraries.Removed);
+        Assert.Equal([fixture.Libraries.Removed.Count], removedAtScan);
     }
 
     [Fact]

@@ -1132,6 +1132,15 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     // The second run reloads the children the first one still holds in memory.
     private async Task ValidateTopFoldersAsync(CancellationToken cancellationToken)
     {
+        // A validation gives ids to the libraries as a scan does, so it waits with the scan for the blocks (D42).
+        if (await SharedScanStillHeldAsync(cancellationToken).ConfigureAwait(false))
+        {
+            _sharedValidationOwed = true;
+            _sharedScanOwed = true;
+            return;
+        }
+
+        _sharedValidationOwed = false;
         try
         {
             await _libraries.ValidateTopLibraryFolders(cancellationToken, true).ConfigureAwait(false);
@@ -1246,29 +1255,26 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     }
 
     // Deletes the libraries of a registry one at a time, or only those the filter takes, each checked again on a fresh
-    // read, and scans after a release. False when it had to stop.
-    private Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, CancellationToken cancellationToken)
-        => DeleteAllAsync(locate, errorKey, only, null, cancellationToken);
-
-    // As above, stopping with Unconfirmed at a library whose current name the admin did not confirm to delete or release.
-    private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, SharedLibrariesConfirmation? confirmed, CancellationToken cancellationToken)
+    // read, and scans once after a delete or a release. False when it had to stop.
+    private async Task<bool> DeleteAllAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, CancellationToken cancellationToken)
     {
-        var released = false;
+        var removed = false;
         try
         {
-            return await DeleteEachAsync(locate, errorKey, only, confirmed, () => released = true, cancellationToken).ConfigureAwait(false);
+            return await DeleteEachAsync(locate, errorKey, only, null, () => removed = true, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            // A released library keeps the titles of the server until a scan drops them.
-            if (released)
+            // A deleted library leaves the database and a released one drops the titles of the server only with a scan,
+            // which waits while a shared library lacks its blocks (D42).
+            if (removed)
             {
                 await QueueScanAsync(cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
-    private async Task<bool> DeleteEachAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, SharedLibrariesConfirmation? confirmed, Action onRelease, CancellationToken cancellationToken)
+    private async Task<bool> DeleteEachAsync(Func<PluginConfiguration, Registry?> locate, Guid? errorKey, Func<PluginConfiguration, AutomaticLibraryConfig, bool>? only, SharedLibrariesConfirmation? confirmed, Action onRemove, CancellationToken cancellationToken)
     {
         while (_store.Read(config => locate(config)?.Libraries.Any(record => only is null || only(config, record)) == true))
         {
@@ -1308,7 +1314,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     return false;
                 }
 
-                onRelease();
+                onRemove();
             }
             else
             {
@@ -1322,7 +1328,9 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
                 try
                 {
-                    await _libraries.RemoveVirtualFolder(next.Name, true).ConfigureAwait(false);
+                    // With no refresh: Jellyfin would scan at once, also while a shared library lacks its blocks (D42).
+                    await _libraries.RemoveVirtualFolder(next.Name, false).ConfigureAwait(false);
+                    onRemove();
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {

@@ -36,6 +36,34 @@ public sealed partial class ServerLibraryManagerTests
 
     private static SharedLibrariesConfig Shared(Fixture fixture) => fixture.Store.Configuration.SharedLibraries;
 
+    // A shared library the server stored under another name, which can be neither blocked nor deleted.
+    private static async Task<Fixture> WithUnblockedSharedFilm()
+    {
+        var fixture = WithTwoServers();
+        fixture.Libraries.Add("Mio", CollectionTypeOptions.movies, _otherMovies);
+        fixture.Libraries.RenameOnCreate = name => name + "2";
+        fixture.Renamer.OnBlock = () =>
+        {
+            if (fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "2"))
+            {
+                fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
+            }
+        };
+        fixture.Libraries.RemoveFailure = new InvalidOperationException("boom");
+        fixture.Libraries.RemoveFailureFor = name => name == SharedFilm + "2";
+        await fixture.Manager.EnableShared().Job;
+        fixture.Libraries.RenameOnCreate = null;
+        Assert.True(Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2").Unblocked);
+        return fixture;
+    }
+
+    // Lets the blocks of the shared library be written.
+    private static void LetBlocks(Fixture fixture)
+    {
+        fixture.Renamer.BlockFailure = null;
+        fixture.Renamer.OnBlock = null;
+    }
+
     [Fact]
     public async Task Switching_on_creates_one_shared_library_per_type_with_the_folders_of_every_server_and_one_scan()
     {
@@ -294,6 +322,70 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Single(fixture.Scans.Steps, step => step == "scan");
         Assert.NotEmpty(scansWhenBlocked);
         Assert.All(scansWhenBlocked, count => Assert.Equal(0, count));
+    }
+
+    [Fact]
+    public async Task Deleting_libraries_starts_no_library_scan_while_a_shared_library_lacks_its_blocks()
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+
+        LetBlocks(fixture);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Single(fixture.Scans.Steps, step => step == "scan");
+    }
+
+    [Fact]
+    public async Task A_server_rename_validates_the_libraries_only_once_the_shared_library_has_its_blocks_and_before_the_scan()
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        fixture.Scans.Steps.Clear();
+        fixture.Server.Name = "Sole";
+
+        await fixture.Manager.RenameAsync(_serverId, CancellationToken.None);
+
+        Assert.Equal(["Sole - Film", "Sole - Serie"], fixture.Server.AutomaticLibraryRegistry.Select(record => record.Name).Order(StringComparer.Ordinal));
+        Assert.Empty(fixture.Libraries.Validations);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+
+        LetBlocks(fixture);
+        var validationsAtScan = new List<int>();
+        fixture.Scans.DuringScan = () => validationsAtScan.Add(fixture.Libraries.Validations.Count);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal([2], validationsAtScan);
+    }
+
+    [Fact]
+    public async Task A_switch_off_scans_once_the_option_is_off_so_a_library_asked_for_before_a_crash_is_not_recorded()
+    {
+        var fixture = WithTwoServers();
+        await fixture.Manager.EnableShared().Job;
+        fixture.Store.Update(config =>
+        {
+            config.SharedLibraries.Libraries.Remove(config.SharedLibraries.Libraries.Single(record => record.Kind == ServerLibraryKind.Movies));
+            config.SharedLibraries.CreatedLibraryKeys.Remove("Movies");
+            var intent = new PendingLibraryConfig { Kind = ServerLibraryKind.Movies, Name = SharedFilm };
+            intent.Paths.Add(_movies);
+            intent.Paths.Add(_otherMovies);
+            config.SharedLibraries.PendingLibraries.Add(intent);
+        });
+
+        var unconfirmed = fixture.Manager.DisableShared(null);
+        await fixture.Manager.DisableShared(Shown(unconfirmed)).Job;
+
+        Assert.Equal([SharedSeries], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.False(Shared(fixture).Enabled);
+        Assert.Empty(Shared(fixture).Libraries);
+        Assert.Empty(Shared(fixture).PendingLibraries);
     }
 
     [Fact]

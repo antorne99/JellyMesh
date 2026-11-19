@@ -190,19 +190,14 @@ public sealed partial class ServerLibraryManager
             return;
         }
 
-        var before = _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0);
+        // Removing a library drops for a while the titles it shared with the new ones; the scan after the deletes brings
+        // them back (F23).
         await DeleteAllAsync(
             config => LiveRegistry(config, serverId),
             serverId,
             (config, record) => Find(config, serverId) is { } server && Retires(server.LibraryMode, record) && ReadyToRetire(server, root, olderLayout),
             cancellationToken).ConfigureAwait(false);
         ForgetPendingInNone();
-
-        // Removing a library drops for a while the titles it shared with the new ones; a scan brings them back (F23).
-        if (!none && _store.Read(config => Find(config, serverId)?.AutomaticLibraryRegistry.Count ?? 0) < before)
-        {
-            await QueueScanAsync(cancellationToken).ConfigureAwait(false);
-        }
     }
 
     // Before a scan shows the new plugin libraries of a mode change, who blocks an old library holding their folders blocks
