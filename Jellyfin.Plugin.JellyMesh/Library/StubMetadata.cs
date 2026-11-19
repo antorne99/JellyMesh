@@ -73,6 +73,21 @@ public sealed record StubMetadata
     /// <summary>Gets the last episode of a stub that covers several.</summary>
     public int? EpisodeNumberEnd { get; init; }
 
+    /// <summary>Gets the album of a track.</summary>
+    public string? Album { get; init; }
+
+    /// <summary>Gets the artists of a track.</summary>
+    public IReadOnlyList<string> Artists { get; init; } = [];
+
+    /// <summary>Gets the album artists of a track.</summary>
+    public IReadOnlyList<string> AlbumArtists { get; init; } = [];
+
+    /// <summary>Gets the number of a track on its disc.</summary>
+    public int? TrackNumber { get; init; }
+
+    /// <summary>Gets the disc of a track.</summary>
+    public int? DiscNumber { get; init; }
+
     /// <summary>
     /// Gets a value indicating whether the plugin writes collections, an option that is off by default (decision 52).
     /// </summary>
@@ -83,6 +98,32 @@ public sealed record StubMetadata
 
     /// <summary>Gets the TMDb ID of that collection.</summary>
     public string? TmdbCollectionId { get; init; }
+
+    /// <summary>
+    /// Builds the metadata of a track. Stock Jellyfin reads nothing from a track stub, so every field is written with or
+    /// without protection, which only adds the lock (D60).
+    /// </summary>
+    /// <param name="item">The track.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <returns>The metadata.</returns>
+    public static StubMetadata Track(IndexedItem item, bool isProtected)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        return new StubMetadata
+        {
+            IsProtected = isProtected,
+            Title = item.Name,
+            Year = item.ProductionYear,
+            ProviderIds = item.ProviderIds,
+            Genres = item.Genres,
+            Album = item.Album,
+            Artists = item.Artists ?? [],
+            AlbumArtists = item.AlbumArtists ?? [],
+            TrackNumber = item.IndexNumber,
+            DiscNumber = item.ParentIndexNumber
+        };
+    }
 
     /// <summary>
     /// Builds the metadata of a catalog entry.
