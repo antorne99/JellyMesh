@@ -19,6 +19,8 @@ public abstract class StubMetadataProvider :
     ICustomMetadataProvider<Movie>,
     ICustomMetadataProvider<Episode>,
     ICustomMetadataProvider<Audio>,
+    ICustomMetadataProvider<MusicVideo>,
+    ICustomMetadataProvider<Video>,
     IHasOrder,
     IForcedProvider,
     IPreRefreshProvider
@@ -61,6 +63,14 @@ public abstract class StubMetadataProvider :
 
     /// <inheritdoc />
     public Task<ItemUpdateType> FetchAsync(Audio item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(MusicVideo item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Video item, MetadataRefreshOptions options, CancellationToken cancellationToken)
         => Task.FromResult(Run(item, options, cancellationToken));
 
     /// <summary>
