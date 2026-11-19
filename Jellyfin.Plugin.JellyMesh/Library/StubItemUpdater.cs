@@ -48,7 +48,7 @@ public sealed class StubItemUpdater
 
         item.Name = metadata.Title ?? item.Name;
         item.ProductionYear = metadata.Year ?? item.ProductionYear;
-        item.ProviderIds = new Dictionary<string, string>(metadata.ProviderIds, StringComparer.OrdinalIgnoreCase);
+        item.ProviderIds = ProviderIdsOf(metadata.ProviderIds);
         if (item is Movie && !string.IsNullOrEmpty(metadata.TmdbCollectionId))
         {
             // Jellyfin sets it from tmdbcolid when it first reads the .nfo.
@@ -100,6 +100,18 @@ public sealed class StubItemUpdater
         }
     }
 
+    // Keys that differ only by case keep the first in ordinal order, so that the same ids always give the same item.
+    private static Dictionary<string, string> ProviderIdsOf(IReadOnlyDictionary<string, string> ids)
+    {
+        var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in ids.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            merged.TryAdd(key, value);
+        }
+
+        return merged;
+    }
+
     /// <summary>
     /// Writes the fields of a track and its lock. Stock Jellyfin reads nothing from a track stub, so they are written with
     /// or without protection (D60). Nothing is saved.
@@ -115,7 +127,7 @@ public sealed class StubItemUpdater
         var before = TrackFieldsOf(audio);
         audio.Name = metadata.Title ?? audio.Name;
         audio.ProductionYear = metadata.Year ?? audio.ProductionYear;
-        audio.ProviderIds = new Dictionary<string, string>(metadata.ProviderIds, StringComparer.OrdinalIgnoreCase);
+        audio.ProviderIds = ProviderIdsOf(metadata.ProviderIds);
         audio.Album = metadata.Album;
         audio.Artists = metadata.Artists.ToArray();
         audio.AlbumArtists = metadata.AlbumArtists.ToArray();
