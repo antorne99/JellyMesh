@@ -31,6 +31,7 @@ public static partial class StubPlanner
 
         string? KeyOf(string path) => FederatedPaths.RemoteLibraryOf(path) is { } library ? input.PlacementOf(serverId, library, TypeFolder.Books) : null;
         var paths = new PathAllocator(stubs, [], input.IgnoreRules);
+        var byItem = stubs.SelectMany(stub => stub.Sources.Select(source => (source.ItemId, Stub: stub))).ToLookup(pair => pair.ItemId, pair => pair.Stub, StringComparer.Ordinal);
         var works = new List<StubWork>();
         foreach (var book in catalog.Items.Where(item => item.Kind == IndexedItemKind.Book && item.Extension is not null).OrderBy(item => item.ItemId, StringComparer.Ordinal))
         {
@@ -43,8 +44,7 @@ public static partial class StubPlanner
             foreach (var library in libraries)
             {
                 var key = input.PlacementOf(serverId, library, TypeFolder.Books);
-                var stub = stubs.Find(entry => !claimed.Contains(entry.Id)
-                    && entry.Sources.Any(source => source.ItemId == book.ItemId)
+                var stub = byItem[book.ItemId].FirstOrDefault(entry => !claimed.Contains(entry.Id)
                     && string.Equals(Path.GetExtension(entry.RelativePath), "." + book.Extension, StringComparison.Ordinal)
                     && KeyOf(entry.RelativePath) == key);
                 var folder = FederatedPaths.TypeFolderOf(serverId, library, TypeFolder.Books);
