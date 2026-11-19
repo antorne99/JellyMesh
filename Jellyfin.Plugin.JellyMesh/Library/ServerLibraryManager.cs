@@ -677,6 +677,11 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
         if (changed)
         {
+            if (!await BlockNewAsync(serverIds, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
 

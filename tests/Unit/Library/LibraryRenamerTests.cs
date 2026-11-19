@@ -204,6 +204,46 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task Users_who_block_an_old_library_block_the_new_ones_before_a_scan_and_are_given_nothing()
+    {
+        var first = Guid.NewGuid();
+        var adopted = Guid.NewGuid();
+        _blocked.SetPermission(PermissionKind.EnableAllFolders, true);
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("D")]);
+        _limited.SetPermission(PermissionKind.EnableAllFolders, false);
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _other.SetPermission(PermissionKind.EnableAllFolders, true);
+
+        await _renamer.BlockAsync(
+            [
+                new AccessCarry("Mare - Film", first, [[OldId]]),
+                new AccessCarry("Mare - Serie", null, [[OldId]]),
+                new AccessCarry("Film di casa", adopted, [[OldId]]) { Adopted = true }
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(
+            [OldId.ToString("D"), first.ToString("N"), IdOf(Path.Combine(_root, "Mare - Serie")).ToString("N")],
+            _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        _users.Verify(users => users.UpdateUserAsync(_blocked), Times.Once);
+        _users.Verify(users => users.UpdateUserAsync(_limited), Times.Never);
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_user_whose_block_cannot_be_saved_keeps_the_list_it_had_and_the_block_fails()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_blocked)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.BlockAsync([new AccessCarry("Mare - Film", NewId, [[OldId]])], CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
     public async Task A_user_with_one_of_two_merged_libraries_gets_no_access_and_is_named()
     {
         var (children, adults, merged) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());

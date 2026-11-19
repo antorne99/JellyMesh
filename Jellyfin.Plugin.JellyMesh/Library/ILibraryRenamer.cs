@@ -42,6 +42,15 @@ public interface ILibraryRenamer
     Task<IReadOnlyList<AccessLoss>> CarryAccessAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Before a scan shows the new libraries, who blocks an old one also blocks the new ones that hold any of its folders.
+    /// Nothing is given and an adopted library is never written; a library with no id yet is found by its name.
+    /// </summary>
+    /// <param name="carries">The new libraries, each with the old libraries that held its folders.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Tells, changing nothing, which users would lose titles if the access were carried to the new libraries.
     /// </summary>
     /// <param name="carries">The new libraries, each with the old libraries that held its folders.</param>

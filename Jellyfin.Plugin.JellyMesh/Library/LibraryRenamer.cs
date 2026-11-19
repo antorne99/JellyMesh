@@ -185,6 +185,25 @@ public sealed class LibraryRenamer : ILibraryRenamer
         ArgumentNullException.ThrowIfNull(carries);
         var users = _users.GetUsers().ToList();
         var lost = LossesOf(carries, users);
+        await WriteAccessAsync(users, carries, true, cancellationToken).ConfigureAwait(false);
+        return lost;
+    }
+
+    /// <inheritdoc />
+    public async Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(carries);
+        var root = _paths.DefaultUserViewsPath;
+        var named = carries
+            .Select(carry => carry.Id is null && ChildOf(root, carry.Name) is { } path ? carry with { Id = _library.GetNewItemId(path, typeof(CollectionFolder)) } : carry)
+            .ToList();
+        await WriteAccessAsync(_users.GetUsers().ToList(), named, false, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Writes to each user the blocks of the new plugin libraries, and with give the ones given by id; a user that cannot be
+    // saved keeps both lists it had and the write fails.
+    private async Task WriteAccessAsync(IReadOnlyList<User> users, IReadOnlyList<AccessCarry> carries, bool give, CancellationToken cancellationToken)
+    {
         foreach (var user in users)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -192,7 +211,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
             var blocked = user.GetPreference(PreferenceKind.BlockedMediaFolders);
             var given = carries.Where(carry => carry.Id is not null && !carry.Adopted).Select(carry => (Id: carry.Id!.Value, Access: AccessOf(user, carry))).ToList();
             var touched = AddIds(user, PreferenceKind.BlockedMediaFolders, given.Where(pair => pair.Access.Blocked).Select(pair => pair.Id));
-            touched |= AddIds(user, PreferenceKind.EnabledFolders, given.Where(pair => pair.Access.Enabled).Select(pair => pair.Id));
+            touched |= give && AddIds(user, PreferenceKind.EnabledFolders, given.Where(pair => pair.Access.Enabled).Select(pair => pair.Id));
             if (!touched)
             {
                 continue;
@@ -209,8 +228,6 @@ public sealed class LibraryRenamer : ILibraryRenamer
                 throw;
             }
         }
-
-        return lost;
     }
 
     /// <inheritdoc />

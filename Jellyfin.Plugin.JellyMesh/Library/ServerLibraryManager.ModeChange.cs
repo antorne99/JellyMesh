@@ -169,6 +169,11 @@ public sealed partial class ServerLibraryManager
             return;
         }
 
+        if (!none && !await BlockNewAsync([serverId], cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         if (!ready)
         {
             _logger.LogInformation("The libraries of the previous library mode stay until those of the new mode are made");
@@ -198,6 +203,56 @@ public sealed partial class ServerLibraryManager
         {
             await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    // Before a scan shows the new plugin libraries of a mode change, who blocks an old library holding their folders blocks
+    // them too, which only narrows access. False when the blocks could not be written, so nothing is scanned.
+    private async Task<bool> BlockNewAsync(IReadOnlyList<Guid> serverIds, CancellationToken cancellationToken)
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (root.Length == 0 || !_store.Read(config => config.Servers.Any(server => serverIds.Contains(server.Id) && server.AutomaticLibraryRegistry.Any(record => Retires(server.LibraryMode, record)))))
+        {
+            return true;
+        }
+
+        if (ReadFolders() is not { } folders)
+        {
+            return false;
+        }
+
+        var carries = _store.Read(config => config.Servers.Where(server => serverIds.Contains(server.Id)).SelectMany(server => BlockCarries(server, root, folders)).ToList());
+        if (carries.Count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            await _renamer.BlockAsync(carries, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot block the libraries of the new library mode for the users who blocked the old ones: {Error}", exception.GetType().Name);
+            return false;
+        }
+    }
+
+    // The plugin libraries of the new mode already there, each with the old libraries that held its folders; one with no
+    // id yet goes by its name.
+    private static IEnumerable<AccessCarry> BlockCarries(RemoteServerConfig server, string root, IReadOnlyList<VirtualFolderInfo> folders)
+    {
+        if (!server.AutomaticLibraryRegistry.Any(record => Retires(server.LibraryMode, record)))
+        {
+            return [];
+        }
+
+        var made = server.AutomaticLibraryRegistry
+            .Where(record => !record.Adopted && !Retires(server.LibraryMode, record))
+            .Select(record => (Record: record, Folder: FindRecorded(record, folders)))
+            .Where(pair => pair.Folder is not null && Holds(pair.Folder, pair.Record, root, server.Id))
+            .Select(pair => new NewLibrary(pair.Folder!.Name, Guid.TryParse(pair.Folder.ItemId, out var id) ? id : null, pair.Folder.Locations, false));
+        return CarriesFor(made, AccessSources(server, server.LibraryMode, folders, root));
     }
 
     // Gives the users the new plugin libraries as they saw the old ones, and records who loses titles. Tells whether the old

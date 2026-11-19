@@ -1905,7 +1905,13 @@ public sealed partial class ServerLibraryManagerTests
                         throw CreateFailure;
                     }
 
-                    Add(RenameOnCreate?.Invoke(name) ?? name, type, options.PathInfos.Select(info => info.Path).ToArray());
+                    var made = RenameOnCreate?.Invoke(name) ?? name;
+                    Add(made, type, options.PathInfos.Select(info => info.Path).ToArray());
+                    if (NoIdOnCreate)
+                    {
+                        Find(made).ItemId = null;
+                    }
+
                     return Task.CompletedTask;
                 });
             _mock.Setup(manager => manager.RemoveVirtualFolder(It.IsAny<string>(), It.IsAny<bool>()))
@@ -1962,6 +1968,9 @@ public sealed partial class ServerLibraryManagerTests
         public Func<string, string>? RenameOnCreate { get; set; }
 
         public Action? OnCreate { get; set; }
+
+        // When set, a library is made with no id, as one the server has not scanned yet.
+        public bool NoIdOnCreate { get; set; }
 
         // Runs after each read of the libraries, before the caller sees it.
         public Action? OnRead { get; set; }
@@ -2042,6 +2051,24 @@ public sealed partial class ServerLibraryManagerTests
 
             Carried.Add(carries);
             return Task.FromResult(Lost);
+        }
+
+        public List<IReadOnlyList<AccessCarry>> Blocked { get; } = [];
+
+        public Exception? BlockFailure { get; set; }
+
+        public Action? OnBlock { get; set; }
+
+        public Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+        {
+            OnBlock?.Invoke();
+            if (BlockFailure is not null)
+            {
+                throw BlockFailure;
+            }
+
+            Blocked.Add(carries);
+            return Task.CompletedTask;
         }
 
         public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
