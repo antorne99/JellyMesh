@@ -9,11 +9,13 @@
 # incremental sync three times (the first finds the scanned library, the next ones find nothing changed), the nightly
 # reconciliation on scanned items and one more incremental after it.
 # SCALE_NAME, SCALE_PORT and SCALE_FAKE_PORT (the first fake; the others follow) override the container and the ports.
-# SCALE_FIRST_ONLY=1 measures the first sync alone.
+# SCALE_FIRST_ONLY=1 measures the first sync alone. SCALE_TREE builds the plugin from another checkout, such as a worktree
+# of an older commit, so that two versions run under the same harness.
 # usage: run.sh   (raw data and results.txt go in WORK, by default ${TMPDIR:-/tmp}/jm-scale-run)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
+TREE=$(cd "${SCALE_TREE:-$WT}" && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/jm-scale-run}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 NAME=${SCALE_NAME:-jm-scale-consumer}
@@ -156,7 +158,7 @@ get /Startup/User >/dev/null
 post /Startup/User '{"Name":"admin","Password":"jellymesh-test"}' >/dev/null
 post /Startup/Complete >/dev/null
 login
-NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.sh" "$NAME" || exit 1
+NUGET_VOLUME=jellymesh-nuget bash "$TREE/tests/Integration/scripts/install-plugin.sh" "$NAME" || exit 1
 sleep 3
 wait_ready
 login
