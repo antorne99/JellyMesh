@@ -146,6 +146,16 @@ public sealed class LibraryPlanTests
     }
 
     [Fact]
+    public void TheManualPathsOfAMixedLibraryAreItsFilmFolderForFilmsAndItsSerieFolderForSeries()
+    {
+        var paths = LibraryPlan.ManualPaths(Server(LibraryMode.None, (Mixed, "Tutto", "mixed")), Root, olderLayout: false);
+
+        Assert.Equal(
+            [(Folder(Mixed, "Film"), "movies", "Tutto"), (Folder(Mixed, "Serie"), "tvshows", "Tutto")],
+            paths.Select(path => (path.Path, path.LibraryType, path.RemoteLibrary)));
+    }
+
+    [Fact]
     public void NoneMakesNoLibrary()
     {
         Assert.Empty(LibraryPlan.For(Server(LibraryMode.None, (Films, "Film", "movies")), Root, olderLayout: false));

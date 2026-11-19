@@ -46,15 +46,15 @@ internal static class LibraryPlan
     /// <param name="server">The server.</param>
     /// <param name="root">The federated folder.</param>
     /// <param name="olderLayout">Whether its titles are still in the 0.5 layout, where only the folders of the server exist.</param>
-    /// <returns>Each folder with the local library type it needs.</returns>
+    /// <returns>Each folder with the local library type it needs: for a mixed library, Film for films and Serie for series.</returns>
     public static IReadOnlyList<ManualLibraryPath> ManualPaths(RemoteServerConfig server, string root, bool olderLayout)
     {
         ArgumentNullException.ThrowIfNull(server);
         var imported = Imported(server);
         return olderLayout
             ? [.. KindsOf(imported, true).Select(kind => new ManualLibraryPath(ServerFolderOf(kind, root, server.Id)!, TypeOf(kind).LibraryType.ToString(), string.Empty))]
-            : [.. imported.Where(library => library.Kind != ServerLibraryKind.Mixed)
-                .Select(library => new ManualLibraryPath(library.Paths(root, server.Id)[0], TypeOf(library.Kind).LibraryType.ToString(), library.Name))];
+            : [.. imported.SelectMany(library => ServerLibraryKinds.TypeFoldersOf(library.Kind).Select(type => new ManualLibraryPath(
+                FederatedFolderLayout.TypeFolderPath(root, server.Id, library.Id, type), type.LibraryType.ToString(), library.Name)))];
     }
 
     /// <summary>
