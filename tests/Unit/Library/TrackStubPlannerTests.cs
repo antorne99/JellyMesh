@@ -219,6 +219,29 @@ public class TrackStubPlannerTests
     }
 
     [Fact]
+    public void ANewTrackOfARenamedAlbumGoesIntoTheFolderTheAlbumAlreadyUses()
+    {
+        var first = Plan([Track("t1", "One", 1)]);
+
+        var second = Plan([Track("t1", "One", 1, album: "Album (Remastered)", albumArtists: ["Band"]), Track("t2", "Two", 2, album: "Album (Remastered)", albumArtists: ["Band"])], first.State);
+
+        Assert.Equal(PathIn("Artist", "Album", "01 - One.strm"), WorkOf(second, "t1").Entry.RelativePath);
+        Assert.Equal(PathIn("Artist", "Album", "02 - Two.strm"), WorkOf(second, "t2").Entry.RelativePath);
+    }
+
+    [Fact]
+    public void ASecondDiscNamesOnlyTheNewTracksByDiscInTheSameFolder()
+    {
+        var first = Plan([Track("t1", "One", 1, disc: 1)]);
+
+        var second = Plan([Track("t1", "One", 1, disc: 1), Track("t2", "Two", 1, disc: 2)], first.State);
+
+        Assert.Equal(PathIn("Artist", "Album", "01 - One.strm"), WorkOf(second, "t1").Entry.RelativePath);
+        Assert.Equal(PathIn("Artist", "Album", "2-01 - Two.strm"), WorkOf(second, "t2").Entry.RelativePath);
+        Assert.Empty(second.Removals);
+    }
+
+    [Fact]
     public void HostileNamesStayInsideTheMusicFolderOfTheServer()
     {
         var plan = Plan([
