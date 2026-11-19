@@ -32,4 +32,7 @@ public sealed record AutomaticLibrariesState(
 
     /// <summary>Gets the users who lost titles in the last change of library mode, by library of the new mode.</summary>
     public IReadOnlyList<AccessLoss> LostAccess { get; init; } = [];
+
+    /// <summary>Gets a value indicating whether a library the mode wants is not in the registry, as after the admin deleted it.</summary>
+    public bool Missing { get; init; }
 }

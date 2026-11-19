@@ -83,6 +83,12 @@ public sealed partial class ServerLibraryManager
         _ => true
     };
 
+    // Whether a library the mode of a switched-on server wants is not in its registry; never while the layout is unknown.
+    private static bool IsMissing(RemoteServerConfig server, string root, bool? olderLayout) =>
+        server.AutomaticLibraries && server.LibraryMode != LibraryMode.None && root.Length > 0 && olderLayout is { } older
+        && LibraryPlan.For(server, root, older).Any(planned => !server.AutomaticLibraryRegistry.Any(record =>
+            !Retires(server.LibraryMode, record) && string.Equals(KeyOf(record), planned.Key, StringComparison.OrdinalIgnoreCase)));
+
     // The old libraries go only once every library the mode wants is in the registry; in "none" at once. With nothing
     // planned, as while the layout is unknown, they stay.
     private static bool ReadyToRetire(RemoteServerConfig server, string root, bool? olderLayout)
