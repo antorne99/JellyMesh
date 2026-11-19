@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Entities;
 using Moq;
@@ -99,6 +100,37 @@ public sealed class BookMaterializerTests : IDisposable
         await _fixture.Materializer.MaterializeAsync(true, CancellationToken.None);
 
         Assert.Equal(("Dune", true), (again.Name, again.IsLocked));
+    }
+
+    // No cycles (D62): a remote read in standard mode sends the placeholders of its own JellyMesh like any book.
+    [Fact]
+    public async Task APlaceholderOfAnotherJellyMeshReadInStandardModeGetsNoStub()
+    {
+        var shaped = "/srv/f/" + Guid.NewGuid().ToString("D") + "/" + Guid.NewGuid().ToString("N") + "/Libri/Dune (1965)/Dune (1965).epub";
+        var a = await AddBookServerAsync(Dune() with { Path = shaped });
+        _fixture.Sync.Client.Add(TestLibraries.Books, RemoteItemType.Book, Dune() with { Id = "b2", Name = "Marked", ProviderIds = new Dictionary<string, string?> { ["JellyMesh"] = "s1" } });
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.NotEqual(RemoteMode.JellyMesh, a.Mode);
+        Assert.Empty(_fixture.Registry.State.Stubs);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(BookPath(a))));
+    }
+
+    [Fact]
+    public async Task ABookThatBecomesAPlaceholderOfAnotherJellyMeshLeavesWithAnIncrementalRead()
+    {
+        var a = await AddBookServerAsync(Dune());
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Single(_fixture.Registry.State.Stubs);
+
+        _fixture.Sync.Client.Items[(TestLibraries.Books, RemoteItemType.Book)][0] = Dune() with { ProviderIds = new Dictionary<string, string?> { ["JellyMesh"] = "s1" } };
+        _fixture.Sync.Client.SavedUtc["b1"] = SyncFixture.Start.AddMinutes(1);
+        await _fixture.Sync.Sync.RunIncrementalAsync(CancellationToken.None);
+        await _fixture.Materializer.MaterializeAsync(false, CancellationToken.None);
+
+        Assert.Empty(_fixture.Registry.State.Stubs);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(BookPath(a))));
     }
 
     [Fact]

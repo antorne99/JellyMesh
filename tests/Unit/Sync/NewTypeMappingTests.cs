@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -154,6 +155,44 @@ public class NewTypeMappingTests
         Assert.DoesNotContain("/media", json, StringComparison.Ordinal);
         Assert.DoesNotContain("Libri", json, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Token, json, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("/srv/federata/0f8fad5b-d9cb-469f-a165-70867728950e/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Libri/Dune (1965)/Dune (1965).epub")]
+    [InlineData("D:\\Federata\\0F8FAD5B-D9CB-469F-A165-70867728950E\\4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c\\Libri\\Dune\\Dune.pdf")]
+    [InlineData("/0f8fad5b-d9cb-469f-a165-70867728950e/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Libri/Dune.cbz")]
+    public void ABookShapedAsAPlaceholderOfAnotherJellyMeshGetsNoFile(string path)
+    {
+        var book = RemoteItemMapper.ToIndexedItem(new RemoteItem { Id = "b1", Path = path }, RemoteItemType.Book, "lib", DateTimeOffset.UnixEpoch);
+
+        Assert.Null(book.Extension);
+    }
+
+    [Theory]
+    [InlineData("/media/0f8fad5b-d9cb-469f-a165-70867728950e/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Film/Dune.epub")]
+    [InlineData("/media/books/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Libri/Dune.epub")]
+    [InlineData("/media/0f8fad5b-d9cb-469f-a165-70867728950e/books/Libri/Dune.epub")]
+    [InlineData("/media/0f8fad5b-d9cb-469f-a165-70867728950e/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/libri/Dune.epub")]
+    [InlineData("/media/0f8fad5b-d9cb-469f-a165-70867728950e/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Libri.epub")]
+    public void ABookOnlyPartlyShapedAsAPlaceholderKeepsItsFile(string path)
+    {
+        var book = RemoteItemMapper.ToIndexedItem(new RemoteItem { Id = "b1", Path = path }, RemoteItemType.Book, "lib", DateTimeOffset.UnixEpoch);
+
+        Assert.Equal("epub", book.Extension);
+    }
+
+    [Theory]
+    [InlineData("JellyMesh", "0123")]
+    [InlineData("jellymesh", "0123")]
+    [InlineData("JellyMesh", "")]
+    [InlineData("JellyMesh", null)]
+    public void ABookWithTheMarkOfAnotherJellyMeshGetsNoFile(string key, string? value)
+    {
+        var item = new RemoteItem { Id = "b1", Path = "/media/books/Dune.epub", ProviderIds = new Dictionary<string, string?> { [key] = value, ["Isbn"] = "1" } };
+
+        var book = RemoteItemMapper.ToIndexedItem(item, RemoteItemType.Book, "lib", DateTimeOffset.UnixEpoch);
+
+        Assert.Null(book.Extension);
     }
 
     [Fact]
