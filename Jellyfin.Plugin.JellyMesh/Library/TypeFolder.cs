@@ -49,6 +49,7 @@ public sealed record TypeFolder(string Name, CollectionTypeOptions LibraryType)
         StubKind.Track => Music,
         StubKind.MusicVideo => MusicVideos,
         StubKind.HomeVideo => HomeVideos,
+        StubKind.Book => Books,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 
