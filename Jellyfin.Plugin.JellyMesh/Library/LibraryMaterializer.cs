@@ -444,7 +444,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(strm))
             {
                 await WriteTextAsync(strm, work.StrmUrl, cancellationToken).ConfigureAwait(false);
-                await WriteTextAsync(FederatedPaths.Resolve(run.Root, work.NfoPath), work.Nfo, cancellationToken).ConfigureAwait(false);
+                // A track has no .nfo: Jellyfin reads none for audio (F48).
+                if (work.NfoPath.Length > 0)
+                {
+                    await WriteTextAsync(FederatedPaths.Resolve(run.Root, work.NfoPath), work.Nfo, cancellationToken).ConfigureAwait(false);
+                }
+
                 if (existing.Value is { } item)
                 {
                     await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
@@ -467,7 +472,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, ImageOwnerOf(entry, strm, existing), cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
@@ -500,6 +505,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             _logger.LogError("Cannot write a stub: {Error}", exception.GetType().Name);
         }
     }
+
+    // The item an image of a stub belongs to: a track carries the cover of its album, which is the album folder's.
+    private BaseItem? ImageOwnerOf(StubEntry entry, string strm, LazyItem existing)
+        => entry.Kind == StubKind.Track ? _library.FindByPath(Path.GetDirectoryName(strm)!, true) : existing.Value;
 
     private async Task SignStubAsync(Run run, StubEntry stub, CancellationToken cancellationToken)
     {
