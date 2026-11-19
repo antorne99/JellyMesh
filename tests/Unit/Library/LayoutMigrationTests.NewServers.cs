@@ -214,6 +214,33 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task ASharedLibraryKeptWithoutItsBlocksGetsNoTypeFolderOfTheNewServerFromPlacement()
+    {
+        // D54: a shared library kept until its blocks are written, with the id it was recorded with, is still the plugin's.
+        MigratedToRemoteLibraries();
+        var (filmsOfA, filmsOfC) = (Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
+        Imported(_serverC, (filmsOfC, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, LocalFilms, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _libraries.Add(Library("Tutti i server - Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        var shared = _store.Configuration.SharedLibraries;
+        shared.Enabled = true;
+        shared.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", ItemId = Guid.NewGuid().ToString("N"), Unblocked = true });
+        foreach (var library in _libraries)
+        {
+            shared.FollowedLibraryIds.Add(library.ItemId!);
+        }
+
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, filmsOfC, TypeFolder.Movies))], _addedPaths);
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)], Locations("Tutti i server - Film"));
+    }
+
+    [Fact]
     public async Task TheAutomaticLibrariesOfTheOtherServersGetNoFolderOfTheNewServer()
     {
         // D24: an automatic library holds only its own server, so the plugin leaves it so; D21: the switch makes the
