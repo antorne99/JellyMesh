@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Security;
@@ -139,6 +140,20 @@ public sealed class PluginDatabaseTests : IDisposable
         Assert.True(!File.Exists(DatabasePath + "-wal") || new FileInfo(DatabasePath + "-wal").Length == 0);
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((_, _) => { }, CancellationToken.None));
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync((_, _) => 0, CancellationToken.None));
+    }
+
+    // Index entries of music, photos and books cannot be read by a build from before them (F50).
+    [Fact]
+    public void ABuildFromBeforeTheNewTypesLeavesTheDatabaseThatMayHoldThemAlone()
+    {
+        using (var current = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1))
+        {
+            Assert.Equal(StoreState.Healthy, current.Health.State);
+        }
+
+        var older = Open(migrations: SchemaMigrations.All.Where(step => step.Version < SchemaMigrations.NewItemKindsVersion).ToList());
+
+        Assert.Equal(StoreState.NewerSchema, older.Health.State);
     }
 
     // The one file set aside as damaged, without its logs.
