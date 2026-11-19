@@ -40,16 +40,22 @@ public sealed partial class ServerLibraryManager
     /// <inheritdoc />
     public AutomaticLibrariesRequest DisableShared(bool confirmed)
     {
-        // An adopted library is released, not deleted, so it needs no confirmation.
-        var names = _store.Read(config => config.SharedLibraries.Libraries.Where(record => !record.Adopted).Select(record => record.Name).ToList());
+        // Every library is named, those deleted and those released; the job checks them again under the gate.
+        var (toDelete, toRelease) = _store.Read(config => (
+            config.SharedLibraries.Libraries.Where(record => !record.Adopted).Select(record => record.Name).ToList(),
+            config.SharedLibraries.Libraries.Where(record => record.Adopted).Select(record => record.Name).ToList()));
         if (HasJob(_sharedOwner))
         {
             return AutomaticLibrariesRequest.Refused(AutomaticLibrariesOutcome.Busy);
         }
 
-        return names.Count > 0 && !confirmed
-            ? new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, names)
-            : Start(_sharedOwner, (_, token) => DisableSharedAsync(token));
+        if (toDelete.Count + toRelease.Count > 0 && !confirmed)
+        {
+            return new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, toDelete) { ToRelease = toRelease };
+        }
+
+        var named = toDelete.Concat(toRelease).ToHashSet(StringComparer.Ordinal);
+        return Start(_sharedOwner, (_, token) => DisableSharedAsync(named, token));
     }
 
     // The registry of the shared libraries, while the option is on or libraries are left. It never adopts a library of a
@@ -127,8 +133,16 @@ public sealed partial class ServerLibraryManager
     }
 
     // Deletes the shared libraries the plugin made and releases the adopted ones (D36), then turns the option off.
-    private async Task DisableSharedAsync(CancellationToken cancellationToken)
+    private async Task DisableSharedAsync(IReadOnlySet<string> named, CancellationToken cancellationToken)
     {
+        // A library made or renamed since the admin confirmed was not named, so the option stays on until a new confirmation.
+        if (_store.Read(config => config.SharedLibraries.Libraries.Any(record => !named.Contains(record.Name))))
+        {
+            _logger.LogWarning("A shared library changed after the switch-off was confirmed, so the option stays on");
+            _errors[_sharedOwner] = AutomaticLibrariesError.Unconfirmed;
+            return;
+        }
+
         _conflicts.TryRemove(_sharedOwner, out _);
         if (!await DeleteAllAsync(SharedRegistry, _sharedOwner, null, cancellationToken).ConfigureAwait(false))
         {

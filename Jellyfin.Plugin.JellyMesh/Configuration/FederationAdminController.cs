@@ -440,7 +440,7 @@ public class FederationAdminController : ControllerBase
         var answer = request.Enabled ? _libraries.EnableShared() : _libraries.DisableShared(request.Confirmed);
         return answer.Outcome == AutomaticLibrariesOutcome.Started
             ? Accepted(_libraries.GetSharedState())
-            : StatusCode(StatusCodes.Status409Conflict, new SharedLibrariesRefusal(answer.Outcome, SharedRefusalMessage(answer.Outcome), answer.ToDelete));
+            : StatusCode(StatusCodes.Status409Conflict, new SharedLibrariesRefusal(answer.Outcome, SharedRefusalMessage(answer.Outcome), answer.ToDelete, answer.ToRelease));
     }
 
     /// <summary>
@@ -582,7 +582,7 @@ public class FederationAdminController : ControllerBase
         return outcome switch
         {
             AutomaticLibrariesOutcome.NoFederatedFolder => "Set the federated folder first.",
-            AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the shared libraries.",
+            AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the shared libraries the plugin made and release the adopted ones.",
             AutomaticLibrariesOutcome.Busy => "The shared libraries are being updated. Try again when it is done.",
             _ => "The operation failed."
         };

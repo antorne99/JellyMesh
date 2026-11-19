@@ -1317,12 +1317,12 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public void SwitchingTheSharedLibrariesOffAsksToConfirmWithTheLibrariesItWouldDelete()
+    public void SwitchingTheSharedLibrariesOffAsksToConfirmWithTheLibrariesItWouldDeleteAndRelease()
     {
         using var fixture = new RegistryFixture();
         var libraries = new Mock<IServerLibraryManager>();
         libraries.Setup(manager => manager.DisableShared(false))
-            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Tutti i server - Film"]));
+            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Tutti i server - Film"]) { ToRelease = ["Serie di tutti"] });
 
         var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = false }).Result;
 
@@ -1330,8 +1330,9 @@ public class FederationAdminControllerTests
         Assert.Equal(409, conflict.StatusCode);
         var refusal = Assert.IsType<SharedLibrariesRefusal>(conflict.Value);
         Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, refusal.Outcome);
-        Assert.Equal("Confirm to delete the shared libraries.", refusal.Message);
+        Assert.Equal("Confirm to delete the shared libraries the plugin made and release the adopted ones.", refusal.Message);
         Assert.Equal(["Tutti i server - Film"], refusal.ToDelete);
+        Assert.Equal(["Serie di tutti"], refusal.ToRelease);
     }
 
     [Fact]

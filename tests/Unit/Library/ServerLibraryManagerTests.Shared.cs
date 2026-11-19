@@ -401,6 +401,7 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, unconfirmed.Outcome);
         Assert.Equal([SharedSeries], unconfirmed.ToDelete);
+        Assert.Equal(["Tutti"], unconfirmed.ToRelease);
         Assert.True(Shared(fixture).Enabled);
 
         var confirmed = fixture.Manager.DisableShared(true);
@@ -415,18 +416,69 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task Switching_off_with_only_adopted_libraries_needs_no_confirmation()
+    public async Task Switching_off_with_only_adopted_libraries_asks_to_confirm_with_the_libraries_it_releases()
     {
         var fixture = WithTwoServers();
         fixture.Libraries.Add("Tutti", CollectionTypeOptions.movies, _movies, _otherMovies);
         fixture.Libraries.Add("Tutte", CollectionTypeOptions.tvshows, _series, _otherSeries);
         await fixture.Manager.EnableShared().Job;
 
-        var request = fixture.Manager.DisableShared(false);
+        var unconfirmed = fixture.Manager.DisableShared(false);
+
+        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, unconfirmed.Outcome);
+        Assert.Empty(unconfirmed.ToDelete);
+        Assert.Equal(["Tutte", "Tutti"], unconfirmed.ToRelease.Order(StringComparer.Ordinal));
+        Assert.True(Shared(fixture).Enabled);
+
+        var request = fixture.Manager.DisableShared(true);
         await request.Job;
 
         Assert.Equal(AutomaticLibrariesOutcome.Started, request.Outcome);
         Assert.Empty(fixture.Libraries.Removed);
+        Assert.False(Shared(fixture).Enabled);
+    }
+
+    [Fact]
+    public async Task A_library_made_while_a_confirmed_switch_off_waits_for_a_check_keeps_the_option_on()
+    {
+        var fixture = WithTwoServers();
+        await fixture.Manager.EnableShared().Job;
+        fixture.Libraries.Add("Nuova", CollectionTypeOptions.movies);
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        fixture.Libraries.OnRead = () =>
+        {
+            entered.Set();
+            release.Wait();
+        };
+        var check = Task.Run(() => fixture.Manager.ReconcileAsync(CancellationToken.None));
+        entered.Wait();
+        fixture.Libraries.OnRead = null;
+
+        var request = fixture.Manager.DisableShared(true);
+        fixture.Store.Update(config => config.SharedLibraries.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Nuova", ItemId = fixture.Libraries.IdOf("Nuova") }));
+        release.Set();
+        await check;
+        await request.Job;
+
+        Assert.Equal(AutomaticLibrariesOutcome.Started, request.Outcome);
+        Assert.True(Shared(fixture).Enabled);
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Equal(AutomaticLibrariesError.Unconfirmed, fixture.Manager.GetSharedState().Error);
+    }
+
+    [Fact]
+    public async Task Switching_off_with_nothing_to_delete_or_release_needs_no_confirmation()
+    {
+        var fixture = WithTwoServers();
+        await fixture.Manager.EnableShared().Job;
+        fixture.Libraries.Folders.Clear();
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        var request = fixture.Manager.DisableShared(false);
+        await request.Job;
+
+        Assert.Equal(AutomaticLibrariesOutcome.Started, request.Outcome);
         Assert.False(Shared(fixture).Enabled);
     }
 
