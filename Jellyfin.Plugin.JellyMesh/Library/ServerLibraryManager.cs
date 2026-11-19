@@ -1632,7 +1632,9 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             }
         }
 
-        return changes;
+        // A shared library without its blocks is never dropped or released until they are written or the switch-off is
+        // confirmed, so its scans stay held (D54).
+        return [.. changes.Where(change => change.Found is not null || !change.Record.Unblocked)];
     }
 
     // Whether two lists of locations hold the same paths, in any order.

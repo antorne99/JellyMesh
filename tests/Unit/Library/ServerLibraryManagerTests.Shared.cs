@@ -380,14 +380,22 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(AutomaticLibrariesError.Failed, state.Error);
     }
 
-    // D54: a library with the recorded id but another type or other paths may be the admin's, since the id comes from the name.
+    // D54: a library with the recorded id but another type or other paths may be the admin's, since the id comes from the name;
+    // it is neither deleted nor released while it lacks its blocks, as one found by its name only.
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task A_library_with_the_recorded_id_but_another_type_or_other_paths_is_not_deleted_when_its_blocks_fail(bool otherType)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task A_library_with_the_recorded_id_but_another_type_or_other_paths_is_kept_held_when_its_blocks_fail(bool otherType, bool nameOnly)
     {
         var fixture = await WithUnblockedSharedFilm();
         fixture.Libraries.RemoveFailure = null;
+        if (nameOnly)
+        {
+            fixture.Store.Update(config => config.SharedLibraries.Libraries.Single(record => record.Name == SharedFilm + "2").ItemId = Guid.NewGuid().ToString("N"));
+        }
+
         var folder = fixture.Libraries.Folders.Single(folder => folder.Name == SharedFilm + "2");
         if (otherType)
         {
@@ -402,12 +410,24 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Scans.Steps.Clear();
 
         Assert.False(await fixture.Manager.ScanAsync(CancellationToken.None));
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         Assert.DoesNotContain(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
         Assert.DoesNotContain(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
+        Assert.Empty(Shared(fixture).ReleasedLibraries);
         Assert.True(Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2").Unblocked);
         Assert.DoesNotContain("scan", fixture.Scans.Steps);
         Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
+
+        // Once its blocks are written, it is released to the admin as any library that changed.
+        LetBlocks(fixture);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+        Assert.Equal([SharedFilm + "2"], Shared(fixture).ReleasedLibraries);
+        Assert.Contains("scan", fixture.Scans.Steps);
     }
 
     // The paths last seen are not taken from a library still without its blocks, so later checks never delete one whose
