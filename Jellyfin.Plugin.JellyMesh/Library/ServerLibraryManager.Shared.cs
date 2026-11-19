@@ -122,7 +122,7 @@ public sealed partial class ServerLibraryManager
         var root = _store.Read(config => config.FederatedFolderPath);
         if (root.Length > 0)
         {
-            ResolveSharedPending(root, folders);
+            await ResolveSharedPendingAsync(root, folders, cancellationToken).ConfigureAwait(false);
         }
 
         RecordSharedPreexisting(folders);
@@ -199,7 +199,7 @@ public sealed partial class ServerLibraryManager
         var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
         KeepSharedCreatedKeys();
         var changed = await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false);
-        changed |= ResolveSharedPending(root, folders);
+        changed |= await ResolveSharedPendingAsync(root, folders, cancellationToken).ConfigureAwait(false);
         var (servers, records, created) = _store.Read(config => (
             config.Servers.Select(server => (server.Id, Folders: _kinds.ToDictionary(kind => kind, kind => SharedLibraries.FoldersOf(server, kind, root, olderLayout)))).ToList(),
             config.SharedLibraries.Libraries.Select(Copy).ToList(),
@@ -252,10 +252,16 @@ public sealed partial class ServerLibraryManager
         _conflicts[_sharedOwner] = conflicts;
         RememberSharedPaths(changed ? ReadFolders() : folders);
 
-        // A shared library without its blocks is never scanned, so the scan waits for a check that writes them (D42).
-        if (_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
+        // A shared library without its blocks, or not told apart yet, is never scanned: the scan waits for a check that
+        // blocks or records it (D42).
+        var (unblocked, pending) = _store.Read(config => (config.SharedLibraries.Libraries.Any(record => record.Unblocked), config.SharedLibraries.PendingLibraries.Count > 0));
+        if (unblocked)
         {
             _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+        }
+
+        if (unblocked || pending)
+        {
             return false;
         }
 
@@ -369,24 +375,51 @@ public sealed partial class ServerLibraryManager
         {
             _logger.LogError("Cannot create the shared {Kind} library: {Error}", planned.Kind, exception.GetType().Name);
             _errors[_sharedOwner] = AutomaticLibrariesError.CreateFailed;
-            return ReadFolders() is { } after && ResolveShared(intent, root, after);
+            return ReadFolders() is { } failed && await ResolveSharedAsync(intent, root, failed, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Unread, the library stays an intent, and no shared check scans until one records it.
+        if (ReadFolders() is not { } after)
+        {
+            _errors[_sharedOwner] = AutomaticLibrariesError.ReadFailed;
+            return false;
         }
 
         // The server may add a number to the name, so the new library is found by exactly its paths among those not there
-        // before, by its name first; none is taken when that leaves more than one.
-        var fresh = ReadFolders()?
+        // before, by its name first; with more than one, by the name and number the server gives.
+        var fresh = after
             .Where(folder => !taken.Contains(folder.Name) && Passes(folder, planned.Kind, string.Empty, root, _sharedOwner) && SameLocations(folder.Locations ?? [], planned.Paths))
-            .ToList() ?? [];
-        var made = fresh.FirstOrDefault(folder => string.Equals(folder.Name, name, StringComparison.Ordinal)) ?? (fresh is [var only] ? only : null);
-        if (made is not null
-            && !string.Equals(made.Name, name, StringComparison.Ordinal)
-            && !await BlockSharedAsync(made.Name, Guid.TryParse(made.ItemId, out var madeId) ? madeId : null, planned, sources, cancellationToken).ConfigureAwait(false))
+            .ToList();
+        if ((fresh.FirstOrDefault(folder => string.Equals(folder.Name, name, StringComparison.Ordinal)) ?? (fresh is [var only] ? only : null)) is not { } made)
         {
-            return await DropUnblockedAsync(intent, made, cancellationToken).ConfigureAwait(false);
+            return await ResolveSharedAsync(intent, root, after, cancellationToken).ConfigureAwait(false);
         }
 
-        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = planned.Kind, Name = made?.Name ?? name, ItemId = made?.ItemId ?? string.Empty }, made?.Locations ?? [.. planned.Paths]));
-        _logger.LogInformation("Created the shared library {Library}", LogText.Clean(made?.Name ?? name));
+        if (!await RecordMadeAsync(intent, made, after, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        _logger.LogInformation("Created the shared library {Library}", LogText.Clean(made.Name));
+        return true;
+    }
+
+    // Records a shared library made for an intent; one stored under another name is first blocked by its own id, or else
+    // deleted (D42). False when it was not recorded as blocked.
+    private async Task<bool> RecordMadeAsync(PendingLibraryConfig intent, VirtualFolderInfo made, IReadOnlyList<VirtualFolderInfo> folders, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(made.Name, intent.Name, StringComparison.Ordinal))
+        {
+            var planned = new PlannedLibrary(intent.KeyOf(), intent.Kind, string.Empty, string.Empty, [.. intent.Paths]);
+            var id = Guid.TryParse(made.ItemId, out var found) ? found : (Guid?)null;
+            if (BlockSources(planned, [.. folders.Where(folder => folder != made)]) is not { } sources
+                || !await BlockSharedAsync(made.Name, id, planned, sources, cancellationToken).ConfigureAwait(false))
+            {
+                return await DropUnblockedAsync(intent, made, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty }, made.Locations ?? []));
         return true;
     }
 
@@ -557,29 +590,40 @@ public sealed partial class ServerLibraryManager
     });
 
     // Records each shared library asked for before a crash and drops the intents of those never made.
-    private bool ResolveSharedPending(string root, List<VirtualFolderInfo> folders)
+    private async Task<bool> ResolveSharedPendingAsync(string root, List<VirtualFolderInfo> folders, CancellationToken cancellationToken)
     {
         var changed = false;
         foreach (var intent in _store.Read(config => config.SharedLibraries.PendingLibraries.ToList()))
         {
-            changed |= ResolveShared(intent, root, folders);
+            changed |= await ResolveSharedAsync(intent, root, folders, cancellationToken).ConfigureAwait(false);
         }
 
         return changed;
     }
 
-    private bool ResolveShared(PendingLibraryConfig intent, string root, List<VirtualFolderInfo> folders)
+    // Finds the library of an intent by its name, or else by the name and number the server gives when the name is taken.
+    private async Task<bool> ResolveSharedAsync(PendingLibraryConfig intent, string root, List<VirtualFolderInfo> folders, CancellationToken cancellationToken)
     {
-        if (FindMade(intent, root, _sharedOwner, folders) is not { } made)
+        var made = FindMade(intent, root, _sharedOwner, folders)
+            ?? (FindAllMade(intent, root, _sharedOwner, folders, name => IsNumbered(name, intent.Name)) is [var only] ? only : null);
+        if (made is null)
         {
             _store.Update(config => RemovePending(config.SharedLibraries.PendingLibraries, intent.KeyOf()));
             return false;
         }
 
-        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty }, made.Locations ?? []));
-        _logger.LogInformation("Recorded the shared library {Library} made before a restart", LogText.Clean(made.Name));
+        if (!await RecordMadeAsync(intent, made, folders, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        _logger.LogInformation("Recorded the shared library {Library}", LogText.Clean(made.Name));
         return true;
     }
+
+    // Whether a name is the other followed by a number, as the server stores a library whose name is taken.
+    private static bool IsNumbered(string name, string other)
+        => name.Length > other.Length && name.StartsWith(other, StringComparison.OrdinalIgnoreCase) && name[other.Length..].All(char.IsAsciiDigit);
 
     // Called after the follow: the libraries there at switch-on, other than those of a registry, are never deleted.
     private void RecordSharedPreexisting(IReadOnlyList<VirtualFolderInfo> folders) => _store.Update(config =>

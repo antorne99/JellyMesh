@@ -963,17 +963,22 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     }
 
     // The library of an intent no registry holds, with its name, type and exactly its folders.
-    private VirtualFolderInfo? FindMade(PendingLibraryConfig intent, string root, Guid serverId, List<VirtualFolderInfo> folders) => _store.Read(config =>
+    private VirtualFolderInfo? FindMade(PendingLibraryConfig intent, string root, Guid serverId, List<VirtualFolderInfo> folders)
+        => FindAllMade(intent, root, serverId, folders, name => string.Equals(name, intent.Name, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+
+    // The libraries no registry holds with a name the filter takes, the type of an intent and exactly its folders.
+    private List<VirtualFolderInfo> FindAllMade(PendingLibraryConfig intent, string root, Guid serverId, List<VirtualFolderInfo> folders, Func<string, bool> named) => _store.Read(config =>
     {
         var known = AllRecords(config)
             .Select(record => FindRecorded(record, folders))
             .OfType<VirtualFolderInfo>()
             .ToHashSet();
-        return folders.FirstOrDefault(folder => !known.Contains(folder)
-            && string.Equals(folder.Name, intent.Name, StringComparison.OrdinalIgnoreCase)
+        return folders.Where(folder => !known.Contains(folder)
+            && named(folder.Name)
             && Passes(folder, intent.Kind, intent.RemoteLibraryId, root, serverId)
             && (folder.Locations ?? []).Length == intent.Paths.Count
-            && intent.Paths.All(path => folder.Locations!.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))));
+            && intent.Paths.All(path => folder.Locations!.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path))))
+            .ToList();
     });
 
     // An adopted library is no longer one a switch-on found, for any registry (§10 row 441).
