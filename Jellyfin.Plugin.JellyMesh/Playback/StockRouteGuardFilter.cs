@@ -136,7 +136,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 ? HasJobWithoutDevice(_sessions.LocalSessionsOfOthers(caller).Concat(_peerSlots.SessionsOfOthers(caller)))
                 : _sessions.IsLocalDeviceOfAnother(caller, device) || _peerSlots.IsDeviceOfAnother(caller, device))
             {
-                _logger.LogWarning("{Controller}.{Action} without a play session names a device that plays for another user: 404", controller, action);
+                _logger.Log(caller == Guid.Empty ? LogLevel.Debug : LogLevel.Warning, "{Controller}.{Action} without a play session names a device that plays for another user: 404", controller, action);
                 context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
                 return;
             }
@@ -153,7 +153,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var named = IsMedia(controller, action) ? MediaPlaySessionsOf(context, controller, action) : [];
         if (await VersionRefusalAsync(context, controller, action, named).ConfigureAwait(false) is { } hidden)
         {
-            _logger.LogInformation("{Controller}.{Action} names a version the user may not play: {Status}", controller, action, StatusOf(hidden));
+            _logger.Log(LevelOf(hidden), "{Controller}.{Action} names a version the user may not play: {Status}", controller, action, StatusOf(hidden));
             await RefuseAsync(context, next, hidden, controller, action).ConfigureAwait(false);
             return;
         }
@@ -200,7 +200,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
         else if (IsMedia(controller, action) && await PeerSessionRefusalAsync(context, named).ConfigureAwait(false) is { } refusal)
         {
-            _logger.LogInformation("{Controller}.{Action} names the play session of a peer it does not belong to: {Status}", controller, action, StatusOf(refusal));
+            _logger.Log(LevelOf(refusal), "{Controller}.{Action} names the play session of a peer it does not belong to: {Status}", controller, action, StatusOf(refusal));
             await RefuseAsync(context, next, refusal, controller, action).ConfigureAwait(false);
             return;
         }
@@ -273,6 +273,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     }
 
     // Reads the status of a result, null when it has none.
+    // Debug for a refusal any anonymous caller can repeat, Information otherwise.
+    private static LogLevel LevelOf(IActionResult? result) =>
+        StatusOf(result) == StatusCodes.Status401Unauthorized ? LogLevel.Debug : LogLevel.Information;
+
     private static int? StatusOf(IActionResult? result)
     {
         return result switch
