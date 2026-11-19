@@ -235,9 +235,10 @@ for case in $CASES; do
       check "Casa keeps its libraries by type, Mare has none" "ByType None" "$(get local /JellyMesh/Admin/Status | jq -r --arg c "$CASA" --arg m "$MARE" '"\(.Servers[] | select(.Id == $c) | .AutomaticLibraries.Mode) \(.Servers[] | select(.Id == $m) | .AutomaticLibraries.Mode)"')"
       wait_run
       verify
-      for i in $(seq 1 30); do [ "$(locations "Casa - Film" | jq -r 'all(.[]; test("/[0-9a-f]{32}/"))')" = true ] && break; sleep 2; done
+      casa_films=$(locations Film | jq -c --arg c "$(server_folder "$CASA")/" 'map(select(startswith($c)))')
+      for i in $(seq 1 30); do [ "$(locations "Casa - Film")" = "$casa_films" ] && break; sleep 2; done
       check "Casa - Film keeps its id" "$CASA_FILM" "$(library_id "Casa - Film")"
-      check "and moves to the two film type folders of Casa" "2 true" "$(locations "Casa - Film" | jq -r --arg c "$(server_folder "$CASA")/" '"\(length) \(all(.[]; startswith($c) and test("/[0-9a-f]{32}/")))"')"
+      check "and moves to the two film type folders of Casa" "$casa_films" "$(locations "Casa - Film")"
       ;;
     manual)
       echo "--- from a 0.5 migrated by hand: the banner stays manual and the admin moves the paths [§10 row 444]"
