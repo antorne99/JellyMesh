@@ -119,6 +119,36 @@ public sealed class StubRemoverTests : IDisposable
     }
 
     [Fact]
+    public void ARemovedTrackTakesOnlyItsOwnFile()
+    {
+        var server = Guid.NewGuid();
+        var gone = Track(server, "t1", "Artist", "Album", "folder");
+        var kept = Track(server, "t2", "Artist", "Album", "folder.live");
+        var album = Path.Combine(_root, Path.GetDirectoryName(gone.RelativePath)!);
+        File.WriteAllText(Path.Combine(album, "folder.jpg"), "cover");
+
+        _remover.RemoveAll(_root, new StubState { Stubs = [gone, kept] }, [gone]);
+
+        Assert.False(File.Exists(Path.Combine(_root, gone.RelativePath)));
+        Assert.True(File.Exists(Path.Combine(album, "folder.jpg")));
+        Assert.True(File.Exists(Path.Combine(_root, kept.RelativePath)));
+    }
+
+    // On a disk that ignores case "Artist" and "artist" are one folder, so a track left in either keeps it.
+    [Fact]
+    public void AnArtistFolderHeldUnderAnotherCaseStays()
+    {
+        var server = Guid.NewGuid();
+        var gone = Track(server, "t1", "Artist", "Album", "01 - One");
+        var kept = Track(server, "t2", "artist", "Other", "01 - One");
+
+        _remover.RemoveAll(_root, new StubState { Stubs = [gone, kept] }, [gone]);
+
+        Assert.True(Directory.Exists(Path.Combine(_root, Path.GetDirectoryName(Path.GetDirectoryName(gone.RelativePath))!)));
+        Assert.True(File.Exists(Path.Combine(_root, kept.RelativePath)));
+    }
+
+    [Fact]
     public void EachRemovedStubLosesItsLibraryRow()
     {
         var films = Enumerable.Range(1, 3).Select(i => Movie("m" + i, "Film " + i)).ToList();

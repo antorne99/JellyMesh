@@ -187,7 +187,8 @@ public sealed class StubRemover
     // Removes the album and artist folders the removed tracks leave without a stub, deepest first, up to the music folder.
     private void RemoveMusicFolders(string root, List<StubEntry> remaining, List<StubEntry> tracks, HashSet<string> kept, List<Exception> failures)
     {
-        var holding = remaining.SelectMany(entry => FoldersAbove(entry.RelativePath, string.Empty)).ToHashSet(StringComparer.Ordinal);
+        // Ignoring case: on such a disk "Artist" and "artist" are one folder.
+        var holding = remaining.SelectMany(entry => FoldersAbove(entry.RelativePath, string.Empty)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var folders = tracks.SelectMany(MusicFoldersOf).Distinct(StringComparer.Ordinal).OrderByDescending(folder => folder.Length);
         foreach (var folder in folders)
         {
@@ -237,6 +238,11 @@ public sealed class StubRemover
         if (stub.Kind == StubKind.Movie)
         {
             DeleteFolder(root, Path.GetDirectoryName(stub.RelativePath)!);
+        }
+        else if (stub.Kind == StubKind.Track)
+        {
+            // Track names are the remote's, so files sharing the stem, the album cover included, are not the track's.
+            File.Delete(strm);
         }
         else
         {
