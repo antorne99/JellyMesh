@@ -359,6 +359,27 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(fixture.Manager.GetSharedState().Unblocked);
     }
 
+    // D54: only a library found by its recorded id is deleted without a confirmation.
+    [Fact]
+    public async Task A_shared_library_found_only_by_name_and_paths_is_not_deleted_and_keeps_the_scans_held_when_its_blocks_fail()
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        fixture.Libraries.RemoveFailure = null;
+        fixture.Store.Update(config => config.SharedLibraries.Libraries.Single(record => record.Name == SharedFilm + "2").ItemId = Guid.NewGuid().ToString("N"));
+        fixture.Renamer.Removed.Clear();
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+        Assert.DoesNotContain(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
+        Assert.True(Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2").Unblocked);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+        var state = fixture.Manager.GetSharedState();
+        Assert.Equal([SharedFilm + "2"], state.Unblocked);
+        Assert.Equal(AutomaticLibrariesError.Failed, state.Error);
+    }
+
     [Fact]
     public async Task A_shared_library_deleted_during_a_check_is_made_again_and_not_adopted()
     {

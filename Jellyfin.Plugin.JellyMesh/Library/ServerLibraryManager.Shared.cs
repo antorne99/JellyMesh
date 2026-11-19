@@ -666,7 +666,7 @@ public sealed partial class ServerLibraryManager
         {
             if (FindRecorded(record, folders) is { } folder && !await BlockFoundAsync(record, folder, folders, cancellationToken).ConfigureAwait(false))
             {
-                // Only a library known as ours is deleted.
+                // Only a library found by its recorded id is deleted with no confirmation; another keeps the scans held (D54).
                 if (IsOwnShared(record, folder) && await RemoveSharedAsync(folder, cancellationToken).ConfigureAwait(false))
                 {
                     ForgetShared(record);
@@ -702,10 +702,9 @@ public sealed partial class ServerLibraryManager
             && await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false);
     }
 
-    // A shared library found by its recorded id, or by its name with the recorded paths and type.
+    // A shared library found by its recorded id: one found by its name only may be the admin's (D54).
     private static bool IsOwnShared(AutomaticLibraryConfig record, VirtualFolderInfo folder) =>
-        (record.ItemId.Length > 0 && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase))
-        || (record.Paths.Count > 0 && folder.CollectionType == TypeOf(record.Kind) && SameLocations(folder.Locations ?? [], record.Paths));
+        record.ItemId.Length > 0 && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase);
 
     // Drops a deleted shared library from the registry with its key, so that a later check makes it again.
     private void ForgetShared(AutomaticLibraryConfig record) => _store.Update(config =>

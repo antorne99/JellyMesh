@@ -1556,7 +1556,14 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 if (change.Found is { } found)
                 {
                     change.Record.Name = found.Name;
-                    change.Record.ItemId = found.ItemId ?? string.Empty;
+
+                    // A shared library without its blocks keeps the id it was recorded with, so that one found by its name
+                    // or folders only is never deleted with no confirmation (D54).
+                    if (!change.Record.Unblocked)
+                    {
+                        change.Record.ItemId = found.ItemId ?? string.Empty;
+                    }
+
                     continue;
                 }
 
