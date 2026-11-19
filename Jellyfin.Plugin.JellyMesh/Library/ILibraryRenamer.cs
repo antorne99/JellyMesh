@@ -53,11 +53,11 @@ public interface ILibraryRenamer
 
     /// <summary>
     /// Removes the id of a library the plugin deletes from one per-id list of each user, in any form, so a library made
-    /// again with its name is not given or blocked by an old entry; a library with no id is found by its name.
+    /// again with its name gives nothing back through an old entry; a library with no id is found by its name.
     /// </summary>
     /// <param name="name">The library name.</param>
     /// <param name="itemId">The library id, if known.</param>
-    /// <param name="list">The list: enabled, blocked or content deletion folders.</param>
+    /// <param name="list">The list: enabled or content deletion folders.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken);

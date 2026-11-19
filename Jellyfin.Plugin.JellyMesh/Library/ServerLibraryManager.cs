@@ -1256,8 +1256,6 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     SetError(errorKey, AutomaticLibrariesError.RemoveFailed);
                     return false;
                 }
-
-                await RemoveFromUsersAsync(next.Name, id, PreferenceKind.BlockedMediaFolders, cancellationToken).ConfigureAwait(false);
             }
 
             // The server may have been removed meanwhile, so its record may now be among those it left.
@@ -1312,8 +1310,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         return true;
     }
 
-    // Removes the id of a plugin library being deleted from a list of each user: the given and deletion lists before the delete,
-    // so a library made again with the name gives nothing back, the blocked ones after it, so no block is lifted while it is there.
+    // Removes the id of a plugin library about to be deleted from a given or deletion list of each user, so a library made
+    // again with the name gives nothing back; blocks stay, so it stays blocked for who blocked it.
     private async Task<bool> RemoveFromUsersAsync(string name, Guid? id, PreferenceKind list, CancellationToken cancellationToken)
     {
         try

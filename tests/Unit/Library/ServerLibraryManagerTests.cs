@@ -214,6 +214,24 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(fixture.Server.AutomaticLibraryRegistry);
     }
 
+    // Asserts that the deletions took each library out of the users' given and deletion lists, and never out of a blocked one.
+    private static void LeftOnlyGivenLists(Fixture fixture, params string[] names) =>
+        Assert.Equal(
+            names.SelectMany(name => new[] { (name, PreferenceKind.EnabledFolders), (name, PreferenceKind.EnableContentDeletionFromFolders) }).Order(),
+            fixture.Renamer.Removed.Select(removed => (removed.Name, removed.List)).Order());
+
+    [Fact]
+    public async Task Switching_off_keeps_the_blocks_of_the_libraries_it_deletes()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        LeftOnlyGivenLists(fixture, "Casa - Film", "Casa - Serie");
+    }
+
     [Fact]
     public async Task Switching_off_with_nothing_in_the_registry_needs_no_confirmation()
     {
@@ -1308,6 +1326,19 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
+    }
+
+    [Fact]
+    public async Task The_libraries_a_removed_server_left_keep_their_blocks_when_deleted()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        LeftOnlyGivenLists(fixture, "Casa - Film", "Casa - Serie");
     }
 
     [Fact]

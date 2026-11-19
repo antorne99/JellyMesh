@@ -135,8 +135,6 @@ public sealed partial class ServerLibraryManager
             return false;
         }
 
-        await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.BlockedMediaFolders, cancellationToken).ConfigureAwait(false);
-
         var key = KeyOf(record);
         _store.Update(config =>
         {

@@ -262,11 +262,11 @@ public sealed class LibraryRenamerTests : IDisposable
     [Fact]
     public async Task A_deleted_library_with_no_id_is_found_by_its_name()
     {
-        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.EnableContentDeletionFromFolders, [OldId.ToString("N")]);
 
-        await _renamer.RemoveFromUsersAsync("Casa - Film", null, PreferenceKind.BlockedMediaFolders, CancellationToken.None);
+        await _renamer.RemoveFromUsersAsync("Casa - Film", null, PreferenceKind.EnableContentDeletionFromFolders, CancellationToken.None);
 
-        Assert.Empty(_blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Empty(_limited.GetPreference(PreferenceKind.EnableContentDeletionFromFolders));
     }
 
     [Fact]

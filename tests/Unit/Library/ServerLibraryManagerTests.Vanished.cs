@@ -77,7 +77,7 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task The_own_library_of_a_vanished_remote_library_leaves_the_users_lists()
+    public async Task The_own_library_of_a_vanished_remote_library_leaves_the_given_and_deletion_lists_and_keeps_its_blocks()
     {
         var fixture = await ByRemoteLibraryWithFilmsB();
         var id = Guid.Parse(fixture.Libraries.Find("Casa - Film 4K").ItemId);
@@ -91,11 +91,10 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(
             [
                 ("Casa - Film 4K", (Guid?)id, PreferenceKind.EnabledFolders),
-                ("Casa - Film 4K", id, PreferenceKind.EnableContentDeletionFromFolders),
-                ("Casa - Film 4K", id, PreferenceKind.BlockedMediaFolders)
+                ("Casa - Film 4K", id, PreferenceKind.EnableContentDeletionFromFolders)
             ],
             fixture.Renamer.Removed);
-        Assert.Equal([0, 0, 1], removedAt);
+        Assert.Equal([0, 0], removedAt);
     }
 
     [Fact]

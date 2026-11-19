@@ -591,7 +591,7 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_library_the_plugin_deletes_leaves_the_given_and_deletion_lists_before_it_goes_and_the_blocked_ones_after()
+    public async Task A_library_a_mode_change_deletes_leaves_the_given_and_deletion_lists_before_it_goes_and_keeps_its_blocks()
     {
         var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
         var oldFilms = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
@@ -603,11 +603,21 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(
             [
                 ("Casa - Film", (Guid?)oldFilms, PreferenceKind.EnabledFolders),
-                ("Casa - Film", oldFilms, PreferenceKind.EnableContentDeletionFromFolders),
-                ("Casa - Film", oldFilms, PreferenceKind.BlockedMediaFolders)
+                ("Casa - Film", oldFilms, PreferenceKind.EnableContentDeletionFromFolders)
             ],
             fixture.Renamer.Removed);
-        Assert.Equal([0, 0, 1], removedAt);
+        Assert.Equal([0, 0], removedAt);
+    }
+
+    [Fact]
+    public async Task A_change_to_none_keeps_the_blocks_of_the_libraries_it_deletes()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.None);
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name).Order(StringComparer.Ordinal));
+        LeftOnlyGivenLists(fixture, "Casa - Film", "Casa - Serie");
     }
 
     [Fact]
@@ -620,7 +630,7 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        Assert.Equal(["Casa - Serie", "Casa - Serie", "Casa - Serie"], fixture.Renamer.Removed.Select(removed => removed.Name));
+        LeftOnlyGivenLists(fixture, "Casa - Serie");
     }
 
     [Fact]
