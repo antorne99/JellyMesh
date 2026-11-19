@@ -18,7 +18,7 @@ public sealed partial class ServerLibraryManager
     // A scan held back for a shared library without its blocks is owed once they are written; read under the gate.
     private bool _sharedScanOwed;
 
-    // A validation of the top folders held back with it, which runs before the owed scan; read under the gate.
+    // A validation of the top folders owed after libraries moved or were deleted, run before the next scan; read under the gate.
     private bool _sharedValidationOwed;
 
     /// <inheritdoc />
@@ -690,6 +690,7 @@ public sealed partial class ServerLibraryManager
         try
         {
             await _libraries.RemoveVirtualFolder(library.Name, false).ConfigureAwait(false);
+            _sharedValidationOwed = true;
             return true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

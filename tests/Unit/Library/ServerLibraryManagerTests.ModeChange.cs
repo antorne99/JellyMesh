@@ -296,6 +296,22 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task The_top_folders_are_validated_after_the_old_libraries_are_deleted_and_before_the_scan()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.None);
+        fixture.Libraries.Validations.Clear();
+        var validationsAtScan = new List<int>();
+        fixture.Scans.DuringScan = () => validationsAtScan.Add(fixture.Libraries.Validations.Count);
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        var removed = fixture.Libraries.Removed.Select(call => call.Name).ToList();
+        Assert.NotEmpty(removed);
+        Assert.NotEqual(0, validationsAtScan.Last());
+        Assert.All(fixture.Libraries.Validations, seen => Assert.Empty(seen.Intersect(removed)));
+    }
+
+    [Fact]
     public async Task A_change_to_none_with_no_library_left_forgets_the_libraries_asked_before_a_crash()
     {
         var fixture = OnTypeFolders();

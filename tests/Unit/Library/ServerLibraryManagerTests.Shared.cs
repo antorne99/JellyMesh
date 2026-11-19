@@ -350,10 +350,13 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal([SharedFilm + "2"], fixture.Manager.GetSharedState().Unblocked);
         fixture.Libraries.RemoveFailure = null;
         fixture.Renamer.Removed.Clear();
+        fixture.Libraries.Validations.Clear();
 
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         Assert.Contains(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2" && !call.Refresh);
+        Assert.NotEmpty(fixture.Libraries.Validations);
+        Assert.All(fixture.Libraries.Validations, seen => Assert.DoesNotContain(SharedFilm + "2", seen));
         Assert.Contains(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
         Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Name == SharedFilm + "2");
         Assert.Empty(fixture.Manager.GetSharedState().Unblocked);

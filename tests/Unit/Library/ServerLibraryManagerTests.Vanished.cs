@@ -77,6 +77,31 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task The_top_folders_are_validated_after_a_vanished_remote_library_is_deleted_once_the_shared_library_has_its_blocks()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        HoldScans(fixture);
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+        fixture.Scans.Steps.Clear();
+        fixture.Libraries.Validations.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Film 4K"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Empty(fixture.Libraries.Validations);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+
+        LetBlocks(fixture);
+        var validationsAtScan = new List<int>();
+        fixture.Scans.DuringScan = () => validationsAtScan.Add(fixture.Libraries.Validations.Count);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.NotEqual(0, validationsAtScan.First());
+        Assert.All(fixture.Libraries.Validations, seen => Assert.DoesNotContain("Casa - Film 4K", seen));
+    }
+
+    [Fact]
     public async Task The_own_library_of_a_vanished_remote_library_leaves_the_given_and_deletion_lists_and_keeps_its_blocks()
     {
         var fixture = await ByRemoteLibraryWithFilmsB();

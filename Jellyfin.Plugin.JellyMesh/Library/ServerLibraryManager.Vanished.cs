@@ -128,6 +128,7 @@ public sealed partial class ServerLibraryManager
         try
         {
             await _libraries.RemoveVirtualFolder(folder.Name, false).ConfigureAwait(false);
+            _sharedValidationOwed = true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
