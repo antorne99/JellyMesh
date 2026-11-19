@@ -2,8 +2,9 @@
 # Integration 8 of the 0.6 spec (F42): the shared libraries (§10 row 442, D29, D41-D44). Two stock remotes, one per type
 # and one in "none" mode. The option goes on with no confirmation and makes "Tutti i server - Film" and "- Serie" with the
 # type folders of both servers, blocked before the first scan for who blocks a server library on their folders. The
-# same title from both servers is one item with two versions there. A type folder also stays in its server library, so
-# a title shows in both with one watch state. A rename in the Dashboard is followed, a removed server leaves once its
+# same title from both servers is one item with two versions in each library that lists it (rows 63, 442), and the
+# versions follow what each user sees. A type folder also stays in its server library, so a title shows in both with one
+# watch state. A rename in the Dashboard is followed, a removed server leaves once its
 # titles are gone, the settings save leaves the option alone, and the switch-off deletes the libraries after a confirmation.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-f42] [PORT=8290] shared.sh
 # The containers are stopped at the end, not removed; the next run makes them again.
@@ -56,8 +57,9 @@ own_casa() { own "$CASA"; }
 # in_library <library id> <user id>: the federated films of a library the user sees, as "id played".
 in_library() { get local "/Items?userId=$2&ParentId=$1&Recursive=true&IncludeItemTypes=Movie&Fields=Path" | jq -c '[.Items[] | "\(.Id) \(.UserData.Played)"] | sort'; }
 # versions <library id> <title>: how many items of the title the library lists, and how many versions the first has.
+# versions <library id> <title> [user id]: as the admin when no user is given.
 versions() {
-  get local "/Items?userId=$ME&ParentId=$1&Recursive=true&IncludeItemTypes=Movie&Fields=Path,MediaSources" |
+  get local "/Items?userId=${3:-$ME}&ParentId=$1&Recursive=true&IncludeItemTypes=Movie&Fields=Path,MediaSources" |
     jq -r --arg t "$2" '[.Items[] | select(.Name | contains($t))] | "\(length) \(.[0].MediaSources // [] | length)"'
 }
 kinds() { get local "/Items?userId=$1&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path" | jq -c '[.Items[] | select((.Path // "") | startswith("/federata")) | .Type] | unique'; }
@@ -138,9 +140,12 @@ check "who blocks the server film library blocks the shared one, from before its
 check "and not the shared series library" '{"Blocked":false}' "$(access "$(id_of "$SERIES")" bloccato)"
 check "the blocking user still sees only episodes" '["Episode"]' "$(kinds "$BLOCKING")"
 
-echo "--- versions of both servers are one item in the shared library, one per server library [rows 63, 69, 442]"
+echo "--- versions of both servers are one item in each library that lists the title, as each user sees them [rows 63, 442]"
 check "the shared library lists the title once with the versions of both servers" "1 2" "$(versions "$SHARED_FILM" "Confronto Risoluzione")"
-check "the server library lists it once too" 1 "$(versions "$CASA_FILM" "Confronto Risoluzione" | cut -d' ' -f1)"
+check "the server library lists it once with the versions the admin sees, the group being one for the server" "1 2" "$(versions "$CASA_FILM" "Confronto Risoluzione")"
+NO_SHARED=$(user local senza-tutti)
+block "$NO_SHARED" "$SHARED_FILM"
+check "who blocks the shared film library gets only the version of the server library" "1 1" "$(versions "$CASA_FILM" "Confronto Risoluzione" "$NO_SHARED")"
 
 echo "--- a title of a type folder shows in its server library and the shared one with one watch state [D29]"
 TEARS=$(stub_item local "Tears of Steel")
@@ -149,10 +154,8 @@ check "the film is played in the server library" "true" "$(in_library "$CASA_FIL
 check "and the same item is played in the shared library" "true" "$(in_library "$SHARED_FILM" "$ME" | jq -r --arg id "$TEARS" '.[] | select(startswith($id)) | split(" ")[1]')"
 
 echo "--- a rename in the Dashboard is followed, not undone, and no library is made again [row 442]"
-req local POST "/Library/VirtualFolders/Name?name=$(jq -rn --arg v "$FILM" '$v | @uri')&newName=Film%20di%20tutti&refreshLibrary=false" >/dev/null
+req local POST "/Library/VirtualFolders/Name?name=$(jq -rn --arg v "$FILM" '$v | @uri')&newName=Film%20di%20tutti&refreshLibrary=true" >/dev/null
 check "the rename answers 204" 204 "$(status)"
-# 12.4 gives a library renamed without a refresh its id only at a scan, which the sync would wait for (decision 250).
-scan local
 sync_now local
 wait_busy shared
 check "the registry follows the new name" "[[\"Film di tutti\",false],[\"$SERIES\",false]]" "$(registry)"
