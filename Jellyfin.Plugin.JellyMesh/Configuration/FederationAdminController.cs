@@ -873,6 +873,8 @@ public class FederationAdminController : ControllerBase
         });
     }
 
+    private static string? NameOrNull(string? name) => string.IsNullOrEmpty(name) ? null : name;
+
     private void RunStep(string step, Action action)
     {
         try
@@ -893,11 +895,12 @@ public class FederationAdminController : ControllerBase
         var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
         var visible = report.Libraries ?? [];
         var kept = report.LibraryIds.ToHashSet(StringComparer.Ordinal);
+        var lastRead = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == serverId)?.RemoteLibraries.ToList() ?? []);
         var removed = (server?.ImportedLibraryIds ?? [])
             .Where(id => !kept.Contains(id))
             .Select(id => visible.FirstOrDefault(library => library.Id == id) is { } library
                 ? new ImportedLibraryRemoval(id, library.Name, false)
-                : new ImportedLibraryRemoval(id, null, true))
+                : new ImportedLibraryRemoval(id, NameOrNull(lastRead.FirstOrDefault(library => library.Id == id)?.Name), true))
             .ToList();
         var rename = server is not null && (report.Changes.HasFlag(RemoteEditChanges.Name) || retryRename)
             ? new ServerRenameConsequence(server.Name, name, _libraries.GetState(serverId).Libraries.Where(library => !library.Adopted).Select(library => library.Name).ToList())
