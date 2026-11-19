@@ -615,10 +615,11 @@ def quiet(s, width):
     reads = []
     page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
     page.wait_for_timeout(31000)
-    counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges"]}
+    counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges", "Store"]}
     check(name + " reads the sync every 5 seconds", 5 <= counts["Sync"] <= 7, counts)
     check(name + " reads status and streams every 15 seconds", 1 <= counts["Status"] <= 3 and 1 <= counts["Peers"] <= 3, counts)
     check(name + " reads the status only with the streams, the migration banner too", counts["Status"] == counts["Peers"], counts)
+    check(name + " reads the database with the status", counts["Store"] == counts["Status"], counts)
     check(name + " reads the peer options at most once a minute", counts["Peers/Options"] <= 1, counts)
     check(name + " leaves the merges alone", counts["Merges"] == 0, counts)
     check(name + " reads nothing else", len(reads) == sum(counts.values()), reads)
@@ -3159,7 +3160,7 @@ def overview_focus(s, width):
     check(name + " keeps the focus", u.has_focus(link), page.evaluate("document.activeElement.tagName"))
     check(name + " does not move the page", page.evaluate("scrollY") == scroll, page.evaluate("scrollY"))
     check(name + " counts the new line", text(page, u.STATUS).startswith("Active. 2 things need attention"), text(page, u.STATUS))
-    check(name + " reads nothing new", {url.rsplit("/Admin/", 1)[1] for url in reads} <= {"Sync", "Status", "Peers", "Peers/Options"}, set(reads))
+    check(name + " reads nothing new", {url.rsplit("/Admin/", 1)[1] for url in reads} <= {"Sync", "Status", "Peers", "Peers/Options", "Store"}, set(reads))
     focus_shows(page, name + " a link", link)
     u.shot(page, f"overview-focus-{width}", full_page=False)
     healthy(page, name)
@@ -3506,6 +3507,18 @@ def adopted(s, width):
     u.close(page)
 
 
+def fulfill_json(context, path, answer, method="GET"):
+    """Answers an admin path to one method with what answer returns for the request, a status and a body."""
+    def reply(route):
+        if route.request.method != method:
+            route.fallback()
+            return
+        status, body = answer(route.request)
+        route.fulfill(status=status, json=body)
+
+    context.route("**/JellyMesh/Admin/" + path, reply)
+
+
 def server_notes(s, width):
     """A server card says who lost titles, which remote libraries are gone, and which folders to add by hand."""
     name = width + " server notes"
@@ -3540,6 +3553,47 @@ def server_notes(s, width):
     check(name + " offers nothing to recreate", stock.get_by_role("button", name="Recreate missing libraries", exact=True).count() == 0)
     healthy(page, name)
     u.shot(page, f"server-notes-{width}")
+    u.close(page)
+
+
+def store_notices(s, width):
+    """The database: why it is suspended with Retry (row 427), the restore banner (row 466) and the old files (row 469)."""
+    name = width + " store"
+    store = [{"State": "Unavailable", "Reason": "The database cannot be opened: disk full.", "Recovery": None, "MigratedKeptUntil": None}]
+    retried = []
+
+    def retry(request):
+        retried.append(True)
+        store[0] = {"State": "Healthy", "Reason": None, "Recovery": None, "MigratedKeptUntil": None}
+        return 200, store[0]
+
+    def routes(context):
+        fulfill_json(context, "Store", lambda request: (200, store[0]))
+        fulfill_json(context, "Store/Retry", retry, "POST")
+        fulfill_json(context, "Store/Recovery/Dismiss", lambda request: (204, None), "POST")
+
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " says the database cannot be used", until(page, lambda: notice.is_visible() and "disk full" in notice.inner_text()), notice.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-{width}")
+    notice.get_by_role("button", name="Try again", exact=True).click()
+    check(name + " retries", until(page, lambda: retried and notice.is_hidden()), notice.inner_text())
+    u.close(page)
+
+    store[0] = {"State": "Healthy", "Reason": None, "MigratedKeptUntil": "2026-12-18T03:00:00Z",
+                "Recovery": {"RecoveredAt": "2026-11-18T03:05:00Z", "DamagedFile": "jellymesh.db.damaged-20261118", "CopyDate": "2026-11-17T03:00:00Z"}}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " shows the restore", until(page, lambda: "from the nightly copy" in notice.inner_text()), notice.inner_text())
+    check(name + " asks to check the servers", "check the list of servers" in notice.inner_text(), notice.inner_text())
+    migrated = page.locator(u.MIGRATED)
+    check(name + " says until when the old files stay", migrated.is_visible() and "migrated-0.5" in migrated.inner_text(), migrated.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-restore-{width}")
+    store[0] = dict(store[0], Recovery=None)
+    notice.get_by_role("button", name="I checked the servers", exact=True).click()
+    check(name + " the restore goes once checked", until(page, lambda: notice.is_hidden()), notice.inner_text())
     u.close(page)
 
 
@@ -3593,6 +3647,7 @@ SCENARIOS = {
     "mode-change": (mode_change, WIDTHS),
     "recreate": (recreate, ["1280"]),
     "server-notes": (server_notes, WIDTHS),
+    "store": (store_notices, WIDTHS),
 }
 
 with u.Session() as session:

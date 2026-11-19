@@ -40,7 +40,7 @@ else
   run merge-details
   run cards cards-in-place cards-themes
   run edit-form edit-locks mode-change adopted recreate
-  run server-notes
+  run server-notes store
 
   block_key first
   run first-nokey overview-first-nokey

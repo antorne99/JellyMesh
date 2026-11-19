@@ -703,6 +703,22 @@
                 margin-top: 1em;
             }
 
+            .jmStore p {
+                margin: 0;
+            }
+
+            .jmStore p + p {
+                margin-top: 0.5em;
+            }
+
+            .jmStore .jmActions {
+                margin-top: 0.75em;
+            }
+
+            .jmMigrated {
+                margin: 0 0 1em;
+            }
+
             .jmOwnNotes .jmAlert {
                 margin: 0.75em 0 0;
             }
@@ -1322,6 +1338,7 @@
 
                 <div id="jmWarning" role="alert" hidden class="jmAlert"></div>
                 <div id="jmStatusFailure" role="alert" hidden class="jmAlert"></div>
+                <div id="jmStore" role="alert" hidden class="jmAlert jmStore"></div>
                 <div id="jmAnnounce" role="status" class="jmHidden"></div>
 
                 <section data-jm-tab="overview" role="tabpanel" aria-label="Overview">
@@ -1393,6 +1410,7 @@
                             </div>
                         </div>
                     </div>
+                    <p id="jmMigrated" class="fieldDescription jmMigrated" hidden></p>
                     <div class="jmColumns">
                         <dl id="jmSummary" class="jmFacts jmPanel"></dl>
                         <div id="jmSetup" hidden>
@@ -1655,6 +1673,15 @@
                     "These remote libraries are no longer on this server, so JellyMesh stopped importing them: {names}.": "Queste librerie remote non sono più su questo server, quindi JellyMesh ha smesso di importarle: {names}.",
                     "JellyMesh makes no library for this server. Add each of these folders in Dashboard > Libraries to a library of the type given:": "JellyMesh non crea librerie per questo server. Aggiungi ognuna di queste cartelle nel Pannello di controllo > Librerie a una libreria del tipo indicato:",
                     "{kind} from {library}": "{kind} da {library}",
+                    "The JellyMesh database was written by a newer version of JellyMesh, so sync and remote playback are suspended. Install that version again to go on.": "Il database di JellyMesh è stato scritto da una versione più recente di JellyMesh, quindi sincronizzazione e riproduzione remota sono sospese. Installa di nuovo quella versione per continuare.",
+                    "The JellyMesh database is damaged, so sync and remote playback are suspended.": "Il database di JellyMesh è danneggiato, quindi sincronizzazione e riproduzione remota sono sospese.",
+                    "The JellyMesh database cannot be opened, so sync and remote playback are suspended. Titles stay visible, and playing them gives an error.": "Il database di JellyMesh non si apre, quindi sincronizzazione e riproduzione remota sono sospese. I titoli restano visibili, e riprodurli dà un errore.",
+                    "The files of JellyMesh 0.5 are kept in the folder migrated-0.5 until {date}, then erased. Going back to JellyMesh 0.5 by hand works only until then.": "I file di JellyMesh 0.5 restano nella cartella migrated-0.5 fino al {date}, poi vengono cancellati. Tornare a mano a JellyMesh 0.5 funziona solo fino ad allora.",
+                    "Reason: {reason}": "Motivo: {reason}",
+                    "On {date} the JellyMesh database was damaged, so JellyMesh restored it from the nightly copy of {copy}. Servers added or removed after that copy may be wrong: check the list of servers.": "Il {date} il database di JellyMesh era danneggiato, quindi JellyMesh l'ha ripristinato dalla copia notturna del {copy}. I server aggiunti o rimossi dopo quella copia possono essere sbagliati: controlla l'elenco dei server.",
+                    "On {date} the JellyMesh database was damaged and there was no nightly copy, so JellyMesh started with an empty one. Check the list of servers.": "Il {date} il database di JellyMesh era danneggiato e non c'era una copia notturna, quindi JellyMesh è ripartito con uno vuoto. Controlla l'elenco dei server.",
+                    "The damaged file is kept as {file} in the plugin data folder.": "Il file danneggiato resta come {file} nella cartella dati del plugin.",
+                    "I checked the servers": "Ho controllato i server",
                     "{server} answered with a problem ({problem}). The edit can still be saved.": "{server} ha risposto con un problema ({problem}). La modifica si può salvare comunque.",
                     "{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.": "{server} non risponde. Finché non risponde, l'accesso e le librerie restano come sono. Un nuovo URL si salva solo se il server risponde a quell'indirizzo.",
                     "Add the folders of each remote library to the libraries": "Aggiungi alle librerie le cartelle di ogni libreria remota",
@@ -5461,6 +5488,62 @@
                     setText(announce, problems > 0 || announce.textContent ? line : '');
                 }
 
+                var storeStates = {
+                    NewerSchema: t('The JellyMesh database was written by a newer version of JellyMesh, so sync and remote playback are suspended. Install that version again to go on.'),
+                    Damaged: t('The JellyMesh database is damaged, so sync and remote playback are suspended.'),
+                    Unavailable: t('The JellyMesh database cannot be opened, so sync and remote playback are suspended. Titles stay visible, and playing them gives an error.')
+                };
+
+                // Shows why the database cannot be used, with a retry (row 427), the last restore (row 466) and until when
+                // the files of JellyMesh 0.5 are kept (row 469). Rebuilds the notice only when it changes.
+                function renderStore(store) {
+                    var migrated = el('#jmMigrated');
+                    setText(migrated, store.MigratedKeptUntil ? t('The files of JellyMesh 0.5 are kept in the folder migrated-0.5 until {date}, then erased. Going back to JellyMesh 0.5 by hand works only until then.', { date: formatDate(store.MigratedKeptUntil) }) : '');
+                    migrated.hidden = !store.MigratedKeptUntil;
+                    var notice = el('#jmStore');
+                    var key = JSON.stringify([store.State, store.Reason, store.Recovery]);
+                    notice.hidden = store.State === 'Healthy' && !store.Recovery;
+                    if (notice.jmKey === key) {
+                        return;
+                    }
+
+                    notice.jmKey = key;
+                    notice.textContent = '';
+                    var actions = actionRow();
+                    if (store.State !== 'Healthy') {
+                        notice.appendChild(create('p', storeStates[store.State] || storeStates.Unavailable));
+                        if (store.Reason) {
+                            notice.appendChild(create('p', t('Reason: {reason}', { reason: store.Reason })));
+                        }
+
+                        actions.appendChild(button(t('Try again'), function () {
+                            act(api('POST', 'Store/Retry').then(function (data) {
+                                adopt(storeSection, data);
+                                return load();
+                            }));
+                        }));
+                    }
+
+                    var recovery = store.Recovery;
+                    if (recovery) {
+                        notice.appendChild(create('p', recovery.CopyDate
+                            ? t('On {date} the JellyMesh database was damaged, so JellyMesh restored it from the nightly copy of {copy}. Servers added or removed after that copy may be wrong: check the list of servers.', { date: formatDate(recovery.RecoveredAt), copy: formatDate(recovery.CopyDate) })
+                            : t('On {date} the JellyMesh database was damaged and there was no nightly copy, so JellyMesh started with an empty one. Check the list of servers.', { date: formatDate(recovery.RecoveredAt) })));
+                        notice.appendChild(create('p', t('The damaged file is kept as {file} in the plugin data folder.', { file: recovery.DamagedFile })));
+                        actions.appendChild(button(t('I checked the servers'), function () {
+                            act(api('POST', 'Store/Recovery/Dismiss').then(function () {
+                                return refresh(storeSection);
+                            }));
+                        }));
+                    }
+
+                    notice.appendChild(actions);
+                }
+
+                var storeSection = section(function () {
+                    return read('Store');
+                }, renderStore, function () {});
+
                 var statusSection = section(function () {
                     return read('Status');
                 }, render, statusFailed);
@@ -5528,7 +5611,7 @@
                 }
 
                 function load() {
-                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges(), loadHistory()]);
+                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges(), loadHistory(), refresh(storeSection)]);
                 }
 
                 // Plans the next read while the page is open and its tab is shown, sooner while a sync or a migration runs.
@@ -5555,7 +5638,7 @@
                         nextMigrationPoll = Date.now() + migrationPollMilliseconds;
                     }
 
-                    var parts = [syncSection, statusSection, peersSection, mergesSection, historySection].filter(function (part) {
+                    var parts = [syncSection, statusSection, peersSection, mergesSection, historySection, storeSection].filter(function (part) {
                         return part.pending === 0 && (part === syncSection || part.stale || (part === statusSection && migrationDue)
                             || (due && part !== mergesSection && part !== historySection));
                     });
