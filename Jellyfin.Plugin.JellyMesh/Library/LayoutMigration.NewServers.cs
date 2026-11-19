@@ -133,7 +133,7 @@ public sealed partial class LayoutMigration
 
         var (folders, automatic) = (libraries.Folders, libraries.Automatic);
         var done = new List<Guid>();
-        var settled = new Dictionary<Guid, IReadOnlyList<string>>();
+        var placements = new Dictionary<Guid, Placement>();
         var added = false;
         foreach (var server in fresh.Concat(later))
         {
@@ -171,7 +171,7 @@ public sealed partial class LayoutMigration
             if (!failed)
             {
                 done.Add(server);
-                settled[server] = toPlace.Settled;
+                placements[server] = toPlace;
             }
         }
 
@@ -185,27 +185,28 @@ public sealed partial class LayoutMigration
         }
 
         _placementScanOwed = false;
-        SavePlaced(servers, done, settled);
+        SavePlaced(servers, done, placements);
     }
 
-    // The folders to place with their type and the libraries imported later they settle: for a new server all its folders,
-    // null until one is read; for a placed one the type folders of libraries imported later, none in the older layout.
-    private (List<(string Path, TypeFolder Type)> Folders, IReadOnlyList<string> Settled)? ToPlace(string root, Guid server, bool olderLayout, bool placed)
+    // The folders to place with their type: for a new server all its folders, null until one is read; for a placed one the
+    // type folders of libraries imported later, none in the older layout.
+    private Placement? ToPlace(string root, Guid server, bool olderLayout, bool placed)
     {
-        var (typeFolders, toPlace, waiting) = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server) is { } found
-            ? (LibraryPlan.TypeFolders(found), found.LibrariesToPlace.ToList(), found.LibrariesToPlace.Where(id => !olderLayout && IsUnread(found, id)).ToList())
+        var (typeFolders, toPlace, unread) = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server) is { } found
+            ? (LibraryPlan.TypeFolders(found), found.LibrariesToPlace.ToList(), found.ImportedLibraryIds.Where(id => !olderLayout && IsUnread(found, id)).ToList())
             : ([], [], []));
-        var settled = toPlace.Except(waiting, StringComparer.Ordinal).ToList();
+        var settled = toPlace.Where(id => !unread.Contains(id, StringComparer.OrdinalIgnoreCase)).ToList();
         if (olderLayout)
         {
-            return (placed ? [] : [(FederatedFolderLayout.ServerMoviesPath(root, server), TypeFolder.Movies), (FederatedFolderLayout.ServerSeriesPath(root, server), TypeFolder.Series)], settled);
+            return new Placement(placed ? [] : [(FederatedFolderLayout.ServerMoviesPath(root, server), TypeFolder.Movies), (FederatedFolderLayout.ServerSeriesPath(root, server), TypeFolder.Series)], settled, []);
         }
 
         var folders = typeFolders
             .Where(folder => !placed || toPlace.Contains(Path.GetFileName(Path.GetDirectoryName(folder)), StringComparer.OrdinalIgnoreCase))
             .Select(folder => (FederatedPaths.Resolve(root, folder), TypeFolder.All.First(type => string.Equals(type.Name, Path.GetFileName(folder), StringComparison.Ordinal))))
             .ToList();
-        return folders.Count == 0 && !placed ? null : (folders, settled);
+        var seeded = placed ? [] : unread.Where(id => !toPlace.Contains(id, StringComparer.OrdinalIgnoreCase)).ToList();
+        return folders.Count == 0 && !placed ? null : new Placement(folders, settled, seeded);
     }
 
     // Records at once a folder added to a library, so one the admin removes before the server is placed stays out (§10 row 496).
@@ -244,9 +245,9 @@ public sealed partial class LayoutMigration
             : null;
     }
 
-    // Keeps the placed servers still configured, with those just placed, and drops the libraries imported later they settled
-    // and the folders recorded for them.
-    private void SavePlaced(IReadOnlyCollection<Guid> servers, IReadOnlyCollection<Guid> done, IReadOnlyDictionary<Guid, IReadOnlyList<string>>? settled = null) => _store.Update(config =>
+    // Keeps the placed servers still configured, with those just placed: their libraries imported later and settled leave
+    // the waiting ones, those not read yet join them (§10 row 496), and their recorded folders are dropped.
+    private void SavePlaced(IReadOnlyCollection<Guid> servers, IReadOnlyCollection<Guid> done, IReadOnlyDictionary<Guid, Placement>? placements = null) => _store.Update(config =>
     {
         var placed = config.LayoutMigration.PlacedServers;
         var kept = placed.Where(servers.Contains).Concat(done).Distinct().ToList();
@@ -258,9 +259,17 @@ public sealed partial class LayoutMigration
 
         foreach (var server in config.Servers.Where(server => done.Contains(server.Id)))
         {
-            foreach (var id in settled?.GetValueOrDefault(server.Id) ?? [])
+            if (placements?.GetValueOrDefault(server.Id) is { } placement)
             {
-                server.LibrariesToPlace.Remove(id);
+                foreach (var id in placement.Settled)
+                {
+                    server.LibrariesToPlace.Remove(id);
+                }
+
+                foreach (var id in placement.Seeded)
+                {
+                    server.LibrariesToPlace.Add(id);
+                }
             }
 
             server.PlacedFolders.Clear();
@@ -281,4 +290,8 @@ public sealed partial class LayoutMigration
             server.LibrariesToPlace.Clear();
         }
     });
+
+    // The folders to place with their type, the libraries waiting to be placed it settles, and the imported ones of a new
+    // server not read yet, which wait from then on.
+    private sealed record Placement(List<(string Path, TypeFolder Type)> Folders, IReadOnlyList<string> Settled, IReadOnlyList<string> Seeded);
 }

@@ -1046,6 +1046,31 @@ public sealed partial class LayoutMigrationTests
         Assert.Empty(c.PlacedFolders);
     }
 
+    [Fact]
+    public async Task AnImportedLibraryOfANewServerNotReadAtItsPlacementIsPlacedOnceRead()
+    {
+        // §10 row 496: placing the server leaves the library it could not place yet waiting, even with none recorded.
+        MigratedToRemoteLibraries();
+        var (films, unread, filmsOfA) = (NewId(), NewId(), NewId());
+        var c = Imported(_serverC, (films, "movies"));
+        c.ImportedLibraryIds.Add(unread);
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+        Assert.Equal([unread], c.LibrariesToPlace);
+
+        c.RemoteLibraries.Add(new RemoteLibraryConfig { Id = unread, Name = "Film 4K", CollectionType = "movies" });
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies), TypeFolderOf(_serverC, films, TypeFolder.Movies), TypeFolderOf(_serverC, unread, TypeFolder.Movies)], Locations("Film"));
+        Assert.Empty(c.LibrariesToPlace);
+    }
+
     private static string NewId() => Guid.NewGuid().ToString("N");
 
     // A remote library the admin imports on a server already linked, as the edit saves it and a sync reads it.
