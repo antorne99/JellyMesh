@@ -615,11 +615,10 @@ def quiet(s, width):
     reads = []
     page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
     page.wait_for_timeout(31000)
-    counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges", "Store", "SharedLibraries"]}
+    counts = {path: reads.count(path) for path in ["Sync", "Status", "Peers", "Peers/Options", "Merges"]}
     check(name + " reads the sync every 5 seconds", 5 <= counts["Sync"] <= 7, counts)
     check(name + " reads status and streams every 15 seconds", 1 <= counts["Status"] <= 3 and 1 <= counts["Peers"] <= 3, counts)
     check(name + " reads the status only with the streams, the migration banner too", counts["Status"] == counts["Peers"], counts)
-    check(name + " reads the database and the libraries of all servers with the status", counts["Store"] == counts["Status"] and counts["SharedLibraries"] == counts["Status"], counts)
     check(name + " reads the peer options at most once a minute", counts["Peers/Options"] <= 1, counts)
     check(name + " leaves the merges alone", counts["Merges"] == 0, counts)
     check(name + " reads nothing else", len(reads) == sum(counts.values()), reads)
@@ -3160,7 +3159,7 @@ def overview_focus(s, width):
     check(name + " keeps the focus", u.has_focus(link), page.evaluate("document.activeElement.tagName"))
     check(name + " does not move the page", page.evaluate("scrollY") == scroll, page.evaluate("scrollY"))
     check(name + " counts the new line", text(page, u.STATUS).startswith("Active. 2 things need attention"), text(page, u.STATUS))
-    check(name + " reads nothing new", {url.rsplit("/Admin/", 1)[1] for url in reads} <= {"Sync", "Status", "Peers", "Peers/Options", "Store", "SharedLibraries"}, set(reads))
+    check(name + " reads nothing new", {url.rsplit("/Admin/", 1)[1] for url in reads} <= {"Sync", "Status", "Peers", "Peers/Options"}, set(reads))
     focus_shows(page, name + " a link", link)
     u.shot(page, f"overview-focus-{width}", full_page=False)
     healthy(page, name)
@@ -3577,7 +3576,7 @@ def shared_libraries(s, width):
         return 202, state[0]
 
     def routes(context):
-        fulfill_json(context, "SharedLibraries", lambda request: (200, state[0]))
+        fake(context, "Status", lambda data: data.update(SharedLibraries=state[0]))
         fulfill_json(context, "SharedLibraries", post, "POST")
 
     page = s.open("fresh", width, tab="settings", route=routes)
@@ -3629,7 +3628,7 @@ def shared_errors(s, width):
     state = [dict(SHARED_STATE, Error="NameTaken")]
 
     def routes(context):
-        fulfill_json(context, "SharedLibraries", lambda request: (200, state[0]))
+        fake(context, "Status", lambda data: data.update(SharedLibraries=state[0]))
 
     for error, words in [("NameTaken", "name was taken"), ("Failed", "change failed"), ("RemoveFailed", "refused to delete")]:
         state[0] = dict(SHARED_STATE, Error=error)
@@ -3697,7 +3696,7 @@ def store_notices(s, width):
         return 200, store[0]
 
     def routes(context):
-        fulfill_json(context, "Store", lambda request: (200, store[0]))
+        fake(context, "Status", lambda data: data.update(Store=store[0]))
         fulfill_json(context, "Store/Retry", retry, "POST")
         fulfill_json(context, "Store/Recovery/Dismiss", lambda request: (204, None), "POST")
 
@@ -3723,6 +3722,18 @@ def store_notices(s, width):
     store[0] = dict(store[0], Recovery=None)
     notice.get_by_role("button", name="I checked the servers", exact=True).click()
     check(name + " the restore goes once checked", until(page, lambda: notice.is_hidden()), notice.inner_text())
+    u.close(page)
+
+    # A database never loaded makes the status answer 503, so the page reads the database state on its own.
+    store[0] = {"State": "Damaged", "Reason": "The database is damaged and no copy could be restored.", "Recovery": None, "MigratedKeptUntil": None}
+
+    def suspended(context):
+        fulfill_json(context, "Status", lambda request: (503, {"Failure": "None", "Message": "The JellyMesh database cannot be used now, so JellyMesh is suspended until it can."}))
+        fulfill_json(context, "Store", lambda request: (200, store[0]))
+
+    page = s.open("fresh", width, route=suspended)
+    notice = page.locator(u.STORE)
+    check(name + " says why with no status", until(page, lambda: notice.is_visible() and "no copy could be restored" in notice.inner_text()), notice.inner_text())
     u.close(page)
 
 

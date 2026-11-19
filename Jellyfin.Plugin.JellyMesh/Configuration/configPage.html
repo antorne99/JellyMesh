@@ -1607,8 +1607,7 @@
                     <div id="jmShared" class="jmGroup">
                         <h3 class="sectionTitle">Libraries of all servers</h3>
                         <div>
-                            <div id="jmSharedFailure" role="alert" hidden class="jmAlert"></div>
-                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input id="jmSharedLibraries" type="checkbox" is="emby-checkbox" disabled />
                                     <span>One library per type with all servers</span>
@@ -1722,7 +1721,6 @@
                     "Deleting the libraries of all servers that JellyMesh made, and releasing the adopted ones.": "Eliminazione delle librerie di tutti i server create da JellyMesh e rilascio di quelle adottate in corso.",
                     "JellyMesh stops keeping one library per type with the folders of all servers.": "JellyMesh smette di tenere una libreria per tipo con le cartelle di tutti i server.",
                     "Turn off the libraries of all servers?": "Spegnere le librerie di tutti i server?",
-                    "the libraries of all servers": "le librerie di tutti i server",
                     "{server} answered with a problem ({problem}). The edit can still be saved.": "{server} ha risposto con un problema ({problem}). La modifica si può salvare comunque.",
                     "{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.": "{server} non risponde. Finché non risponde, l'accesso e le librerie restano come sono. Un nuovo URL si salva solo se il server risponde a quell'indirizzo.",
                     "Add the folders of each remote library to the libraries": "Aggiungi alle librerie le cartelle di ogni libreria remota",
@@ -3831,6 +3829,14 @@
                     renderFolder(status.FederatedFolder);
                     renderReleasedLibraries(status.ReleasedLibraries || []);
                     renderHeldRemovals(status.HeldRemovals || []);
+                    if (status.Store) {
+                        adopt(storeSection, status.Store);
+                    }
+
+                    if (status.SharedLibraries) {
+                        adopt(sharedSection, status.SharedLibraries);
+                    }
+
                     if (mergesSection.data) {
                         renderMergeLists(mergesSection.data);
                     }
@@ -5591,7 +5597,7 @@
                         notice.appendChild(create('p', t('The damaged file is kept as {file} in the plugin data folder.', { file: recovery.DamagedFile })));
                         actions.appendChild(button(t('I checked the servers'), function () {
                             act(api('POST', 'Store/Recovery/Dismiss').then(function () {
-                                return refresh(storeSection);
+                                return loadStatus();
                             }));
                         }));
                     }
@@ -5599,13 +5605,19 @@
                     notice.appendChild(actions);
                 }
 
+                // The database state comes with the status; it is read on its own only when the status cannot be read.
                 var storeSection = section(function () {
                     return read('Store');
                 }, renderStore, function () {});
 
                 var statusSection = section(function () {
                     return read('Status');
-                }, render, statusFailed);
+                }, render, function (reason) {
+                    statusFailed(reason);
+                    if (reason && storeSection.pending === 0) {
+                        refresh(storeSection);
+                    }
+                });
 
                 var syncSection = section(function () {
                     return read('Sync');
@@ -5734,7 +5746,7 @@
 
                         sharedAsking = false;
                         showError(error.message);
-                        return refresh(sharedSection);
+                        return loadStatus();
                     });
                 }
 
@@ -5762,11 +5774,8 @@
                     });
                 }
 
-                var sharedSection = section(function () {
-                    return read('SharedLibraries');
-                }, renderShared, function (reason) {
-                    showFailure('#jmSharedFailure', t('the libraries of all servers'), keepsTrying, reason);
-                });
+                // The libraries of all servers come with the status.
+                var sharedSection = section(null, renderShared, function () {});
 
                 function loadStatus() {
                     return refresh(statusSection);
@@ -5789,7 +5798,7 @@
                 }
 
                 function load() {
-                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges(), loadHistory(), refresh(storeSection), refresh(sharedSection)]);
+                    return Promise.all([loadStatus(), loadSync(), loadPeers(), loadMerges(), loadHistory()]);
                 }
 
                 // Plans the next read while the page is open and its tab is shown, sooner while a sync or a migration runs.
@@ -5818,8 +5827,8 @@
                     }
 
                     var sharedBusy = !!(sharedSection.data && sharedSection.data.Busy);
-                    var parts = [syncSection, statusSection, peersSection, mergesSection, historySection, storeSection, sharedSection].filter(function (part) {
-                        return part.pending === 0 && (part === syncSection || part.stale || (part === statusSection && migrationDue) || (part === sharedSection && sharedBusy)
+                    var parts = [syncSection, statusSection, peersSection, mergesSection, historySection].filter(function (part) {
+                        return part.pending === 0 && (part === syncSection || part.stale || (part === statusSection && (migrationDue || sharedBusy))
                             || (due && part !== mergesSection && part !== historySection));
                     });
                     polling = true;
