@@ -128,6 +128,60 @@ public class ServerStubPlannerTests
 
     private static ResolvedContent Local(ResolvedContent content, params Guid[] localIds) => content with { IsLocal = true, LocalItemIds = localIds };
 
+    // Plans series of two episodes each on one server, and checks that each got its series and episodes.
+    private static void PlanSeries(int count)
+    {
+        var items = new List<IndexedItem>();
+        var contents = new List<ResolvedContent>();
+        for (var series = 0; series < count; series++)
+        {
+            var seriesId = "s" + series;
+            items.Add(SeriesItem(seriesId, "Show " + series));
+            for (var number = 1; number <= 2; number++)
+            {
+                var episodeId = seriesId + "e" + number;
+                items.Add(EpisodeItem(episodeId, seriesId, number) with { SeriesName = "Show " + series });
+                contents.Add(new ResolvedContent(
+                    new ContentIdentity("show" + series + "|S1E" + number, "show" + series, ContentKind.Episode, MatchKind.ProviderId, 1, number),
+                    false,
+                    null,
+                    [])
+                {
+                    RemoteItems = [OnA(episodeId)]
+                });
+            }
+        }
+
+        var plan = Plan(contents, [Catalog(_serverA, [.. items])], servers: [Server(_serverA, "Casa")]);
+
+        Assert.Equal(count, plan.Series.Count);
+        Assert.Equal(count * 2, plan.Stubs.Count);
+    }
+
+    // The shorter of two runs, so that a pause of the machine in one does not count.
+    private static TimeSpan Fastest(Action run)
+    {
+        var best = TimeSpan.MaxValue;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            run();
+            best = watch.Elapsed < best ? watch.Elapsed : best;
+        }
+
+        return best;
+    }
+
+    [Fact]
+    public void PlanningEightTimesTheSeriesTakesAboutEightTimesAsLong()
+    {
+        PlanSeries(100);
+        var small = Fastest(() => PlanSeries(1000));
+        var large = Fastest(() => PlanSeries(8000));
+
+        Assert.True(large < small * 12, small + " for 1000 series, " + large + " for 8000");
+    }
+
     [Fact]
     public void ATitleInTwoLibrariesOfOneLocalLibraryGetsOneStubWithTheOtherCopyAsASource()
     {

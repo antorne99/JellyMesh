@@ -51,7 +51,7 @@ public static class StubPlanner
         var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
 
         var paths = new PathAllocator(flat, flatSeries);
-        var scope = new SeriesScope(null, flatSeries, input.View.Contents, (_, _, title, year, id) => paths.SeriesFolder(TypeFolder.Series.Name, title, year, id), input.LocalSeriesOf);
+        var scope = new SeriesScope(null, flatSeries, ByWork(input.View.Contents), (_, _, title, year, id) => paths.SeriesFolder(TypeFolder.Series.Name, title, year, id), input.LocalSeriesOf);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
         var works = new List<StubWork>();
         var unplaceable = 0;
@@ -146,7 +146,7 @@ public static class StubPlanner
                 var claims = matcher.ClaimAll(StubContents.Group(part.Contents));
 
                 var paths = new PathAllocator(part.Stubs, part.Series);
-                var scope = new SeriesScope(server.Id, part.Series, part.Contents, (remote, winner, title, year, id) => paths.SeriesFolder(part.FolderOf([remote, winner], TypeFolder.Series), title, year, id), _ => null);
+                var scope = new SeriesScope(server.Id, part.Series, ByWork(part.Contents), (remote, winner, title, year, id) => paths.SeriesFolder(part.FolderOf([remote, winner], TypeFolder.Series), title, year, id), _ => null);
                 var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
                 foreach (var (content, stub) in claims)
                 {
@@ -627,7 +627,7 @@ public static class StubPlanner
             return plan;
         }
 
-        var known = SeriesItems(scope.Contents, workKey, catalog);
+        var known = SeriesItems(scope.Contents[workKey], catalog);
         var stub = scope.Existing.FirstOrDefault(entry => string.Equals(entry.WorkKey, workKey, StringComparison.Ordinal))
             ?? scope.Existing.FirstOrDefault(entry => entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)));
 
@@ -739,11 +739,14 @@ public static class StubPlanner
             .FirstOrDefault();
     }
 
+    // Groups the contents by work key, so that each series reads only its own episodes.
+    private static ILookup<string, ResolvedContent> ByWork(IEnumerable<ResolvedContent> contents)
+        => contents.ToLookup(content => content.Identity.WorkKey, StringComparer.Ordinal);
+
     // Every remote row of the series, in a fixed order, so that a first choice does not depend on the order of a read.
-    private static List<(Guid ServerId, IndexedItem Item)> SeriesItems(IReadOnlyList<ResolvedContent> contents, string workKey, IndexItemLookup catalog)
+    private static List<(Guid ServerId, IndexedItem Item)> SeriesItems(IEnumerable<ResolvedContent> contents, IndexItemLookup catalog)
     {
         return contents
-            .Where(content => string.Equals(content.Identity.WorkKey, workKey, StringComparison.Ordinal))
             .OrderBy(content => content.Identity.SeasonNumber)
             .ThenBy(content => content.Identity.EpisodeNumber)
             .SelectMany(content => content.RemoteItems)
@@ -894,14 +897,14 @@ public static class StubPlanner
     /// </summary>
     /// <param name="ServerId">The server, null in the flat layout.</param>
     /// <param name="Existing">The series stubs of the scope.</param>
-    /// <param name="Contents">The contents whose remote items name the series.</param>
+    /// <param name="Contents">The contents whose remote items name the series, by work key.</param>
     /// <param name="NewFolder">Gives the relative folder of a new series from its remote row, the episode that brings it, its
     /// title, year and ID.</param>
     /// <param name="LocalSeriesOf">Finds the local series of a work key.</param>
     private sealed record SeriesScope(
         Guid? ServerId,
         IReadOnlyList<SeriesStub> Existing,
-        IReadOnlyList<ResolvedContent> Contents,
+        ILookup<string, ResolvedContent> Contents,
         Func<IndexedItem, IndexedItem, string?, int?, string, string> NewFolder,
         Func<string, LocalSeries?> LocalSeriesOf);
 
