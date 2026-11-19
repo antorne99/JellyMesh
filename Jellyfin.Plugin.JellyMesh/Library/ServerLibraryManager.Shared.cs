@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
@@ -468,18 +469,24 @@ public sealed partial class ServerLibraryManager
     private async Task<bool> DropUnblockedAsync(PendingLibraryConfig intent, VirtualFolderInfo made, CancellationToken cancellationToken)
     {
         _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
-        try
+        var id = Guid.TryParse(made.ItemId, out var found) ? found : (Guid?)null;
+        if (await RemoveFromUsersAsync(made.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false)
+            && await RemoveFromUsersAsync(made.Name, id, PreferenceKind.EnableContentDeletionFromFolders, cancellationToken).ConfigureAwait(false))
         {
-            await _libraries.RemoveVirtualFolder(made.Name, false).ConfigureAwait(false);
-            _store.Update(config => RemovePending(config.SharedLibraries.PendingLibraries, intent.KeyOf()));
-            return false;
+            try
+            {
+                await _libraries.RemoveVirtualFolder(made.Name, false).ConfigureAwait(false);
+                _store.Update(config => RemovePending(config.SharedLibraries.PendingLibraries, intent.KeyOf()));
+                return false;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogError("Cannot delete the shared library {Library}, which could not be blocked: {Error}", LogText.Clean(made.Name), exception.GetType().Name);
+            }
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            _logger.LogError("Cannot delete the shared library {Library}, which could not be blocked: {Error}", LogText.Clean(made.Name), exception.GetType().Name);
-            RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty }, made.Locations ?? []));
-            return true;
-        }
+
+        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty }, made.Locations ?? []));
+        return true;
     }
 
     // Saves a shared library and drops its intent.

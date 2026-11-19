@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Model.Entities;
@@ -171,6 +172,9 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.EnableShared().Job;
 
         Assert.Equal([SharedFilm + "1"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.Equal(
+            [(PreferenceKind.EnabledFolders, Guid.Parse(fixture.Libraries.IdOf(SharedFilm + "1"))), (PreferenceKind.EnableContentDeletionFromFolders, Guid.Parse(fixture.Libraries.IdOf(SharedFilm + "1")))],
+            fixture.Renamer.Removed.Where(call => call.Name == SharedFilm + "1").Select(call => (call.List, call.Id!.Value)));
         Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Kind == ServerLibraryKind.Movies);
         Assert.Empty(Shared(fixture).PendingLibraries);
         Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
