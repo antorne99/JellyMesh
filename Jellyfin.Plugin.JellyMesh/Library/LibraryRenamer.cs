@@ -231,6 +231,37 @@ public sealed class LibraryRenamer : ILibraryRenamer
     }
 
     /// <inheritdoc />
+    public async Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken)
+    {
+        if ((itemId ?? (ChildOf(_paths.DefaultUserViewsPath, name) is { } path ? _library.GetNewItemId(path, typeof(CollectionFolder)) : null)) is not { } id)
+        {
+            return;
+        }
+
+        foreach (var user in _users.GetUsers().ToList())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var values = user.GetPreference(list);
+            var kept = values.Where(value => !Guid.TryParse(value, out var named) || named != id).ToArray();
+            if (kept.Length == values.Length)
+            {
+                continue;
+            }
+
+            user.SetPreference(list, kept);
+            try
+            {
+                await _users.UpdateUserAsync(user).ConfigureAwait(false);
+            }
+            catch
+            {
+                user.SetPreference(list, values);
+                throw;
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
     {
         ArgumentNullException.ThrowIfNull(carries);

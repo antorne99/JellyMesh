@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Model.Configuration;
@@ -531,6 +532,52 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(fixture.Renamer.Carried);
 
         fixture.Renamer.BlockFailure = null;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task A_library_the_plugin_deletes_leaves_the_given_lists_before_it_goes_and_the_blocked_ones_after()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        var oldFilms = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
+        var removedAt = new List<int>();
+        fixture.Renamer.OnRemove = () => removedAt.Add(fixture.Libraries.Removed.Count);
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Equal(
+            [("Casa - Film", (Guid?)oldFilms, PreferenceKind.EnabledFolders), ("Casa - Film", oldFilms, PreferenceKind.BlockedMediaFolders)],
+            fixture.Renamer.Removed);
+        Assert.Equal([0, 1], removedAt);
+    }
+
+    [Fact]
+    public async Task A_released_library_of_the_admin_stays_in_the_users_lists()
+    {
+        var fixture = OnTypeFolders();
+        fixture.Libraries.Add("Film di casa", CollectionTypeOptions.movies, FilmPaths);
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByType).Job;
+        fixture.Server.LibraryMode = LibraryMode.None;
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Equal(["Casa - Serie", "Casa - Serie"], fixture.Renamer.Removed.Select(removed => removed.Name));
+    }
+
+    [Fact]
+    public async Task A_library_still_given_to_a_user_is_not_deleted_and_the_next_check_deletes_it()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Renamer.RemoveFailure = new InvalidOperationException("database");
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Contains(fixture.Server.AutomaticLibraryRegistry, record => record.Name == "Casa - Film");
+
+        fixture.Renamer.RemoveFailure = null;
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));

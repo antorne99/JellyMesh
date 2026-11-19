@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -49,6 +50,17 @@ public interface ILibraryRenamer
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes the id of a library the plugin deletes from one per-id list of each user, in any form, so a library made
+    /// again with its name is not given or blocked by an old entry; a library with no id is found by its name.
+    /// </summary>
+    /// <param name="name">The library name.</param>
+    /// <param name="itemId">The library id, if known.</param>
+    /// <param name="list">The list, enabled or blocked folders.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken);
 
     /// <summary>
     /// Tells, changing nothing, which users would lose titles if the access were carried to the new libraries.

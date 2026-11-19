@@ -6,6 +6,7 @@
 # libraries merge into one, only a user who saw both gets it; who saw one loses it and is named, before and after.
 # A library of the admin with exactly the paths and type of a library the new mode wants is adopted: never renamed or
 # deleted, its permissions untouched, and who loses titles in it is named and kept across a restart (rows 440-441).
+# A library the plugin deletes leaves the users' lists, so a user who lost it does not get it back when it is made again.
 # A stock remote with two film libraries and a series library, and a consumer with the plugin.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f40] [PORT=18970] [KEEP=1] modes.sh
 set -euo pipefail
@@ -249,5 +250,13 @@ check "no user list changes for the released library" "$ACCESS" "$(access "$ADOP
 check "the state lists the two film paths and a series path" '["movies","movies","tvshows"]' "$(own | jq -c '[.ManualPaths[].LibraryType] | sort')"
 check "the mode is none" None "$(own | jq -r .Mode)"
 check "with the plugin's libraries gone neither user sees a federated title" "[] []" "$(seen)"
+
+echo "--- back from none: who lost a library when it went does not get it back when it is made again [row 438]"
+save_edit '{"LibraryMode":"ByRemoteLibrary"}' >/dev/null
+check "the save answers 200" 200 "$(status)"
+wait_own
+check "the children films have their library again" yes "$(exists 'Casa - Film Bambini')"
+check "no user list gives the library made again" 0 "$(access "$(folder 'Casa - Film Bambini' | jq -r .ItemId)" | jq '[.[] | select(.Enabled)] | length')"
+check "the users with their own lists who lost the films see no federated title" "[] []" "$(sees "$CHILDREN") $(sees "$LIMITED")"
 
 [ "$FAILED" = 0 ] && echo "all passed" || { echo "some checks failed"; exit 1; }

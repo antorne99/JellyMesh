@@ -244,6 +244,44 @@ public sealed class LibraryRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_deleted_library_leaves_the_list_given_in_any_form_and_nothing_else()
+    {
+        var kept = Guid.NewGuid();
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("D").ToUpperInvariant(), kept.ToString("N")]);
+        _limited.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+        _blocked.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+
+        await _renamer.RemoveFromUsersAsync("Casa - Mare", OldId, PreferenceKind.EnabledFolders, CancellationToken.None);
+
+        Assert.Equal([kept.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.BlockedMediaFolders));
+        Assert.Empty(_blocked.GetPreference(PreferenceKind.EnabledFolders));
+        _users.Verify(users => users.UpdateUserAsync(_other), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_deleted_library_with_no_id_is_found_by_its_name()
+    {
+        _blocked.SetPreference(PreferenceKind.BlockedMediaFolders, [OldId.ToString("N")]);
+
+        await _renamer.RemoveFromUsersAsync("Casa - Film", null, PreferenceKind.BlockedMediaFolders, CancellationToken.None);
+
+        Assert.Empty(_blocked.GetPreference(PreferenceKind.BlockedMediaFolders));
+    }
+
+    [Fact]
+    public async Task A_user_that_cannot_be_saved_keeps_the_id_of_a_deleted_library_and_the_removal_fails()
+    {
+        _limited.SetPreference(PreferenceKind.EnabledFolders, [OldId.ToString("N")]);
+        _users.Setup(users => users.UpdateUserAsync(_limited)).ThrowsAsync(new InvalidOperationException("database"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _renamer.RemoveFromUsersAsync("Casa - Film", OldId, PreferenceKind.EnabledFolders, CancellationToken.None));
+
+        Assert.Equal([OldId.ToString("N")], _limited.GetPreference(PreferenceKind.EnabledFolders));
+    }
+
+    [Fact]
     public async Task A_user_with_one_of_two_merged_libraries_gets_no_access_and_is_named()
     {
         var (children, adults, merged) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());

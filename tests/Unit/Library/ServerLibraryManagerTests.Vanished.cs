@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Model.Entities;
@@ -72,6 +74,42 @@ public sealed partial class ServerLibraryManagerTests
         Assert.DoesNotContain(fixture.Server.CreatedLibraryKeys, key => key.Contains(TestLibraries.FilmsB, StringComparison.OrdinalIgnoreCase));
         Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Folders.Select(folder => folder.Name).Order());
         Assert.Contains("scan", fixture.Scans.Steps);
+    }
+
+    [Fact]
+    public async Task The_own_library_of_a_vanished_remote_library_leaves_the_users_lists()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        var id = Guid.Parse(fixture.Libraries.Find("Casa - Film 4K").ItemId);
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+        var removedAt = new List<int>();
+        fixture.Renamer.OnRemove = () => removedAt.Add(fixture.Libraries.Removed.Count);
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(
+            [("Casa - Film 4K", (Guid?)id, PreferenceKind.EnabledFolders), ("Casa - Film 4K", id, PreferenceKind.BlockedMediaFolders)],
+            fixture.Renamer.Removed);
+        Assert.Equal([0, 1], removedAt);
+    }
+
+    [Fact]
+    public async Task The_own_library_of_a_vanished_remote_library_still_given_to_a_user_stays_until_the_next_check()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+        fixture.Renamer.RemoveFailure = new InvalidOperationException("database");
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Empty(fixture.Libraries.Removed);
+
+        fixture.Renamer.RemoveFailure = null;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Casa - Film 4K"], fixture.Libraries.Removed.Select(call => call.Name));
     }
 
     // Runs a check that stops at its first wait for the scans, changes the libraries there, then lets it go on.

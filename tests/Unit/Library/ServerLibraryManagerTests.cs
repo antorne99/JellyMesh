@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
@@ -2068,6 +2069,24 @@ public sealed partial class ServerLibraryManagerTests
             }
 
             Blocked.Add(carries);
+            return Task.CompletedTask;
+        }
+
+        public List<(string Name, Guid? Id, PreferenceKind List)> Removed { get; } = [];
+
+        public Exception? RemoveFailure { get; set; }
+
+        public Action? OnRemove { get; set; }
+
+        public Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken)
+        {
+            OnRemove?.Invoke();
+            if (RemoveFailure is not null)
+            {
+                throw RemoveFailure;
+            }
+
+            Removed.Add((name, itemId, list));
             return Task.CompletedTask;
         }
 

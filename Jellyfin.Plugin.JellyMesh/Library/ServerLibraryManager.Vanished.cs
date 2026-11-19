@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
@@ -117,6 +118,12 @@ public sealed partial class ServerLibraryManager
             return false;
         }
 
+        var id = Guid.TryParse(record.ItemId, out var found) ? found : (Guid?)null;
+        if (!await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.EnabledFolders, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
         try
         {
             await _libraries.RemoveVirtualFolder(folder.Name, false).ConfigureAwait(false);
@@ -126,6 +133,8 @@ public sealed partial class ServerLibraryManager
             _logger.LogError("Cannot delete the library {Library} of a vanished remote library: {Error}", LogText.Clean(folder.Name), exception.GetType().Name);
             return false;
         }
+
+        await RemoveFromUsersAsync(folder.Name, id, PreferenceKind.BlockedMediaFolders, cancellationToken).ConfigureAwait(false);
 
         var key = KeyOf(record);
         _store.Update(config =>
