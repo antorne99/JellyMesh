@@ -242,6 +242,25 @@ public class TypeStubPlannerTests
         Assert.False(JellyfinNaming.IsExtra(work.Entry.RelativePath));
     }
 
+    [Theory]
+    [InlineData("..\u0000/ab", "x.strm [ab]")]
+    [InlineData("a\nb.c d", "x.strm [abcd]")]
+    public void TheIdInAFolderNameKeepsOnlyLettersAndDigits(string id, string expected)
+    {
+        var work = Assert.Single(Plan(Catalog(Folder(id, "x.strm", HomeVideos), HomeVideo("v1", "Beach day", id))).Stubs);
+
+        Assert.Equal(In(HomeVideos, "Video domestici", expected, "Beach day.strm"), work.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void AFolderIdWithoutLettersOrDigitsGivesAHashInItsName()
+    {
+        var work = Assert.Single(Plan(Catalog(Folder("../..", "x.strm", HomeVideos), HomeVideo("v1", "Beach day", "../.."))).Stubs);
+
+        var folder = Path.GetFileName(Path.GetDirectoryName(work.Entry.RelativePath));
+        Assert.Matches("^x\\.strm \\[[0-9a-f]{8}\\]$", folder);
+    }
+
     [Fact]
     public void AFolderTheServerWouldIgnoreGetsItsId()
     {

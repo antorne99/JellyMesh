@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Emby.Naming.Common;
 using Emby.Naming.Video;
 using Jellyfin.Plugin.JellyMesh.Dedup;
@@ -184,8 +186,15 @@ public static partial class StubPlanner
             || _extraFolders.Contains(name)
             || rules.Ignores(parent, name, true)
             || rules.Ignores(Path.Combine(parent, name), ProbeFileName, false)
-            ? string.Create(CultureInfo.InvariantCulture, $"{name} [{folder.ItemId[..Math.Min(8, folder.ItemId.Length)]}]")
+            ? string.Create(CultureInfo.InvariantCulture, $"{name} [{SafeId(folder.ItemId)}]")
             : name;
+    }
+
+    // Up to 8 letters and digits of a remote id, or of its hash when it has none, so that it is safe in a name.
+    private static string SafeId(string id)
+    {
+        var safe = new string(id.Where(char.IsAsciiLetterOrDigit).Take(8).ToArray());
+        return safe.Length > 0 ? safe : Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..8];
     }
 
     // The remote folders and albums above an item, outermost first.
