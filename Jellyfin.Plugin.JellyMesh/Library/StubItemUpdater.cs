@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -56,6 +57,17 @@ public sealed class StubItemUpdater
         var isSeries = item is Series;
         item.IsLocked = metadata.IsProtected && !isSeries;
         item.LockedFields = metadata.IsProtected && isSeries ? NfoDocument.SeriesLockedFields.ToArray() : [];
+
+        // Stock Jellyfin reads nothing from a track stub, so its fields are written with or without protection (D60).
+        if (item is Audio audio)
+        {
+            audio.Album = metadata.Album;
+            audio.Artists = metadata.Artists.ToArray();
+            audio.AlbumArtists = metadata.AlbumArtists.ToArray();
+            audio.IndexNumber = metadata.TrackNumber;
+            audio.ParentIndexNumber = metadata.DiscNumber;
+            audio.Genres = metadata.Genres.ToArray();
+        }
 
         if (metadata.IsProtected)
         {

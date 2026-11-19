@@ -89,4 +89,35 @@ public sealed class TrackMaterializerTests : IDisposable
         Assert.Empty(track.GetImages(ImageType.Primary));
         Assert.Equal(2, _fixture.Sync.Client.ImageReads.Count);
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AChangedTrackReachesItsIndexedItemLockedOnlyWithProtection(bool isProtected)
+    {
+        _fixture.Sync.Store.Configuration.MetadataProtection = isProtected;
+        _fixture.Sync.Client.Add(TestLibraries.Music, RemoteItemType.Audio, Track("t1", "Song", 1));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Music);
+        await _fixture.SyncAndMaterializeAsync();
+        var strm = AlbumPath(a, "01 - Song.strm");
+        var track = new Audio { Id = Guid.NewGuid(), Path = strm, Name = "Song" };
+        _fixture.Library.Setup(library => library.FindByPath(strm, false)).Returns(track);
+        _fixture.Sync.Client.Items[(TestLibraries.Music, RemoteItemType.Audio)][0] = Track("t1", "Song (Live)", 1) with
+        {
+            Album = "Album (Live)",
+            Artists = ["Artist", "Guest"],
+            ParentIndexNumber = 2,
+            Genres = ["Live"]
+        };
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(("Song (Live)", "Album (Live)", 1, 2, 2020), (track.Name, track.Album, track.IndexNumber, track.ParentIndexNumber, track.ProductionYear));
+        Assert.Equal(["Artist", "Guest"], track.Artists);
+        Assert.Equal(["Artist"], track.AlbumArtists);
+        Assert.Equal(["Live"], track.Genres);
+        Assert.Equal("mb-t1", track.ProviderIds["MusicBrainzTrack"]);
+        Assert.Equal(isProtected, track.IsLocked);
+        Assert.True(File.Exists(strm));
+    }
 }
