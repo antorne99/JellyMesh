@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -28,13 +29,13 @@ internal static class ServerLibraryKinds
     /// <returns>The kind, or null.</returns>
     public static ServerLibraryKind? Of(string collectionType) => (collectionType ?? string.Empty).ToLowerInvariant() switch
     {
-        "movies" => ServerLibraryKind.Movies,
-        "tvshows" => ServerLibraryKind.Series,
-        "music" => ServerLibraryKind.Music,
-        "musicvideos" => ServerLibraryKind.MusicVideos,
-        "homevideos" => ServerLibraryKind.HomeVideos,
-        "books" => ServerLibraryKind.Books,
-        "mixed" => ServerLibraryKind.Mixed,
+        RemoteCollectionTypes.Movies => ServerLibraryKind.Movies,
+        RemoteCollectionTypes.TvShows => ServerLibraryKind.Series,
+        RemoteCollectionTypes.Music => ServerLibraryKind.Music,
+        RemoteCollectionTypes.MusicVideos => ServerLibraryKind.MusicVideos,
+        RemoteCollectionTypes.HomeVideos => ServerLibraryKind.HomeVideos,
+        RemoteCollectionTypes.Books => ServerLibraryKind.Books,
+        RemoteCollectionTypes.Mixed => ServerLibraryKind.Mixed,
         _ => null
     };
 
