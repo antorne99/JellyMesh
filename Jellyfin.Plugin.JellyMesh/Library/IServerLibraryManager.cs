@@ -132,7 +132,7 @@ public interface IServerLibraryManager
     /// Deletes in the background the shared libraries the plugin made, releases the adopted ones and turns the option off,
     /// once confirmed.
     /// </summary>
-    /// <param name="confirmed">Whether the admin confirmed the deletion.</param>
-    /// <returns>The answer, with the libraries a confirmation would delete.</returns>
-    AutomaticLibrariesRequest DisableShared(bool confirmed);
+    /// <param name="confirmation">The libraries the admin confirmed, as a refusal named them; null when not confirmed.</param>
+    /// <returns>The answer, with the libraries a confirmation would delete and release when they differ from those.</returns>
+    AutomaticLibrariesRequest DisableShared(SharedLibrariesConfirmation? confirmation);
 }

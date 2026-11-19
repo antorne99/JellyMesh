@@ -437,7 +437,9 @@ public class FederationAdminController : ControllerBase
     public ActionResult<SharedLibrariesState> SetSharedLibraries([FromBody] SharedLibrariesRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var answer = request.Enabled ? _libraries.EnableShared() : _libraries.DisableShared(request.Confirmed);
+        var answer = request.Enabled
+            ? _libraries.EnableShared()
+            : _libraries.DisableShared(request.Confirmed ? new SharedLibrariesConfirmation(request.ToDelete, request.ToRelease) : null);
         return answer.Outcome == AutomaticLibrariesOutcome.Started
             ? Accepted(_libraries.GetSharedState())
             : StatusCode(StatusCodes.Status409Conflict, new SharedLibrariesRefusal(answer.Outcome, SharedRefusalMessage(answer.Outcome), answer.ToDelete, answer.ToRelease));

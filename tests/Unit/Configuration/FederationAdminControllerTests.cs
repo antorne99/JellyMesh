@@ -1313,7 +1313,7 @@ public class FederationAdminControllerTests
 
         var accepted = Assert.IsType<AcceptedResult>(result);
         Assert.Same(state, accepted.Value);
-        libraries.Verify(manager => manager.DisableShared(It.IsAny<bool>()), Times.Never);
+        libraries.Verify(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation?>()), Times.Never);
     }
 
     [Fact]
@@ -1321,7 +1321,7 @@ public class FederationAdminControllerTests
     {
         using var fixture = new RegistryFixture();
         var libraries = new Mock<IServerLibraryManager>();
-        libraries.Setup(manager => manager.DisableShared(false))
+        libraries.Setup(manager => manager.DisableShared(null))
             .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Tutti i server - Film"]) { ToRelease = ["Serie di tutti"] });
 
         var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = false }).Result;
@@ -1340,12 +1340,16 @@ public class FederationAdminControllerTests
     {
         using var fixture = new RegistryFixture();
         var libraries = new Mock<IServerLibraryManager>();
-        libraries.Setup(manager => manager.DisableShared(true)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+        libraries.Setup(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation>())).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
 
-        var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = false, Confirmed = true }).Result;
+        var result = ControllerFor(fixture, libraries: libraries.Object)
+            .SetSharedLibraries(new SharedLibrariesRequest { Enabled = false, Confirmed = true, ToDelete = ["Tutti i server - Film"], ToRelease = ["Serie di tutti"] }).Result;
 
         Assert.IsType<AcceptedResult>(result);
-        libraries.Verify(manager => manager.DisableShared(true), Times.Once);
+        libraries.Verify(
+            manager => manager.DisableShared(It.Is<SharedLibrariesConfirmation>(confirmation =>
+                confirmation.ToDelete.SequenceEqual(new[] { "Tutti i server - Film" }) && confirmation.ToRelease.SequenceEqual(new[] { "Serie di tutti" }))),
+            Times.Once);
     }
 
     [Theory]

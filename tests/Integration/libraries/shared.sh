@@ -184,7 +184,9 @@ check "the switch-off asks to confirm" 409 "$(status)"
 check "it names the libraries it deletes, and none to release" "[\"Film di tutti\",\"$SERIES\"] []" "$(echo "$answer" | jq -c '.ToDelete | sort' | tr -d '\n'; echo -n ' '; echo "$answer" | jq -c .ToRelease)"
 check "nothing is deleted yet" "yes true" "$(exists 'Film di tutti') $(shared | jq -r .Enabled)"
 switch '{"Enabled":false,"Confirmed":true}' >/dev/null
-check "the confirmed switch-off answers 202" 202 "$(status)"
+check "a confirmation without the names asks again [D48]" 409 "$(status)"
+switch "$(echo "$answer" | jq -c '{Enabled: false, Confirmed: true, ToDelete, ToRelease}')" >/dev/null
+check "the switch-off confirmed with the names it showed answers 202" 202 "$(status)"
 wait_busy shared
 check "the shared libraries are deleted, the server libraries stay" '["Casa - Film","Casa - Serie"]' "$(get local /Library/VirtualFolders | jq -c '[.[].Name] | sort')"
 check "the option is off with an empty registry" "false []" "$(shared | jq -rc '"\(.Enabled) \(.Libraries)"')"
