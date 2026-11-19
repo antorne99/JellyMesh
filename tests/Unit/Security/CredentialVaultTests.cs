@@ -133,6 +133,120 @@ public class CredentialVaultTests
         Assert.ThrowsAny<CryptographicException>(() => Vault.Unprotect(Guid.NewGuid(), encrypted!));
     }
 
+    [Fact]
+    public void OneVaultKeepsTheCredentialsItDecrypted()
+    {
+        var vault = Vault;
+        var server = StoreServer();
+
+        var first = vault.Unprotect(server.Id, server.EncryptedCredentials);
+
+        Assert.Same(first, vault.Unprotect(server.Id, server.EncryptedCredentials));
+    }
+
+    [Fact]
+    public void OneVaultSeesAChangedKeyAndTheRightOneComingBack()
+    {
+        var vault = Vault;
+        var server = StoreServer();
+        Assert.NotNull(vault.Unprotect(server.Id, server.EncryptedCredentials));
+
+        _key.Key = TestValues.OtherKey;
+
+        Assert.Equal(KeyState.Wrong, vault.GetKeyState());
+        Assert.False(vault.CanDecrypt(server.Id, server.EncryptedCredentials));
+        Assert.Null(vault.Unprotect(server.Id, server.EncryptedCredentials));
+
+        _key.Key = TestValues.Key;
+
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+        Assert.Equal(TestValues.Password, vault.Unprotect(server.Id, server.EncryptedCredentials)!.Password);
+    }
+
+    [Fact]
+    public void OneVaultReadsCredentialsEnteredAgain()
+    {
+        var vault = Vault;
+        var server = StoreServer();
+        Assert.Equal(TestValues.Password, vault.Unprotect(server.Id, server.EncryptedCredentials)!.Password);
+
+        server.EncryptedCredentials = vault.Protect(server.Id, new RemoteCredentials { Username = TestValues.Username, Password = "entered again" })!;
+
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+        Assert.Equal("entered again", vault.Unprotect(server.Id, server.EncryptedCredentials)!.Password);
+    }
+
+    [Fact]
+    public void OneVaultSeesAnAlteredValueAndAValueOfAnotherServer()
+    {
+        var vault = Vault;
+        var first = StoreServer();
+        var second = StoreServer();
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+        Assert.ThrowsAny<CryptographicException>(() => vault.Unprotect(second.Id, first.EncryptedCredentials));
+        var original = second.EncryptedCredentials;
+
+        second.EncryptedCredentials = "AA" + original[2..];
+        Assert.Equal(KeyState.Wrong, vault.GetKeyState());
+
+        second.EncryptedCredentials = first.EncryptedCredentials;
+        Assert.Equal(KeyState.Wrong, vault.GetKeyState());
+
+        second.EncryptedCredentials = original;
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+    }
+
+    [Fact]
+    public void OneVaultKeepsNothingOutsideTheStore()
+    {
+        var vault = Vault;
+        var id = Guid.NewGuid();
+        var encrypted = vault.Protect(id, TestValues.Credentials)!;
+
+        var first = vault.Unprotect(id, encrypted);
+
+        Assert.NotSame(first, vault.Unprotect(id, encrypted));
+    }
+
+    [Fact]
+    public void OneVaultGivesNoKeptCredentialsWhileAnotherServerIsWrong()
+    {
+        var vault = Vault;
+        var server = StoreServer();
+        var other = StoreServer();
+        Assert.NotNull(vault.Unprotect(server.Id, server.EncryptedCredentials));
+
+        other.EncryptedCredentials = "AA" + other.EncryptedCredentials[2..];
+
+        Assert.Null(vault.Unprotect(server.Id, server.EncryptedCredentials));
+        Assert.True(vault.CanDecrypt(server.Id, server.EncryptedCredentials));
+    }
+
+    [Fact]
+    public void OneVaultReadsAServerStoredTwice()
+    {
+        var vault = Vault;
+        var server = StoreServer();
+        _store.Configuration.Servers.Add(new RemoteServerConfig { Id = server.Id, EncryptedCredentials = server.EncryptedCredentials });
+
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+    }
+
+    [Fact]
+    public void OneVaultForgetsARemovedServer()
+    {
+        var vault = Vault;
+        var server = StoreServer();
+        var first = vault.Unprotect(server.Id, server.EncryptedCredentials);
+
+        _store.Configuration.Servers.Remove(server);
+        Assert.Equal(KeyState.Ok, vault.GetKeyState());
+        _store.Configuration.Servers.Add(server);
+
+        Assert.NotSame(first, vault.Unprotect(server.Id, server.EncryptedCredentials));
+    }
+
     private const string ThirdKey = "01234567890123456789012345678901";
 
     private readonly FixedLegacyKeySource _legacy = new(null);
