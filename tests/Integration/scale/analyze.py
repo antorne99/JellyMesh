@@ -8,7 +8,8 @@ A sync runs from LastStartedUtc to LastFinishedUtc of /JellyMesh/Admin/Sync. Ins
 "Nothing changed since the last sync" when the sync skips it and the version links. The index is saved in the plugin's
 SQLite store (jellymesh.db and its -wal log), whose files say nothing about when, so the materialization counts from the
 end of the read with the index save in it. The fake's request log says what was asked for
-and how long the fake itself took to answer.
+and how long the fake itself took to answer. With music, the fakes' artist pages count as reads, and music-expected.txt
+says what the federation should hold.
 """
 import datetime
 import json
@@ -17,6 +18,8 @@ import re
 import sys
 
 WORK = sys.argv[1]
+# The request kinds of a catalog read: /Items pages, and the artist pages of the music.
+READS = ("items-", "artists ", "album-artists ")
 LOG_LINE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+) ([+-]\d\d:\d\d)\] \[(\w+)\] \[\d+\] ([\w.]+): (.*)")
 
 
@@ -111,9 +114,10 @@ def report(phase):
     status = json.loads(status_text)
     start, end = iso_ms(status.get("LastStartedUtc")), iso_ms(status.get("LastFinishedUtc"))
     window = [r for r in requests if start - 1000 <= r[0] <= end + 1000]
-    items = [r for r in window if r[3].startswith("items-")]
+    items = [r for r in window if r[3].startswith(READS)]
     images = [r for r in window if r[3].startswith("image-")]
-    others = [r for r in window if not r[3].startswith(("items-", "image-"))]
+    others = [r for r in window if not r[3].startswith(READS + ("image-",))]
+    unknown = [r for r in others if r[3].startswith("unknown ")]
     in_logs = [entry for entry in logs if start - 1000 <= entry[0] <= end + 1000]
     # One line per server: the read ends with the last.
     read_lines = [entry for entry in in_logs if re.match(r"Read \d+ .*entries", entry[3])]
@@ -133,10 +137,16 @@ def report(phase):
         f"  read of the catalog                      {seconds(read_end - start) if read_end else '-'}"
         f"  ({len(items)} /Items calls, {sum(r[2] for r in items) / 1048576:.1f} MiB, fake busy {seconds(sum(r[1] for r in items))})",
     ]
-    # A full read of each server starts with its first page of films, so the pages split by server there.
-    segments = []
+    kinds = {}
     for r in items:
-        if r[3] == "items-Movie 0" or not segments:
+        kinds[r[3].split(" ")[0]] = kinds.get(r[3].split(" ")[0], 0) + 1
+    if any(not kind.startswith(("items-Movie", "items-Series", "items-Season", "items-Episode")) for kind in kinds):
+        lines.append(f"    calls by kind                          {', '.join(f'{k} {v}' for k, v in sorted(kinds.items()))}")
+    # A full read of each server starts with the first page of the type it reads first, so the pages split by server there.
+    segments = []
+    first_page = next((r[3].split(" ")[0] + " 0" for r in items if r[3].endswith(" 0")), None)
+    for r in items:
+        if r[3] == first_page or not segments:
             segments.append([])
         segments[-1].append(r)
     if len(segments) > 1:
@@ -154,6 +164,10 @@ def report(phase):
         f"    after the last image                   {seconds(materialize_end - images[-1][0]) if images else '-'}",
         f"  after the materialization                {seconds(end - materialize_end) if done_line else '-'}  (version links, migration, libraries)",
         f"  other calls                              {len(others)} ({', '.join(sorted({r[3].split(' ')[0] for r in others}))})",
+    ]
+    if unknown:
+        lines.append(f"  UNKNOWN CALLS, answered 404 by the fake  {len(unknown)}: {', '.join(sorted({r[3] for r in unknown}))}")
+    lines += [
         f"log                                        {sum_reads(read_lines)} | {done_line[3] if done_line else '-'}",
         f"version links                              {link_line[3] if link_line else '-'}",
         f"warnings/errors in the window              {sum(1 for e in in_logs if e[1] in ('WRN', 'ERR', 'FTL'))}",
@@ -172,15 +186,22 @@ def report(phase):
     links = (read(f"{phase}-links.txt") or "").strip()
     if links:
         lines.append(f"listed films and episodes by versions     {links}")
+    track_links = (read(f"{phase}-track-links.txt") or "").strip()
+    if track_links:
+        lines.append(f"listed tracks by versions                 {track_links}")
     lines.append(f"files in the federated folder             {tree.get('total', 0)} ({', '.join(f'{k} {v}' for k, v in sorted(tree.items()) if k not in ('total', 'kib'))}), {tree.get('kib', 0) / 1024:.0f} MiB")
     servers = status.get("Servers") or []
     lines.append("servers                                   " + "; ".join(
-        f"{s.get('State')} failure={s.get('Failure')} movies={s.get('Movies')} series={s.get('Series')} episodes={s.get('Episodes')}" for s in servers))
+        f"{s.get('State')} failure={s.get('Failure')} movies={s.get('Movies')} series={s.get('Series')} episodes={s.get('Episodes')}"
+        + "".join(f" {key.lower()}={s[key]}" for key in ("Tracks", "Albums", "Artists") if key in s) for s in servers))
     return "\n".join(lines)
 
 
 print(f"# Scale run in {WORK}")
 print((read("fake.out") or read("fake-1.out") or "").strip())
+expected = (read("music-expected.txt") or "").strip()
+if expected:
+    print(f"expected: {expected}")
 remotes = len([name for name in os.listdir(WORK) if re.match(r"fake-\d+\.out$", name)])
 if remotes > 1:
     print(f"{remotes} remote servers with that catalog each")
@@ -196,6 +217,9 @@ for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-
             print("## scan of the linked federated folder (Jellyfin's own work, with the plugin's providers)")
             print(f"wall time                                 {seconds(seen - requested)} (polled every 2 s)")
             print(f"items in the library                      {(read('scan-items.txt') or '-').strip()}")
+            music = (read("scan-music-items.txt") or read("scan-music.txt") or "").strip()
+            if music:
+                print(f"music in the library                      {'; '.join(music.splitlines())}")
             if scan_samples:
                 print(f"memory, docker stats peak sample          {max(s[1] for s in scan_samples)} MiB")
             print(f"memory, process VmHWM after               {memory.get('VmHWM', '-')} MiB\n")

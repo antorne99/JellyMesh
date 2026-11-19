@@ -9,6 +9,10 @@
 # incremental sync three times (the first finds the scanned library, the next ones find nothing changed), the nightly
 # reconciliation on scanned items and one more incremental after it.
 # SCALE_NAME, SCALE_PORT and SCALE_FAKE_PORT (the first fake; the others follow) override the container and the ports.
+# SCALE_TRACKS above 0 adds a music library of that many tracks to each fake; fake n holds share n of the albums
+# (SCALE_SERVER_INDEX), so three fakes overlap as fake_remote.py describes, and what a federation of them should hold
+# goes to music-expected.txt. SCALE_FILMS=0 SCALE_SERIES=0 leaves the music alone. With SCALE_SCAN=1 the music folders
+# the plugin lists on its status page are linked to a Music library too.
 # SCALE_FIRST_ONLY=1 measures the first sync alone. SCALE_TREE builds the plugin from another checkout, such as a worktree
 # of an older commit, so that two versions run under the same harness.
 # usage: run.sh   (raw data and results.txt go in WORK, by default ${TMPDIR:-/tmp}/jm-scale-run)
@@ -22,6 +26,7 @@ NAME=${SCALE_NAME:-jm-scale-consumer}
 PORT=${SCALE_PORT:-18460}
 FAKE=${SCALE_FAKE_PORT:-18461}
 REMOTES=${SCALE_REMOTES:-1}
+TRACKS=${SCALE_TRACKS:-0}
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshScale", Device="scale", DeviceId="jm-scale-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
@@ -99,6 +104,8 @@ snapshot() {
   # After the scan: the films and episodes Jellyfin lists, by how many versions each one holds.
   [ -f "$WORK/scan-requested" ] && get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=MediaSourceCount' |
     jq -c '[.Items[] | .MediaSourceCount // 0] | group_by(.) | map({versions: .[0], items: length})' >"$WORK/$phase-links.txt"
+  [ -f "$WORK/scan-requested" ] && [ "$TRACKS" -gt 0 ] && get '/Items?Recursive=true&IncludeItemTypes=Audio&Fields=MediaSourceCount' |
+    jq -c '[.Items[] | .MediaSourceCount // 0] | group_by(.) | map({versions: .[0], items: length})' >"$WORK/$phase-track-links.txt"
   in_box "find /federata -type f | sed -e 's/.*\.//' | sort | uniq -c; echo total \$(find /federata -type f | wc -l); echo kib \$(du -sk /federata | cut -f1)" >"$WORK/$phase-tree.txt"
 }
 
@@ -141,10 +148,11 @@ FAKE_PIDS=
 touch "$WORK/hold"
 for n in $(seq 1 "$REMOTES"); do
   echo "--- fake remote $n on :$((FAKE + n - 1))"
-  SCALE_HOLD="$WORK/hold" SCALE_SERVER_ID=$(printf '%032x' $((0x8000 + n))) SCALE_SERVER_NAME="scale-remote-$n" \
+  SCALE_HOLD="$WORK/hold" SCALE_SERVER_ID=$(printf '%032x' $((0x8000 + n))) SCALE_SERVER_NAME="scale-remote-$n" SCALE_SERVER_INDEX="$n" \
     python3 "$S/fake_remote.py" "$((FAKE + n - 1))" "$WORK/requests.log" >"$WORK/fake-$n.out" 2>&1 &
   FAKE_PIDS="$FAKE_PIDS $!"
 done
+[ "$TRACKS" -gt 0 ] && python3 "$S/fake_remote.py" --expect "$REMOTES" | tee "$WORK/music-expected.txt"
 
 echo "--- consumer $NAME on :$PORT"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
@@ -210,6 +218,15 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
   done
   post "/Library/VirtualFolders?name=Films&collectionType=movies&refreshLibrary=false$films" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
   post "/Library/VirtualFolders?name=Shows&collectionType=tvshows&refreshLibrary=false$shows" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  if [ "$TRACKS" -gt 0 ]; then
+    # The music folders are where the status page says to add them, one per server and remote library.
+    music=$(get /JellyMesh/Admin/Status | jq -r '[.Servers[].AutomaticLibraries.ManualPaths[]? | select(.LibraryType == "music") | "&paths=" + (.Path | @uri)] | join("")')
+    if [ -n "$music" ]; then
+      post "/Library/VirtualFolders?name=Music&collectionType=music&refreshLibrary=false$music" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+    else
+      echo "the status page lists no music folder: no Music library" | tee "$WORK/scan-music.txt"
+    fi
+  fi
   echo "$(now_ms)" >"$WORK/scan-requested"
   post /Library/Refresh >/dev/null
   sleep 10
@@ -220,6 +237,9 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
   echo "$(now_ms)" >"$WORK/scan-seen"
   snapshot scan
   get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode,Series&Limit=0' | jq -r .TotalRecordCount >"$WORK/scan-items.txt"
+  [ "$TRACKS" -gt 0 ] && for type in Audio MusicAlbum MusicArtist; do
+    echo "$type $(get "/Items?Recursive=true&IncludeItemTypes=$type&Limit=0" | jq -r .TotalRecordCount)"
+  done >"$WORK/scan-music-items.txt"
   echo "--- scan done: $(cat "$WORK/scan-items.txt") items"
   measure incremental-scanned start_incremental
   measure incremental-scanned-again start_incremental
