@@ -527,6 +527,27 @@ public sealed class LegacyImportTests : IDisposable
         Assert.Equal(shared, File.GetUnixFileMode(outside));
     }
 
+    // The page says until when the old files are kept: 30 days after the migration, while their folder is there (row 469).
+    [Fact]
+    public async Task TheDatabaseSaysUntilWhenTheOldFilesAreKeptWhileTheyAreThere()
+    {
+        CopyFixtures();
+        var database = Open();
+        var migrated = _clock.Now;
+
+        Assert.Equal(migrated + TimeSpan.FromDays(30), await database.MigratedKeptUntilAsync(CancellationToken.None));
+
+        _clock.Now += TimeSpan.FromDays(31);
+        Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+        Assert.Null(await database.MigratedKeptUntilAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ANewInstallHasNoOldFilesToKeep()
+    {
+        Assert.Null(await Open().MigratedKeptUntilAsync(CancellationToken.None));
+    }
+
     // Once the folder is erased, files that come back are left alone instead of filling a folder the next night would erase.
     [Fact]
     public async Task OldFilesThatComeBackAfterTheErasureStayWhereTheyAre()

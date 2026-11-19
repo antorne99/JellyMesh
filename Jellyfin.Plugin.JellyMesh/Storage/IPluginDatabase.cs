@@ -103,4 +103,12 @@ public interface IPluginDatabase
     /// <returns>Whether the folder is gone, or never was.</returns>
     /// <exception cref="StoreSuspendedException">The store is suspended.</exception>
     Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets until when the files of the older version stay in <c>migrated-0.5/</c>, for the page (row 469).
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>30 days after the migration while the folder is there; <c>null</c> otherwise, or when it is a link.</returns>
+    /// <exception cref="StoreSuspendedException">The store is suspended.</exception>
+    Task<DateTimeOffset?> MigratedKeptUntilAsync(CancellationToken cancellationToken);
 }

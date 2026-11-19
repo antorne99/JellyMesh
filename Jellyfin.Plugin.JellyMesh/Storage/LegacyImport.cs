@@ -282,6 +282,17 @@ public sealed class LegacyImport
         return true;
     }
 
+    /// <summary>
+    /// Gets until when <see cref="FolderName"/> is kept: 30 days after the migration, while it is there and not a link.
+    /// </summary>
+    /// <param name="writer">The writer connection of the database.</param>
+    /// <returns>The date, or <c>null</c>.</returns>
+    internal DateTimeOffset? KeptUntil(SqliteConnection writer)
+    {
+        var folder = new DirectoryInfo(MigratedFolder);
+        return folder.Exists && folder.LinkTarget is null && ReadMark(writer) is { } mark ? mark.MigratedUtc + MigratedKept : null;
+    }
+
     // A folder for the old files that is a link is never written, made private or erased through.
     private bool IsLinkedFolder()
     {
