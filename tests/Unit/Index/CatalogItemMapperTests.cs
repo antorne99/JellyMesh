@@ -96,6 +96,38 @@ public class CatalogItemMapperTests
         Assert.Equal(ContentIds.None, item.Ids);
     }
 
+    [Theory]
+    [InlineData(RemoteItemType.Audio)]
+    [InlineData(RemoteItemType.MusicVideo)]
+    [InlineData(RemoteItemType.Video)]
+    [InlineData(RemoteItemType.Photo)]
+    [InlineData(RemoteItemType.PhotoAlbum)]
+    [InlineData(RemoteItemType.Folder)]
+    [InlineData(RemoteItemType.Book)]
+    [InlineData(RemoteItemType.AudioBook)]
+    public void AnEntryOfTheNewTypesStaysOutOfTheDedup(RemoteItemType type)
+    {
+        var entry = Map(TestItems.Movie("n", "Same", 2020, "1"), type);
+        var film = Map(TestItems.Movie("m", "Same", 2020, "1"), RemoteItemType.Movie);
+
+        var item = Assert.Single(CatalogItemMapper.ToCatalogItems(Catalog(entry, film)));
+
+        Assert.Equal("m", item.ItemId);
+    }
+
+    [Fact]
+    public void TheFilmsAndEpisodesOfAMixedLibraryEnterTheDedupBesideItsMusic()
+    {
+        var film = RemoteItemMapper.ToIndexedItem(TestItems.Movie("m", "Film", 2020, "1"), RemoteItemType.Movie, "mixed-library", _now);
+        var series = RemoteItemMapper.ToIndexedItem(TestItems.Series("s", "Show", 2019), RemoteItemType.Series, "mixed-library", _now);
+        var episode = RemoteItemMapper.ToIndexedItem(TestItems.Episode("e", "s", 1, 1), RemoteItemType.Episode, "mixed-library", _now);
+        var track = RemoteItemMapper.ToIndexedItem(TestItems.Movie("t", "Track", 2020, "2"), RemoteItemType.Audio, "mixed-library", _now);
+
+        var items = CatalogItemMapper.ToCatalogItems(Catalog(film, series, episode, track));
+
+        Assert.Equal([("e", ContentKind.Episode), ("m", ContentKind.Movie)], items.Select(item => (item.ItemId, item.Kind)).Order());
+    }
+
     [Fact]
     public void SeriesAndSeasonsAreNotItemsOfTheirOwn()
     {
