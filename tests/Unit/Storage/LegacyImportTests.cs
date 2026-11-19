@@ -195,6 +195,54 @@ public sealed class LegacyImportTests : IDisposable
         Assert.False(File.Exists(ConfigurationFile));
     }
 
+    // §10 row 444 (Q55): an automatic choice of 0.5 migrates again, without asking, to the remote library layout.
+    [Theory]
+    [InlineData(AutomaticMigrationStep.AddPaths)]
+    [InlineData(AutomaticMigrationStep.Scan)]
+    [InlineData(AutomaticMigrationStep.Carry)]
+    [InlineData(AutomaticMigrationStep.RemoveOldPaths)]
+    [InlineData(AutomaticMigrationStep.Finish)]
+    [InlineData(AutomaticMigrationStep.Done)]
+    public async Task AnAutomaticChoiceOfVersion05MigratesAgainFromTheAdditionOfThePaths(AutomaticMigrationStep step)
+    {
+        CopyFixtures(LayoutMigrationMode.Automatic, step, AutomaticMigrationError.AddFailed);
+
+        var migration = (await ConfigurationOf(Open())).LayoutMigration;
+
+        Assert.Equal(LayoutMigrationMode.Automatic, migration.Mode);
+        Assert.Equal(AutomaticMigrationStep.AddPaths, migration.Step);
+        Assert.Equal(AutomaticMigrationError.None, migration.Error);
+        Assert.Equal(string.Empty, migration.ErrorLibrary);
+        Assert.Equal([_fixtureServer], migration.PlacedServers);
+    }
+
+    [Theory]
+    [InlineData(LayoutMigrationMode.Manual, AutomaticMigrationStep.Done)]
+    [InlineData(LayoutMigrationMode.Manual, AutomaticMigrationStep.AddPaths)]
+    [InlineData(LayoutMigrationMode.None, AutomaticMigrationStep.AddPaths)]
+    public async Task AManualChoiceOfVersion05StaysManualAndNoChoiceStaysForTheBanner(LayoutMigrationMode mode, AutomaticMigrationStep step)
+    {
+        CopyFixtures(mode, step, AutomaticMigrationError.None);
+
+        var migration = (await ConfigurationOf(Open())).LayoutMigration;
+
+        Assert.Equal(mode, migration.Mode);
+        Assert.Equal(step, migration.Step);
+    }
+
+    // The fixtures with the folder migration of 0.5 at the given mode, step and error, done with the fixture server.
+    private void CopyFixtures(LayoutMigrationMode mode, AutomaticMigrationStep step, AutomaticMigrationError error)
+    {
+        CopyFixtures();
+        var xml = File.ReadAllText(ConfigurationFile)
+            .Replace("<Mode>None</Mode>", "<Mode>" + mode + "</Mode>", StringComparison.Ordinal)
+            .Replace("<Step>AddPaths</Step>", "<Step>" + step + "</Step>", StringComparison.Ordinal)
+            .Replace("<Error>None</Error>", "<Error>" + error + "</Error>", StringComparison.Ordinal)
+            .Replace("<ErrorLibrary />", "<ErrorLibrary>Film</ErrorLibrary>", StringComparison.Ordinal)
+            .Replace("<PlacedServers />", "<PlacedServers><guid>" + _fixtureServer + "</guid></PlacedServers>", StringComparison.Ordinal);
+        File.WriteAllText(ConfigurationFile, xml);
+    }
+
     // The small files as 0.5 wrote them, read back through the stores that now keep them in the database.
     [Fact]
     public async Task TheSmallFilesOfVersion05AreReadBackByTheirStores()
