@@ -251,6 +251,16 @@ public class TypeStubPlannerTests
     }
 
     [Fact]
+    public void AFolderWhoseFilesTheServerWouldIgnoreGetsItsId()
+    {
+        var rules = new FakeIgnoreRules((folder, _, isDirectory) => !isDirectory && Path.GetFileName(folder) == "sample");
+
+        var work = Assert.Single(Plan(Catalog(Folder("f1", "sample", HomeVideos), HomeVideo("v1", "Beach day", "f1")), ignoreRules: rules).Stubs);
+
+        Assert.Equal(In(HomeVideos, "Video domestici", "sample [f1]", "Beach day.strm"), work.Entry.RelativePath);
+    }
+
+    [Fact]
     public void AHomeVideoTheServerWouldIgnoreGetsItsId()
     {
         var work = Assert.Single(Plan(Catalog(HomeVideo("v1", "Clip.minta", HomeVideos)), ignoreRules: new FakeIgnoreRules("Clip.minta.strm")).Stubs);

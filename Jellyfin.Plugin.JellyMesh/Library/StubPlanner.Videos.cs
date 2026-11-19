@@ -22,6 +22,9 @@ public static partial class StubPlanner
 
     private const string ThumbSuffix = "-thumb";
 
+    // A plain file name, to ask whether the server skips every file of a folder.
+    private const string ProbeFileName = "Video.strm";
+
     // The extensions of the files written next to a home video.
     private static readonly HashSet<string> _fileExtensions = new([".strm", ".nfo", ".jpg", ".png", ".webp", ".gif"], StringComparer.OrdinalIgnoreCase);
 
@@ -172,11 +175,15 @@ public static partial class StubPlanner
     // Whether Jellyfin would read a file as an extra of another video, and not as a video of its own.
     private static bool IsReadAsExtra(string path) => ExtraRuleResolver.GetExtraInfo(path, _naming).ExtraType is not null;
 
-    // A remote folder name that ends like a stub file or image, names an extras folder or is skipped by the server gets its id.
+    // A remote folder name that ends like a stub file or image, names an extras folder, or is skipped by the server with or
+    // without its files, gets its id.
     private static string FolderName(IndexedItem folder, string parent, IServerIgnoreRules rules)
     {
         var name = FederatedPaths.Sanitize(folder.Name);
-        return _fileExtensions.Contains(Path.GetExtension(name)) || _extraFolders.Contains(name) || rules.Ignores(parent, name, true)
+        return _fileExtensions.Contains(Path.GetExtension(name))
+            || _extraFolders.Contains(name)
+            || rules.Ignores(parent, name, true)
+            || rules.Ignores(Path.Combine(parent, name), ProbeFileName, false)
             ? string.Create(CultureInfo.InvariantCulture, $"{name} [{folder.ItemId[..Math.Min(8, folder.ItemId.Length)]}]")
             : name;
     }
