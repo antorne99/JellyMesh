@@ -380,6 +380,80 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(AutomaticLibrariesError.Failed, state.Error);
     }
 
+    // D54: a library with the recorded id but another type or other paths may be the admin's, since the id comes from the name.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_library_with_the_recorded_id_but_another_type_or_other_paths_is_not_deleted_when_its_blocks_fail(bool otherType)
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        fixture.Libraries.RemoveFailure = null;
+        var folder = fixture.Libraries.Folders.Single(folder => folder.Name == SharedFilm + "2");
+        if (otherType)
+        {
+            folder.CollectionType = CollectionTypeOptions.tvshows;
+        }
+        else
+        {
+            folder.Locations = [_otherMovies, "/media/altro"];
+        }
+
+        fixture.Renamer.Removed.Clear();
+        fixture.Scans.Steps.Clear();
+
+        Assert.False(await fixture.Manager.ScanAsync(CancellationToken.None));
+
+        Assert.DoesNotContain(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+        Assert.DoesNotContain(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
+        Assert.True(Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2").Unblocked);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+        Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
+    }
+
+    // The paths last seen are not taken from a library still without its blocks, so later checks never delete one whose
+    // paths differed from the record.
+    [Fact]
+    public async Task A_library_with_the_recorded_id_but_other_paths_is_still_not_deleted_at_the_next_checks()
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        fixture.Libraries.RemoveFailure = null;
+        fixture.Store.Update(config => config.Servers.Remove(config.Servers.Single(server => server.Id == _serverId)));
+        fixture.Stubs.Setup(stubs => stubs.HasTitlesOf(_serverId)).Returns(true);
+        fixture.Libraries.Folders.Single(folder => folder.Name == SharedFilm + "2").Locations = [_otherMovies];
+        fixture.Renamer.Removed.Clear();
+        fixture.Scans.Steps.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+        Assert.DoesNotContain(fixture.Renamer.Removed, call => call.Name == SharedFilm + "2");
+        Assert.True(Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2").Unblocked);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+        Assert.Equal(AutomaticLibrariesError.Failed, fixture.Manager.GetSharedState().Error);
+    }
+
+    // The blocks of a shared library still without them cover the folders it holds now, those added since it was recorded too.
+    [Fact]
+    public async Task The_blocks_of_a_held_shared_library_cover_a_folder_added_after_it_was_recorded()
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        var thirdId = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000003");
+        var thirdMovies = $"{Root}/{thirdId:D}/Film";
+        fixture.Store.Update(config => config.Servers.Add(Fixture.WithLibraries(new RemoteServerConfig { Id = thirdId, Name = "Lago" })));
+        fixture.Libraries.Add("Suo", CollectionTypeOptions.movies, thirdMovies);
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        Assert.Contains(thirdMovies, fixture.Libraries.Find(SharedFilm + "2").Locations);
+        LetBlocks(fixture);
+        fixture.Renamer.Blocked.Clear();
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        var carry = Assert.Single(fixture.Renamer.Blocked.SelectMany(carries => carries), carry => carry.Name == SharedFilm + "2");
+        Assert.Contains(Guid.Parse(fixture.Libraries.IdOf("Suo")), carry.Folders.SelectMany(sources => sources));
+        Assert.False(Shared(fixture).Libraries.Single(record => record.Name == SharedFilm + "2").Unblocked);
+    }
+
     [Fact]
     public async Task A_shared_library_deleted_during_a_check_is_made_again_and_not_adopted()
     {

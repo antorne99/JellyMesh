@@ -634,6 +634,7 @@ public sealed partial class ServerLibraryManager
     }
 
     // Keeps the paths each shared library has now, so that only a library with the same paths is taken for it when renamed.
+    // A library still without its blocks keeps those it was recorded with, which tell whether it may be deleted (D54).
     private void RememberSharedPaths(IReadOnlyList<VirtualFolderInfo>? folders)
     {
         if (folders is null)
@@ -642,7 +643,8 @@ public sealed partial class ServerLibraryManager
         }
 
         bool Differs(AutomaticLibraryConfig record) =>
-            FindRecorded(record, folders) is { } folder && !(folder.Locations ?? []).SequenceEqual(record.Paths, StringComparer.Ordinal);
+            !record.Unblocked
+            && FindRecorded(record, folders) is { } folder && !(folder.Locations ?? []).SequenceEqual(record.Paths, StringComparer.Ordinal);
 
         if (!_store.Read(config => config.SharedLibraries.Libraries.Any(Differs)))
         {
@@ -733,18 +735,25 @@ public sealed partial class ServerLibraryManager
         return changed;
     }
 
-    // Writes the blocks of a shared library found for its record. False when they could not be written.
+    // Writes the blocks of a shared library found for its record, for its recorded and current folders. False when they
+    // could not be written.
     private async Task<bool> BlockFoundAsync(AutomaticLibraryConfig record, VirtualFolderInfo folder, IReadOnlyList<VirtualFolderInfo> folders, CancellationToken cancellationToken)
     {
-        var planned = new PlannedLibrary(KeyOf(record), record.Kind, string.Empty, string.Empty, [.. record.Paths]);
+        var paths = record.Paths.Concat((folder.Locations ?? []).Where(location => !record.Paths.Any(path => FederatedFolderLinkChecker.IsSamePath(path, location))));
+        var planned = new PlannedLibrary(KeyOf(record), record.Kind, string.Empty, string.Empty, [.. paths]);
         var id = Guid.TryParse(folder.ItemId, out var found) ? found : (Guid?)null;
         return BlockSources(planned, [.. folders.Where(other => other != folder)]) is { } sources
             && await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false);
     }
 
-    // A shared library found by its recorded id: one found by its name only may be the admin's (D54).
+    // A shared library found by its recorded id, type and exact paths: another may be the admin's, since the id comes from
+    // the name (D54).
     private static bool IsOwnShared(AutomaticLibraryConfig record, VirtualFolderInfo folder) =>
-        record.ItemId.Length > 0 && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase);
+        record.ItemId.Length > 0
+            && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase)
+            && folder.CollectionType == TypeOf(record.Kind)
+            && record.Paths.Count > 0
+            && SameLocations(folder.Locations ?? [], record.Paths);
 
     // Drops a deleted shared library from the registry with its key, so that a later check makes it again.
     private void ForgetShared(AutomaticLibraryConfig record) => _store.Update(config =>
