@@ -115,13 +115,11 @@ public sealed partial class LayoutMigration
 
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
         _materializer.PrepareServerFolders();
-        if (_registry.UsesOlderLayout() is not { } usesOlder)
+        if (_registry.UsesOlderLayout() is not { } olderLayout)
         {
             _logger.LogInformation("Migration to the server folders: the stubs are not read yet, so the new servers wait for the next sync");
             return;
         }
-
-        var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
 
         // The follow first, so a renamed automatic library is known as one (§10 row 385); busy is checked after the read,
         // so that a job started before it is seen (row 384).

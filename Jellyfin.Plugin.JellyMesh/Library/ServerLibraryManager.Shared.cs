@@ -272,12 +272,11 @@ public sealed partial class ServerLibraryManager
     private async Task<bool> ConvergeSharedAsync(List<VirtualFolderInfo> folders, bool prepared, bool recreate, CancellationToken cancellationToken)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
-        if (root.Length == 0 || !_store.Read(config => config.SharedLibraries.Enabled) || _stubs.UsesOlderLayout() is not { } usesOlder)
+        if (root.Length == 0 || !_store.Read(config => config.SharedLibraries.Enabled) || _stubs.UsesOlderLayout() is not { } olderLayout)
         {
             return false;
         }
 
-        var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
         KeepSharedCreatedKeys();
         var changed = await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false) | _sharedScanOwed;
         changed |= await ResolveSharedPendingAsync(root, folders, cancellationToken).ConfigureAwait(false);

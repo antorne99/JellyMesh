@@ -130,9 +130,9 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
-    public async Task StubFilesLeftInTheServerFoldersKeepTheNewServerOnItsServerFolders()
+    public async Task StubFilesLeftInTheServerFoldersOfAnEmptyRegistryKeepTheNewServerOnItsServerFolders()
     {
-        // The registry is on the remote library layout, but the materializer keeps the older one while such files are left.
+        // An empty registry, as after a damage, takes back the 0.5 layout of the files it finds.
         MigratedToRemoteLibraries();
         var stub = FederatedPaths.Resolve(Root, FederatedPaths.MovieStub(_serverA, "Dune (2021)", "A"));
         Directory.CreateDirectory(Path.GetDirectoryName(stub)!);
@@ -146,6 +146,35 @@ public sealed partial class LayoutMigrationTests
         await migration.Running;
 
         Assert.Equal([("Film", ServerFilms(_serverC))], _addedPaths);
+    }
+
+    [Fact]
+    public async Task AStrayStubFileInTheServerFoldersKeepsNoOlderLayoutOnceTheRegistryHoldsTitles()
+    {
+        MigratedToRemoteLibraries();
+        var (filmsOfA, filmsOfC) = (Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
+        var typeFolder = FederatedPaths.TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies);
+        _stubs.Add(new StubEntry
+        {
+            Id = Id(),
+            ServerId = _serverA,
+            Kind = StubKind.Movie,
+            RelativePath = FederatedPaths.MovieStubIn(typeFolder, "Dune (2021)", "A"),
+            IdentityKey = "dune",
+            Sources = [Source((_serverA, "a1"))]
+        });
+        var stray = FederatedPaths.Resolve(Root, FederatedPaths.MovieStub(_serverA, "Old (2019)", "A"));
+        Directory.CreateDirectory(Path.GetDirectoryName(stray)!);
+        await File.WriteAllTextAsync(stray, "stub");
+        Imported(_serverC, (filmsOfC, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, FederatedPaths.Resolve(Root, typeFolder)));
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, filmsOfC, TypeFolder.Movies))], _addedPaths);
     }
 
     [Theory]

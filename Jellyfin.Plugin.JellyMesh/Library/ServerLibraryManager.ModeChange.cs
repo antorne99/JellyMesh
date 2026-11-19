@@ -38,7 +38,7 @@ public sealed partial class ServerLibraryManager
 
             // As the change does: nothing goes while the layout is unknown, and a by-type library takes its type folders.
             var root = config.FederatedFolderPath;
-            var plan = root.Length == 0 || usesOlder is not { } older ? [] : LibraryPlan.For(server, root, older || StubLayout.HasOlderStubFiles(root), mode);
+            var plan = root.Length == 0 || usesOlder is not { } older ? [] : LibraryPlan.For(server, root, older, mode);
             if (mode != LibraryMode.None && plan.Count == 0)
             {
                 return (new LibraryModeChange(server.LibraryMode, mode, [], []), []);
@@ -160,7 +160,7 @@ public sealed partial class ServerLibraryManager
             return;
         }
 
-        bool? olderLayout = _stubs.UsesOlderLayout() is { } usesOlder ? usesOlder || StubLayout.HasOlderStubFiles(root) : null;
+        bool? olderLayout = _stubs.UsesOlderLayout();
         var (retiring, ready, none) = _store.Read(config => Find(config, serverId) is { } server
             ? (server.AutomaticLibraryRegistry.Any(record => Retires(server.LibraryMode, record)), ReadyToRetire(server, root, olderLayout), server.LibraryMode == LibraryMode.None)
             : (false, false, false));

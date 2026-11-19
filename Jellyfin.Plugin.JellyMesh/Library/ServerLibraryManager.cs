@@ -636,12 +636,11 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
 
         // Until the registry is read, the layout of the titles and so the folders of the libraries are unknown.
-        if (_stubs.UsesOlderLayout() is not { } usesOlder)
+        if (_stubs.UsesOlderLayout() is not { } olderLayout)
         {
             return false;
         }
 
-        var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
         var changed = false;
         var waited = false;
         foreach (var serverId in serverIds)
