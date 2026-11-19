@@ -33,7 +33,7 @@ run_wizard() {
   post /Startup/Complete
 }
 
-# add_library <name> <collection type> <path>...
+# add_library <name> <collection type, or "" for a mixed library> <path>...
 add_library() {
   local name=$1 type=$2 query path
   shift 2
@@ -41,9 +41,22 @@ add_library() {
     return
   fi
   echo "  library $name: $*"
-  query="name=$name&collectionType=$type&refreshLibrary=false"
-  for path in "$@"; do query+="&paths=$path"; done
+  query="name=$(uri "$name")&refreshLibrary=false"
+  [ -n "$type" ] && query+="&collectionType=$type"
+  for path in "$@"; do query+="&paths=$(uri "$path")"; done
   post "/Library/VirtualFolders?$query" '{"LibraryOptions":{"EnableInternetProviders":true,"PreferredMetadataLanguage":"it","MetadataCountryCode":"IT"}}'
+}
+
+uri() {
+  jq -rn --arg v "$1" '$v | @uri'
+}
+
+# add_library_if_present <name> <collection type> <path>: only when the server sees that folder,
+# so the 0.6 matrix without the 0.7 folders provisions as before.
+add_library_if_present() {
+  get "/Environment/DirectoryContents?path=$(uri "$(dirname "$3")")&includeDirectories=true" |
+    jq -e --arg p "$3" 'any(.[]; .Path == $p)' >/dev/null || return 0
+  add_library "$@"
 }
 
 # link_server_folders: adds the Film and Serie folders of each remote server already added to the libraries.
@@ -98,9 +111,16 @@ for instance in locale remoto-standard remoto-jellymesh; do
     add_library Film movies /media/film /federata/Film
     add_library Serie tvshows /media/serie /federata/Serie
     link_server_folders
+    add_library_if_present Musica music /media/musica
   else
     add_library Film movies /media/film
     add_library Serie tvshows /media/serie
+    # 0.7 types (README, "Media 0.7"); Jellyfin 12 cannot create a photos library.
+    add_library_if_present Musica music /media/musica
+    add_library_if_present "Video musicali" musicvideos /media/videomusicali
+    add_library_if_present "Video domestici" homevideos /media/videodomestici
+    add_library_if_present Libri books /media/libri
+    add_library_if_present Mista "" /media/mista
     add_remote_user
   fi
   scan_and_wait
