@@ -78,6 +78,17 @@ public sealed class StubItemUpdater
             item.PremiereDate = metadata.PremiereDate?.UtcDateTime;
             item.EndDate = metadata.EndDate?.UtcDateTime;
         }
+        else if (metadata.PremiereDate is { } date)
+        {
+            // The date of a home video is copied in both modes.
+            item.PremiereDate = date.UtcDateTime;
+        }
+
+        if (item is MusicVideo musicVideo)
+        {
+            musicVideo.Artists = metadata.Artists.ToArray();
+            musicVideo.Album = metadata.Album;
+        }
 
         if (metadata.IsProtected && item is Movie or Series)
         {
