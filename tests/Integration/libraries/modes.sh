@@ -7,6 +7,7 @@
 # A library of the admin with exactly the paths and type of a library the new mode wants is adopted: never renamed or
 # deleted, its permissions untouched, and who loses titles in it is named and kept across a restart (rows 440-441).
 # A library the plugin deletes leaves the users' lists, so a user who lost it does not get it back when it is made again.
+# A new library gets the id of its name, which the plugin blocks before making it.
 # A stock remote with two film libraries and a series library, and a consumer with the plugin.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f40] [PORT=18970] [KEEP=1] modes.sh
 set -euo pipefail
@@ -89,6 +90,9 @@ block() {
   wait_ready local
   login local
 }
+# name_id <library name>: the id 12.4 gives a library of that name, which the plugin blocks before making it: GetNewItemId of
+# its folder under root/default, relative to the data folder (/config in the image), case kept.
+name_id() { python3 -I -c 'import hashlib, sys, uuid; key = "MediaBrowser.Controller.Entities.CollectionFolderroot\\default\\" + sys.argv[1]; print(uuid.UUID(bytes_le=hashlib.md5(key.encode("utf-16-le")).digest()).hex)' "$1"; }
 ids() { get local '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path' | jq -c '[.Items[] | select((.Path // "") | startswith("/federata")) | "\(.Id) \(.Path | split("/") | last)"] | sort'; }
 
 echo "--- setup: $PREFIX-local on $PORT, $PREFIX-remote on $((PORT + 1))"
@@ -144,6 +148,9 @@ check "the save answers 200" 200 "$(status)"
 wait_own
 check "the libraries of the remote libraries replace those per type" '[["Casa - Film Bambini",false],["Casa - Film HD",false],["Casa - Telefilm",false]]' "$(registry)"
 check "the old libraries are gone" "no no" "$(exists 'Casa - Film') $(exists 'Casa - Serie')"
+NEW_LIBRARIES=("Casa - Film Bambini" "Casa - Film HD" "Casa - Telefilm")
+check "each new library has the id of its name, blocked before it was made" \
+  "$(for name in "${NEW_LIBRARIES[@]}"; do name_id "$name"; done)" "$(for name in "${NEW_LIBRARIES[@]}"; do folder "$name" | jq -r .ItemId; done)"
 BAMBINI=$(locations 'Casa - Film Bambini')
 check "the film libraries have the film folders" "$(own | jq -c '[.ManualPaths[] | select(.LibraryType == "movies") | .Path] | sort')" \
   "$(jq -nc --argjson a "$(locations 'Casa - Film HD')" --argjson b "$(locations 'Casa - Film Bambini')" '$a + $b | sort')"

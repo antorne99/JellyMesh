@@ -466,7 +466,7 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task Who_blocks_an_old_library_has_the_new_ones_blocked_before_their_first_scan()
+    public async Task Who_blocks_an_old_library_has_each_new_one_blocked_before_it_is_made_and_again_before_the_scan()
     {
         var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
         var oldFilms = Guid.Parse(fixture.Libraries.Find("Casa - Film").ItemId);
@@ -474,12 +474,14 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        Assert.Equal(["wait", "create", "create", "block", "scan"], fixture.Scans.Steps.Take(5));
-        var blocked = fixture.Renamer.Blocked[0];
+        Assert.Equal(["wait", "block", "create", "block", "create", "block", "scan"], fixture.Scans.Steps.Take(7));
+        var beforeMade = fixture.Renamer.Blocked.Take(2).Select(Assert.Single).ToList();
+        Assert.Equal(fixture.Libraries.Created.TakeLast(2).Select(call => call.Name), beforeMade.Select(carry => carry.Name));
+        Assert.All(beforeMade, carry => Assert.Null(carry.Id));
+        Assert.All(beforeMade, carry => Assert.Equal([oldFilms], Assert.Single(carry.Folders)));
         Assert.Equal(
             [("Casa - Film 4K", (Guid?)null), ("Casa 1a2b3c4d - Film", null)],
-            blocked.Select(carry => (carry.Name, carry.Id)).OrderBy(pair => pair.Name, StringComparer.Ordinal));
-        Assert.All(blocked, carry => Assert.Equal([oldFilms], Assert.Single(carry.Folders)));
+            fixture.Renamer.Blocked[2].Select(carry => (carry.Name, carry.Id)).OrderBy(pair => pair.Name, StringComparer.Ordinal));
         Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
     }
 
@@ -515,8 +517,8 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
-        Assert.Equal(["create", "create", "block", "scan"], fixture.Scans.Steps.Where(step => step is "create" or "block" or "scan").Take(4));
-        Assert.Equal(["Casa - Film 4K", "Casa 1a2b3c4d - Film"], fixture.Renamer.Blocked[0].Select(carry => carry.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(["block", "create", "block", "create", "block", "scan"], fixture.Scans.Steps.Where(step => step is "create" or "block" or "scan").Take(6));
+        Assert.Equal(["Casa - Film 4K", "Casa 1a2b3c4d - Film"], fixture.Renamer.Blocked[2].Select(carry => carry.Name).Order(StringComparer.Ordinal));
         Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
     }
 
@@ -531,26 +533,58 @@ public sealed partial class ServerLibraryManagerTests
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
-        Assert.Equal(["wait", "create", "block", "scan"], fixture.Scans.Steps.Take(4));
+        Assert.Equal(["wait", "block", "create", "block", "scan"], fixture.Scans.Steps.Take(5));
         Assert.Equal(["Casa 1a2b3c4d - Film"], fixture.Renamer.Blocked[0].Select(carry => carry.Name));
+        Assert.Equal(["Casa 1a2b3c4d - Film"], fixture.Renamer.Blocked[1].Select(carry => carry.Name));
         Assert.Empty(fixture.Libraries.Removed);
         Assert.Empty(fixture.Renamer.Carried);
     }
 
     [Fact]
-    public async Task A_block_that_cannot_be_written_stops_the_change_before_any_scan_and_the_next_check_finishes_it()
+    public async Task A_block_that_cannot_be_written_before_a_library_is_made_leaves_it_unmade_and_the_next_check_makes_it()
     {
         var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Libraries.Created.Clear();
         fixture.Scans.Steps.Clear();
         fixture.Renamer.BlockFailure = new InvalidOperationException("database");
 
         await fixture.Manager.ApplyMode(_serverId).Job;
 
+        Assert.Empty(fixture.Libraries.Created);
+        Assert.Empty(fixture.Server.PendingLibraries);
         Assert.DoesNotContain("scan", fixture.Scans.Steps);
         Assert.Empty(fixture.Libraries.Removed);
         Assert.Empty(fixture.Renamer.Carried);
 
         fixture.Renamer.BlockFailure = null;
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(2, fixture.Libraries.Created.Count);
+        Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));
+    }
+
+    [Fact]
+    public async Task A_block_that_cannot_be_written_after_the_libraries_are_made_stops_the_change_before_any_scan_and_the_next_check_finishes_it()
+    {
+        var fixture = await ChangedFrom(LibraryMode.ByType, LibraryMode.ByRemoteLibrary);
+        fixture.Libraries.Created.Clear();
+        fixture.Scans.Steps.Clear();
+        fixture.Renamer.OnBlock = () =>
+        {
+            if (fixture.Libraries.Created.Count == 2)
+            {
+                throw new InvalidOperationException("database");
+            }
+        };
+
+        await fixture.Manager.ApplyMode(_serverId).Job;
+
+        Assert.Equal(2, fixture.Libraries.Created.Count);
+        Assert.DoesNotContain("scan", fixture.Scans.Steps);
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Empty(fixture.Renamer.Carried);
+
+        fixture.Renamer.OnBlock = null;
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
 
         Assert.Equal(["Casa - Film"], fixture.Libraries.Removed.Select(call => call.Name));

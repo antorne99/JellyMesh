@@ -238,6 +238,30 @@ public sealed partial class ServerLibraryManager
         }
     }
 
+    // Blocks a library about to be made, by the id of its name, for who blocks an old library holding one of its folders.
+    // False when the blocks could not be written.
+    private async Task<bool> BlockBeforeCreateAsync(RemoteServerConfig owner, string name, PlannedLibrary planned, string root, IReadOnlyList<VirtualFolderInfo> folders, CancellationToken cancellationToken)
+    {
+        var carries = _store.Read(config => Owned(config, owner) is { } server && server.AutomaticLibraryRegistry.Any(record => Retires(server.LibraryMode, record))
+            ? CarriesFor([new NewLibrary(name, null, planned.Paths, false)], AccessSources(server, server.LibraryMode, folders, root))
+            : []);
+        if (carries.Count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            await _renamer.BlockAsync(carries, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogError("Cannot block a library of the new library mode for the users who blocked the old ones, so it is not made: {Error}", exception.GetType().Name);
+            return false;
+        }
+    }
+
     // The plugin libraries of the new mode already there, each with the old libraries that held its folders; one with no
     // id yet goes by its name.
     private static IEnumerable<AccessCarry> BlockCarries(RemoteServerConfig server, string root, IReadOnlyList<VirtualFolderInfo> folders)

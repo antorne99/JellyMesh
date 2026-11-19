@@ -670,7 +670,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                     }
                 }
 
-                changed |= await CreateAsync(serverId, owner, planned).ConfigureAwait(false);
+                changed |= await CreateAsync(serverId, owner, planned, cancellationToken).ConfigureAwait(false);
             }
 
             _conflicts[serverId] = conflicts;
@@ -788,7 +788,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         return changed || removed == LibraryPathOutcome.Done;
     }
 
-    private async Task<bool> CreateAsync(Guid serverId, RemoteServerConfig owner, PlannedLibrary planned)
+    private async Task<bool> CreateAsync(Guid serverId, RemoteServerConfig owner, PlannedLibrary planned, CancellationToken cancellationToken)
     {
         var folders = ReadFolders();
         var (root, serverName, addsToCollections) = _store.Read(config => (config.FederatedFolderPath, Owned(config, owner)?.Name, config.FederateCollections));
@@ -809,6 +809,14 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         {
             _logger.LogWarning("Cannot create the {Kind} library of {Server}: its names are taken", planned.Kind, LogText.Clean(serverName));
             _errors[serverId] = AutomaticLibrariesError.NameTaken;
+            return false;
+        }
+
+        // In a mode change, who blocks an old library holding a folder of this one blocks it before it exists, by the id of its
+        // name, so no scan shows it to them; one that cannot be blocked is not made.
+        if (!await BlockBeforeCreateAsync(owner, name, planned, root, folders, cancellationToken).ConfigureAwait(false))
+        {
+            _errors[serverId] = AutomaticLibrariesError.Failed;
             return false;
         }
 
