@@ -262,6 +262,37 @@ class OverlapTest(unittest.TestCase):
         only_track = [track for found in self.copies.values() for policy, track in found.values() if policy == "track"]
         self.assertTrue(all("MusicBrainzRecording" not in track["ProviderIds"] for track in only_track))
 
+    def test_expected_distinct_tracks_follow_row_453(self):
+        found = [track for copies in self.copies.values() for _, track in copies.values()]
+        parent = list(range(len(found)))
+
+        def root(n):
+            while parent[n] != n:
+                parent[n] = parent[parent[n]]
+                n = parent[n]
+            return n
+
+        def join(a, b):
+            parent[root(a)] = root(b)
+
+        seen = {}
+        for n, track in enumerate(found):
+            for key in ("MusicBrainzRecording", "MusicBrainzTrack"):
+                if key in track["ProviderIds"]:
+                    join(n, seen.setdefault((key, track["ProviderIds"][key]), n))
+        named = {}
+        for n, track in enumerate(found):
+            named.setdefault((track["AlbumArtist"], track["Album"], track["ParentIndexNumber"], track["IndexNumber"],
+                              track["Name"].lower()), []).append(n)
+        for group in named.values():
+            for a in group:
+                for b in group:
+                    if abs(found[a]["RunTimeTicks"] - found[b]["RunTimeTicks"]) <= 2 * 10_000_000:
+                        join(a, b)
+        distinct = len({root(n) for n in range(len(found))})
+        line = self.module.expectations(3, self.TRACKS, "mixed")
+        self.assertIn(f"{len(found)} tracks listed, {distinct} distinct", line)
+
     def test_expectations_add_up(self):
         line = self.module.expectations(3, 2000, "all")
         self.assertIn("6000 tracks listed, 2000 distinct", line)

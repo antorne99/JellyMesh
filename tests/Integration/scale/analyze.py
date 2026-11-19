@@ -186,23 +186,24 @@ def report(phase):
     links = (read(f"{phase}-links.txt") or "").strip()
     if links:
         lines.append(f"listed films and episodes by versions     {links}")
-    track_links = (read(f"{phase}-track-links.txt") or "").strip()
-    if track_links:
-        lines.append(f"listed tracks by versions                 {track_links}")
     lines.append(f"files in the federated folder             {tree.get('total', 0)} ({', '.join(f'{k} {v}' for k, v in sorted(tree.items()) if k not in ('total', 'kib'))}), {tree.get('kib', 0) / 1024:.0f} MiB")
     servers = status.get("Servers") or []
     lines.append("servers                                   " + "; ".join(
-        f"{s.get('State')} failure={s.get('Failure')} movies={s.get('Movies')} series={s.get('Series')} episodes={s.get('Episodes')}"
-        + "".join(f" {key.lower()}={s[key]}" for key in ("Tracks", "Albums", "Artists") if key in s) for s in servers))
+        f"{s.get('State')} failure={s.get('Failure')} movies={s.get('Movies')} series={s.get('Series')} episodes={s.get('Episodes')}" for s in servers))
     return "\n".join(lines)
 
 
 print(f"# Scale run in {WORK}")
 print((read("fake.out") or read("fake-1.out") or "").strip())
+remotes = len([name for name in os.listdir(WORK) if re.match(r"fake-\d+\.out$", name)])
+# With music each fake holds its own share of the albums.
+for n in range(2, remotes + 1):
+    for line in (read(f"fake-{n}.out") or "").splitlines():
+        if line.startswith("music:"):
+            print(line)
 expected = (read("music-expected.txt") or "").strip()
 if expected:
     print(f"expected: {expected}")
-remotes = len([name for name in os.listdir(WORK) if re.match(r"fake-\d+\.out$", name)])
 if remotes > 1:
     print(f"{remotes} remote servers with that catalog each")
 idle = memory_of("idle")
@@ -217,7 +218,7 @@ for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-
             print("## scan of the linked federated folder (Jellyfin's own work, with the plugin's providers)")
             print(f"wall time                                 {seconds(seen - requested)} (polled every 2 s)")
             print(f"items in the library                      {(read('scan-items.txt') or '-').strip()}")
-            music = (read("scan-music-items.txt") or read("scan-music.txt") or "").strip()
+            music = "\n".join(text.strip() for text in (read("scan-music.txt"), read("scan-music-items.txt")) if text)
             if music:
                 print(f"music in the library                      {'; '.join(music.splitlines())}")
             if scan_samples:

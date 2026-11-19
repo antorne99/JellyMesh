@@ -104,8 +104,6 @@ snapshot() {
   # After the scan: the films and episodes Jellyfin lists, by how many versions each one holds.
   [ -f "$WORK/scan-requested" ] && get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=MediaSourceCount' |
     jq -c '[.Items[] | .MediaSourceCount // 0] | group_by(.) | map({versions: .[0], items: length})' >"$WORK/$phase-links.txt"
-  [ -f "$WORK/scan-requested" ] && [ "$TRACKS" -gt 0 ] && get '/Items?Recursive=true&IncludeItemTypes=Audio&Fields=MediaSourceCount' |
-    jq -c '[.Items[] | .MediaSourceCount // 0] | group_by(.) | map({versions: .[0], items: length})' >"$WORK/$phase-track-links.txt"
   in_box "find /federata -type f | sed -e 's/.*\.//' | sort | uniq -c; echo total \$(find /federata -type f | wc -l); echo kib \$(du -sk /federata | cut -f1)" >"$WORK/$phase-tree.txt"
 }
 
