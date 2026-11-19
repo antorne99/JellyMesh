@@ -22,7 +22,8 @@ import threading
 import time
 import urllib.parse
 
-PORT, LOG = int(sys.argv[1]), sys.argv[2]
+# The request log, set by main.
+LOG = None
 FILMS = int(os.environ.get("SCALE_FILMS", "5000"))
 SERIES = int(os.environ.get("SCALE_SERIES", "500"))
 SEASONS = int(os.environ.get("SCALE_SEASONS", "5"))
@@ -274,6 +275,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if length:
             self.rfile.read(length)
         kind, sent = self.route(target.path, urllib.parse.parse_qs(target.query))
+        if LOG is None:
+            return
         with log_lock, open(LOG, "a") as handle:
             handle.write(f"{int(started * 1000)} {int((time.time() - started) * 1000)} {sent} {kind}\n")
 
@@ -296,5 +299,12 @@ class Server(http.server.ThreadingHTTPServer):
     request_queue_size = 256
 
 
-print(f"catalog: {COUNTS}, images {'on' if IMAGES else 'off'}", flush=True)
-Server(("0.0.0.0", PORT), Handler).serve_forever()
+def main():
+    global LOG
+    port, LOG = int(sys.argv[1]), sys.argv[2]
+    print(f"catalog: {COUNTS}, images {'on' if IMAGES else 'off'}", flush=True)
+    Server(("0.0.0.0", port), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()
