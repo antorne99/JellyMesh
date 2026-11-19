@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
@@ -24,17 +25,17 @@ public sealed class TrackMaterializerTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private static RemoteItem Track(string id, string name, int number, string cover = "c1") => new()
+    private static RemoteItem Track(string id, string name, int number, string cover = "c1", string albumId = "al1", string artist = "Artist") => new()
     {
         Id = id,
         Name = name,
         IndexNumber = number,
         ProductionYear = 2020,
         Album = "Album",
-        AlbumId = "al1",
+        AlbumId = albumId,
         AlbumPrimaryImageTag = cover,
-        Artists = ["Artist"],
-        AlbumArtists = [new RemoteNamedItem("Artist")],
+        Artists = [artist],
+        AlbumArtists = [new RemoteNamedItem(artist)],
         Genres = ["Rock"],
         ProviderIds = new Dictionary<string, string?> { ["MusicBrainzTrack"] = "mb-" + id },
         MediaSources =
@@ -88,6 +89,61 @@ public sealed class TrackMaterializerTests : IDisposable
         Assert.Equal(AlbumPath(a, "folder.jpg"), album.GetImageInfo(ImageType.Primary, 0)?.Path);
         Assert.Empty(track.GetImages(ImageType.Primary));
         Assert.Equal(2, _fixture.Sync.Client.ImageReads.Count);
+    }
+
+    [Fact]
+    public async Task ATrackThatIsTheStubOfAnotherJellyMeshGetsNoStub()
+    {
+        var federated = Track("t1", "Song", 1);
+        federated = federated with { MediaSources = [federated.MediaSources![0] with { Path = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") }] };
+        _fixture.Sync.Client.Add(TestLibraries.Music, RemoteItemType.Audio, federated, Track("t2", "Other", 2));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Music);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["02 - Other.strm", "folder.jpg"], Directory.GetFiles(AlbumPath(a)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheLastTracksOfAnArtistTakeTheirAlbumAndArtistFoldersWithTheCover()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Music, RemoteItemType.Audio, Track("t1", "Song", 1), Track("t2", "Other", 2), Track("t3", "Kept", 1, albumId: "al2", artist: "Band"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Music);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.True(File.Exists(AlbumPath(a, "folder.jpg")));
+        _fixture.Sync.Client.Items[(TestLibraries.Music, RemoteItemType.Audio)].RemoveAll(item => item.Id is "t1" or "t2");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(Directory.Exists(_fixture.PathIn(a, TestLibraries.Music, "Musica", "Artist")));
+        Assert.True(File.Exists(_fixture.PathIn(a, TestLibraries.Music, "Musica", "Band", "Album", "01 - Kept.strm")));
+        Assert.Equal(["Kept"], _fixture.Registry.State.Stubs.Select(stub => Path.GetFileNameWithoutExtension(stub.RelativePath)[5..]));
+    }
+
+    [Fact]
+    public async Task WhenTheTrackThatCarriesTheCoverGoesTheNextOneCarriesIt()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Music, RemoteItemType.Audio, Track("t1", "Song", 1), Track("t2", "Other", 2));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Music);
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Sync.Client.Items[(TestLibraries.Music, RemoteItemType.Audio)].RemoveAll(item => item.Id is "t1");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["02 - Other.strm", "folder.jpg"], Directory.GetFiles(AlbumPath(a)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal("Primary=c1;", Assert.Single(_fixture.Registry.State.Stubs).ImageTag);
+    }
+
+    [Fact]
+    public async Task ATrackStubIsReadBackAsATrackAfterARestart()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Music, RemoteItemType.Audio, Track("t1", "Song", 1));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Music);
+        await _fixture.SyncAndMaterializeAsync();
+
+        using var restarted = new StubRegistry(_fixture.Sync.Database, _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
+
+        Assert.Equal(StubKind.Track, Assert.Single(restarted.State.Stubs).Kind);
     }
 
     [Theory]

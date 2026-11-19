@@ -219,6 +219,25 @@ public class TrackStubPlannerTests
     }
 
     [Fact]
+    public void HostileNamesStayInsideTheMusicFolderOfTheServer()
+    {
+        var plan = Plan([
+            Track("t1", "../../x", 1, album: "../..", albumArtists: [".."]),
+            Track("t2", "a/b\\c", 2, album: "///", albumId: "album2", albumArtists: ["/"]),
+            Track("t3", "...", 3, album: "  ", albumId: "album3", albumArtists: ["\0"], artists: [])
+        ]);
+
+        Assert.Equal(3, plan.Stubs.Count);
+        Assert.All(plan.Stubs, work =>
+        {
+            var parts = Path.GetRelativePath(MusicFolder, work.Entry.RelativePath).Split(Path.DirectorySeparatorChar);
+            Assert.Equal(3, parts.Length);
+            Assert.All(parts, part => Assert.False(string.IsNullOrWhiteSpace(part.Trim('.'))));
+            Assert.StartsWith(Path.Combine("/root", MusicFolder) + Path.DirectorySeparatorChar, FederatedPaths.Resolve("/root", work.Entry.RelativePath), StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public void ATrackWithNoVersionOfItsOwnIsNotImported()
     {
         var plan = Plan([Track("t1") with { Versions = [] }]);
