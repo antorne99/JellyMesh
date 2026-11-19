@@ -225,7 +225,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
             if (stubs.Keys.Any(id => !_stubs.Sees(user, id)) || named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)))
             {
-                _logger.LogWarning(
+                _logger.LogInformation(
                     "{Controller}.{Action} names a title the user does not see ({Unseen}) or a play session of another user ({OfAnother}): 404",
                     controller,
                     action,

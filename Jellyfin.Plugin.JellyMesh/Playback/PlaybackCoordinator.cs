@@ -305,7 +305,7 @@ public sealed class PlaybackCoordinator
         var place = _streams.TryEnter(serverId);
         if (place is null)
         {
-            _logger.LogWarning("Server {ServerId} has {Count} streams open from here, the most allowed: a stream is refused", serverId, PlaybackLimits.StreamsPerServer);
+            _logger.LogInformation("Server {ServerId} has {Count} streams open from here, the most allowed: a stream is refused", serverId, PlaybackLimits.StreamsPerServer);
             return RemoteResult.Fail<RemoteContent>(RemoteFailure.Busy);
         }
 

@@ -139,7 +139,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         var targetStub = target.Equals(route) ? routeStub : _stubs.Find(target);
         if (targetStub is null && routeStub is null)
         {
-            await PlayStockVersionAsync(context, next, target).ConfigureAwait(false);
+            await PlayStockVersionAsync(context, next, target, route).ConfigureAwait(false);
             return;
         }
 
@@ -201,14 +201,23 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     }
 
     // Stock answers for a local version under a local item. The GET action has no version to pin, so the answer is trimmed.
-    private static async Task PlayStockVersionAsync(ActionExecutingContext context, ActionExecutionDelegate next, Guid versionId)
+    private async Task PlayStockVersionAsync(ActionExecutingContext context, ActionExecutionDelegate next, Guid versionId, Guid route)
     {
         context.ActionArguments[MediaSourceArgument] = versionId.ToString("N");
         var executed = await next().ConfigureAwait(false);
-        if (executed.Result is ObjectResult { Value: PlaybackInfoResponse response })
+        if (executed.Result is ObjectResult { Value: PlaybackInfoResponse response } && executed.Exception is null && response.ErrorCode is null && response.MediaSources.Count > 0)
         {
             KeepOnly(response, versionId);
+            _logger.LogInformation("Item {ItemId} plays its local version {VersionId}, play session {PlaySessionId}", route, versionId, response.PlaySessionId);
+            return;
         }
+
+        if (executed.Result is ObjectResult { Value: PlaybackInfoResponse trimmed })
+        {
+            KeepOnly(trimmed, versionId);
+        }
+
+        _logger.LogWarning("Stock gave no PlaybackInfo for the local version {VersionId} of item {ItemId}: {Failure}", versionId, route, StockFailureOf(executed));
     }
 
     private static void HideFile(MediaSourceInfo source)

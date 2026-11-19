@@ -53,6 +53,31 @@ public class RemotePlaybackClientTests
     }
 
     [Fact]
+    public async Task A_failed_answer_keeps_its_http_status_for_the_logs()
+    {
+        var (client, _) = Build(_ => StubHandler.Status(HttpStatusCode.InternalServerError));
+
+        var stream = await client.OpenStreamAsync(_endpoint, _session, new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null), CancellationToken.None);
+        var playlist = await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", CancellationToken.None);
+        var info = await client.GetPlaybackInfoAsync(_endpoint, _session, Request(), CancellationToken.None);
+
+        Assert.Equal(500, stream.Status);
+        Assert.Equal(500, playlist.Status);
+        Assert.Equal("ServerError (HTTP 500)", info.Describe());
+    }
+
+    [Fact]
+    public async Task An_unreachable_remote_has_no_status()
+    {
+        var (client, _) = Build(_ => throw new HttpRequestException("down"));
+
+        var stream = await client.OpenStreamAsync(_endpoint, _session, new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null), CancellationToken.None);
+
+        Assert.Null(stream.Status);
+        Assert.Equal("Unreachable", stream.Describe());
+    }
+
+    [Fact]
     public async Task The_token_goes_in_a_header_and_never_in_a_url()
     {
         var (client, handler) = Build(_ => StubHandler.Json("{}"));

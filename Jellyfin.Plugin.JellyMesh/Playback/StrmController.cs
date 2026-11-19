@@ -59,7 +59,7 @@ public class StrmController : ControllerBase
         // Before the lookup, so that an answer never tells which stubs exist.
         if (!LoopbackGuard.IsLocalRequest(HttpContext) || !_signer.IsValid(stubId, signature))
         {
-            _logger.LogWarning("A read of a .strm target was refused: not from this server or without a valid signature: 403");
+            _logger.LogDebug("A read of a .strm target was refused: not from this server or without a valid signature: 403");
             return StatusCode(StatusCodes.Status403Forbidden);
         }
 
