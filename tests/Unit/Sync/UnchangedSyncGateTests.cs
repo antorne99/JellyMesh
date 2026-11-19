@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -133,6 +134,20 @@ public sealed class UnchangedSyncGateTests : IDisposable
         RaiseAdded(new Person { Name = "Someone" });
 
         Assert.True(_gate.IsUnchanged(_gate.Capture()));
+    }
+
+    // A book placeholder takes its metadata only once its item exists, so the item appearing must let the next sync run.
+    [Fact]
+    public void TheLocalIdsReadIncludeBooks()
+    {
+        InternalItemsQuery? query = null;
+        _library.Setup(library => library.GetItemIds(It.IsAny<InternalItemsQuery>()))
+            .Callback<InternalItemsQuery>(read => query = read)
+            .Returns(() => [.. _localIds]);
+
+        _gate.Capture();
+
+        Assert.Contains(BaseItemKind.Book, query!.IncludeItemTypes);
     }
 
     [Fact]

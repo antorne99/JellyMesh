@@ -18,13 +18,13 @@ namespace Jellyfin.Plugin.JellyMesh.Sync;
 
 /// <summary>
 /// <see cref="IUnchangedSyncGate"/> kept in memory: after a restart the first sync runs. The local library is read as the
-/// ids of its films, episodes and series and its libraries, which no event is needed for, and as a count of the items
+/// ids of its films, episodes, series and books and its libraries, which no event is needed for, and as a count of the items
 /// Jellyfin added, removed or updated outside the federated folder, or the administrator edited, for changes that keep
 /// the id (Q386).
 /// </summary>
 public sealed class UnchangedSyncGate : IUnchangedSyncGate, IDisposable
 {
-    private static readonly BaseItemKind[] _localKinds = [BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.Series, BaseItemKind.Video];
+    private static readonly BaseItemKind[] _localKinds = [BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.Series, BaseItemKind.Video, BaseItemKind.Book];
 
     private readonly IFederationIndex _index;
     private readonly IRemoteServerRegistry _servers;
