@@ -3,6 +3,7 @@ using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 
@@ -75,7 +76,10 @@ public static class RemoteItemMapper
 
             // Decision 11: a version that is the stub of another JellyMesh is not a source. An item left with no versions
             // is skipped by the dedup, and an incremental read replaces the entry, so one that changed leaves at once.
-            Versions = item.MediaSources?.Where(source => !IsFederatedStub(source)).Select(ToVersion).ToList() ?? []
+            // A track stub of another JellyMesh has its file path, not its URL, so it is told by its folder (row 455).
+            Versions = kind == IndexedItemKind.Audio && FederatedTrackMark.IsStub(item.Path, item.MediaSources)
+                ? []
+                : item.MediaSources?.Where(source => !IsFederatedStub(source)).Select(ToVersion).ToList() ?? []
         };
 
         // Films and series keep their stored form, so that their entries are not written again.

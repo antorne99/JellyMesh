@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
-using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
@@ -106,7 +105,8 @@ public sealed class TrackMaterializerTests : IDisposable
     public async Task ATrackThatIsTheStubOfAnotherJellyMeshGetsNoStub()
     {
         var federated = Track("t1", "Song", 1);
-        federated = federated with { MediaSources = [federated.MediaSources![0] with { Path = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") }] };
+        var stubPath = "/fed/8e3f1c2a-4b5d-4e6f-8a9b-0c1d2e3f4a5b/" + TestLibraries.Music + "/Musica/Artist/Album/01 - Song.strm";
+        federated = federated with { Path = stubPath, MediaSources = [federated.MediaSources![0] with { Path = stubPath, Protocol = "File" }] };
         _fixture.Sync.Client.Add(TestLibraries.Music, RemoteItemType.Audio, federated, Track("t2", "Other", 2));
         var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Music);
 
