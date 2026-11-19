@@ -162,7 +162,7 @@ public static partial class StubPlanner
                     if (content.Identity.Kind == ContentKind.Movie)
                     {
                         var folder = part.FolderOf([winner], TypeFolder.Movies);
-                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id), label)), content, winner));
+                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id, label), label)), content, winner));
                     }
                     else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
                     {
@@ -954,17 +954,21 @@ public static partial class StubPlanner
             }
         }
 
-        // The folder name of a film, unique in its type folder.
-        public string MovieFolderName(string typeFolder, string? title, int? year, string id)
-            => Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id);
+        // The folder name of a film, unique in its type folder, with the id when Jellyfin would read its stub as an extra.
+        public string MovieFolderName(string typeFolder, string? title, int? year, string id, string? label = null)
+        {
+            var name = FederatedPaths.TitleFolder(title, year);
+            var stub = label is null ? Path.Combine(typeFolder, name, name + ".strm") : FederatedPaths.MovieStubIn(typeFolder, name, label);
+            return Unique(typeFolder, name, id, IsReadAsExtra(stub));
+        }
 
         // The relative folder of a series, unique in its type folder.
         public string SeriesFolder(string typeFolder, string? title, int? year, string id)
             => Path.Combine(typeFolder, Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id));
 
-        private string Unique(string typeFolder, string name, string id)
+        private string Unique(string typeFolder, string name, string id, bool isExtra = false)
         {
-            if (_taken.Add(Path.Combine(typeFolder, name)))
+            if (!isExtra && _taken.Add(Path.Combine(typeFolder, name)))
             {
                 return name;
             }

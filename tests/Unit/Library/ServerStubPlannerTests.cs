@@ -351,6 +351,33 @@ public class ServerStubPlannerTests
         Assert.Equal(series.Entry.Id, On(plan, _serverA).Entry.SeriesStubId);
     }
 
+    [Theory]
+    [InlineData("Trailers")]
+    [InlineData("extras")]
+    [InlineData("Other")]
+    [InlineData("backdrops")]
+    public void AFilmNamedLikeAnExtrasFolderGetsTheIdInItsFolder(string name)
+    {
+        Assert.True(JellyfinNaming.IsExtra(Path.Combine(A, Library, "Film", name, name + " - Casa.strm")));
+
+        var stub = On(Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m", name) with { ProductionYear = null })]), _serverA);
+
+        var folder = $"{name} [{stub.Entry.Id[..8]}]";
+        Assert.Equal(Path.Combine(A, Library, "Film", folder, folder + " - Casa.strm"), stub.Entry.RelativePath);
+        Assert.False(JellyfinNaming.IsExtra(stub.Entry.RelativePath));
+    }
+
+    [Fact]
+    public void AFilmWhoseLabelledFileIsNoExtraKeepsItsName()
+    {
+        var path = Path.Combine(A, Library, "Film", "Beach-trailer", "Beach-trailer - Casa.strm");
+        Assert.False(JellyfinNaming.IsExtra(path));
+
+        var stub = On(Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m", "Beach-trailer") with { ProductionYear = null })]), _serverA);
+
+        Assert.Equal(path, stub.Entry.RelativePath);
+    }
+
     [Fact]
     public void ATitleOnTwoServersGetsOneLabelledStubInTheFolderOfEach()
     {

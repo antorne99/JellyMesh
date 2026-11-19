@@ -91,7 +91,7 @@ public static partial class StubPlanner
                 var typeFolder = FederatedPaths.TypeFolderOf(server.Id, placement.First(), type);
                 var sources = ranked.Select(source => new StubSource(server.Id, item.ItemId, source.MediaSourceId) { LibraryId = item.LibraryId }).ToList();
                 works.Add(kind == StubKind.MusicVideo
-                    ? MusicVideoWork(input, item, stub, sources, id => FederatedPaths.MovieStubIn(typeFolder, folders.MovieFolderName(typeFolder, item.Name, item.ProductionYear, id), label))
+                    ? MusicVideoWork(input, item, stub, sources, id => FederatedPaths.MovieStubIn(typeFolder, folders.MovieFolderName(typeFolder, item.Name, item.ProductionYear, id, label), label))
                     : HomeVideoWork(input, item, stub, sources, id => HomeVideoPath(catalog, server.Id, item, typeFolder, files, id)));
                 if (stub is not null)
                 {
