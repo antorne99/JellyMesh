@@ -672,6 +672,7 @@ public sealed partial class ServerLibraryManager
                 if (folder is not null && IsOwnShared(record, folder) && await RemoveSharedAsync(folder, cancellationToken).ConfigureAwait(false))
                 {
                     ForgetShared(record);
+                    folders.Remove(folder);
                     _logger.LogInformation("Deleted the shared library {Library}, which could not be blocked", LogText.Clean(folder.Name));
                     _sharedScanOwed = true;
                     changed = true;
@@ -718,7 +719,7 @@ public sealed partial class ServerLibraryManager
     // A shared library found by its recorded id, or by its name with the recorded paths and type.
     private static bool IsOwnShared(AutomaticLibraryConfig record, VirtualFolderInfo folder) =>
         (record.ItemId.Length > 0 && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase))
-        || (folder.CollectionType == TypeOf(record.Kind) && SameLocations(folder.Locations ?? [], record.Paths));
+        || (record.Paths.Count > 0 && folder.CollectionType == TypeOf(record.Kind) && SameLocations(folder.Locations ?? [], record.Paths));
 
     // Drops a deleted shared library from the registry with its key, so that a later check makes it again.
     private void ForgetShared(AutomaticLibraryConfig record) => _store.Update(config =>

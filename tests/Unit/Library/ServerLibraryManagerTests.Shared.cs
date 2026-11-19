@@ -379,6 +379,21 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task A_shared_library_deleted_during_a_check_is_made_again_and_not_adopted()
+    {
+        var fixture = await WithUnblockedSharedFilm();
+        fixture.Libraries.RemoveFailure = null;
+        fixture.Renamer.OnBlock = () => fixture.Renamer.BlockFailure =
+            fixture.Libraries.Folders.Any(folder => folder.Name == SharedFilm + "2") ? new InvalidOperationException("boom") : null;
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.Contains(fixture.Libraries.Removed, call => call.Name == SharedFilm + "2");
+        Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Name == SharedFilm + "2");
+        Assert.Contains(Shared(fixture).Libraries, record => record.Kind == ServerLibraryKind.Movies && record.Name == SharedFilm && !record.Adopted);
+    }
+
+    [Fact]
     public async Task A_shared_library_not_found_by_id_or_name_is_blocked_under_the_name_of_the_one_library_with_its_paths_and_type()
     {
         var fixture = WithMovedUnblockedLibrary();
@@ -391,7 +406,7 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_shared_library_found_only_by_its_paths_is_never_deleted_when_its_blocks_fail()
+    public async Task A_shared_library_found_only_by_its_paths_is_deleted_for_failed_blocks_only_once_the_follow_takes_it_as_renamed()
     {
         var fixture = WithMovedUnblockedLibrary();
         fixture.Renamer.BlockFailure = new InvalidOperationException("boom");
@@ -403,6 +418,12 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Empty(fixture.Libraries.Removed);
         Assert.Empty(fixture.Renamer.Removed);
         Assert.Equal(["Vecchia"], fixture.Manager.GetSharedState().Unblocked);
+
+        // The follow takes the one library with the paths last seen as renamed (D49), so it is the plugin's from then on.
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal(["Rinominata"], fixture.Libraries.Removed.Select(call => call.Name));
+        Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Kind == ServerLibraryKind.Movies);
     }
 
     [Fact]
