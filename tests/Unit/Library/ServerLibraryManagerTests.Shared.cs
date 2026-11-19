@@ -206,6 +206,56 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Equal(2, fixture.Libraries.Created.Count);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_library_the_admin_makes_after_deleting_a_shared_one_is_not_taken_for_it(bool withServerFolder)
+    {
+        var fixture = WithTwoServers();
+        await fixture.Manager.EnableShared().Job;
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find(SharedFilm));
+        string[] kept = withServerFolder ? [_movies] : [];
+        fixture.Libraries.Add("Bambini", CollectionTypeOptions.movies, kept);
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Kind == ServerLibraryKind.Movies);
+        Assert.Equal(kept, fixture.Libraries.Find("Bambini").Locations);
+        Assert.Equal(2, fixture.Libraries.Created.Count);
+    }
+
+    [Fact]
+    public async Task An_empty_shared_library_renamed_in_the_dashboard_is_left_to_the_admin()
+    {
+        var fixture = new Fixture();
+        fixture.Store.Update(config => config.Servers.Clear());
+        await fixture.Manager.EnableShared().Job;
+        fixture.Libraries.RenameFromDashboard(SharedFilm, "Vuota");
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+        fixture.AddServerBack("Casa");
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(Shared(fixture).Libraries, record => record.Kind == ServerLibraryKind.Movies);
+        Assert.Empty(fixture.Libraries.Find("Vuota").Locations);
+        Assert.Equal(2, fixture.Libraries.Created.Count);
+    }
+
+    [Fact]
+    public async Task A_shared_library_keeps_the_paths_it_was_last_seen_with()
+    {
+        var fixture = WithTwoServers();
+
+        await fixture.Manager.EnableShared().Job;
+
+        Assert.Equal([_movies, _otherMovies], Shared(fixture).Libraries.Single(record => record.Kind == ServerLibraryKind.Movies).Paths);
+
+        fixture.Store.Update(config => config.Servers.Remove(config.Servers.Single(server => server.Id == _otherId)));
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Equal([_movies], Shared(fixture).Libraries.Single(record => record.Kind == ServerLibraryKind.Movies).Paths);
+    }
+
     [Fact]
     public async Task The_library_of_a_single_server_with_the_same_folders_stays_apart_from_the_shared_one()
     {

@@ -720,8 +720,16 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         return changed;
     }
 
-    private static AutomaticLibraryConfig Copy(AutomaticLibraryConfig record) =>
-        new() { Kind = record.Kind, Name = record.Name, ItemId = record.ItemId, RemoteLibraryId = record.RemoteLibraryId, Adopted = record.Adopted };
+    private static AutomaticLibraryConfig Copy(AutomaticLibraryConfig record)
+    {
+        var copy = new AutomaticLibraryConfig { Kind = record.Kind, Name = record.Name, ItemId = record.ItemId, RemoteLibraryId = record.RemoteLibraryId, Adopted = record.Adopted };
+        foreach (var path in record.Paths)
+        {
+            copy.Paths.Add(path);
+        }
+
+        return copy;
+    }
 
     // The libraries no registry holds, live or held, of any server: only these may be adopted or be in the way.
     private List<VirtualFolderInfo> Unclaimed(List<VirtualFolderInfo> folders)
@@ -1565,8 +1573,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             {
                 // Gone by id and name: renamed if exactly one other library holds the same folder with the same type. One
                 // that cannot be adopted is released under its current name when it is the only one there (173, 401).
+                // A shared library is renamed only with the paths it was last seen with; an empty one never is.
                 var passing = visible
                     .Where(other => !claimed.Contains(other) && !registry.NotAdopted.Contains(other.ItemId ?? string.Empty) && Passes(other, record, root, registry.ServerId))
+                    .Where(other => registry.ServerId != _sharedOwner || (record.Paths.Count > 0 && SameLocations(other.Locations ?? [], record.Paths)))
                     .ToList();
                 var candidates = passing.Where(registry.MayAdopt).ToList();
                 changes.Add(candidates.Count == 1
@@ -1585,6 +1595,12 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
         return changes;
     }
+
+    // Whether two lists of locations hold the same paths, in any order.
+    private static bool SameLocations(IReadOnlyCollection<string> locations, IReadOnlyCollection<string> paths) =>
+        locations.Count == paths.Count
+        && locations.All(location => paths.Any(path => FederatedFolderLinkChecker.IsSamePath(location, path)))
+        && paths.All(path => locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path)));
 
     // The id wins over the name. A library made later under an old name gets its id too, and is then checked by path.
     private static VirtualFolderInfo? FindRecorded(AutomaticLibraryConfig record, IReadOnlyList<VirtualFolderInfo> folders) =>

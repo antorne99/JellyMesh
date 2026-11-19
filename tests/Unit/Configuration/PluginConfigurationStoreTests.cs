@@ -199,8 +199,13 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             var shared = config.SharedLibraries;
             shared.Enabled = true;
             shared.FollowSkipped = true;
-            shared.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" });
-            shared.Libraries.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Serie di tutti", Adopted = true });
+            var film = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" };
+            film.Paths.Add("/federata/a/Film");
+            film.Paths.Add("/federata/b/Film");
+            shared.Libraries.Add(film);
+            var series = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Serie di tutti", Adopted = true };
+            series.Paths.Add("/federata/a/Serie");
+            shared.Libraries.Add(series);
             shared.CreatedLibraryKeys.Add("Movies");
             var pending = new PendingLibraryConfig { Kind = ServerLibraryKind.Series, Name = "Tutti i server - Serie" };
             pending.Paths.Add("/federata/a/library-1/Serie");
@@ -217,6 +222,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal(
             [(ServerLibraryKind.Movies, "Tutti i server - Film", "0f1e2d3c4b5a69788796a5b4c3d2e1f0", false), (ServerLibraryKind.Series, "Serie di tutti", string.Empty, true)],
             shared.Libraries.Select(library => (library.Kind, library.Name, library.ItemId, library.Adopted)));
+        Assert.Equal([["/federata/a/Film", "/federata/b/Film"], ["/federata/a/Serie"]], shared.Libraries.Select(library => library.Paths.ToList()));
         Assert.Equal(["Movies", "Series"], shared.CreatedLibraryKeys);
         var loadedPending = Assert.Single(shared.PendingLibraries);
         Assert.Equal((ServerLibraryKind.Series, "Tutti i server - Serie"), (loadedPending.Kind, loadedPending.Name));

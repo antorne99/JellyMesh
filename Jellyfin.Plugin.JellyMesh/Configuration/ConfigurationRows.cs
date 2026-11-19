@@ -37,6 +37,10 @@ internal sealed class ConfigurationRows
     // The owner of the shared libraries in the tables of the servers: not a GUID, so no server reads its rows (§10 row 442).
     private const string SharedOwner = "shared";
 
+    // The paths each shared library was last seen with, by library position and path at the same positions (§10 row 442).
+    private const string SharedPathLibrary = "shared_path_library";
+    private const string SharedPath = "shared_path";
+
     private static readonly Setting[] _settings =
     [
         Number(nameof(PluginConfiguration.SyncIntervalSeconds), config => config.SyncIntervalSeconds, (config, value) => config.SyncIntervalSeconds = value),
@@ -117,6 +121,9 @@ internal sealed class ConfigurationRows
         serverValues.AddRange(Values(SharedOwner, CreatedLibrary, shared.CreatedLibraryKeys));
         automatic.AddRange(Libraries(SharedOwner, shared.Libraries));
         serverValues.AddRange(Values(SharedOwner, AdoptedLibrary, AdoptedPositions(shared.Libraries)));
+        var sharedPaths = shared.Libraries.SelectMany((library, position) => library.Paths.Select(path => (Position: position.ToString(CultureInfo.InvariantCulture), Path: path))).ToList();
+        serverValues.AddRange(Values(SharedOwner, SharedPathLibrary, sharedPaths.Select(pair => pair.Position)));
+        serverValues.AddRange(Values(SharedOwner, SharedPath, sharedPaths.Select(pair => pair.Path)));
         pendingLibraries.AddRange(shared.PendingLibraries.Select((library, position)
             => Row(SharedOwner, position, library.Kind.ToString(), library.Name, library.RemoteLibraryId, JsonSerializer.Serialize(library.Paths))));
 
@@ -274,6 +281,7 @@ internal sealed class ConfigurationRows
         Fill(shared.CreatedLibraryKeys, serverValues, SharedOwner, CreatedLibrary);
         Fill(shared.Libraries, automatic, SharedOwner);
         MarkAdopted(shared.Libraries, serverValues, SharedOwner);
+        FillPaths(shared.Libraries, serverValues, SharedOwner);
         foreach (var key in shared.Libraries.Select(record => record.KeyOf()).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
         {
             if (!shared.CreatedLibraryKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
@@ -413,6 +421,19 @@ internal sealed class ConfigurationRows
             if (int.TryParse((string)row[3], NumberStyles.None, CultureInfo.InvariantCulture, out var position) && position < target.Count)
             {
                 target[position].Adopted = true;
+            }
+        }
+    }
+
+    // Gives each library the paths kept at the positions of its own.
+    private static void FillPaths(Collection<AutomaticLibraryConfig> target, ILookup<(string Owner, string List), object[]> lists, string owner)
+    {
+        var paths = lists[(owner, SharedPath)].ToDictionary(row => (long)row[2], row => (string)row[3]);
+        foreach (var row in lists[(owner, SharedPathLibrary)].OrderBy(row => (long)row[2]))
+        {
+            if (int.TryParse((string)row[3], NumberStyles.None, CultureInfo.InvariantCulture, out var position) && position < target.Count && paths.TryGetValue((long)row[2], out var path))
+            {
+                target[position].Paths.Add(path);
             }
         }
     }

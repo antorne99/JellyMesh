@@ -204,7 +204,7 @@ public sealed partial class ServerLibraryManager
             conflicts.AddRange(adoption.Conflicts);
             if (adoption.Adopt is { } adopted)
             {
-                RecordShared(planned.Key, new AutomaticLibraryConfig { Kind = kind, Name = adopted.Name, ItemId = adopted.ItemId ?? string.Empty, Adopted = true });
+                RecordShared(planned.Key, WithPaths(new AutomaticLibraryConfig { Kind = kind, Name = adopted.Name, ItemId = adopted.ItemId ?? string.Empty, Adopted = true }, adopted.Locations));
                 _logger.LogInformation("Adopted the library {Library}, which has exactly the paths and type of the shared {Kind} library", LogText.Clean(adopted.Name), kind);
                 continue;
             }
@@ -228,6 +228,7 @@ public sealed partial class ServerLibraryManager
         }
 
         _conflicts[_sharedOwner] = conflicts;
+        RememberSharedPaths(changed ? ReadFolders() : folders);
         return changed;
     }
 
@@ -342,7 +343,7 @@ public sealed partial class ServerLibraryManager
 
         // The server may add a number to the name, so the new library is found by its paths among those not there before.
         var made = ReadFolders()?.FirstOrDefault(folder => !taken.Contains(folder.Name) && Passes(folder, planned.Kind, string.Empty, root, _sharedOwner));
-        RecordShared(intent.KeyOf(), new AutomaticLibraryConfig { Kind = planned.Kind, Name = made?.Name ?? name, ItemId = made?.ItemId ?? string.Empty });
+        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = planned.Kind, Name = made?.Name ?? name, ItemId = made?.ItemId ?? string.Empty }, made?.Locations ?? [.. planned.Paths]));
         _logger.LogInformation("Created the shared library {Library}", LogText.Clean(made?.Name ?? name));
         return true;
     }
@@ -370,6 +371,42 @@ public sealed partial class ServerLibraryManager
             _logger.LogError("Cannot block a shared library for the users who blocked a library of its folders, so it is not made: {Error}", exception.GetType().Name);
             return false;
         }
+    }
+
+    private static AutomaticLibraryConfig WithPaths(AutomaticLibraryConfig record, IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            record.Paths.Add(path);
+        }
+
+        return record;
+    }
+
+    // Keeps the paths each shared library has now, so that only a library with the same paths is taken for it when renamed.
+    private void RememberSharedPaths(IReadOnlyList<VirtualFolderInfo>? folders)
+    {
+        if (folders is null)
+        {
+            return;
+        }
+
+        bool Differs(AutomaticLibraryConfig record) =>
+            FindRecorded(record, folders) is { } folder && !(folder.Locations ?? []).SequenceEqual(record.Paths, StringComparer.Ordinal);
+
+        if (!_store.Read(config => config.SharedLibraries.Libraries.Any(Differs)))
+        {
+            return;
+        }
+
+        _store.Update(config =>
+        {
+            foreach (var record in config.SharedLibraries.Libraries.Where(Differs))
+            {
+                record.Paths.Clear();
+                WithPaths(record, FindRecorded(record, folders)!.Locations ?? []);
+            }
+        });
     }
 
     // Saves a shared library and drops its intent.
@@ -421,7 +458,7 @@ public sealed partial class ServerLibraryManager
             return false;
         }
 
-        RecordShared(intent.KeyOf(), new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty });
+        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty }, made.Locations ?? []));
         _logger.LogInformation("Recorded the shared library {Library} made before a restart", LogText.Clean(made.Name));
         return true;
     }
