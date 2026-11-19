@@ -1842,6 +1842,7 @@ public sealed partial class ServerLibraryManagerTests
             Server = WithLibraries(new RemoteServerConfig { Id = _serverId, Name = serverName });
             Store.Configuration.FederatedFolderPath = root;
             Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(true);
+            Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.Music)).Returns([]);
             Store.Configuration.Servers.Add(Server);
             var fileSystem = new Mock<IFileSystem>();
             fileSystem.Setup(system => system.GetValidFilename(It.IsAny<string>()))
