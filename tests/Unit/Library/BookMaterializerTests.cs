@@ -4,10 +4,12 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Moq;
 using Xunit;
@@ -81,6 +83,38 @@ public sealed class BookMaterializerTests : IDisposable
 
         Assert.Equal(Assert.Single(_fixture.Registry.State.Stubs).Id, item.GetProviderId(FederatedBookMark.ProviderId));
         Assert.Equal("9780441013593", item.GetProviderId("Isbn"));
+    }
+
+    // D62: without protection the plugin still writes all the book data, only with no lock, as for music.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ABookGetsAllItsDataLockedOnlyWithProtection(bool isProtected)
+    {
+        _fixture.Sync.Store.Configuration.MetadataProtection = isProtected;
+        var a = await AddBookServerAsync(Dune() with
+        {
+            Genres = ["Fantascienza"],
+            Studios = [new RemoteNamedItem("Chilton")],
+            People = [new RemotePerson("Frank Herbert", null, "Author")],
+            SeriesName = "Le cronache di Dune",
+            ProviderIds = new Dictionary<string, string?> { ["Isbn"] = "9780441013593" }
+        });
+        await _fixture.SyncAndMaterializeAsync();
+        var item = new Book { Id = Guid.NewGuid(), Path = BookPath(a), Name = "Dune (1965)" };
+        _fixture.Library.Setup(library => library.FindByPath(BookPath(a), false)).Returns(item);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(isProtected, item.IsLocked);
+        Assert.Empty(item.LockedFields);
+        Assert.Equal(("Dune", 1965, "Spice", "Le cronache di Dune"), (item.Name, item.ProductionYear, item.Overview, item.SeriesName));
+        Assert.Equal(["Fantascienza"], item.Genres);
+        Assert.Equal(["Chilton"], item.Studios);
+        Assert.Equal("9780441013593", item.GetProviderId("Isbn"));
+        var people = Assert.Single(_fixture.Library.Invocations, call => call.Method.Name == nameof(ILibraryManager.UpdatePeopleAsync) && call.Arguments[0] == item);
+        var author = Assert.Single((IEnumerable<PersonInfo>)people.Arguments[1]);
+        Assert.Equal(("Frank Herbert", PersonKind.Author), (author.Name, author.Type));
     }
 
     [Fact]

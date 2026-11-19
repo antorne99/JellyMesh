@@ -35,7 +35,7 @@ public sealed class StubItemUpdater
 
     /// <summary>
     /// Applies metadata to an item. Without protection only title, year, IDs, the artists and album of a music video and the
-    /// date of a home video are the plugin's: the rest belongs to the fetchers.
+    /// date of a home video are the plugin's: the rest belongs to the fetchers, except on a book.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <param name="metadata">The metadata.</param>
@@ -64,7 +64,9 @@ public sealed class StubItemUpdater
             WriteTrack(audio, metadata);
         }
 
-        if (metadata.IsProtected)
+        // A book gets all its data also without protection, only unlocked (D62).
+        var writesAll = metadata.IsProtected || item is Book;
+        if (writesAll)
         {
             item.OriginalTitle = metadata.OriginalTitle;
             item.Overview = metadata.Overview;
@@ -90,6 +92,11 @@ public sealed class StubItemUpdater
             musicVideo.Album = metadata.Album;
         }
 
+        if (item is Book book && writesAll)
+        {
+            book.SeriesName = metadata.SeriesName;
+        }
+
         if (metadata.IsProtected && item is Movie or Series)
         {
             item.RemoteTrailers = metadata.TrailerIds.Select(id => new MediaUrl { Url = YouTubeTrailer.WatchPrefix + id }).ToArray();
@@ -105,7 +112,7 @@ public sealed class StubItemUpdater
         // folder, even with its metadata savers off (observed on 12.4).
         await SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
 
-        if (metadata.IsProtected)
+        if (writesAll)
         {
             await _library.UpdatePeopleAsync(item, metadata.People.Select(ToPerson).OfType<PersonInfo>().ToList(), cancellationToken).ConfigureAwait(false);
         }

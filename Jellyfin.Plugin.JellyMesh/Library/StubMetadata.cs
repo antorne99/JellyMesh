@@ -88,6 +88,9 @@ public sealed record StubMetadata
     /// <summary>Gets the disc of a track.</summary>
     public int? DiscNumber { get; init; }
 
+    /// <summary>Gets the series of a book.</summary>
+    public string? SeriesName { get; init; }
+
     /// <summary>
     /// Gets a value indicating whether the plugin writes collections, an option that is off by default (decision 52).
     /// </summary>
@@ -154,9 +157,10 @@ public sealed record StubMetadata
             PremiereDate = item.Kind == IndexedItemKind.Video ? item.PremiereDate : null
         };
 
-        // Without protection the fetchers fill the rest (plan §3.1).
-        return !isProtected ? core : core with
+        // Without protection the fetchers fill the rest (plan §3.1), except for books, which get it all unlocked (D62).
+        return !isProtected && item.Kind != IndexedItemKind.Book ? core : core with
         {
+            SeriesName = item.Kind == IndexedItemKind.Book ? item.SeriesName : null,
             OriginalTitle = item.OriginalTitle,
             Overview = item.Overview,
             Taglines = item.Taglines,
