@@ -112,7 +112,7 @@ public sealed record RemoteItem
     /// <summary>Gets the folder, album or item that holds this one.</summary>
     public string? ParentId { get; init; }
 
-    /// <summary>Gets the file path on the remote. Only the mapper reads it, for the extension of a book or a photo.</summary>
+    /// <summary>Gets the file path on the remote, asked for books and photos only. The mapper keeps only its extension.</summary>
     public string? Path { get; init; }
 
     /// <summary>Gets the album of a track or a music video, the album of a photo, or the folder of an audiobook part.</summary>

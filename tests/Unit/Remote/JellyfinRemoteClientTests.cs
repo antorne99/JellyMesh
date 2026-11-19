@@ -445,20 +445,26 @@ public class JellyfinRemoteClientTests
         Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task ItemsAsksForTheParentThePathAndTheSizeThatTheNewTypesNeed()
+    [Theory]
+    [InlineData(RemoteItemType.Photo, true)]
+    [InlineData(RemoteItemType.Book, true)]
+    [InlineData(RemoteItemType.Movie, false)]
+    [InlineData(RemoteItemType.Episode, false)]
+    [InlineData(RemoteItemType.Audio, false)]
+    [InlineData(RemoteItemType.Video, false)]
+    public async Task ItemsAsksForTheParentAndTheSizeAndThePathOnlyOfBooksAndPhotos(RemoteItemType type, bool withPath)
     {
         var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
 
-        await ItemsAsync(handler, new RemoteItemQuery("lib", RemoteItemType.Photo, 0, 200));
+        await ItemsAsync(handler, new RemoteItemQuery("lib", type, 0, 200));
 
         var query = Uri.UnescapeDataString(Assert.Single(handler.Requests).Uri.Query);
-        Assert.Contains("includeItemTypes=Photo", query, StringComparison.Ordinal);
+        Assert.Contains("includeItemTypes=" + type, query, StringComparison.Ordinal);
         var fields = query.Split('&').Single(part => part.StartsWith("fields=", StringComparison.Ordinal))["fields=".Length..].Split(',');
         Assert.Contains("ParentId", fields);
-        Assert.Contains("Path", fields);
         Assert.Contains("Width", fields);
         Assert.Contains("Height", fields);
+        Assert.Equal(withPath, fields.Contains("Path"));
     }
 
     [Fact]

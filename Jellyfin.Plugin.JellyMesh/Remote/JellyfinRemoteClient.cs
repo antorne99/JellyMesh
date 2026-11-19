@@ -61,7 +61,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     // Everything a catalog entry keeps. ImageTags, BackdropImageTags, ratings, dates and numbers come by default, and
     // MediaSources holds the streams of each version. The list is what can reach the index: see RemoteItem.
-    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers,ParentId,Path,Width,Height";
+    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers,ParentId,Width,Height";
 
     // Waits before each new try of a sync read, and the longest wait a Retry-After can ask for (decision 47).
     private static readonly TimeSpan[] _retryWaits = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
@@ -355,7 +355,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             // A remote that groups films into collections would otherwise answer with the collection in their place.
             "collapseBoxSetItems=false",
             "enableUserData=false",
-            "fields=" + ItemFields,
+            // The path, which can name the remote's folders, only where the extension of the file is needed.
+            "fields=" + ItemFields + (query.Type is RemoteItemType.Book or RemoteItemType.Photo ? ",Path" : string.Empty),
             string.Create(CultureInfo.InvariantCulture, $"startIndex={query.StartIndex}"),
             string.Create(CultureInfo.InvariantCulture, $"limit={query.Limit}")
         };
