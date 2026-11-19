@@ -446,6 +446,22 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
+    public async Task ItemsAsksForTheParentThePathAndTheSizeThatTheNewTypesNeed()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+        await ItemsAsync(handler, new RemoteItemQuery("lib", RemoteItemType.Photo, 0, 200));
+
+        var query = Uri.UnescapeDataString(Assert.Single(handler.Requests).Uri.Query);
+        Assert.Contains("includeItemTypes=Photo", query, StringComparison.Ordinal);
+        var fields = query.Split('&').Single(part => part.StartsWith("fields=", StringComparison.Ordinal))["fields=".Length..].Split(',');
+        Assert.Contains("ParentId", fields);
+        Assert.Contains("Path", fields);
+        Assert.Contains("Width", fields);
+        Assert.Contains("Height", fields);
+    }
+
+    [Fact]
     public async Task ItemsKeepsFilmsThatARemoteGroupsIntoCollections()
     {
         var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));

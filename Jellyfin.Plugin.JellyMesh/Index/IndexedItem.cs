@@ -139,4 +139,31 @@ public sealed record IndexedItem
     /// (decision 52). A read of changes keeps the one already known.
     /// </summary>
     public IndexedBoxSet? Collection { get; init; }
+
+    /// <summary>Gets the folder, album or item that holds an entry of the types other than films and series.</summary>
+    public string? ParentId { get; init; }
+
+    /// <summary>Gets the album of a track or a music video, the album of a photo, or the folder of an audiobook part.</summary>
+    public string? Album { get; init; }
+
+    /// <summary>Gets the album of a track.</summary>
+    public string? AlbumId { get; init; }
+
+    /// <summary>Gets the tag of the album image of a track.</summary>
+    public string? AlbumPrimaryImageTag { get; init; }
+
+    /// <summary>Gets the artists of a track or a music video.</summary>
+    public IReadOnlyList<string>? Artists { get; init; }
+
+    /// <summary>Gets the album artists of a track.</summary>
+    public IReadOnlyList<string>? AlbumArtists { get; init; }
+
+    /// <summary>Gets whether a track has lyrics.</summary>
+    public bool? HasLyrics { get; init; }
+
+    /// <summary>Gets the lowercase file extension of a book or a photo, the only part of its path that is kept.</summary>
+    public string? Extension { get; init; }
+
+    /// <summary>Gets the size and the camera data of a photo, without the place where it was taken.</summary>
+    public IndexedPhoto? Photo { get; init; }
 }
