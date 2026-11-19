@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// A stub whose content turned local is left alone here: only the post-scan task may remove it, after handing over the
 /// watch state (decision 2). This plan removes only what is proved gone from the remotes.
 /// </remarks>
-public static class StubPlanner
+public static partial class StubPlanner
 {
     private static readonly string[] _seriesKeyProviders = ["Custom", "Tvdb", "Imdb"];
 
@@ -130,13 +130,15 @@ public static class StubPlanner
         var merged = new HashSet<string>(StringComparer.Ordinal);
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
         var tracks = new List<StubWork>();
+        var videoWorks = new List<StubWork>();
 
         // Stubs of an older layout are left as they are, out of every part, until the migration empties them (§10 row 444).
         var legacy = input.KeepsOlderLayout;
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Track && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Track && !IsVideoKind(stub.Kind) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsVideoKind(stub.Kind)).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
             var parts = legacy
@@ -186,9 +188,21 @@ public static class StubPlanner
                 tracks.AddRange(serverTracks);
                 claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
             }
+
+            // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
+            if (legacy)
+            {
+                claimed.UnionWith(ownVideos.Select(stub => stub.Id));
+            }
+            else
+            {
+                videoWorks.AddRange(VideoWorks(input, catalog, server, label, ownVideos, claimed, unplaceable));
+            }
         }
 
         works.AddRange(tracks);
+        works.AddRange(videoWorks);
+
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = input.State.Stubs.Where(stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)) && !claimed.Contains(stub.Id)).ToList();
 
@@ -246,7 +260,7 @@ public static class StubPlanner
         foreach (var server in servers)
         {
             var contents = ServerContents(view, snapshot, catalog, server);
-            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath)).ToList();
+            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath) && !IsVideoKind(stub.Kind)).ToList();
             var parts = PartsOf(placementOf ?? StubPlanInput.DefaultPlacement, catalog, server.Id, contents, own, [], []);
             claims.AddRange(parts.SelectMany(part => new StubMatcher(part.Stubs).ClaimAll(StubContents.Group(part.Contents))));
         }
@@ -929,7 +943,7 @@ public static class StubPlanner
 
         public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series)
         {
-            foreach (var stub in stubs.Where(stub => stub.Kind == StubKind.Movie))
+            foreach (var stub in stubs.Where(stub => stub.Kind is StubKind.Movie or StubKind.MusicVideo))
             {
                 _taken.Add(Path.GetDirectoryName(stub.RelativePath)!);
             }
