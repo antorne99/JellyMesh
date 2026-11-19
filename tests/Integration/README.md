@@ -122,9 +122,11 @@ These have no IDs and their invented titles match nothing on TMDb, so `report.sh
 
 ### 0.7 types
 
-Added for the 0.7 phases (integration test 11 of the spec). They are small and fully generated, so `prepare-media.sh` builds them in a few minutes: audio is a two-tone sine from ffmpeg, pictures are single frames of the films with a burned-in label, and `scripts/media-types.py` writes EXIF, EPUB, PDF and CBZ with the Python standard library, in the Playwright image the proof scripts already use. Audio, pictures and books come out byte-identical on every run (bitexact ffmpeg, fixed ZIP times, no dates in the PDF). The video clips are not: like the films above they go through libx264 and Matroska or MP4, which differ between runs.
+Added for the 0.7 phases (integration test 11 of the spec). They are small and fully generated, so `prepare-media.sh` builds them in a few minutes: audio is a two-tone sine from ffmpeg, pictures are single frames of the films with a burned-in label, and `scripts/media-types.py` writes EXIF, EPUB, PDF and CBZ with the Python standard library, in the Playwright image the proof scripts already use. Every file comes out byte-identical on every run: ffmpeg runs bitexact, and single-threaded for video, ZIPs have fixed times and the PDF no dates. The films above are not reproducible this way. The clips carry none of the source film tags.
 
 Each server plays its own tone, a little higher per track: `locale` 659 Hz, `remoto-standard` 440 Hz, `remoto-jellymesh` 554 Hz. The pitch tells which copy is really served, as the label does on video.
+
+Photos carry EXIF numbers as rationals: 12.4 drops the whole EXIF block of a photo whose values are written as doubles, as Pillow does (F48 probes).
 
 Invented MusicBrainz IDs have the form `99000000-0000-4000-8000-0000000NNNNN` and are written below by their last four digits. Track files carry them under the tag names Picard writes: Vorbis keys such as `MUSICBRAINZ_TRACKID` in FLAC, ID3 `TXXX` descriptions such as `MusicBrainz Track Id` in MP3. The artist is `JM Artista` (`…0001`) everywhere.
 
@@ -150,7 +152,7 @@ Every album folder has a `folder.jpg`.
 | `Album Vacanze 2025/IMG_0002.jpg` | Portrait, 900x1200 | Camera, date, exposure, no GPS |
 | `Album Vacanze 2025/IMG_0003.jpg`, `IMG_0004.png` | JPEG and PNG | None |
 
-**Books** (`libri/`, library `Libri`, type `books`). Each book is alone in its folder, as Jellyfin's book resolver wants.
+**Books** (`libri/`, library `Libri`, type `books`). Each book and audiobook is alone in its folder, as Jellyfin's book resolver wants; a loose audiobook at the library root would be named after the library folder (F48 probes).
 
 | Book | remoto-standard | remoto-jellymesh | Notes |
 |---|---|---|---|
@@ -196,7 +198,7 @@ Seen on the 0.7 types, with the stock `remoto-standard` and the non-admin user:
 
 ## Client routes
 
-`play/clients.sh` calls the audio, book and photo routes the way the main clients do, against any server URL, so the 0.7 phases can compare a stock server with the federated copy of the same item. It makes no containers and asserts nothing: it prints one tab-separated line per request with the status, content type, length, content range, accept ranges, bytes received and their SHA-256, and with `--file` whether the body matches that file, or the slice of it a `206` names. `OUT=<dir>` keeps every header and body. Each client logs in with its own `Authorization` identity, and the item is an id or an exact name. It exits non-zero only when a request got no answer.
+`play/clients.sh` calls the audio, book and photo routes the way the main clients do, against any server URL, so the 0.7 phases can compare a stock server with the federated copy of the same item. It makes no containers and asserts nothing: it prints one tab-separated line per request with the status, content type, length, content range, accept ranges, bytes received and their SHA-256, and with `--file` whether the body matches that file, or the slice of it a `206` names. `OUT=<dir>` keeps every header and body. Each client logs in with its own `Authorization` identity, and the item is an id or an exact name. It exits non-zero only when a request got no answer. Client names and versions in the `Authorization` header are plausible placeholders.
 
 ```sh
 play/clients.sh <base URL> <user> <password> <command> <item id or name> [--file <path>]
@@ -221,6 +223,8 @@ play/clients.sh http://127.0.0.1:8097 jellymesh jellymesh-test web-audio "Prima 
 | `photo-tv` | Android TV | an anonymous `Images/Primary` with the tag and `maxWidth=1920&maxHeight=1080` |
 
 The stock answers are in "What 12.4 showed" above. Against stock `remoto-standard`, every direct body matches its file.
+
+Run on a stub, the same commands show what the plugin must guard (F48 probes, for F56 and F61): on a stock server, `File` and `Download` of an audio or book `.strm` return the stub URL as text, which the file column shows as `url-body`; `universal` on an audio stub answers 400, and on a video stub the server opens the stub URL. Any item id works with every command, so `web-audio` also runs on a video stub.
 
 ## Spikes
 

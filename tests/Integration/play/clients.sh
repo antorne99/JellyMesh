@@ -27,14 +27,16 @@
 #   photo-tv       Android TV: anonymous Primary image fitted to 1920x1080
 #
 # --file compares each body with that local file: a 200 with the whole file, a 206
-# with the slice its Content-Range names. OUT=<dir> keeps every header and body.
+# with the slice its Content-Range names. A short body that is only a URL shows as
+# url-body, as a stock server answers File or Download of a .strm stub. OUT=<dir>
+# keeps every header and body. Client names and versions are plausible placeholders.
 # Output columns: client, step, method, status, content type, length, content range,
 # accept ranges, bytes received, sha256 (first 16), compared with --file.
 
 set -euo pipefail
 
 usage() {
-  sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '3,35p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 [ $# -ge 5 ] || usage
@@ -116,6 +118,11 @@ header() {
 # compare <body> <status> <content range>: match, differs or "-" against --file.
 compare() {
   local body=$1 status=$2 range=$3 from to
+  if [ -s "$body" ] && [ "$(wc -c <"$body")" -lt 4096 ] && LC_ALL=C grep -qE '^https?://[^[:space:]]+[[:space:]]*$' "$body" &&
+    [ "$(grep -c . "$body")" = 1 ]; then
+    echo url-body
+    return
+  fi
   [ -n "$FILE" ] && [ -s "$body" ] || { echo -; return; }
   if [ "$status" = 200 ]; then
     [ "$(sha <"$body")" = "$(sha <"$FILE")" ] && echo match || echo differs
