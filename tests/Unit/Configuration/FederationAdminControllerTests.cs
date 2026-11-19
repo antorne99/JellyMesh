@@ -1353,6 +1353,22 @@ public class FederationAdminControllerTests
     }
 
     [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ASwitchOffWithAListSentAsNullIsRefusedAsABadRequest(bool nullDelete, bool nullRelease)
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+
+        var result = ControllerFor(fixture, libraries: libraries.Object)
+            .SetSharedLibraries(new SharedLibrariesRequest { Enabled = false, Confirmed = true, ToDelete = nullDelete ? null! : [], ToRelease = nullRelease ? null! : [] }).Result;
+
+        var refusal = Assert.IsType<SettingRefusal>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Equal(nullDelete ? nameof(SharedLibrariesRequest.ToDelete) : nameof(SharedLibrariesRequest.ToRelease), refusal.Field);
+        libraries.Verify(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation?>()), Times.Never);
+    }
+
+    [Theory]
     [InlineData(AutomaticLibrariesOutcome.NoFederatedFolder, "Set the federated folder first.")]
     [InlineData(AutomaticLibrariesOutcome.Busy, "The shared libraries are being updated. Try again when it is done.")]
     public void ARefusedSwitchOnSaysWhy(AutomaticLibrariesOutcome outcome, string message)

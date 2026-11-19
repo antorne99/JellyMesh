@@ -433,10 +433,19 @@ public class FederationAdminController : ControllerBase
     /// <returns>The state, accepted, or the reason of a refusal with the libraries a confirmation would delete.</returns>
     [HttpPost("SharedLibraries")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public ActionResult<SharedLibrariesState> SetSharedLibraries([FromBody] SharedLibrariesRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        // A list sent as null is not one with no library.
+        if (request.ToDelete is null || request.ToRelease is null)
+        {
+            var field = request.ToDelete is null ? nameof(SharedLibrariesRequest.ToDelete) : nameof(SharedLibrariesRequest.ToRelease);
+            return BadRequest(new SettingRefusal(field, "Send the libraries to delete and to release as lists, empty when there are none."));
+        }
+
         var answer = request.Enabled
             ? _libraries.EnableShared()
             : _libraries.DisableShared(request.Confirmed ? new SharedLibrariesConfirmation(request.ToDelete, request.ToRelease) : null);
