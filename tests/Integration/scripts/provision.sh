@@ -51,8 +51,8 @@ uri() {
   jq -rn --arg v "$1" '$v | @uri'
 }
 
-# add_library_if_present <name> <collection type> <path>: only when the server sees that folder,
-# so the 0.6 matrix without the 0.7 folders provisions as before.
+# add_library_if_present <name> <collection type> <path>: add_library, only when the
+# server has that folder.
 add_library_if_present() {
   get "/Environment/DirectoryContents?path=$(uri "$(dirname "$3")")&includeDirectories=true" |
     jq -e --arg p "$3" 'any(.[]; .Path == $p)' >/dev/null || return 0

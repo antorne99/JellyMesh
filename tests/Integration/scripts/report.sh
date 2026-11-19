@@ -45,10 +45,8 @@ for instance in locale remoto-standard remoto-jellymesh; do
   echo
 done
 
-# The 0.7 types: music, music videos, home videos and photos, books and audiobooks,
-# and the mixed library. "detail" is the audio format, the book file, chapter
-# count, or for photos the camera and whether GPS came through. Long IDs show
-# their last four characters, MusicBrainz as Mb.
+# The 0.7 types; "detail" is the audio format, chapter count, or camera and GPS.
+# Long IDs show their last four characters, MusicBrainz as Mb.
 FIELDS07=ProviderIds,MediaSources,MediaStreams,Path,ProductionYear,Chapters,ParentId
 TYPES07=MusicAlbum,Audio,MusicVideo,Video,Photo,PhotoAlbum,Book,AudioBook
 for instance in locale remoto-standard remoto-jellymesh; do
