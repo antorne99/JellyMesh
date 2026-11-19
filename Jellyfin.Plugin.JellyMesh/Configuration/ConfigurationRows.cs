@@ -33,6 +33,7 @@ internal sealed class ConfigurationRows
 
     // The positions of the adopted libraries in the list of a server, so no schema step is needed (§10 row 441).
     private const string AdoptedLibrary = "adopted_library";
+    private const string UnblockedLibrary = "unblocked_library";
 
     // The owner of the shared libraries in the tables of the servers: not a GUID, so no server reads its rows (§10 row 442).
     private const string SharedOwner = "shared";
@@ -121,6 +122,7 @@ internal sealed class ConfigurationRows
         serverValues.AddRange(Values(SharedOwner, CreatedLibrary, shared.CreatedLibraryKeys));
         automatic.AddRange(Libraries(SharedOwner, shared.Libraries));
         serverValues.AddRange(Values(SharedOwner, AdoptedLibrary, AdoptedPositions(shared.Libraries)));
+        serverValues.AddRange(Values(SharedOwner, UnblockedLibrary, Positions(shared.Libraries, library => library.Unblocked)));
         var sharedPaths = shared.Libraries.SelectMany((library, position) => library.Paths.Select(path => (Position: position.ToString(CultureInfo.InvariantCulture), Path: path))).ToList();
         serverValues.AddRange(Values(SharedOwner, SharedPathLibrary, sharedPaths.Select(pair => pair.Position)));
         serverValues.AddRange(Values(SharedOwner, SharedPath, sharedPaths.Select(pair => pair.Path)));
@@ -281,6 +283,7 @@ internal sealed class ConfigurationRows
         Fill(shared.CreatedLibraryKeys, serverValues, SharedOwner, CreatedLibrary);
         Fill(shared.Libraries, automatic, SharedOwner);
         MarkAdopted(shared.Libraries, serverValues, SharedOwner);
+        Mark(shared.Libraries, serverValues, SharedOwner, UnblockedLibrary, library => library.Unblocked = true);
         FillPaths(shared.Libraries, serverValues, SharedOwner);
         foreach (var key in shared.Libraries.Select(record => record.KeyOf()).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
         {
@@ -410,17 +413,24 @@ internal sealed class ConfigurationRows
         }
     }
 
-    private static IEnumerable<string> AdoptedPositions(IEnumerable<AutomaticLibraryConfig> libraries)
-        => libraries.Select((library, position) => (library.Adopted, position)).Where(pair => pair.Adopted).Select(pair => pair.position.ToString(CultureInfo.InvariantCulture));
+    private static IEnumerable<string> AdoptedPositions(IEnumerable<AutomaticLibraryConfig> libraries) => Positions(libraries, library => library.Adopted);
+
+    // The positions of the libraries the predicate takes.
+    private static IEnumerable<string> Positions(IEnumerable<AutomaticLibraryConfig> libraries, Func<AutomaticLibraryConfig, bool> predicate)
+        => libraries.Select((library, position) => (Taken: predicate(library), position)).Where(pair => pair.Taken).Select(pair => pair.position.ToString(CultureInfo.InvariantCulture));
 
     // Marks as adopted the libraries at the positions kept for them, read in the order of their positions.
     private static void MarkAdopted(Collection<AutomaticLibraryConfig> target, ILookup<(string Owner, string List), object[]> lists, string owner)
+        => Mark(target, lists, owner, AdoptedLibrary, library => library.Adopted = true);
+
+    // Applies the mark to the libraries at the positions kept in the list.
+    private static void Mark(Collection<AutomaticLibraryConfig> target, ILookup<(string Owner, string List), object[]> lists, string owner, string list, Action<AutomaticLibraryConfig> mark)
     {
-        foreach (var row in lists[(owner, AdoptedLibrary)])
+        foreach (var row in lists[(owner, list)])
         {
             if (int.TryParse((string)row[3], NumberStyles.None, CultureInfo.InvariantCulture, out var position) && position < target.Count)
             {
-                target[position].Adopted = true;
+                mark(target[position]);
             }
         }
     }

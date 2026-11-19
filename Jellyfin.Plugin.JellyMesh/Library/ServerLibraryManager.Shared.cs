@@ -198,7 +198,8 @@ public sealed partial class ServerLibraryManager
 
         var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
         KeepSharedCreatedKeys();
-        var changed = ResolveSharedPending(root, folders);
+        var changed = await BlockUnblockedAsync(folders, cancellationToken).ConfigureAwait(false);
+        changed |= ResolveSharedPending(root, folders);
         var (servers, records, created) = _store.Read(config => (
             config.Servers.Select(server => (server.Id, Folders: _kinds.ToDictionary(kind => kind, kind => SharedLibraries.FoldersOf(server, kind, root, olderLayout)))).ToList(),
             config.SharedLibraries.Libraries.Select(Copy).ToList(),
@@ -250,6 +251,14 @@ public sealed partial class ServerLibraryManager
 
         _conflicts[_sharedOwner] = conflicts;
         RememberSharedPaths(changed ? ReadFolders() : folders);
+
+        // A shared library without its blocks is never scanned, so the scan waits for a check that writes them (D42).
+        if (_store.Read(config => config.SharedLibraries.Libraries.Any(record => record.Unblocked)))
+        {
+            _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
+            return false;
+        }
+
         return changed;
     }
 
@@ -465,7 +474,7 @@ public sealed partial class ServerLibraryManager
     }
 
     // Deletes a shared library the server stored under another name when its blocks could not be written, before any scan
-    // shows it; one that cannot be deleted is recorded, so the switch-off deletes it.
+    // shows it; one that cannot be deleted is recorded as unblocked, so no shared check scans until its blocks are written.
     private async Task<bool> DropUnblockedAsync(PendingLibraryConfig intent, VirtualFolderInfo made, CancellationToken cancellationToken)
     {
         _errors[_sharedOwner] = AutomaticLibrariesError.Failed;
@@ -485,8 +494,37 @@ public sealed partial class ServerLibraryManager
             }
         }
 
-        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty }, made.Locations ?? []));
-        return true;
+        RecordShared(intent.KeyOf(), WithPaths(new AutomaticLibraryConfig { Kind = intent.Kind, Name = made.Name, ItemId = made.ItemId ?? string.Empty, Unblocked = true }, made.Locations ?? []));
+        return false;
+    }
+
+    // Writes the blocks a shared library still lacks, by its id or else the id of its name (D42). Tells whether one got them.
+    private async Task<bool> BlockUnblockedAsync(List<VirtualFolderInfo> folders, CancellationToken cancellationToken)
+    {
+        var changed = false;
+        foreach (var record in _store.Read(config => config.SharedLibraries.Libraries.Where(record => record.Unblocked).Select(Copy).ToList()))
+        {
+            if (FindRecorded(record, folders) is { } folder)
+            {
+                var planned = new PlannedLibrary(KeyOf(record), record.Kind, string.Empty, string.Empty, [.. record.Paths]);
+                var id = Guid.TryParse(folder.ItemId, out var found) ? found : (Guid?)null;
+                if (BlockSources(planned, folders) is not { } sources || !await BlockSharedAsync(folder.Name, id, planned, sources, cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+            }
+
+            _store.Update(config =>
+            {
+                foreach (var kept in config.SharedLibraries.Libraries.Where(kept => kept.Kind == record.Kind && string.Equals(kept.Name, record.Name, StringComparison.Ordinal)))
+                {
+                    kept.Unblocked = false;
+                }
+            });
+            changed = true;
+        }
+
+        return changed;
     }
 
     // Saves a shared library and drops its intent.

@@ -199,7 +199,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             var shared = config.SharedLibraries;
             shared.Enabled = true;
             shared.FollowSkipped = true;
-            var film = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0" };
+            var film = new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Tutti i server - Film", ItemId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0", Unblocked = true };
             film.Paths.Add("/federata/a/Film");
             film.Paths.Add("/federata/b/Film");
             shared.Libraries.Add(film);
@@ -223,6 +223,7 @@ public sealed class PluginConfigurationStoreTests : IDisposable
             [(ServerLibraryKind.Movies, "Tutti i server - Film", "0f1e2d3c4b5a69788796a5b4c3d2e1f0", false), (ServerLibraryKind.Series, "Serie di tutti", string.Empty, true)],
             shared.Libraries.Select(library => (library.Kind, library.Name, library.ItemId, library.Adopted)));
         Assert.Equal([["/federata/a/Film", "/federata/b/Film"], ["/federata/a/Serie"]], shared.Libraries.Select(library => library.Paths.ToList()));
+        Assert.Equal([true, false], shared.Libraries.Select(library => library.Unblocked));
         Assert.Equal(["Movies", "Series"], shared.CreatedLibraryKeys);
         var loadedPending = Assert.Single(shared.PendingLibraries);
         Assert.Equal((ServerLibraryKind.Series, "Tutti i server - Serie"), (loadedPending.Kind, loadedPending.Name));

@@ -34,6 +34,12 @@ public class AutomaticLibraryConfig
     public bool Adopted { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether a shared library still lacks the blocks of who blocks a library on its
+    /// folders (D42): no shared check scans until they are written.
+    /// </summary>
+    public bool Unblocked { get; set; }
+
+    /// <summary>
     /// Gets the paths of the library as last seen, kept for the shared libraries only.
     /// </summary>
     public Collection<string> Paths { get; } = [];

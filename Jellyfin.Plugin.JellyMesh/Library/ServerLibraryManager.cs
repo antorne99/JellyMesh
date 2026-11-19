@@ -722,7 +722,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
     private static AutomaticLibraryConfig Copy(AutomaticLibraryConfig record)
     {
-        var copy = new AutomaticLibraryConfig { Kind = record.Kind, Name = record.Name, ItemId = record.ItemId, RemoteLibraryId = record.RemoteLibraryId, Adopted = record.Adopted };
+        var copy = new AutomaticLibraryConfig { Kind = record.Kind, Name = record.Name, ItemId = record.ItemId, RemoteLibraryId = record.RemoteLibraryId, Adopted = record.Adopted, Unblocked = record.Unblocked };
         foreach (var path in record.Paths)
         {
             copy.Paths.Add(path);
