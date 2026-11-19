@@ -1,0 +1,134 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Remote;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Model.Entities;
+using Moq;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
+
+public sealed class BookMaterializerTests : IDisposable
+{
+    private readonly StubFixture _fixture = new();
+
+    public void Dispose() => _fixture.Dispose();
+
+    private static RemoteItem Dune(string overview = "Spice") => new()
+    {
+        Id = "b1",
+        Name = "Dune",
+        ProductionYear = 1965,
+        Overview = overview,
+        Path = "/books/Dune/Dune.epub",
+        ImageTags = new Dictionary<string, string> { ["Primary"] = "c1" }
+    };
+
+    private async Task<RemoteServerInfo> AddBookServerAsync(RemoteItem book)
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.Books, "Libri", "books"));
+        _fixture.Sync.Client.Add(TestLibraries.Books, RemoteItemType.Book, book);
+        return await _fixture.Sync.AddServerAsync("A", TestLibraries.Books);
+    }
+
+    private string BookPath(RemoteServerInfo server, string file = "Dune (1965).epub")
+        => _fixture.PathIn(server, TestLibraries.Books, "Libri", "Dune (1965)", file);
+
+    [Fact]
+    public async Task ABookBecomesAPlaceholderAndACoverWithNoStrmNfoOrOpf()
+    {
+        var a = await AddBookServerAsync(Dune());
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var folder = Path.GetDirectoryName(BookPath(a))!;
+        Assert.Equal(["Dune (1965).epub", "Dune (1965).jpg"], Directory.GetFiles(folder).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal(BookPlaceholders.Epub(), await File.ReadAllBytesAsync(BookPath(a)));
+        var stub = Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.Equal(StubKind.Book, stub.Kind);
+        _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
+    }
+
+    [Fact]
+    public async Task AnIndexedBookGetsTheRemoteMetadataLockedAtTheNextRun()
+    {
+        var a = await AddBookServerAsync(Dune());
+        await _fixture.SyncAndMaterializeAsync();
+        var item = new Book { Id = Guid.NewGuid(), Path = BookPath(a), Name = "Dune (1965)" };
+        _fixture.Library.Setup(library => library.FindByPath(BookPath(a), false)).Returns(item);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(("Dune", 1965, "Spice", true), (item.Name, item.ProductionYear, item.Overview, item.IsLocked));
+        Assert.Equal(BookPlaceholders.Epub(), await File.ReadAllBytesAsync(BookPath(a)));
+    }
+
+    [Fact]
+    public async Task AChangedBookReachesItsItem()
+    {
+        var a = await AddBookServerAsync(Dune());
+        await _fixture.SyncAndMaterializeAsync();
+        var item = new Book { Id = Guid.NewGuid(), Path = BookPath(a), Name = "Dune" };
+        _fixture.Library.Setup(library => library.FindByPath(BookPath(a), false)).Returns(item);
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Sync.Client.Items[(TestLibraries.Books, RemoteItemType.Book)][0] = Dune("Sand");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal("Sand", item.Overview);
+    }
+
+    [Fact]
+    public async Task APlaceholderWithNoWorkIsNeverWrittenOverWithAUrl()
+    {
+        await AddBookServerAsync(Dune());
+        var missing = Guid.NewGuid();
+        var relative = FederatedPaths.TypeFolderOf(missing, TestLibraries.Books, TypeFolder.Books) + "/Dune/Dune.epub";
+        var path = Path.Combine(_fixture.Root, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllBytesAsync(path, BookPlaceholders.Epub());
+        await _fixture.Registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            var stub = new StubEntry
+            {
+                Id = "kept",
+                ServerId = missing,
+                Kind = StubKind.Book,
+                RelativePath = relative,
+                Sources = [new StubSource(missing, "x", "x") { LibraryId = TestLibraries.Books }],
+                IdentityKey = "book|x"
+            };
+            await _fixture.Registry.SaveAsync(_fixture.Registry.State with { Stubs = [stub] }, CancellationToken.None);
+        }
+        finally
+        {
+            _fixture.Registry.Exit();
+        }
+
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Materializer.MaterializeAsync(true, CancellationToken.None);
+
+        Assert.Contains(_fixture.Registry.State.Stubs, stub => stub.Id == "kept");
+        Assert.Equal(BookPlaceholders.Epub(), await File.ReadAllBytesAsync(path));
+    }
+
+    [Fact]
+    public async Task ABookTheRemoteDropsLeavesWithItsFolder()
+    {
+        var a = await AddBookServerAsync(Dune());
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Sync.Client.Items[(TestLibraries.Books, RemoteItemType.Book)].Clear();
+        _fixture.Sync.Client.Add(TestLibraries.Books, RemoteItemType.Book, Dune() with { Id = "b2", Name = "Other", Path = "/books/Other.pdf" });
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(Directory.Exists(Path.GetDirectoryName(BookPath(a))));
+        Assert.True(File.Exists(_fixture.PathIn(a, TestLibraries.Books, "Libri", "Other (1965)", "Other (1965).pdf")));
+    }
+}

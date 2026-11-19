@@ -51,6 +51,30 @@ public class BookPlaceholdersTests
         });
     }
 
+    [Theory]
+    [InlineData("pdf")]
+    [InlineData("cbz")]
+    [InlineData("epub")]
+    public void For_GivesTheMinimalValidFileOfPdfCbzAndEpub(string extension)
+    {
+        var expected = extension switch { "pdf" => BookPlaceholders.Pdf(), "cbz" => BookPlaceholders.Cbz(), _ => BookPlaceholders.Epub() };
+
+        Assert.Equal(expected, BookPlaceholders.For(extension));
+    }
+
+    // D51: empty until the trial on 12.4 decides otherwise.
+    [Theory]
+    [InlineData("azw")]
+    [InlineData("azw3")]
+    [InlineData("mobi")]
+    [InlineData("cbr")]
+    [InlineData("cb7")]
+    [InlineData("cbt")]
+    public void For_GivesAnEmptyFileForTheOtherFormats(string extension)
+    {
+        Assert.Empty(BookPlaceholders.For(extension));
+    }
+
     [Fact]
     public void Pdf_IsANewCopyEachTime()
     {

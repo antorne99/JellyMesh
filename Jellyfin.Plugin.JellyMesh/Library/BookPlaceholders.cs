@@ -44,6 +44,20 @@ public static class BookPlaceholders
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] >>"
     ];
 
+    /// <summary>
+    /// Returns the placeholder of a book format: the minimal valid file for PDF, CBZ and EPUB (D47), an empty one for the
+    /// other formats until the trial of D51 on 12.4.
+    /// </summary>
+    /// <param name="extension">The lowercase extension, without the dot.</param>
+    /// <returns>A new copy of the file.</returns>
+    public static byte[] For(string extension) => extension switch
+    {
+        "pdf" => Pdf(),
+        "cbz" => Cbz(),
+        "epub" => Epub(),
+        _ => []
+    };
+
     /// <summary>Returns a PDF with two empty 1x1 pages, the file the F48 probes tested.</summary>
     /// <returns>A new copy of the file.</returns>
     public static byte[] Pdf()

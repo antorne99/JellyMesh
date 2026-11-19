@@ -20,7 +20,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <see cref="ILibraryMaterializer"/>. Writes only inside the federated folder. The registry is saved before the files, so
 /// that a scan running at the same time finds the stub of every file it meets.
 /// </summary>
-public sealed class LibraryMaterializer : ILibraryMaterializer
+public sealed partial class LibraryMaterializer : ILibraryMaterializer
 {
     // How many images of one server are read at once. A choice of Claude's, under the 8 reads per peer of decision 31.
     private const int ImageReadsAtOnce = 4;
@@ -434,6 +434,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     private async Task WriteStubAsync(Run run, StubWork work, CancellationToken cancellationToken)
     {
+        if (work.Entry.Kind == StubKind.Book)
+        {
+            await WriteBookAsync(run, work, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var entry = work.Entry;
         var strm = FederatedPaths.Resolve(run.Root, entry.RelativePath);
         try
@@ -514,6 +520,11 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     private async Task SignStubAsync(Run run, StubEntry stub, CancellationToken cancellationToken)
     {
+        if (stub.Kind == StubKind.Book)
+        {
+            return;
+        }
+
         var strm = FederatedPaths.Resolve(run.Root, stub.RelativePath);
         try
         {
