@@ -11,6 +11,7 @@ using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.IO;
 using Moq;
 using Xunit;
 
@@ -79,6 +80,17 @@ public sealed class TypeMaterializerTests : IDisposable
         var homeNfo = XDocument.Load(Path.Combine(_fixture.Root, home, "Trips", "Beach day.nfo")).Root!;
         Assert.Equal(("movie", "2021-07-08"), (homeNfo.Name.LocalName, homeNfo.Element("premiered")?.Value));
         Assert.Equal([StubKind.MusicVideo, StubKind.HomeVideo], _fixture.Registry.State.Stubs.Select(stub => stub.Kind).Order());
+    }
+
+    [Fact]
+    public async Task AFolderTheServerWouldIgnoreIsWrittenWithItsId()
+    {
+        var a = await AddVideosAsync();
+        _fixture.Library.Setup(library => library.IgnoreFile(It.Is<FileSystemMetadata>(file => file.Name == "Trips"), It.IsAny<BaseItem>())).Returns(true);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Contains(Path.Combine(StubFixture.InLibrary(a, TestLibraries.HomeVideos, "Video domestici"), "Trips [f1]", "Beach day.strm"), _fixture.Files);
     }
 
     [Fact]
