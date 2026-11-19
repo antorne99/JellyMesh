@@ -64,6 +64,19 @@ public sealed class TypeStubRemoverTests : IDisposable
     }
 
     [Fact]
+    public void AHomeVideoNamedLikeTheThumbnailOfAnotherStays()
+    {
+        var gone = Stub("v1", StubKind.HomeVideo, HomeFolder("Trips", "clip.strm"), "clip-thumb.jpg");
+        var other = Stub("v2", StubKind.HomeVideo, HomeFolder("Trips", "clip-thumb.strm"), "clip-thumb.nfo");
+
+        _remover.RemoveAll(_root, new StubState { Stubs = [gone, other] }, [gone]);
+
+        Assert.Equal(
+            ["clip-thumb.nfo", "clip-thumb.strm"],
+            Directory.GetFiles(Abs(HomeFolder("Trips"))).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public void TheLastHomeVideoOfAFolderTakesTheFoldersItLeavesEmptyButNotTheTypeFolder()
     {
         var gone = Stub("v1", StubKind.HomeVideo, HomeFolder("Trips", "Sea", "Beach day.strm"), "Beach day.nfo");

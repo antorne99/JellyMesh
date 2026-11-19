@@ -277,7 +277,7 @@ public sealed class StubRemover
         foreach (var file in Directory.EnumerateFiles(folder))
         {
             var name = Path.GetFileName(file);
-            if (HasExtensionOnly(name, stem + ".") || HasExtensionOnly(name, stem + "-thumb."))
+            if (HasExtensionOnly(name, stem + ".") || IsThumbnailOf(name, stem))
             {
                 File.Delete(file);
             }
@@ -287,6 +287,12 @@ public sealed class StubRemover
     // Whether a file name is the prefix and one extension, so that removing "clip" leaves "clip.final.strm".
     private static bool HasExtensionOnly(string name, string prefix)
         => name.StartsWith(prefix, StringComparison.Ordinal) && !name.AsSpan(prefix.Length).Contains('.');
+
+    // Whether a file is the thumbnail of a stem, and not the .strm or .nfo of a stub named like one.
+    private static bool IsThumbnailOf(string name, string stem)
+        => HasExtensionOnly(name, stem + "-thumb.")
+            && !name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
+            && !name.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase);
 
     // Deletes a home video folder and the parents it leaves empty, with their rows, up to the type folder, which stays.
     private void DeleteEmptyFolders(string root, string relative)
