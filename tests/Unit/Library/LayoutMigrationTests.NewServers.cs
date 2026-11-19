@@ -103,11 +103,12 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
-    public async Task ANewServerWithNoImportedLibraryOfATypeIsPlacedWithNothingAdded()
+    public async Task ANewServerWithNoImportedLibraryWaitsUntilTheAdminImportsOne()
     {
-        // Its remote libraries are read and none is imported: there is nothing of it to place.
+        // Its remote libraries were read, but none is imported now: it has no type folder yet, so it stays to place.
         MigratedToRemoteLibraries();
-        var c = Imported(_serverC, (Guid.NewGuid().ToString("N"), "movies"));
+        var films = Guid.NewGuid().ToString("N");
+        var c = Imported(_serverC, (films, "movies"));
         c.ImportedLibraryIds.Clear();
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, TypeFolderOf(_serverA, Guid.NewGuid().ToString("N"), TypeFolder.Movies)));
         _configured.Add(_serverC);
@@ -118,6 +119,13 @@ public sealed partial class LayoutMigrationTests
 
         Assert.Empty(_addedPaths);
         Assert.Equal(0, _scansQueued);
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+
+        c.ImportedLibraryIds.Add(films);
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Equal([("Film", TypeFolderOf(_serverC, films, TypeFolder.Movies))], _addedPaths);
         Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
     }
 

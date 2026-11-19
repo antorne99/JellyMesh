@@ -129,7 +129,7 @@ public sealed partial class LayoutMigration
         {
             if (FoldersToPlace(root, server, olderLayout) is not { } paths)
             {
-                _logger.LogInformation("Migration to the server folders: the remote libraries of a new server are not read yet, so it waits for the next sync");
+                _logger.LogInformation("Migration to the server folders: a new server has no imported library read yet, so it waits for the next sync");
                 continue;
             }
 
@@ -169,7 +169,7 @@ public sealed partial class LayoutMigration
     }
 
     // The folders of a new server with their type: its 0.5 folders while the stubs keep the older layout, otherwise one type
-    // folder per imported remote library (§10 row 443). Null while its remote libraries are not read yet.
+    // folder per imported remote library (§10 row 443). Null until a sync has read an imported library of it.
     private List<(string Path, TypeFolder Type)>? FoldersToPlace(string root, Guid server, bool olderLayout)
     {
         if (olderLayout)
@@ -177,10 +177,8 @@ public sealed partial class LayoutMigration
             return [(FederatedFolderLayout.ServerMoviesPath(root, server), TypeFolder.Movies), (FederatedFolderLayout.ServerSeriesPath(root, server), TypeFolder.Series)];
         }
 
-        var typeFolders = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server) is { RemoteLibraries.Count: > 0 } found
-            ? LibraryPlan.TypeFolders(found)
-            : null);
-        return typeFolders?
+        var typeFolders = _store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server) is { } found ? LibraryPlan.TypeFolders(found) : []);
+        return typeFolders.Count == 0 ? null : typeFolders
             .Select(folder => (FederatedPaths.Resolve(root, folder), TypeFolder.All.First(type => string.Equals(type.Name, Path.GetFileName(folder), StringComparison.Ordinal))))
             .ToList();
     }
