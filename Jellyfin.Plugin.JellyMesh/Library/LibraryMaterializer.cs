@@ -205,6 +205,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var folder = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(folder);
         var temporary = Path.Combine(folder, "." + Guid.NewGuid().ToString("N") + ".tmp");
+        var moved = false;
         try
         {
             var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
@@ -214,10 +215,14 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             File.Move(temporary, path, overwrite: true);
+            moved = true;
         }
         finally
         {
-            File.Delete(temporary);
+            if (!moved)
+            {
+                File.Delete(temporary);
+            }
         }
     }
 
@@ -456,7 +461,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             var urlTag = UrlTagOf(work.StrmUrl);
             if (written || run.VerifyEveryStub || !IsUrlConfirmed(entry, strm, urlTag))
             {
-                changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing.Value, cancellationToken).ConfigureAwait(false);
+                changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, written, existing.Value, cancellationToken).ConfigureAwait(false);
                 entry = entry with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) };
             }
 
@@ -504,7 +509,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             var urlTag = UrlTagOf(url);
             if (File.Exists(strm) && (run.VerifyEveryStub || !IsUrlConfirmed(stub, strm, urlTag)))
             {
-                await ApplyStrmUrlAsync(strm, url, _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
+                await ApplyStrmUrlAsync(strm, url, false, _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
                 run.Put(stub with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) });
             }
         }
@@ -517,9 +522,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     // Keeps the file and the item on the current URL. Only those two change: the path, hence the item and its watch state,
     // stay. The item matters most: it is what ffmpeg opens, and an old URL would be refused until the next refresh.
-    private async Task<bool> ApplyStrmUrlAsync(string strm, string url, BaseItem? item, CancellationToken cancellationToken)
+    // A file just written with the URL is not read again.
+    private async Task<bool> ApplyStrmUrlAsync(string strm, string url, bool written, BaseItem? item, CancellationToken cancellationToken)
     {
-        var stale = !string.Equals(await File.ReadAllTextAsync(strm, cancellationToken).ConfigureAwait(false), url, StringComparison.Ordinal);
+        var stale = !written && !string.Equals(await File.ReadAllTextAsync(strm, cancellationToken).ConfigureAwait(false), url, StringComparison.Ordinal);
         if (stale)
         {
             await WriteTextAsync(strm, url, cancellationToken).ConfigureAwait(false);

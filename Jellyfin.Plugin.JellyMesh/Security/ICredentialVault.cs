@@ -18,7 +18,8 @@ public interface ICredentialVault
     bool IsLegacyKeySet { get; }
 
     /// <summary>
-    /// Evaluates the key against everything stored. Evaluated on each call, nothing is cached.
+    /// Evaluates the key against everything stored, on each call. Credentials already decrypted from the same value
+    /// under the same key are not decrypted again (D39).
     /// </summary>
     /// <returns>The state of the key.</returns>
     KeyState GetKeyState();

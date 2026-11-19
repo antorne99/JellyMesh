@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -16,7 +17,8 @@ namespace Jellyfin.Plugin.JellyMesh.Security;
 /// <remarks>
 /// There is no separate key check value: a key is wrong exactly when a stored credential does not
 /// decrypt. The way out is to enter the password of each such server again, which a key that is
-/// there always allows.
+/// there always allows. Credentials once decrypted stay in memory for the life of the process, with the
+/// key and the stored value they came from, and are used again only while both are the same (D39).
 /// </remarks>
 public sealed class CredentialVault : ICredentialVault
 {
@@ -24,6 +26,7 @@ public sealed class CredentialVault : ICredentialVault
     private readonly IPluginConfigurationStore _store;
     private readonly ILegacySecretKeySource? _legacy;
     private readonly ILogger _logger;
+    private readonly ConcurrentDictionary<Guid, Decrypted> _decrypted = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CredentialVault"/> class.
@@ -58,7 +61,8 @@ public sealed class CredentialVault : ICredentialVault
             .Select(server => KeyValuePair.Create(server.Id, server.EncryptedCredentials))
             .ToList());
 
-        return stored.All(entry => CanDecrypt(secret, entry.Key, entry.Value)) ? KeyState.Ok : KeyState.Wrong;
+        Forget(secret, stored);
+        return stored.All(entry => CanDecrypt(secret, entry.Key, entry.Value, keep: true)) ? KeyState.Ok : KeyState.Wrong;
     }
 
     /// <inheritdoc />
@@ -86,26 +90,18 @@ public sealed class CredentialVault : ICredentialVault
     /// <inheritdoc />
     public RemoteCredentials? Unprotect(Guid serverId, string encryptedCredentials)
     {
-        if (GetKeyState() != KeyState.Ok)
+        if (GetKeyState() != KeyState.Ok || UsableKey() is not { } secret)
         {
             return null;
         }
 
-        var payload = CredentialCipher.Decrypt(_keySource.GetSecretKey()!, encryptedCredentials, serverId.ToByteArray());
-        try
-        {
-            return JsonSerializer.Deserialize<RemoteCredentials>(payload);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(payload);
-        }
+        return Decrypt(secret, serverId, encryptedCredentials, keep: false);
     }
 
     /// <inheritdoc />
     public bool CanDecrypt(Guid serverId, string encryptedCredentials)
     {
-        return UsableKey() is { } secret && CanDecrypt(secret, serverId, encryptedCredentials);
+        return UsableKey() is { } secret && CanDecrypt(secret, serverId, encryptedCredentials, keep: false);
     }
 
     private static bool CanDecrypt(string secret, Guid serverId, string value)
@@ -140,6 +136,62 @@ public sealed class CredentialVault : ICredentialVault
     }
 
     private string? UsableKey() => Usable(_keySource.GetSecretKey());
+
+    // Whether the value decrypts under the key; keep says whether the credentials stay in memory.
+    private bool CanDecrypt(string secret, Guid serverId, string value, bool keep)
+    {
+        try
+        {
+            Decrypt(secret, serverId, value, keep);
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+        catch (JsonException)
+        {
+            return true;
+        }
+    }
+
+    // The credentials of a server, from an earlier decryption of the same value under the same key when one was kept.
+    // Only values just read from the store are kept, so nothing outside it stays in memory.
+    private RemoteCredentials? Decrypt(string secret, Guid serverId, string value, bool keep)
+    {
+        if (_decrypted.TryGetValue(serverId, out var kept) && kept.Matches(secret, value))
+        {
+            return kept.Credentials;
+        }
+
+        var payload = CredentialCipher.Decrypt(secret, value, serverId.ToByteArray());
+        try
+        {
+            var credentials = JsonSerializer.Deserialize<RemoteCredentials>(payload);
+            if (keep && credentials is not null)
+            {
+                _decrypted[serverId] = new Decrypted(secret, value, credentials);
+            }
+
+            return credentials;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(payload);
+        }
+    }
+
+    // Drops the credentials of servers that are gone or whose key or stored value changed.
+    private void Forget(string secret, List<KeyValuePair<Guid, string>> stored)
+    {
+        foreach (var (serverId, kept) in _decrypted)
+        {
+            if (!stored.Any(entry => entry.Key == serverId && kept.Matches(secret, entry.Value)))
+            {
+                _decrypted.TryRemove(KeyValuePair.Create(serverId, kept));
+            }
+        }
+    }
 
     // All or nothing: a password the old key cannot read leaves every password as it was, and the page asks for them
     // again. A failure here must not stop the plugin from starting.
@@ -195,5 +247,14 @@ public sealed class CredentialVault : ICredentialVault
         {
             _logger.LogError("Moving the credentials to the key file failed: {Error}", exception.GetType().Name);
         }
+    }
+
+    // Credentials with the key and the stored value they were decrypted from. A class, so that no generated ToString prints them.
+    private sealed class Decrypted(string secret, string value, RemoteCredentials credentials)
+    {
+        public RemoteCredentials Credentials { get; } = credentials;
+
+        public bool Matches(string key, string stored)
+            => string.Equals(secret, key, StringComparison.Ordinal) && string.Equals(value, stored, StringComparison.Ordinal);
     }
 }
