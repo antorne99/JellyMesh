@@ -3456,7 +3456,7 @@ def recreate(s, width):
         fake(context, "Status", lambda data: of_server(data, "stock").update(
             Rename={"Busy": False, "Pending": False, "Failed": True, "Stuck": False},
             AutomaticLibraries={"Enabled": True, "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "ManualPaths": [],
-                                "Libraries": [], "Conflicts": []}))
+                                "Libraries": [], "Conflicts": [], "Missing": True}))
 
         def save(route):
             if route.request.method != "PUT":
@@ -3503,6 +3503,43 @@ def adopted(s, width):
     check(name + " a library name renders no markup", stock.locator("b").count() == 0)
     healthy(page, name)
     u.shot(page, f"adopted-{width}")
+    u.close(page)
+
+
+def server_notes(s, width):
+    """A server card says who lost titles, which remote libraries are gone, and which folders to add by hand."""
+    name = width + " server notes"
+    mode = ["ByType"]
+
+    def libraries(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(AutomaticLibraries={
+            "Enabled": mode[0] != "None", "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "Conflicts": [], "Missing": mode[0] != "None",
+            "Libraries": [] if mode[0] == "None" else [{"Kind": "Movies", "Name": "stock - Film", "Adopted": False, "Disabled": False}],
+            "Vanished": [HOSTILE], "LostAccess": [{"Library": "stock - Film", "Users": [HOSTILE_PEER, "friend"]}],
+            "ManualPaths": [{"Path": "/federata/x/a/Film", "LibraryType": "movies", "RemoteLibrary": "Film 4K"}]}))
+
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    lost = stock.locator(u.ALERT, has_text="lost titles")
+    check(name + " lists who lost titles", until(page, lambda: lost.count() == 1) and HOSTILE_PEER in lost.inner_text() and "friend" in lost.inner_text(), stock.inner_text())
+    gone = stock.locator(u.ALERT, has_text="no longer on this server")
+    check(name + " names the vanished library", gone.count() == 1 and HOSTILE in gone.inner_text(), stock.inner_text())
+    check(name + " offers to recreate a missing library", stock.get_by_role("button", name="Recreate missing libraries", exact=True).is_visible())
+    check(name + " lists no folder to add by hand", "/federata/x/a/Film" not in stock.inner_text())
+    check(name + " names render no markup", stock.locator("b, i").count() == 0)
+    healthy(page, name)
+    u.close(page)
+
+    mode[0] = "None"
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    check(name + " lists the folders to add by hand", until(page, lambda: "/federata/x/a/Film" in stock.inner_text()), stock.inner_text())
+    check(name + " gives each its type and library", "Films from Film 4K" in stock.inner_text(), stock.inner_text())
+    check(name + " offers nothing to recreate", stock.get_by_role("button", name="Recreate missing libraries", exact=True).count() == 0)
+    healthy(page, name)
+    u.shot(page, f"server-notes-{width}")
     u.close(page)
 
 
@@ -3555,6 +3592,7 @@ SCENARIOS = {
     "adopted": (adopted, WIDTHS),
     "mode-change": (mode_change, WIDTHS),
     "recreate": (recreate, ["1280"]),
+    "server-notes": (server_notes, WIDTHS),
 }
 
 with u.Session() as session:

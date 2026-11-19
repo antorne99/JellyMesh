@@ -703,6 +703,18 @@
                 margin-top: 1em;
             }
 
+            .jmOwnNotes .jmAlert {
+                margin: 0.75em 0 0;
+            }
+
+            .jmManualPaths {
+                margin-bottom: 1em;
+            }
+
+            .jmManualPaths .jmPathName {
+                width: 14em;
+            }
+
             .jmHeldRemovals p {
                 margin: 0;
             }
@@ -1639,6 +1651,10 @@
                     "Your library {library} holds {paths} together with other folders, so JellyMesh neither made nor adopted it. Take the other folders out of it for JellyMesh to adopt it, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} insieme ad altre cartelle, quindi JellyMesh non l'ha né creata né adottata. Togli le altre cartelle perché JellyMesh la adotti, oppure imposta su Nessuna la modalità delle librerie di questo server.",
                     "Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library for them. Take them out of {library}, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} con un altro tipo di contenuto, quindi JellyMesh non ha né creato né adottato una libreria per questi percorsi. Toglili da {library}, oppure imposta su Nessuna la modalità delle librerie di questo server.",
                     "{library} (adopted)": "{library} (adottata)",
+                    "In the last change of library mode these users lost titles in {library}, because they could see only some of the libraries it joins: {names}. Give them access in Dashboard > Users if they should see them.": "Nell'ultimo cambio di modalità delle librerie questi utenti hanno perso dei titoli in {library}, perché vedevano solo alcune delle librerie che unisce: {names}. Dai loro l'accesso nel Pannello di controllo > Utenti se devono vederli.",
+                    "These remote libraries are no longer on this server, so JellyMesh stopped importing them: {names}.": "Queste librerie remote non sono più su questo server, quindi JellyMesh ha smesso di importarle: {names}.",
+                    "JellyMesh makes no library for this server. Add each of these folders in Dashboard > Libraries to a library of the type given:": "JellyMesh non crea librerie per questo server. Aggiungi ognuna di queste cartelle nel Pannello di controllo > Librerie a una libreria del tipo indicato:",
+                    "{kind} from {library}": "{kind} da {library}",
                     "{server} answered with a problem ({problem}). The edit can still be saved.": "{server} ha risposto con un problema ({problem}). La modifica si può salvare comunque.",
                     "{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.": "{server} non risponde. Finché non risponde, l'accesso e le librerie restano come sono. Un nuovo URL si salva solo se il server risponde a quell'indirizzo.",
                     "Add the folders of each remote library to the libraries": "Aggiungi alle librerie le cartelle di ogni libreria remota",
@@ -3439,6 +3455,13 @@
                     return row;
                 }
 
+                // Makes a paragraph that stands out as a warning.
+                function alertNote(text) {
+                    var note = create('p', text);
+                    note.className = 'jmAlert';
+                    return note;
+                }
+
                 // Says why a library of the admin keeps JellyMesh from making or adopting one, and what to do (D4, D30).
                 function conflictText(conflict) {
                     var values = { library: conflict.Library, paths: conflict.Paths.join(', ') };
@@ -3456,9 +3479,12 @@
 
                 // Shows the notes about the libraries of a server, and rebuilds them only when they change.
                 function renderOwnNotes(container, own, recreate) {
-                    var missing = own.Enabled && !own.Busy && own.Libraries.length < 2;
+                    var missing = !!own.Missing && !own.Busy;
                     var conflicts = own.Conflicts || [];
-                    var key = JSON.stringify([own.Enabled, own.Mode, own.Released, missing, conflicts]);
+                    var lost = own.LostAccess || [];
+                    var vanished = own.Vanished || [];
+                    var manual = own.Mode === 'None' ? own.ManualPaths || [] : [];
+                    var key = JSON.stringify([own.Enabled, own.Mode, own.Released, missing, conflicts, lost, vanished, manual]);
                     if (container.jmKey === key) {
                         return;
                     }
@@ -3475,10 +3501,28 @@
 
                     // A library of the admin in the way of one JellyMesh wants: neither made nor adopted, and what to do (D4, D30).
                     conflicts.forEach(function (conflict) {
-                        var note = create('p', conflictText(conflict));
-                        note.className = 'jmAlert';
-                        container.appendChild(note);
+                        container.appendChild(alertNote(conflictText(conflict)));
                     });
+
+                    lost.forEach(function (loss) {
+                        container.appendChild(alertNote(t('In the last change of library mode these users lost titles in {library}, because they could see only some of the libraries it joins: {names}. Give them access in Dashboard > Users if they should see them.', { library: loss.Library, names: loss.Users.join(', ') })));
+                    });
+
+                    if (vanished.length > 0) {
+                        container.appendChild(alertNote(t('These remote libraries are no longer on this server, so JellyMesh stopped importing them: {names}.', { names: vanished.join(', ') })));
+                    }
+
+                    if (manual.length > 0) {
+                        container.appendChild(create('p', t('JellyMesh makes no library for this server. Add each of these folders in Dashboard > Libraries to a library of the type given:')));
+                        var paths = create('div');
+                        paths.className = 'jmManualPaths';
+                        manual.forEach(function (path) {
+                            var kind = libraryKinds[path.LibraryType] || path.LibraryType;
+                            var label = path.RemoteLibrary ? t('{kind} from {library}', { kind: kind, library: path.RemoteLibrary }) : kind;
+                            paths.appendChild(renderCopyRow(sentence(label), path.Path, t('Copy: {label}', { label: path.Path })));
+                        });
+                        container.appendChild(paths);
+                    }
 
                     if (missing) {
                         var actions = actionRow();
