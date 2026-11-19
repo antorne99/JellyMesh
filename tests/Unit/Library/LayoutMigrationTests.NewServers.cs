@@ -954,6 +954,42 @@ public sealed partial class LayoutMigrationTests
         Assert.Empty(a.LibrariesToPlace);
     }
 
+    [Fact]
+    public async Task AnUnrecordedLibraryOnTheFoldersOfAServerHoldsPlacementUntilTheFollowAdoptsIt()
+    {
+        // §10 rows 384, 393, 440: a library with exactly the paths and type of a by-type library A lacks may be one made
+        // and never recorded, so placement waits; the follow of the next sync adopts it, and placement goes on.
+        MigratedToRemoteLibraries();
+        var (filmsOfA, showsOfA, filmsOfC) = (NewId(), NewId(), NewId());
+        var a = Imported(_serverA, (filmsOfA, "movies"), (showsOfA, "tvshows"));
+        a.LibraryMode = LibraryMode.ByType;
+        Imported(_serverC, (filmsOfC, "movies"));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, LocalFilms, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, TypeFolderOf(_serverA, showsOfA, TypeFolder.Series)));
+        _libraries.Add(Library("Di A", CollectionTypeOptions.movies, TypeFolderOf(_serverA, filmsOfA, TypeFolder.Movies)));
+        a.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "Di A", ItemId = IdOf("Di A") });
+        foreach (var library in _libraries)
+        {
+            a.FollowedLibraryIds.Add(library.ItemId!);
+        }
+
+        _configured.Add(_serverC);
+        var migration = await MigrationAsync();
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Empty(_addedPaths);
+        Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+
+        await _manager!.ReconcileAsync(CancellationToken.None);
+        await migration.RunAsync(CancellationToken.None);
+        await migration.Running;
+
+        Assert.Contains(a.AutomaticLibraryRegistry, record => record.Name == "Serie" && record.Adopted);
+        Assert.Equal([("Film", TypeFolderOf(_serverC, filmsOfC, TypeFolder.Movies))], _addedPaths);
+        Assert.Contains(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
+    }
+
     private static string NewId() => Guid.NewGuid().ToString("N");
 
     // A remote library the admin imports on a server already linked, as the edit saves it and a sync reads it.
