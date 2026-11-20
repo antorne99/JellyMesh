@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
@@ -42,6 +43,7 @@ public sealed class BookProviderTests : IDisposable
             Genres = ["Fantascienza"],
             Studios = [new RemoteNamedItem("Chilton")],
             SeriesName = "Le cronache di Dune",
+            People = [new RemotePerson("Frank Herbert", null, "Author")],
             ProviderIds = new Dictionary<string, string?> { ["Isbn"] = "9780441013593" }
         });
         var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Books);
@@ -76,6 +78,26 @@ public sealed class BookProviderTests : IDisposable
         Assert.Equal(Assert.Single(_fixture.Registry.State.Stubs).Id, item.GetProviderId(FederatedBookMark.ProviderId));
         Assert.Equal(isProtected, item.IsLocked);
         Assert.Empty(item.LockedFields);
+    }
+
+    // The provider leaves the authors to the next materializer run, which still writes them after the fields it wrote.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheAuthorsLandOnABookAfterTheProviderWithOrWithoutProtection(bool isProtected)
+    {
+        _fixture.Sync.Store.Configuration.MetadataProtection = isProtected;
+        var path = await BookStubAsync();
+        var item = new Book { Id = Guid.NewGuid(), Path = path, Name = "Dune (1965)" };
+        await Before().FetchAsync(item, Options(), CancellationToken.None);
+        _fixture.Library.Setup(library => library.FindByPath(path, false)).Returns(item);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var people = Assert.Single(_fixture.Library.Invocations, call => call.Method.Name == nameof(ILibraryManager.UpdatePeopleAsync) && call.Arguments[0] == item);
+        var author = Assert.Single((IEnumerable<PersonInfo>)people.Arguments[1]);
+        Assert.Equal(("Frank Herbert", PersonKind.Author), (author.Name, author.Type));
+        Assert.Equal(isProtected, item.IsLocked);
     }
 
     [Fact]
