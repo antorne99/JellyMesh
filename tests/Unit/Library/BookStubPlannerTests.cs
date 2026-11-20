@@ -135,7 +135,7 @@ public class BookStubPlannerTests
 
         var ids = Assert.Single(Plan(state, items: book).Stubs).Metadata.ProviderIds;
 
-        Assert.Equal(new Dictionary<string, string> { ["Isbn"] = "9780441013593", [FederatedBookMark.ProviderId] = "s1" }, ids);
+        Assert.Equal(new Dictionary<string, string> { ["Isbn"] = "9780441013593", [FederatedPlaceholderMark.ProviderId] = "s1" }, ids);
     }
 
     [Fact]

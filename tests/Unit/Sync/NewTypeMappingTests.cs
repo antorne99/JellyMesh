@@ -195,6 +195,36 @@ public class NewTypeMappingTests
         Assert.Null(book.Extension);
     }
 
+    [Theory]
+    [InlineData("/srv/federata/0f8fad5b-d9cb-469f-a165-70867728950e/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Video domestici/Album/IMG_0001.jpg")]
+    [InlineData("D:\\Federata\\0F8FAD5B-D9CB-469F-A165-70867728950E\\4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c\\Video domestici\\IMG_0001.png")]
+    public void APhotoShapedAsAPlaceholderOfAnotherJellyMeshGetsNoFile(string path)
+    {
+        var photo = RemoteItemMapper.ToIndexedItem(new RemoteItem { Id = "p1", Path = path }, RemoteItemType.Photo, "lib", DateTimeOffset.UnixEpoch);
+
+        Assert.Null(photo.Extension);
+    }
+
+    [Theory]
+    [InlineData("/media/0f8fad5b-d9cb-469f-a165-70867728950e/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Libri/IMG_0001.jpg")]
+    [InlineData("/media/photos/4c1e9b0a5d2f4e3b8a7c6d5e4f3a2b1c/Video domestici/IMG_0001.jpg")]
+    public void APhotoOnlyPartlyShapedAsAPlaceholderKeepsItsFile(string path)
+    {
+        var photo = RemoteItemMapper.ToIndexedItem(new RemoteItem { Id = "p1", Path = path }, RemoteItemType.Photo, "lib", DateTimeOffset.UnixEpoch);
+
+        Assert.Equal("jpg", photo.Extension);
+    }
+
+    [Fact]
+    public void APhotoWithTheMarkOfAnotherJellyMeshGetsNoFile()
+    {
+        var item = new RemoteItem { Id = "p1", Path = "/media/photos/IMG_0001.jpg", ProviderIds = new Dictionary<string, string?> { ["JellyMesh"] = "0123" } };
+
+        var photo = RemoteItemMapper.ToIndexedItem(item, RemoteItemType.Photo, "lib", DateTimeOffset.UnixEpoch);
+
+        Assert.Null(photo.Extension);
+    }
+
     [Fact]
     public void APhotoKeepsOnlyTheExtensionOfItsFile()
     {

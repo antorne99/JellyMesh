@@ -139,7 +139,7 @@ public sealed record StubMetadata
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        return From(item, isProtected) with { ProviderIds = FederatedBookMark.WithMark(item.ProviderIds, stubId) };
+        return From(item, isProtected) with { ProviderIds = FederatedPlaceholderMark.WithMark(item.ProviderIds, stubId) };
     }
 
     /// <summary>

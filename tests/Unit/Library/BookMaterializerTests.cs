@@ -91,8 +91,8 @@ public sealed class BookMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.True(File.Exists(BookPath(a)));
-        Assert.True(FederatedBookMark.IsPlaceholder(BookPath(a), null));
-        Assert.True(FederatedBookMark.IsPlaceholder(Path.Combine(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).RelativePath), null));
+        Assert.True(FederatedPlaceholderMark.IsPlaceholder(BookPath(a), null, TypeFolder.Books));
+        Assert.True(FederatedPlaceholderMark.IsPlaceholder(Path.Combine(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).RelativePath), null, TypeFolder.Books));
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public sealed class BookMaterializerTests : IDisposable
 
         await _fixture.SyncAndMaterializeAsync();
 
-        Assert.Equal(Assert.Single(_fixture.Registry.State.Stubs).Id, item.GetProviderId(FederatedBookMark.ProviderId));
+        Assert.Equal(Assert.Single(_fixture.Registry.State.Stubs).Id, item.GetProviderId(FederatedPlaceholderMark.ProviderId));
         Assert.Equal("9780441013593", item.GetProviderId("Isbn"));
     }
 
