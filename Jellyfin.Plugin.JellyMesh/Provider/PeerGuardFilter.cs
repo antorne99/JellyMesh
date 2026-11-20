@@ -108,7 +108,10 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         }
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
-        if (ItemIdOf(context.RouteData) is not { } itemId || _catalog.FindVisible(caller, itemId) is null)
+        // A folder has no file to give, so a slot would be taken for nothing.
+        if (ItemIdOf(context.RouteData) is not { } itemId
+            || _catalog.FindVisible(caller, itemId) is not { } item
+            || (item.IsFolder && action?.ControllerName == "Library"))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
