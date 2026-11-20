@@ -151,6 +151,51 @@ public class ProviderCatalogTests
         Assert.False(_fixture.Catalog.IsFederated(new Book { Path = "/media/Libri/Autore/Libro.epub" }));
     }
 
+    [Theory]
+    [InlineData("/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7", false)]
+    [InlineData("/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/", false)]
+    [InlineData("/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e", true)]
+    public void The_folders_of_a_server_left_by_a_moved_federated_folder_never_reach_a_peer(string path, bool onDisk)
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-old-root");
+        try
+        {
+            if (onDisk)
+            {
+                Directory.CreateDirectory(Path.Combine(temp.FullName, "vecchia", "0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679742540de944be07fc1f90ae7", "Video domestici"));
+                path = temp.FullName + path;
+            }
+
+            _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+            Assert.True(_fixture.Catalog.IsFederated(new Folder { Path = path }));
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    [Fact]
+    public void A_folder_named_as_a_guid_is_federated_only_with_the_folder_of_a_library_in_it()
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-guid-folder");
+        try
+        {
+            var own = Directory.CreateDirectory(Path.Combine(temp.FullName, "0f8fad5b-d9cb-469f-a165-70867728950e", "Gita"));
+            _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = Path.GetDirectoryName(own.FullName)! }));
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = "/media/0f8fad5b-d9cb-469f-a165-70867728950e" }));
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = "/media/7c9e6679742540de944be07fc1f90ae7" }));
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = "/media/Gita/7c9e6679742540de944be07fc1f90ae7" }));
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
     [Fact]
     public void A_photo_and_its_album_stay_hidden_until_photos_are_shared()
     {

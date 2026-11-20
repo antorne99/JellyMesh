@@ -70,7 +70,7 @@ public sealed class ProviderCatalog
     /// <summary>
     /// Tells whether an item is one this server federates itself. §4.4: such an item never leaves it. The URL covers
     /// video stubs wherever they are; the path, links resolved, covers all under the federated folder in every layout, placeholders included.
-    /// The layout of a server folder covers the stubs of every type a moved or cleared federated folder left behind.
+    /// The layout of a server folder covers the stubs of every type a moved or cleared federated folder left behind, and its folders.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>Whether it is a stub.</returns>
@@ -89,7 +89,7 @@ public sealed class ProviderCatalog
         }
 
         var path = FolderPath.Of(item.Path);
-        if (HasServerFolderLayout(path.Lexical) || HasServerFolderLayout(path.Canonical))
+        if (HasServerFolderLayout(path.Lexical) || HasServerFolderLayout(path.Canonical) || IsServerFolder(path.Lexical) || IsServerFolder(path.Canonical))
         {
             return true;
         }
@@ -415,6 +415,33 @@ public sealed class ProviderCatalog
         }
 
         return false;
+    }
+
+    // The folder of a server's library, {server guid}/{library id}, or the folder of a server holding such folders.
+    private static bool IsServerFolder(string path)
+    {
+        var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && Guid.TryParseExact(parts[^2], "D", out _) && FederatedPaths.IsLibraryId(parts[^1]))
+        {
+            return true;
+        }
+
+        return parts.Length >= 1 && Guid.TryParseExact(parts[^1], "D", out _) && HoldsServerFolders(path);
+    }
+
+    // Whether a folder holds the folder of a library or of a type, as the folder of a server does.
+    private static bool HoldsServerFolders(string path)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(path)
+                .Select(Path.GetFileName)
+                .Any(name => FederatedPaths.IsLibraryId(name) || TypeFolder.Written.Any(type => string.Equals(type.Name, name, PathIdentity.Comparison)));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
+        {
+            return false;
+        }
     }
 
     private static bool IsOnlyFederated(VirtualFolderInfo library, FolderPath root)
