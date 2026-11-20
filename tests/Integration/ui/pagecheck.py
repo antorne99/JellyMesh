@@ -642,7 +642,8 @@ def quiet(s, width):
     page.context.close()
 
 
-MIGRATION_STEP = {"Step": "RemoveOldPaths", "Libraries": [{"Name": "Film", "OldPaths": ["/federata/Film"], "MissingPaths": []}],
+MIGRATION_STEP = {"Step": "RemoveOldPaths", "Libraries": [{"Name": "Film", "OldPaths": ["/federata/Film"], "MissingPaths": [], "PathsToAdd": []},
+                                                {"Name": "Serie", "OldPaths": ["/federata/Serie"], "MissingPaths": [], "PathsToAdd": ["/federata/x/y/Serie"]}],
                   "OldTitles": 0, "UnlinkedFolders": [], "Mode": "None", "AutomaticStep": None, "Running": False, "Error": "None"}
 
 
@@ -681,7 +682,7 @@ def migration(s, width):
     page = s.open("fresh", width, route=routes)
     page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
     banner = page.locator(u.MIGRATION)
-    check(name + " shows the choice", banner.is_visible() and text(page, u.MIGRATION_TITLE) == "Choose how to move to the folders of each server", text(page, u.MIGRATION_TITLE))
+    check(name + " shows the choice", banner.is_visible() and text(page, u.MIGRATION_TITLE) == "Choose how to move to the folders of each remote library", text(page, u.MIGRATION_TITLE))
     check(name + " offers both ways", page.locator(u.MIGRATE_AUTOMATIC).is_visible() and page.locator(u.MIGRATE_MANUAL).is_visible())
     mode = page.locator(u.NEW_SERVER_MODE)
     check(name + " shows the mode of the servers linked later", mode.is_enabled() and mode.input_value() == "Manual", mode.input_value())
@@ -692,12 +693,24 @@ def migration(s, width):
     check(name + " a choice reads the status at once", until(page, lambda: "Status" in reads, 3), reads)
     check(name + " by hand names the step", until(page, lambda: text(page, u.MIGRATION_TITLE) == "Remove the old folders from the libraries", 3), text(page, u.MIGRATION_TITLE))
     check(name + " by hand lists the old folders", "/federata/Film" in text(page, u.MIGRATION_LIBRARIES), text(page, u.MIGRATION_LIBRARIES))
+    listed = text(page, u.MIGRATION_LIBRARIES)
+    check(name + " by hand lists the folders to add before the old ones to remove",
+          "Then remove" in listed and 0 <= listed.find("/federata/x/y/Serie") < listed.find("/federata/Serie"), listed)
+    check(name + " with no titles left says nothing of titles shown twice", page.locator(u.MIGRATION_TWICE).is_hidden())
     check(name + " by hand drops its own choice", page.locator(u.MIGRATE_MANUAL).is_hidden())
     page.unroute("**/JellyMesh/Admin/Migration")
 
-    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Step": "Carrying", "OldTitles": 3, "AutomaticStep": "Carry", "Running": True}))
+    # Stopped after the old paths left the libraries: nothing is left by hand, so the banner asks only for a retry.
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Libraries": [], "AutomaticStep": "Finish", "Error": "Failed"}))
+    page.locator(u.MIGRATE_AUTOMATIC).click()
+    check(name + " a run stopped at the end asks to try again", until(page, lambda: text(page, u.MIGRATION_TEXT).endswith("Try again to finish the migration."), 3), text(page, u.MIGRATION_TEXT))
+    check(name + " a run stopped at the end lists no step by hand", page.locator(u.MIGRATION_NEXT).is_hidden() and page.locator(u.MIGRATION_LIBRARIES).is_hidden())
+    page.unroute("**/JellyMesh/Admin/Migration")
+
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Step": "Carrying", "OldTitles": 3, "AutomaticStep": "Carry", "Error": "None", "Running": True}))
     page.locator(u.MIGRATE_AUTOMATIC).click()
     check(name + " a running migration says its step", until(page, lambda: text(page, u.MIGRATION_TEXT) == "Moving the watch state to the new titles.", 3), text(page, u.MIGRATION_TEXT))
+    check(name + " until it runs the titles show twice", text(page, u.MIGRATION_TWICE).startswith("Until the migration runs, each title shows twice"), text(page, u.MIGRATION_TWICE))
     page.wait_for_timeout(500)
     reads.clear()
     times.clear()
