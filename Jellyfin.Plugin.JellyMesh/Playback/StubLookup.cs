@@ -244,8 +244,16 @@ public sealed class StubLookup
     }
 
     /// <summary>
+    /// Finds the stub a playback of an item reaches: a video stub by its URL, or a book placeholder or audio stub by its
+    /// path.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? FindPlayable(Guid itemId) => Find(itemId) ?? (IsAudioStub(itemId) ? FindFile(itemId) : null);
+
+    /// <summary>
     /// Finds the stub of an item for its file and its visibility: a video stub, or an audio stub or book placeholder by its
-    /// path, which playback does not reach (F56).
+    /// path.
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>The stub, null for anything else.</returns>

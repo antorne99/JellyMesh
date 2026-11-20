@@ -1909,16 +1909,38 @@ public class PlaybackFiltersTests
         Assert.StartsWith("/Videos/remote-item/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
     }
 
-    // Until the audio routes of F56, PlaybackInfo and segments of a track stub stay stock: no remote is reached.
     [Fact]
-    public async Task PlaybackInfo_of_a_track_stub_stays_with_stock_and_reaches_no_remote()
+    public async Task PlaybackInfo_of_a_visible_track_stub_comes_from_the_remote()
     {
         CanSeeItem();
-        TrackStub();
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
 
-        Assert.True(await RunAsync(InfoFilter(), Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId))));
-        Assert.True(await RunAsync(InfoFilter(), Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", LocalItem()), ("mediaSourceId", _itemId.ToString("N")))));
+        Assert.False(await RunAsync(InfoFilter(TrackStub()), context));
+        var response = Assert.IsType<PlaybackInfoResponse>(Assert.IsType<OkObjectResult>(context.Result).Value);
+        Assert.StartsWith("/JellyMesh/Playback/", Assert.Single(response.MediaSources).TranscodingUrl, StringComparison.Ordinal);
+        Assert.Equal("remote-item", Assert.Single(_fixture.Client.Requests).ItemId);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_track_stub_wants_a_user_who_sees_it()
+    {
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(TrackStub()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
         Assert.Empty(_fixture.Client.Requests);
+    }
+
+    // No local audio transcode: a remote that answers but cannot serve leaves a clear error, and stock is never reached.
+    [Fact]
+    public async Task PlaybackInfo_of_a_track_stub_the_remote_cannot_serve_is_refused_without_a_local_transcode()
+    {
+        CanSeeItem();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(RemoteResult.Success(new PlaybackInfoResponse { PlaySessionId = "remote-play", ErrorCode = PlaybackErrorCode.NotAllowed }));
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId), ("playbackInfoDto", new { DeviceProfile = PlaybackValues.WebProfile }));
+
+        Assert.False(await RunAsync(InfoFilter(TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
     [Fact]

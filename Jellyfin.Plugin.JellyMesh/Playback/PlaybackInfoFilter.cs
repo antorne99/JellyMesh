@@ -104,7 +104,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         // R:versioni §5: the version comes from the query, else from the body, as the stock action merges them.
         var arguments = new ArgumentReader(context.ActionArguments);
         var asked = arguments.Version(MediaSourceArgument);
-        var routeStub = _stubs.Find(route);
+        var routeStub = _stubs.FindPlayable(route);
         if (routeStub is null && (asked is not { } named || named.Equals(route) || _stubs.Find(named) is null) && !_stubs.HasVersions(route))
         {
             await next().ConfigureAwait(false);
@@ -135,7 +135,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         var target = asked ?? (routeStub is null ? route : _versions.Choose(route, routeStub, user));
-        var targetStub = target.Equals(route) ? routeStub : _stubs.Find(target);
+        var targetStub = target.Equals(route) ? routeStub : _stubs.FindPlayable(target);
         if (targetStub is null && routeStub is null)
         {
             await PlayStockVersionAsync(context, next, target).ConfigureAwait(false);
@@ -171,8 +171,16 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         var outcome = await _coordinator.OpenAsync(request, http.RequestAborted).ConfigureAwait(false);
+        var track = _stubs.IsAudioStub(request.Identity.ItemId);
         switch (outcome.Kind)
         {
+            case PlaybackOutcomeKind.Remote when track:
+                context.Result = new OkObjectResult(outcome.Response);
+                break;
+            case PlaybackOutcomeKind.LocalTranscode or PlaybackOutcomeKind.Unavailable when track:
+                // No local audio transcode: the end of the chain is a clear error.
+                context.Result = _refusal.Refuse(http, deviceId, outcome.Kind == PlaybackOutcomeKind.LocalTranscode ? PlaybackRefusal.FailedText : PlaybackRefusal.TextOf(outcome));
+                break;
             case PlaybackOutcomeKind.Remote:
                 _segments.OfferOnRemote(outcome.Response!, outcome.Served, route);
                 context.Result = new OkObjectResult(outcome.Response);
