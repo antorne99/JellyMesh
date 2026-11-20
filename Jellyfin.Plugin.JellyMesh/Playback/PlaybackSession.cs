@@ -58,6 +58,7 @@ public sealed partial class PlaybackSession
         RemotePlaySessionId = remotePlaySessionId;
         Kind = kind;
         UpstreamPath = upstreamPath;
+        Opened = now;
         _lastRequestTicks = now.UtcTicks;
         _lastRenewalTicks = now.UtcTicks;
     }
@@ -79,6 +80,9 @@ public sealed partial class PlaybackSession
 
     /// <summary>Gets the master playlist or the stream on the remote, without a token.</summary>
     public string UpstreamPath { get; }
+
+    /// <summary>Gets when the session was opened.</summary>
+    public DateTimeOffset Opened { get; }
 
     /// <summary>Gets the time of the last request.</summary>
     public DateTimeOffset LastRequest => new(Interlocked.Read(ref _lastRequestTicks), TimeSpan.Zero);

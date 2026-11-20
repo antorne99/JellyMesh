@@ -51,6 +51,8 @@ public class PlaybackFiltersTests
     private readonly Mock<IAuthorizationContext> _authorization = new();
     private readonly Mock<ISessionManager> _sessionManager = new();
     private readonly Mock<ITranscodeManager> _transcodes = new();
+    private readonly CapturingLogger<PlaybackInfoFilter> _infoLog = new();
+    private readonly CapturingLogger<StockRouteGuardFilter> _guardLog = new();
     private readonly Mock<IFederationResolver> _resolver = new();
     private readonly Mock<IMediaSegmentManager> _segmentManager = new();
     private readonly User _user = new("viewer", "auth", "reset");
@@ -98,7 +100,8 @@ public class PlaybackFiltersTests
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
             new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
-            _offer);
+            _offer,
+            _infoLog);
     }
 
     private StubSegments Segments(StubLookup lookup, InMemoryConfigurationStore store)
@@ -118,7 +121,8 @@ public class PlaybackFiltersTests
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
             _peerSlots,
-            listFolder ?? StockRouteGuardFilter.ListFolder);
+            listFolder ?? StockRouteGuardFilter.ListFolder,
+            _guardLog);
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
@@ -253,6 +257,7 @@ public class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(), context));
         Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Contains(_guardLog.Lines, line => line.Contains("MediaSegments.GetItemSegments names a title the user does not see (True)", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -432,6 +437,8 @@ public class PlaybackFiltersTests
         Assert.True(source.SupportsTranscoding);
         Assert.Null(source.Path);
         Assert.Null(source.MediaStreams[0].Path);
+        Assert.Contains(_infoLog.Lines, line => line.Contains("plays from its local copy " + _localId, StringComparison.Ordinal));
+        PlaybackLogAssert.NoRemoteValue(_infoLog.Lines);
     }
 
     [Fact]
@@ -522,6 +529,7 @@ public class PlaybackFiltersTests
         await InfoFilter().OnActionExecutionAsync(context, () => Task.FromResult(failed));
 
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(failed.Result).StatusCode);
+        Assert.Contains(_infoLog.Lines, line => line.Contains("Stock gave no PlaybackInfo for the local copy", StringComparison.Ordinal) && line.Contains("status 404", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1305,6 +1313,8 @@ public class PlaybackFiltersTests
 
         Assert.Same(failure, executed.Exception);
         _transcodes.Verify(manager => manager.KillTranscodingJobs("device", "local-play", It.IsAny<Func<string, bool>>()), Times.Once);
+        Assert.Contains(_guardLog.Lines, line => line.Contains("failed in stock: FfmpegException", StringComparison.Ordinal));
+        Assert.DoesNotContain(_guardLog.Lines, line => line.Contains("exited", StringComparison.Ordinal));
     }
 
     [Fact]

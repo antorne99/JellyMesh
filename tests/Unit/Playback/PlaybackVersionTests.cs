@@ -181,7 +181,8 @@ public class PlaybackVersionTests
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
             new PlaybackVersions(lookup, _stubs.Object, _library.Object, _index.Object, _store),
-            new SegmentOffer(_segmentManager.Object, _segments, lookup, _fixture.Sessions));
+            new SegmentOffer(_segmentManager.Object, _segments, lookup, _fixture.Sessions),
+            NullLogger<PlaybackInfoFilter>.Instance);
     }
 
     private static ActionExecutingContext Context(Guid itemId, params (string Key, object? Value)[] arguments)

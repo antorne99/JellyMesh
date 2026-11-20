@@ -138,6 +138,13 @@ public sealed class PlaybackCoordinator
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
                 await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
                 await RecordServedAsync(version, source).ConfigureAwait(false);
+                _logger.LogInformation(
+                    "Title {StubId} plays from server {ServerId} as {Kind}, play session {PlaySessionId}, after {Tried} source(s)",
+                    version.Stub.Id,
+                    source.ServerId,
+                    _sessions.Find(attempt.Response.PlaySessionId)?.Kind,
+                    attempt.Response.PlaySessionId,
+                    tried);
                 return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
             }
 
@@ -157,11 +164,18 @@ public sealed class PlaybackCoordinator
                 Remember(version, source);
                 await ClosePreviousAsync(previous).ConfigureAwait(false);
                 await RecordServedAsync(version, source).ConfigureAwait(false);
+                _logger.LogInformation("Title {StubId} plays from a local transcode of the file of server {ServerId}", version.Stub.Id, source.ServerId);
                 return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true, Served: version.Identity);
             }
         }
 
         await ClosePreviousAsync(previous).ConfigureAwait(false);
+        _logger.LogWarning(
+            "No source can play title {StubId}: {Tried} tried, {Reachable} reachable but failing, {Refused} at their stream limit",
+            request.Stub.Id,
+            tried,
+            reachable.Count,
+            refused);
 
         // Only when the limit is the whole story: with any source down or broken, trying later may not help.
         return new PlaybackOutcome(
@@ -255,6 +269,7 @@ public sealed class PlaybackCoordinator
                 return stream.Value;
             }
 
+            _logger.LogInformation("The file of stub {StubId} on server {ServerId} did not open: {Failure}", stub.Id, source.ServerId, stream.Describe());
             refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
         }
 
@@ -290,6 +305,7 @@ public sealed class PlaybackCoordinator
         var place = _streams.TryEnter(serverId);
         if (place is null)
         {
+            _logger.LogInformation("Server {ServerId} has {Count} streams open from here, the most allowed: a stream is refused", serverId, PlaybackLimits.StreamsPerServer);
             return RemoteResult.Fail<RemoteContent>(RemoteFailure.Busy);
         }
 
@@ -471,6 +487,7 @@ public sealed class PlaybackCoordinator
             }
             else if (idle >= times.Idle && session.TryPark())
             {
+                _logger.LogInformation("Play session {PlaySessionId} had no request for {Idle}: its remote stream is closed until the client returns", session.Id, idle);
                 await CloseRemoteAsync(session).ConfigureAwait(false);
             }
         }
@@ -494,7 +511,11 @@ public sealed class PlaybackCoordinator
         var now = _clock.GetUtcNow();
         return Task.WhenAll(_sessions.All
             .Where(session => session.IsAbandoned(now, StreamSlots.AbandonGrace) && session.RemotePlaySessionId is not null && IsJellyMesh(session.Source.ServerId) && session.TryPark())
-            .Select(CloseRemoteAsync));
+            .Select(session =>
+            {
+                _logger.LogDebug("The client of play session {PlaySessionId} went: its remote slot is given back", session.Id);
+                return CloseRemoteAsync(session);
+            }));
     }
 
     /// <summary>
@@ -505,7 +526,11 @@ public sealed class PlaybackCoordinator
     /// <returns>A task.</returns>
     public Task CloseFailedAsync()
     {
-        return Task.WhenAll(_sessions.All.Where(session => session.TryCloseAfterFailure()).Select(CloseRemoteAsync));
+        return Task.WhenAll(_sessions.All.Where(session => session.TryCloseAfterFailure()).Select(session =>
+        {
+            _logger.LogInformation("Play session {PlaySessionId} failed: its remote stream is closed", session.Id);
+            return CloseRemoteAsync(session);
+        }));
     }
 
     // The request itself, then one request per other version the user sees, in their order.
@@ -690,6 +715,7 @@ public sealed class PlaybackCoordinator
 
         if (!answer.IsSuccess)
         {
+            _logger.LogInformation("PlaybackInfo on server {ServerId} failed: {Failure}", source.ServerId, answer.Describe());
             return new Attempt(null, !IsOffline(answer.Failure));
         }
 
@@ -697,11 +723,13 @@ public sealed class PlaybackCoordinator
         var remote = info.MediaSources.FirstOrDefault(candidate => candidate.Id == source.MediaSourceId) ?? (info.MediaSources.Count > 0 ? info.MediaSources[0] : null);
         if (info.PlaySessionId is null)
         {
+            _logger.LogInformation("Server {ServerId} answered PlaybackInfo without a play session", source.ServerId);
             return new Attempt(null, true);
         }
 
         if (info.ErrorCode is not null || remote is null)
         {
+            _logger.LogInformation("Server {ServerId} answered PlaybackInfo with error {ErrorCode} and {Count} media source(s)", source.ServerId, info.ErrorCode, info.MediaSources.Count);
             await ReleaseSlotAsync(source.ServerId, info.PlaySessionId, PlaybackTimeouts.RemoteStop).ConfigureAwait(false);
             return new Attempt(null, true);
         }
@@ -728,6 +756,7 @@ public sealed class PlaybackCoordinator
         var built = PlaybackResponseBuilder.Build(remote, session, request.LocalToken);
         if (built is null)
         {
+            _logger.LogWarning("The answer of server {ServerId} for a {Kind} stream could not be turned into one for the client", source.ServerId, session.Kind);
             await CloseRemoteAsync(session).ConfigureAwait(false);
             return new Attempt(null, true);
         }
@@ -750,19 +779,21 @@ public sealed class PlaybackCoordinator
         {
             // A JellyMesh remote counts this stream by its play session. A stock request stays as it always was.
             var path = FilePath(source, IsJellyMesh(source.ServerId) ? remotePlaySessionId : null);
-            return await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, path, ProbeRange), cancellationToken).ConfigureAwait(false)
+            return await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, path, ProbeRange), "direct stream", cancellationToken).ConfigureAwait(false)
                 ? new PlaybackSession(request.Identity, source, remotePlaySessionId, PlaybackStreamKind.Direct, path, now)
                 : null;
         }
 
         if (string.IsNullOrEmpty(remote.TranscodingUrl) || !remote.SupportsTranscoding)
         {
+            _logger.LogInformation("Server {ServerId} offers neither direct play nor a transcode for the client's profile", source.ServerId);
             return null;
         }
 
         var policy = await GetPolicyAsync(source.ServerId, cancellationToken).ConfigureAwait(false);
         if (PolicyForbids(policy, remote.TranscodingUrl))
         {
+            _logger.LogInformation("The user of server {ServerId} may not transcode or remux what the client needs", source.ServerId);
             return null;
         }
 
@@ -773,7 +804,7 @@ public sealed class PlaybackCoordinator
         {
             var works = kind == PlaybackStreamKind.Hls
                 ? await FirstSegmentWorksAsync(session, request.DeviceProfile, cancellationToken).ConfigureAwait(false)
-                : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null), cancellationToken).ConfigureAwait(false);
+                : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null), "progressive transcode", cancellationToken).ConfigureAwait(false);
             if (works)
             {
                 return session;
@@ -795,6 +826,7 @@ public sealed class PlaybackCoordinator
         var master = await ReadPlaylistAsync(session.Source.ServerId, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
         if (!master.IsSuccess)
         {
+            _logger.LogInformation("The HLS master playlist of server {ServerId} could not be read: {Failure}", session.Source.ServerId, master.Describe());
             return false;
         }
 
@@ -808,25 +840,38 @@ public sealed class PlaybackCoordinator
         var folder = session.UpstreamFolder();
         var variantPath = folder + variant.Uri;
         var playlist = await ReadPlaylistAsync(session.Source.ServerId, variantPath, cancellationToken).ConfigureAwait(false);
-        if (!playlist.IsSuccess || HlsMaster.FirstSegment(playlist.Value!) is not { } segment)
+        if (!playlist.IsSuccess)
         {
+            _logger.LogInformation("The HLS variant playlist of server {ServerId} could not be read: {Failure}", session.Source.ServerId, playlist.Describe());
+            return false;
+        }
+
+        if (HlsMaster.FirstSegment(playlist.Value!) is not { } segment)
+        {
+            _logger.LogInformation("The HLS variant playlist of server {ServerId} names no segment", session.Source.ServerId);
             return false;
         }
 
         var segmentFolder = variantPath.Split('?')[0];
         segmentFolder = segmentFolder[..(segmentFolder.LastIndexOf('/') + 1)];
-        return await CanOpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, segmentFolder + segment, null), cancellationToken).ConfigureAwait(false);
+        return await CanOpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, segmentFolder + segment, null), "first HLS segment", cancellationToken).ConfigureAwait(false);
     }
 
     private Task<bool> CanReadFileAsync(StubSource source, CancellationToken cancellationToken)
     {
-        return CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, FilePath(source), ProbeRange), cancellationToken);
+        return CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, FilePath(source), ProbeRange), "file for a local transcode", cancellationToken);
     }
 
-    private async Task<bool> CanOpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
+    // Opens a stream to see that it serves, and logs the step that failed.
+    private async Task<bool> CanOpenAsync(Guid serverId, RemoteStreamRequest request, string step, CancellationToken cancellationToken)
     {
         var stream = await OpenAsync(serverId, request with { IsProbe = IsJellyMesh(serverId) }, cancellationToken).ConfigureAwait(false);
         stream.Value?.Dispose();
+        if (!stream.IsSuccess)
+        {
+            _logger.LogInformation("The {Step} of server {ServerId} did not open: {Failure}", step, serverId, stream.Describe());
+        }
+
         return stream.IsSuccess;
     }
 
@@ -1004,6 +1049,7 @@ public sealed class PlaybackCoordinator
         var gate = _callGates.GetOrAdd(serverId, _ => new SemaphoreSlim(PlaybackLimits.CallsPerServer, PlaybackLimits.CallsPerServer));
         if (!await gate.WaitAsync(PlaybackLimits.QueueWait, cancellationToken).ConfigureAwait(false))
         {
+            _logger.LogWarning("Server {ServerId} already has {Count} calls running from here, and a call waited {Wait} in vain", serverId, PlaybackLimits.CallsPerServer, PlaybackLimits.QueueWait);
             return RemoteResult.Fail<T>(RemoteFailure.Busy);
         }
 
@@ -1031,6 +1077,7 @@ public sealed class PlaybackCoordinator
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            _logger.LogWarning("A call to server {ServerId} timed out after {Timeout}", serverId, timeout);
             return RemoteResult.Fail<T>(RemoteFailure.Timeout);
         }
     }

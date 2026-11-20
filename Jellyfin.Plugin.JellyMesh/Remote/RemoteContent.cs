@@ -45,6 +45,11 @@ public sealed class RemoteContent : IDisposable
     /// <summary>Gets the status.</summary>
     public HttpStatusCode Status { get; }
 
+    /// <summary>
+    /// Gets how many bytes of the body went to the target so far.
+    /// </summary>
+    public long BytesCopied { get; private set; }
+
     /// <summary>Gets the headers to pass on.</summary>
     public RemoteContentHeaders Headers { get; }
 
@@ -126,6 +131,7 @@ public sealed class RemoteContent : IDisposable
 
                 var started = clock.GetUtcNow();
                 await target.WriteAsync(buffer.AsMemory(0, read), copy.Token).ConfigureAwait(false);
+                BytesCopied += read;
                 var written = clock.GetUtcNow();
                 if (written - started >= ClientPause)
                 {

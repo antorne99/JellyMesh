@@ -6,6 +6,7 @@ using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -22,6 +23,7 @@ public class StrmController : ControllerBase
     private readonly IStubRegistry _stubs;
     private readonly PlaybackCoordinator _coordinator;
     private readonly StrmSigner _signer;
+    private readonly ILogger<StrmController> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StrmController"/> class.
@@ -29,8 +31,10 @@ public class StrmController : ControllerBase
     /// <param name="stubs">The stubs.</param>
     /// <param name="coordinator">The coordinator.</param>
     /// <param name="signer">The signer of the URLs.</param>
-    public StrmController(IStubRegistry stubs, PlaybackCoordinator coordinator, StrmSigner signer)
+    /// <param name="logger">The logger.</param>
+    public StrmController(IStubRegistry stubs, PlaybackCoordinator coordinator, StrmSigner signer, ILogger<StrmController> logger)
     {
+        _logger = logger;
         _stubs = stubs;
         _coordinator = coordinator;
         _signer = signer;
@@ -55,11 +59,13 @@ public class StrmController : ControllerBase
         // Before the lookup, so that an answer never tells which stubs exist.
         if (!LoopbackGuard.IsLocalRequest(HttpContext) || !_signer.IsValid(stubId, signature))
         {
+            _logger.LogDebug("A read of a .strm target was refused: not from this server or without a valid signature: 403");
             return StatusCode(StatusCodes.Status403Forbidden);
         }
 
         if (_stubs.Find(stubId) is not { } stub)
         {
+            _logger.LogWarning("A read of a .strm target names a stub that no longer exists: 404");
             return NotFound();
         }
 
@@ -68,12 +74,17 @@ public class StrmController : ControllerBase
         var opened = await _coordinator.OpenFileAsync(stub, method, string.IsNullOrEmpty(range) ? null : range, cancellationToken).ConfigureAwait(false);
         if (opened is null)
         {
+            _logger.LogWarning("No source opened the file of stub {StubId} for a local transcode: 503", stub.Id);
             return StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
         using (opened)
         {
-            await StreamRelay.CopyAsync(opened, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false);
+            var relayed = await StreamRelay.RelayAsync(opened, HttpContext, _coordinator.StallLimit, cancellationToken).ConfigureAwait(false);
+            if (relayed.IsAbnormal)
+            {
+                _logger.LogInformation("The file of stub {StubId} for a local transcode broke off: {End} after {Bytes} bytes in {Elapsed}", stub.Id, relayed.End, relayed.Bytes, relayed.Elapsed);
+            }
         }
 
         return new EmptyResult();
