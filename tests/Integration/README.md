@@ -255,6 +255,12 @@ MEDIA=<main checkout>/tests/Integration/media bash play/keyfile.sh
 MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] bash play/last-served.sh
 ```
 
+`store.sh` proves integration tests 3 and 4 of the 0.6 spec on the plugin database. The stock `/Plugins/{id}/Configuration` answers 404 and writes no XML, while the settings save and read through `/JellyMesh/Admin/Settings`. The nightly reconciliation makes a copy readable by its owner only; a setting changed after it, then a damaged `jellymesh.db`, start again from the copy with the restore banner, the damaged file set aside, the saved password working, and the banner gone once dismissed. A schema newer than the build leaves the file as it was, answers 503 to users who are not admins and refuses a sync. A data folder Jellyfin cannot write, with Jellyfin run as user 1000, leaves JellyMesh unavailable until "Retry" finds it writable. It makes `$PREFIX-local` and `$PREFIX-remote` (default `jm-store`, on `PORT` and the next one, default 18530) and removes them at the end unless `KEEP=1`.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-store] [PORT=18530] bash play/store.sh
+```
+
 ### `merge/`
 
 Proves manual merges on the per-server layout (decision 20, Q23), on two stock remotes and a consumer whose Film library holds both server folders. Copies of one server keep one stub, which takes the state of the other; copies of two servers and a local copy become versions, linked as soon as the merge is saved; a new stub is linked by the scan that makes its item (Q145). The containers are `$PREFIX-local`, `$PREFIX-remote` and `$PREFIX-peer` (default `jm-merge`, on `PORT` and the next two, default 18441). Checks marked `PENDING (row 144)` wait for the thorough detach that dissolves a group after an undo.
