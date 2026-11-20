@@ -268,7 +268,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         var report = _links.Check(root, [serverId]);
         return report.IsChecked && report.Servers.Count > 0
             && report.Covering.Count == 0
-            && report.Servers.All(server => server.Movies.Link == FederatedPathLink.NotLinked && server.Series.Link == FederatedPathLink.NotLinked);
+            && report.Servers.All(server => server.Folders.All(folder => folder.Link.Link == FederatedPathLink.NotLinked));
     }
 
     private void MarkUnfinished(Guid serverId, bool unfinished) => _store.Update(config =>

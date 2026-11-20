@@ -1696,7 +1696,7 @@
                     "Active. {problems}.": "Attivo. {problems}.",
                     "Add a remote server": "Aggiungi un server remoto",
                     "Add a server": "Aggiungi un server",
-                    "Add the Film folder of each server to a film library and its Serie folder to a series library in Dashboard > Libraries, or turn on the automatic libraries of the server on the Servers tab.": "Aggiungi la cartella Film di ogni server a una libreria di film e la sua cartella Serie a una libreria di serie nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server nella scheda Server.",
+                    "Add the type folders of each server to libraries of their type in Dashboard > Libraries, or choose a library mode for the server on the Servers tab.": "Aggiungi le cartelle di tipo di ogni server a librerie del loro tipo nel Pannello di controllo > Librerie, oppure scegli per il server una modalità delle librerie nella scheda Server.",
                     "Added {server}, but its libraries could not be read. {reason} Open Edit on its card to try again.": "{server} è stato aggiunto, ma non è stato possibile leggere le sue librerie. {reason} Apri Modifica nella sua scheda per riprovare.",
                     "Added {server}. Choose its libraries.": "{server} è stato aggiunto. Scegli le sue librerie.",
                     "Added {server}. Open Edit on its card to choose what to import.": "{server} è stato aggiunto. Apri Modifica nella sua scheda per scegliere cosa importare.",
@@ -1745,8 +1745,8 @@
                     "Duplicate series": "Serie duplicate",
                     "Duplicates to review": "Duplicati da rivedere",
                     "Duration": "Durata",
-                    "Each server gets a Film and a Serie folder here. Add a server to see them.": "Qui ogni server ha una cartella Film e una Serie. Aggiungi un server per vederle.",
-                    "Each server has a Film and a Serie folder. Add them by hand in Dashboard > Libraries, the Film folder to a film library and the Serie folder to a series library, or turn on the automatic libraries of the server.": "Ogni server ha una cartella Film e una Serie. Aggiungile a mano nel Pannello di controllo > Librerie, la cartella Film a una libreria di film e la cartella Serie a una libreria di serie, oppure attiva le librerie automatiche del server.",
+                    "Each remote library of a server gets a type folder here. Add a server to see them.": "Qui ogni libreria remota di un server ha una cartella di tipo. Aggiungi un server per vederle.",
+                    "Each remote library of a server has a type folder, Film or Serie. Add each one by hand in Dashboard > Libraries to a library of its type, or choose a library mode for the server that makes them.": "Ogni libreria remota di un server ha una cartella di tipo, Film o Serie. Aggiungile a mano nel Pannello di controllo > Librerie, ognuna a una libreria del suo tipo, oppure scegli per il server una modalità delle librerie che le crea.",
                     "Enter a name, a user and an http or https URL with no credentials, query or fragment.": "Inserisci un nome, un utente e un URL http o https senza credenziali, query o frammento.",
                     "Enter a time as hours and minutes.": "Inserisci un orario in ore e minuti.",
                     "Enter a whole number from {min} to {max}.": "Inserisci un numero intero da {min} a {max}.",
@@ -1757,6 +1757,7 @@
                     "Failed": "Non riuscita",
                     "Federated folder": "Cartella federata",
                     "Film library": "Libreria film",
+                    "{kind} from {library}": "{kind} da {library}",
                     "Fix the login on that server, or remove this server and add it again with a working one.": "Sistema l'accesso su quel server, oppure rimuovi questo server e aggiungilo di nuovo con un accesso funzionante.",
                     "Folder": "Cartella",
                     "For the servers connected to this one. A stream with no activity for 2 minutes frees its slot, and this closes its transcode with it. When off, Jellyfin's own timer closes it. A dropped connection closes the transcode either way.": "Per i server connessi a questo. Uno stream senza attività per 2 minuti libera il suo posto, e questa opzione ne chiude anche la transcodifica. Se disattivata, la chiude il timer di Jellyfin. Una connessione caduta chiude comunque la transcodifica.",
@@ -3564,11 +3565,11 @@
                     }
 
                     if (servers.length === 0) {
-                        el('#jmFolderHint').textContent = t('Each server gets a Film and a Serie folder here. Add a server to see them.');
+                        el('#jmFolderHint').textContent = t('Each remote library of a server gets a type folder here. Add a server to see them.');
                         return;
                     }
 
-                    el('#jmFolderHint').textContent = t('Each server has a Film and a Serie folder. Add them by hand in Dashboard > Libraries, the Film folder to a film library and the Serie folder to a series library, or turn on the automatic libraries of the server.');
+                    el('#jmFolderHint').textContent = t('Each remote library of a server has a type folder, Film or Serie. Add each one by hand in Dashboard > Libraries to a library of its type, or choose a library mode for the server that makes them.');
                     if (!checked) {
                         notes.appendChild(create('div', t('The libraries could not be read to check these paths.')));
                         return;
@@ -3583,7 +3584,7 @@
                     });
                 }
 
-                // Builds the block of a server in the folder section, with its two paths and what is wrong with them.
+                // Builds the block of a server in the folder section, with its folders and what is wrong with them.
                 // A change in the links updates the block in place, so a path row keeps its focus.
                 function renderServerFolder(server, checked) {
                     var block = create('div');
@@ -3597,9 +3598,10 @@
                     block.appendChild(warnings);
                     block.jmUpdate = function (current, currentChecked) {
                         setText(name, current.Name);
-                        updateRows(paths, [[t('Film library'), current.MoviesPath], [t('Series library'), current.SeriesPath]].map(function (path) {
-                            var copyLabel = t('Copy the {library} path of {server}', { library: path[0], server: current.Name });
-                            return { key: JSON.stringify([path[0], path[1], copyLabel]), build: renderCopyRow, args: [path[0], path[1], copyLabel] };
+                        updateRows(paths, current.Folders.map(function (folder) {
+                            var label = folderLabel(folder);
+                            var copyLabel = t('Copy the {library} path of {server}', { library: label, server: current.Name });
+                            return { key: JSON.stringify([label, folder.Path, copyLabel]), build: renderCopyRow, args: [label, folder.Path, copyLabel] };
                         }));
                         warnings.textContent = '';
                         if (currentChecked) {
@@ -3618,12 +3620,17 @@
                     return warning;
                 }
 
-                // Says what is wrong with the two folders of a server.
+                // Names a folder of a server by the library type it needs and its remote library.
+                function folderLabel(folder) {
+                    var kind = folder.LibraryType === 'tvshows' ? t('Series library') : t('Film library');
+                    return folder.RemoteLibrary ? t('{kind} from {library}', { kind: kind, library: folder.RemoteLibrary }) : kind;
+                }
+
+                // Says what is wrong with the folders of a server.
                 function serverFolderWarnings(server) {
-                    var warnings = [
-                        pathWarning(server.MoviesPath, t('film'), server.Movies),
-                        pathWarning(server.SeriesPath, t('series'), server.Series)
-                    ];
+                    var warnings = server.Folders.map(function (folder) {
+                        return pathWarning(folder.Path, folder.LibraryType === 'tvshows' ? t('series') : t('film'), folder.Link);
+                    });
                     if (server.SeriesGroupingOff.length > 0) {
                         warnings.push(t('Warning: "Automatically merge series that are spread across multiple folders" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.', { libraries: server.SeriesGroupingOff.join(', ') }));
                     }
@@ -5305,7 +5312,7 @@
                         key: 'link',
                         name: t('Link the folders of each server'),
                         state: linkState(folder),
-                        text: t('Add the Film folder of each server to a film library and its Serie folder to a series library in Dashboard > Libraries, or turn on the automatic libraries of the server on the Servers tab.'),
+                        text: t('Add the type folders of each server to libraries of their type in Dashboard > Libraries, or choose a library mode for the server on the Servers tab.'),
                         tab: 'settings'
                     }].filter(Boolean);
                 }

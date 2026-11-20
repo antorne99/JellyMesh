@@ -465,7 +465,14 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     private static FederatedFolderLinkReport Report(FederatedPathLink movies, FederatedPathLink series) => new(
-        [new ServerFolderLink(_server, "/m", "/s", new FederatedPathStatus(movies, []), new FederatedPathStatus(series, []), [], [], [])],
+        [new ServerFolderLink(
+            _server,
+            [new TypeFolderLink("/m", "movies", "Film", new FederatedPathStatus(movies, [])), new TypeFolderLink("/s", "tvshows", "Serie", new FederatedPathStatus(series, []))],
+            new FederatedPathStatus(movies, []),
+            new FederatedPathStatus(series, []),
+            [],
+            [],
+            [])],
         [],
         false);
 }

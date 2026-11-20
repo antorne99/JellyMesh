@@ -4,20 +4,18 @@ using System.Collections.Generic;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// The links of the two folders of one server.
+/// The links of the folders of one server: its type folders, or its two 0.5 folders while titles are in that layout.
 /// </summary>
 /// <param name="ServerId">The server.</param>
-/// <param name="MoviesPath">The film folder of the server.</param>
-/// <param name="SeriesPath">The series folder of the server.</param>
-/// <param name="Movies">The link of the film folder.</param>
-/// <param name="Series">The link of the series folder.</param>
-/// <param name="SeriesGroupingOff">The series libraries holding the series folder with automatic series grouping off.</param>
-/// <param name="SeriesLibraries">Every library holding the series folder, whose set decides which series merge (Q46).</param>
+/// <param name="Folders">Each folder of the server with its link.</param>
+/// <param name="Movies">The link of its film folders together: linked only when each is.</param>
+/// <param name="Series">The link of its series folders together: linked only when each is.</param>
+/// <param name="SeriesGroupingOff">The series libraries holding a series folder with automatic series grouping off.</param>
+/// <param name="SeriesLibraries">Every library holding a series folder apart from the single library, whose set decides which series merge (Q46).</param>
 /// <param name="OnlyOnItsFolders">The libraries whose only paths are folders of this server.</param>
 public sealed record ServerFolderLink(
     Guid ServerId,
-    string MoviesPath,
-    string SeriesPath,
+    IReadOnlyList<TypeFolderLink> Folders,
     FederatedPathStatus Movies,
     FederatedPathStatus Series,
     IReadOnlyList<string> SeriesGroupingOff,

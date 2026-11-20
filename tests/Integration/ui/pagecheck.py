@@ -1737,10 +1737,10 @@ def folder_chosen(page, name):
 
 
 def folder_paths(server, remote=None):
-    """Returns the paths to link that the server reports: the Film then the Serie folder of each remote, or of the one named."""
+    """Returns the paths to link that the server reports: the folders of each remote, or of the one named."""
     folder = u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["FederatedFolder"]
     remotes = [of_server(folder, remote)] if remote else folder["Servers"]
-    return [path for each in remotes for path in (each["MoviesPath"], each["SeriesPath"])]
+    return [each_folder["Path"] for each in remotes for each_folder in each["Folders"]]
 
 
 def copied_over_http(page, name):
@@ -1859,7 +1859,7 @@ def link_warnings(page, name):
     page.unroute("**/JellyMesh/Admin/Status")
 
     def long_path(status):
-        of_server(status["FederatedFolder"], "stock")["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
+        of_server(status["FederatedFolder"], "stock")["Folders"][0]["Path"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
 
     fake(page, "Status", long_path)
     check(name + " shows a long path", until(page, lambda: u.copy_button(page, "a-very-long-folder-name").count() == 1, 20))
@@ -2554,19 +2554,27 @@ def opens(page, name, node, tab):
 
 
 def link_folders(status, link, movies=None, series=None, grouping_off=()):
-    """Sets the link of the federated folder, and of the two folders of each server, or of the one named in movies and series."""
+    """Sets the link of the federated folder, and of the folders of each server, or of the one named in movies and series."""
     folder = status["FederatedFolder"]
     folder.update(Link=link, Path="/federata", Covering=[], SeriesSplit=False, Migration=None)
     for server in folder["Servers"]:
         server.update(SeriesGroupingOff=list(grouping_off), Unregistered=[])
         server["Movies"].update(Link="Linked", Libraries=["Film"])
         server["Series"].update(Link="Linked", Libraries=["Serie"])
+        for each in server["Folders"]:
+            each["Link"] = dict(Link="Linked", Libraries=["Serie" if each["LibraryType"] == "tvshows" else "Film"])
         if link == "NotLinked" and movies is None and series is None:
             server["Movies"].update(Link="NotLinked", Libraries=[])
             server["Series"].update(Link="NotLinked", Libraries=[])
+            for each in server["Folders"]:
+                each["Link"] = dict(Link="NotLinked", Libraries=[])
     for kind, named in [("Movies", movies), ("Series", series)]:
         if named:
-            of_server(folder, named[0])[kind].update(Link=named[1], Libraries=named[2])
+            target = of_server(folder, named[0])
+            target[kind].update(Link=named[1], Libraries=named[2])
+            for each in target["Folders"]:
+                if (each["LibraryType"] == "tvshows") == (kind == "Series"):
+                    each["Link"] = dict(Link=named[1], Libraries=named[2])
 
 
 def linked(status):

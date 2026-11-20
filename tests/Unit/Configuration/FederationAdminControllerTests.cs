@@ -930,8 +930,7 @@ public class FederationAdminControllerTests
         var shown = Assert.Single(folder.Servers);
         Assert.Equal(server.Id, shown.Id);
         Assert.Equal("Friend", shown.Name);
-        Assert.Equal($"/federata/{server.Id:D}/Film", shown.MoviesPath);
-        Assert.Equal($"/federata/{server.Id:D}/Serie", shown.SeriesPath);
+        Assert.Equal(["/federata/m", "/federata/s"], shown.Folders.Select(folder => folder.Path));
         Assert.Equal(["Film"], shown.Movies.Libraries);
         Assert.Equal(["Serie"], shown.SeriesGroupingOff);
         Assert.Equal(["Serie"], shown.SeriesLibraries);
@@ -1274,8 +1273,7 @@ public class FederationAdminControllerTests
             var servers = serverIds
                 .Select(id => new ServerFolderLink(
                     id,
-                    FederatedFolderLayout.ServerMoviesPath(federatedFolderPath, id),
-                    FederatedFolderLayout.ServerSeriesPath(federatedFolderPath, id),
+                    [new TypeFolderLink(federatedFolderPath + "/m", "movies", "Film", new(link, ["Film"])), new TypeFolderLink(federatedFolderPath + "/s", "tvshows", "Serie", new(link, []))],
                     new(link, ["Film"]),
                     new(link, []),
                     ["Serie"],
