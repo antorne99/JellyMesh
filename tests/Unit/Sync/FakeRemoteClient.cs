@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 
@@ -172,6 +173,27 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
                 _imagesInFlight--;
             }
         }
+    }
+
+    /// <summary>The photos whose thumbnail was read.</summary>
+    public List<string> ThumbnailReads { get; } = [];
+
+    /// <summary>The thumbnail every photo answers with.</summary>
+    public byte[] Thumbnail { get; set; } = PhotoPlaceholders.For("jpg");
+
+    /// <summary>Fails the thumbnail reads.</summary>
+    public RemoteFailure ThumbnailFailure { get; set; }
+
+    public Task<RemoteResult<RemoteImage>> GetPhotoThumbnailAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    {
+        lock (ThumbnailReads)
+        {
+            ThumbnailReads.Add(itemId);
+        }
+
+        return Task.FromResult(ThumbnailFailure == RemoteFailure.None
+            ? RemoteResult.Success(new RemoteImage(Thumbnail.ToArray(), "image/jpeg"))
+            : RemoteResult.Fail<RemoteImage>(ThumbnailFailure));
     }
 
     public Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken)

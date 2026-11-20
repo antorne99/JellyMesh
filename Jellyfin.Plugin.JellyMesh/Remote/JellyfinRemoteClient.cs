@@ -45,6 +45,16 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     public const int MaxImageBytes = 16 * 1024 * 1024;
 
     /// <summary>
+    /// Longest side of the local thumbnail of a remote photo, in pixels.
+    /// </summary>
+    public const int PhotoThumbnailSide = 640;
+
+    /// <summary>
+    /// JPEG quality of the local thumbnail of a remote photo.
+    /// </summary>
+    public const int PhotoThumbnailQuality = 80;
+
+    /// <summary>
     /// Timeout of a whole request, the body included.
     /// </summary>
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -303,6 +313,24 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
         return response.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true && response.Body.Length > 0
             ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType))
+            : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<RemoteImage>> GetPhotoThumbnailAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        // Below quality 90 Jellyfin never sends the original file, so the photo's own EXIF is not copied.
+        var path = string.Create(CultureInfo.InvariantCulture, $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={PhotoThumbnailSide}&maxHeight={PhotoThumbnailSide}&quality={PhotoThumbnailQuality}&format=Jpg");
+        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, MaxImageBytes).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteImage>(response.Failure);
+        }
+
+        return string.Equals(response.ContentType, "image/jpeg", StringComparison.OrdinalIgnoreCase) && response.Body.Length > 0
+            ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType!))
             : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
     }
 

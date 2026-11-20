@@ -91,6 +91,45 @@ public class JellyfinRemoteClientTests
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
     }
 
+    // Below quality 90 Jellyfin never sends the original file, so the copy is re-encoded at 640 with no EXIF of the photo.
+    [Fact]
+    public async Task APhotoThumbnailIsAskedSmallAndReEncodedWithTheSessionInTheHeaderOnly()
+    {
+        var bytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var handler = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            return response;
+        });
+
+        var result = await ClientFor(handler).GetPhotoThumbnailAsync(_endpoint, _session, "item 1", CancellationToken.None);
+
+        Assert.Equal(bytes, result.Value!.Content.ToArray());
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items/item%201/Images/Primary/0", request.Uri.AbsolutePath);
+        Assert.Equal("?maxWidth=640&maxHeight=640&quality=80&format=Jpg", request.Uri.Query);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("image/png")]
+    [InlineData("application/json")]
+    public async Task APhotoThumbnailThatIsNotAJpegIsRefused(string type)
+    {
+        var handler = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF, 0xD8, 0xFF, 0xD9]) };
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(type);
+            return response;
+        });
+
+        var result = await ClientFor(handler).GetPhotoThumbnailAsync(_endpoint, _session, "item", CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
     [Fact]
     public async Task AnAnswerThatIsNotAnImageIsRefused()
     {
