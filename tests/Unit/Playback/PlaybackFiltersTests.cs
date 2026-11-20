@@ -2406,6 +2406,7 @@ public class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
         Assert.IsType<NotFoundResult>(context.Result);
+        Assert.DoesNotContain(RemoteFailure.Forbidden, _fixture.Registry.Recorded);
     }
 
     [Fact]
@@ -2417,6 +2418,7 @@ public class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Contains(RemoteFailure.Forbidden, _fixture.Registry.Recorded);
     }
 
     [Fact]

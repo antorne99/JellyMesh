@@ -163,8 +163,15 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
             : call(_endpoint, _session, cancellationToken);
     }
 
-    public Task<RemoteResult<T>> RunPlaybackCallAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
-        => RunWithSessionAsync(serverId, call, cancellationToken);
+    // The outcomes a playback call hands back, which the real registry records as the last one of its server.
+    public List<RemoteFailure> Recorded { get; } = [];
+
+    public async Task<RemoteResult<T>> RunPlaybackCallAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
+    {
+        var result = await RunWithSessionAsync(serverId, call, cancellationToken).ConfigureAwait(false);
+        Recorded.Add(result.Failure);
+        return result;
+    }
 }
 
 /// <summary>A remote scripted per test. Records what is asked of it, per item path.</summary>
