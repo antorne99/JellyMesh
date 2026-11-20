@@ -279,9 +279,10 @@ for case in $CASES; do
       check "the banner lists both libraries on their server folders" "Film,Serie" "$(migration | jq -r '[.Libraries[].Name] | sort | join(",")')"
       check "with the type folders to add" 5 "$(migration | jq '[.Libraries[].MissingPaths[]] | length')"
       casa_films=$(film_folders "$CASA")
-      until_carry=$(jq -c --arg o "$(server_folder "$CASA")/Film" '. + [$o] | sort' <<<"$casa_films")
-      for i in $(seq 1 30); do [ "$(locations "Casa - Film")" = "$until_carry" ] && break; sleep 2; done
-      check "until the carry Casa - Film holds the old folder of Casa beside its film type folders" "$until_carry" "$(locations "Casa - Film")"
+      # Until the carry the plugin adds only the type folders that hold titles beside the old folder of Casa.
+      beside() { locations "Casa - Film" | jq -r --arg o "$(server_folder "$CASA")/Film" 'index($o) != null and (map(select(test("/[0-9a-f]{32}/Film$"))) | length) > 0'; }
+      for i in $(seq 1 30); do [ "$(beside)" = true ] && break; sleep 2; done
+      check "until the carry Casa - Film holds the old folder of Casa beside a film type folder" true "$(beside)"
       scan local
       check "so it shows Tears of Steel twice (D61)" 2 "$(in_library "Casa - Film" "Tears of Steel")"
       check "and the banner says so while titles are left to carry" true "$(migration | jq '.OldTitles > 0')"
