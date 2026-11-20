@@ -3638,12 +3638,12 @@ def shared_libraries(s, width):
 
     u.tick(box, False)
     u.wait_confirm(page)
-    u.answer_confirm(page, True)
+    # The second confirmation can open before the first has gone, so the first is answered without waiting for it to go.
+    page.locator(u.CONFIRM_OK).click()
     check(name + " resends the names shown (D48)", until(page, lambda: len(sent) == 3)
           and sent[2] == {"Enabled": False, "Confirmed": True, "ToDelete": first["ToDelete"], "ToRelease": first["ToRelease"]}, sent)
-    u.wait_confirm(page)
-    again = text(page, u.CONFIRM_TEXT)
-    check(name + " asks again with the new list", HOSTILE in again and page.locator(u.CONFIRM_MARKUP).count() == 0, again)
+    asked = lambda: page.locator(u.CONFIRM_TEXT).count() == 1 and HOSTILE in page.locator(u.CONFIRM_TEXT).inner_text()
+    check(name + " asks again with the new list", until(page, asked) and page.locator(u.CONFIRM_MARKUP).count() == 0, page.locator(u.CONFIRM_TEXT).all_inner_texts())
     u.answer_confirm(page, True)
     check(name + " resends the new list", until(page, lambda: len(sent) == 4) and sent[3]["ToDelete"] == second["ToDelete"], sent)
     check(name + " shows the option off", until(page, lambda: not box.is_checked() and box.is_enabled()))
