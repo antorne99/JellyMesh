@@ -979,6 +979,9 @@ public class FederationAdminController : ControllerBase
             link.Series,
             link.SeriesGroupingOff,
             link.SeriesLibraries,
-            unregistered);
+            unregistered)
+        {
+            SeriesSplitWith = link.SeriesSplitWith
+        };
     }
 }

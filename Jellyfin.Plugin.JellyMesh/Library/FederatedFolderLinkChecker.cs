@@ -64,7 +64,9 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
 
         // The single library holds every server, as it is meant to, so it is in no set that decides a split (D29).
         var counted = libraries.Where(library => !shared.Contains(library.ItemId ?? string.Empty, StringComparer.OrdinalIgnoreCase)).ToList();
-        var servers = serverIds.Select((server, index) => LinkOf(libraries, counted, server, folders[index])).ToList();
+        var links = serverIds.Select((server, index) => LinkOf(libraries, counted, server, folders[index])).ToList();
+        var splits = SeriesSplits(counted, links);
+        var servers = links.Select(link => link with { SeriesSplitWith = splits.GetValueOrDefault(link.ServerId) ?? [] }).ToList();
         var tops = serverIds.Select(server => FederatedFolderLayout.ServerPath(federatedFolderPath, server))
             .Concat(folders.SelectMany(own => own).Select(folder => Path.GetDirectoryName(Normalized(folder.Path))).OfType<string>())
             .Prepend(federatedFolderPath)
@@ -73,7 +75,7 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
             .Where(library => Locations(library).Any(location => tops.Any(top => IsAncestorOrSame(location, top))))
             .Select(library => library.Name)
             .ToList();
-        return new FederatedFolderLinkReport(servers, covering, IsSeriesSplit(counted, servers));
+        return new FederatedFolderLinkReport(servers, covering, splits.Count > 0);
     }
 
     /// <summary>Tells whether a library location is the given folder, as the link check compares them.</summary>
@@ -122,19 +124,24 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
             onlyOnItsFolders);
     }
 
-    // Series of different servers merge in a library only where all its series folders sit in the same libraries
-    // (Q46, R:prova §5); a library with the folders of one server only merges nothing.
-    private static bool IsSeriesSplit(List<VirtualFolderInfo> counted, List<ServerFolderLink> servers)
+    // Series of two servers merge in a library only where their series folders sit in the same libraries (Q46,
+    // R:prova §5): each server with the others whose folders share a library with its own in another set of libraries.
+    private static Dictionary<Guid, List<Guid>> SeriesSplits(List<VirtualFolderInfo> counted, List<ServerFolderLink> servers)
     {
         var folders = servers
             .SelectMany(server => server.Folders.Where(folder => ExpectedType(folder.LibraryType) == CollectionTypeOptions.tvshows).Select(folder => (server.ServerId, folder.Path)))
             .Select(folder => (folder.ServerId, Libraries: counted.Where(library => Holds(library, folder.Path, _pathComparison)).ToHashSet()))
             .ToList();
-        return counted.Any(library =>
-        {
-            var held = folders.Where(folder => folder.Libraries.Contains(library)).ToList();
-            return held.Select(folder => folder.ServerId).Distinct().Count() > 1 && held.Any(folder => !folder.Libraries.SetEquals(held[0].Libraries));
-        });
+        var pairs = folders
+            .SelectMany(left => folders, (left, right) => (Left: left, Right: right))
+            .Where(pair => pair.Left.ServerId != pair.Right.ServerId
+                && pair.Left.Libraries.Overlaps(pair.Right.Libraries)
+                && !pair.Left.Libraries.SetEquals(pair.Right.Libraries))
+            .Select(pair => (pair.Left.ServerId, Other: pair.Right.ServerId));
+        var order = servers.Select(server => server.ServerId).ToList();
+        return pairs
+            .GroupBy(pair => pair.ServerId, pair => pair.Other)
+            .ToDictionary(group => group.Key, group => group.Distinct().OrderBy(order.IndexOf).ToList());
     }
 
     // The link of several folders of one kind: the worst of them, and linked when there are none.

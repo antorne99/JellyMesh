@@ -20,4 +20,8 @@ public sealed record ServerFolderLink(
     FederatedPathStatus Series,
     IReadOnlyList<string> SeriesGroupingOff,
     IReadOnlyList<string> SeriesLibraries,
-    IReadOnlyList<string> OnlyOnItsFolders);
+    IReadOnlyList<string> OnlyOnItsFolders)
+{
+    /// <summary>Gets the servers whose series folders share a library with a series folder of this one but sit in other libraries.</summary>
+    public IReadOnlyList<Guid> SeriesSplitWith { get; init; } = [];
+}

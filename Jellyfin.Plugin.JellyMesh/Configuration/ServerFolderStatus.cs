@@ -26,4 +26,8 @@ public sealed record ServerFolderStatus(
     FederatedPathStatus Series,
     IReadOnlyList<string> SeriesGroupingOff,
     IReadOnlyList<string> SeriesLibraries,
-    IReadOnlyList<string> Unregistered);
+    IReadOnlyList<string> Unregistered)
+{
+    /// <summary>Gets the servers whose series stay split from those of this server (Q46, row 77).</summary>
+    public IReadOnlyList<Guid> SeriesSplitWith { get; init; } = [];
+}

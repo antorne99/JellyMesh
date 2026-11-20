@@ -33,6 +33,9 @@ public sealed class FederatedFolderLinkCheckerTests
     private static readonly string _aAnime = $"/federata/{_a:D}/{AnimeA}/Serie";
     private static readonly string _bFilms = $"/federata/{_b:D}/{FilmsB}/Film";
     private static readonly string _bShows = $"/federata/{_b:D}/{ShowsB}/Serie";
+    private static readonly Guid _c = Guid.Parse("cccccccc-0000-4000-8000-000000000003");
+    private const string ShowsC = "c2000000000000000000000000000001";
+    private static readonly string _cShows = $"/federata/{_c:D}/{ShowsC}/Serie";
 
     private static VirtualFolderInfo Library(string name, CollectionTypeOptions? type, bool grouping, params string[] locations) => new()
     {
@@ -465,10 +468,13 @@ public sealed class FederatedFolderLinkCheckerTests
     [Fact]
     public void AServerWithNoSeriesLibraryNeedsOnlyItsFilmsLinked()
     {
-        var report = CheckTypeFolders(ServerA((FilmsA, "Film", "movies")), Movies(_aFilms));
+        var report = CheckTypeFolders([ServerA((FilmsA, "Film", "movies")), ServerB()], [], Movies(_aFilms, _bFilms), Shows("Serie", _bShows));
 
         Assert.Equal(FederatedFolderLinkState.Linked, report.State);
         Assert.Equal(FederatedPathLink.Linked, LinkOfA(report).Series.Link);
+        Assert.Empty(LinkOfA(report).Series.Libraries);
+        Assert.False(report.SeriesSplit);
+        Assert.Empty(LinkOfA(report).SeriesSplitWith);
     }
 
     [Fact]
@@ -490,6 +496,36 @@ public sealed class FederatedFolderLinkCheckerTests
 
         Assert.True(report.SeriesSplit);
         Assert.Equal(["Serie", "Casa - Serie"], LinkOfA(report).SeriesLibraries);
+        Assert.Equal([_b], LinkOfA(report).SeriesSplitWith);
+        Assert.Equal([_a], report.Servers[1].SeriesSplitWith);
+    }
+
+    [Fact]
+    public void EachServerNamesOnlyTheServersItsSeriesSplitFrom()
+    {
+        var report = CheckTypeFolders(
+            [ServerA((ShowsA, "Serie", "tvshows")), ServerB(), Server(_c, (ShowsC, "Serie", "tvshows"))],
+            [],
+            Shows("Serie", _aShows, _bShows, _cShows),
+            Shows("Casa - Serie", _aShows));
+
+        Assert.Equal([_b, _c], LinkOfA(report).SeriesSplitWith);
+        Assert.Equal([_a], report.Servers[1].SeriesSplitWith);
+        Assert.Equal([_a], report.Servers[2].SeriesSplitWith);
+    }
+
+    [Fact]
+    public void AServerWhoseSeriesShareNoLibrarySplitsFromNoOne()
+    {
+        var report = CheckTypeFolders(
+            [ServerA((ShowsA, "Serie", "tvshows")), ServerB(), Server(_c, (ShowsC, "Serie", "tvshows"))],
+            [],
+            Shows("Serie", _aShows, _bShows),
+            Shows("Casa - Serie", _aShows),
+            Shows("Altro - Serie", _cShows));
+
+        Assert.Equal([_b], LinkOfA(report).SeriesSplitWith);
+        Assert.Empty(report.Servers[2].SeriesSplitWith);
     }
 
     [Fact]
@@ -527,6 +563,7 @@ public sealed class FederatedFolderLinkCheckerTests
             Shows("Anime", _aAnime));
 
         Assert.False(report.SeriesSplit);
+        Assert.All(report.Servers, server => Assert.Empty(server.SeriesSplitWith));
     }
 
     [Fact]
