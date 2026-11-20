@@ -71,6 +71,17 @@ public sealed class BookMaterializerTests : IDisposable
         Assert.Equal(BookPlaceholders.Epub(), await File.ReadAllBytesAsync(BookPath(a)));
     }
 
+    // Like every type folder the plugin writes, a books folder carries the hidden file that keeps it from being empty.
+    [Fact]
+    public async Task TheBooksFolderHasTheHiddenFileOfAWrittenTypeFolder()
+    {
+        var a = await AddBookServerAsync(Dune());
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.True(File.Exists(_fixture.PathIn(a, TestLibraries.Books, "Libri", ".jellymesh")));
+    }
+
     // The shape another JellyMesh skips (D62) is the one this server writes, so a change of layout cannot open a cycle.
     [Fact]
     public async Task APlaceholderWrittenHereHasTheShapeAnotherJellyMeshSkips()
