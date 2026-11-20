@@ -1993,6 +1993,7 @@ public class PlaybackFiltersTests
     [InlineData("Audio", "GetAudioStreamByContainer")]
     [InlineData("UniversalAudio", "GetUniversalAudioStream")]
     [InlineData("DynamicHls", "GetMasterHlsAudioPlaylist")]
+    [InlineData("DynamicHls", "GetVariantHlsAudioPlaylist")]
     public async Task A_stock_audio_route_refuses_a_track_stub_without_a_user(string controller, string action)
     {
         Anonymous();
@@ -2154,6 +2155,130 @@ public class PlaybackFiltersTests
         var playlist = Assert.IsType<ContentResult>(context.Result);
         Assert.Contains("../../JellyMesh/Playback/" + Assert.Single(_fixture.Sessions.All).Id + "/f/", playlist.Content, StringComparison.Ordinal);
         HoldsNoRemoteValue(playlist.Content!);
+    }
+
+    // A remote answers an audio transcode with an audio master: its variant holds no video codec.
+    private void RemoteTranscodesAudioToHls()
+    {
+        _fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            answer.Value!.MediaSources[0].TranscodingUrl = PlaybackValues.AudioMaster;
+            return Task.FromResult(answer);
+        };
+        _fixture.Client.Master = PlaybackValues.AudioMasterPlaylist;
+        _fixture.Client.Variant = PlaybackValues.AudioVariantPlaylist;
+    }
+
+    [Fact]
+    public async Task Universal_of_a_track_stub_with_an_audio_master_leads_to_its_session()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var context = Universal();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var playlist = Assert.IsType<ContentResult>(context.Result);
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Equal(PlaybackStreamKind.Hls, session.Kind);
+        Assert.Contains("CODECS=\"mp4a.40.2\"", playlist.Content, StringComparison.Ordinal);
+        Assert.Contains("\n../../JellyMesh/Playback/" + session.Id + "/f/", playlist.Content, StringComparison.Ordinal);
+        HoldsNoRemoteValue(playlist.Content!);
+    }
+
+    [Fact]
+    public async Task Main_playlist_of_a_track_stub_with_an_audio_master_lists_its_segments()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var playlist = Assert.IsType<ContentResult>(context.Result).Content!;
+        var prefix = "../../JellyMesh/Playback/" + Assert.Single(_fixture.Sessions.All).Id + "/f/";
+        Assert.Contains("URI=\"" + prefix, playlist, StringComparison.Ordinal);
+        Assert.Contains("\n" + prefix, playlist, StringComparison.Ordinal);
+        Assert.Contains("0.mp4", playlist, StringComparison.Ordinal);
+        Assert.Contains("#EXT-X-ENDLIST", playlist, StringComparison.Ordinal);
+        HoldsNoRemoteValue(playlist);
+    }
+
+    // A rooted variant would leave the folder of the session.
+    [Fact]
+    public async Task Main_playlist_of_a_master_with_a_rooted_variant_is_a_bad_gateway()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        _fixture.Client.Master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n/Audio/other/main.m3u8\n";
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Universal_of_a_track_stub_the_remote_transcodes_to_a_file_relays_it()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            var source = answer.Value!.MediaSources[0];
+            source.TranscodingUrl = "/Audio/remote-item/stream.mp3?DeviceId=" + PlaybackValues.RemoteDevice + "&ApiKey=" + PlaybackValues.RemoteToken;
+            source.TranscodingSubProtocol = Jellyfin.Data.Enums.MediaStreamProtocol.http;
+            return Task.FromResult(answer);
+        };
+        var guard = GuardFilter(store: TrackStub());
+
+        var head = Universal("HEAD");
+        Assert.False(await RunAsync(guard, head));
+        Assert.Equal("audio/mpeg", Assert.IsType<FileContentResult>(head.Result).ContentType);
+        var get = Universal();
+        Assert.False(await RunAsync(guard, get));
+
+        Assert.Equal(_remoteBytes, BodyOf(get));
+        Assert.Equal(PlaybackStreamKind.Progressive, Assert.Single(_fixture.Sessions.All).Kind);
+        Assert.Single(_fixture.Client.Requests);
+    }
+
+    // The same query from another user or device is another playback: it never gets the session of the first.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task The_same_universal_query_from_another_user_or_device_opens_its_own_session(bool otherUser)
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, Universal()));
+        var other = new User("other", "auth", "reset");
+        _library.Setup(library => library.GetItemById<BaseItem>(_itemId, other)).Returns(new Movie());
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .ReturnsAsync(new AuthorizationInfo { User = otherUser ? other : _user, Token = Token, DeviceId = otherUser ? "device" : "another-device" });
+
+        var second = Universal();
+        Assert.False(await RunAsync(guard, second));
+
+        Assert.Equal(2, _fixture.Client.Requests.Count);
+        Assert.Equal(2, _fixture.Sessions.All.Count);
+        Assert.Equal(_remoteBytes, BodyOf(second));
+    }
+
+    [Fact]
+    public async Task A_session_whose_source_failed_is_not_reused()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, Universal()));
+        Assert.True(Assert.Single(_fixture.Sessions.All).TryFail());
+
+        Assert.False(await RunAsync(guard, Universal()));
+
+        Assert.Equal(2, _fixture.Client.Requests.Count);
     }
 
     // A playlist route never answers with the bytes of a stream.

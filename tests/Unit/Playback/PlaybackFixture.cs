@@ -42,6 +42,25 @@ internal static class PlaybackValues
         + "#EXTINF:3.0,\n"
         + "hls1/main/0.mp4?DeviceId=" + RemoteDevice + "&PlaySessionId=" + RemotePlaySession + "&runtimeTicks=0&actualSegmentLengthTicks=30000000\n";
 
+    public const string AudioMaster = "/Audio/remote-item/master.m3u8?DeviceId=" + RemoteDevice + "&MediaSourceId=ms&AudioCodec=aac&SegmentContainer=mp4&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken;
+
+    // An audio master as stock 12.4 writes it: one variant, audio codecs only.
+    public const string AudioMasterPlaylist =
+        "#EXTM3U\n"
+        + "#EXT-X-STREAM-INF:BANDWIDTH=320000,AVERAGE-BANDWIDTH=320000,CODECS=\"mp4a.40.2\"\n"
+        + "main.m3u8?DeviceId=" + RemoteDevice + "&MediaSourceId=ms&AudioCodec=aac&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken + "\n";
+
+    public const string AudioVariantPlaylist =
+        "#EXTM3U\n"
+        + "#EXT-X-PLAYLIST-TYPE:VOD\n"
+        + "#EXT-X-VERSION:7\n"
+        + "#EXT-X-TARGETDURATION:6\n"
+        + "#EXT-X-MEDIA-SEQUENCE:0\n"
+        + "#EXT-X-MAP:URI=\"hls1/main/-1.mp4?DeviceId=" + RemoteDevice + "&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken + "&runtimeTicks=0&actualSegmentLengthTicks=0\"\n"
+        + "#EXTINF:6.000000, nodesc\n"
+        + "hls1/main/0.mp4?DeviceId=" + RemoteDevice + "&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken + "&runtimeTicks=0&actualSegmentLengthTicks=60000000\n"
+        + "#EXT-X-ENDLIST\n";
+
     public static readonly DeviceProfile WebProfile = new()
     {
         TranscodingProfiles =
@@ -163,6 +182,8 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
 
     public string Master { get; set; } = PlaybackValues.MasterPlaylist;
 
+    public string Variant { get; set; } = PlaybackValues.VariantPlaylist;
+
     public Func<RemoteStreamRequest, CancellationToken, Task<RemoteResult<RemoteContent>>> Open { get; set; } = (_, _) => Task.FromResult(Bytes());
 
     public RemoteTranscodePolicy Policy { get; set; } = new("none", true, true, true);
@@ -212,7 +233,7 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
             return Task.FromResult(RemoteResult.Fail<string>(failure));
         }
 
-        return Task.FromResult(RemoteResult.Success(path.Contains("master.m3u8", StringComparison.Ordinal) ? Master : PlaybackValues.VariantPlaylist));
+        return Task.FromResult(RemoteResult.Success(path.Contains("master.m3u8", StringComparison.Ordinal) ? Master : Variant));
     }
 
     public Task<RemoteResult<RemoteContent>> OpenStreamAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteStreamRequest request, CancellationToken cancellationToken)
