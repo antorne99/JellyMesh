@@ -504,7 +504,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
     }
 
-    // Q54: when an item the action names has linked versions, its user must see every item it names. A Playstate report
+    // Q54: when an item the action names has linked versions or track copies, its user must see every item it names. A Playstate report
     // gets 204 without effect, as for the play session of another user (D8). Null when the action goes on.
     private async Task<IActionResult?> VersionRefusalAsync(ActionExecutingContext context, string controller, string action, IReadOnlyList<string> sessions)
     {
@@ -520,7 +520,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             named.AddRange(sessions.Select(_sessions.LocalItemOf).OfType<Guid>());
         }
 
-        if (!named.Exists(_stubs.HasVersions))
+        // The copies of a track count as its versions (row 66).
+        if (!named.Exists(id => _stubs.HasVersions(id) || _versions.HasCopies(id)))
         {
             return null;
         }

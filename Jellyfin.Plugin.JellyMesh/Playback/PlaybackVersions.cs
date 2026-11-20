@@ -42,6 +42,14 @@ public sealed class PlaybackVersions
     }
 
     /// <summary>
+    /// Tells whether an item is a track stub with other copies, which count as its versions (row 457, row 66).
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a track stub whose dedup key other track stubs share.</returns>
+    public bool HasCopies(Guid itemId)
+        => TrackKeyOf(itemId) is { } key && _registry.FindCopies(key).Count > 1;
+
+    /// <summary>
     /// Tells whether an item is a version of the title of another: the same item, a member of the same group of the
     /// registry, or an item Jellyfin links with it, directly or through a shared primary.
     /// </summary>

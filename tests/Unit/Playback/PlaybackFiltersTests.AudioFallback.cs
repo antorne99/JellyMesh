@@ -25,6 +25,7 @@ using MediaBrowser.Controller.MediaSegments;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
+using MediaBrowser.Model.Session;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Lyrics;
@@ -306,6 +307,36 @@ public partial class PlaybackFiltersTests
         Assert.Equal(_remoteBytes, BodyOf(context));
         Assert.StartsWith("/Videos/item-b/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
     }
+
+    // Row 66 for tracks: a report naming a copy the user cannot see gets the answer of stock, with no effect.
+    [Theory]
+    [InlineData("ReportPlaybackProgress")]
+    [InlineData("ReportPlaybackStopped")]
+    [InlineData("OnPlaybackProgress")]
+    public async Task A_playstate_report_naming_a_copy_the_user_cannot_see_is_answered_without_effect(string action)
+    {
+        var (store, _, _) = TrackWithCopy(seesCopy: false);
+        var context = Context("Playstate", action, PlaystateOf(action, _itemId, _copyId));
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.IsType<NoContentResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task A_playstate_report_naming_a_copy_the_user_sees_goes_to_stock()
+    {
+        var (store, _, _) = TrackWithCopy();
+
+        Assert.True(await RunAsync(GuardFilter(store: store), Context("Playstate", "ReportPlaybackProgress", PlaystateOf("ReportPlaybackProgress", _itemId, _copyId))));
+    }
+
+    // The arguments of a Playstate action naming a track and a version of it.
+    private static (string Key, object? Value)[] PlaystateOf(string action, Guid item, Guid version) => action switch
+    {
+        "ReportPlaybackProgress" => [("playbackProgressInfo", new PlaybackProgressInfo { ItemId = item, MediaSourceId = version.ToString("N"), PlaySessionId = "play" })],
+        "ReportPlaybackStopped" => [("playbackStopInfo", new PlaybackStopInfo { ItemId = item, MediaSourceId = version.ToString("N"), PlaySessionId = "play" })],
+        _ => [("itemId", item), ("mediaSourceId", version.ToString("N")), ("playSessionId", "play")]
+    };
 
     [Fact]
     public async Task Universal_of_a_track_never_falls_back_to_a_copy_the_user_cannot_see()
