@@ -44,11 +44,13 @@ only() { # only <user> <library>...: the user sees those libraries alone
   policy=$(get local "/Users/$uid" | jq -c --argjson f "$libs" '.Policy | .EnableAllFolders = false | .EnabledFolders = $f')
   post local "/Users/$uid/Policy" "$policy" >/dev/null
 }
-# stopped <sql>: runs a statement on the database of the consumer while it is stopped, then starts it again.
+# stopped <sql> [plugin sql]: runs statements on the databases of Jellyfin and of the plugin while the consumer is stopped,
+# then starts it again.
 stopped() {
   docker stop "$PREFIX-local" >/dev/null
   docker run --rm --name "$PREFIX-sqlite" -v "$PREFIX-local-config:/config" alpine \
-    sh -c 'apk add -q sqlite >/dev/null && sqlite3 /config/data/jellyfin.db "$1"' sh "$1"
+    sh -c 'apk add -q sqlite >/dev/null && sqlite3 /config/data/jellyfin.db "$1" && { [ -z "$2" ] || sqlite3 "$3/jellymesh.db" "$2"; }' \
+    sh "$1" "${2:-}" "$DATA"
   docker start "$PREFIX-local" >/dev/null
   sleep 3
   wait_ready local
@@ -267,21 +269,19 @@ check "and its folder" 0 "$(docker exec "$PREFIX-local" sh -c "ls /config/root/d
 # Its new side is in the registry, so only the old id, that of the live Serie library, sets it aside (row 360).
 LIVE=$(lib_id "Alba - Serie")
 ALBA_FILM=$(lib_id "Alba - Film")
-DATA=$(docker exec "$PREFIX-local" sh -c 'dirname "$(find /config -name federated-stubs.json | head -1)"')
-jq -n --arg old "$(dashed "$GHOST")" --arg live "$(dashed "$LIVE")" --arg new "$(dashed "$ALBA_FILM")" \
-  '{Version: 1, Records: [
-    {OldName: "Spettro - Film", NewName: "Alba - Film", OldId: $live, NewId: $new, Type: "movies", TemporaryName: null},
-    {OldName: "Fantasma - Film", NewName: "Alba - Film", OldId: $old, NewId: $new, Type: "movies", TemporaryName: null}]}' >"$WORK/library-renames.json"
-docker cp "$WORK/library-renames.json" "$PREFIX-local:$DATA/library-renames.json"
+FORGED="insert into library_renames (old_name, new_name, old_id, new_id, type) values
+  ('Spettro - Film', 'Alba - Film', '$LIVE', '$ALBA_FILM', 'movies'),
+  ('Fantasma - Film', 'Alba - Film', '$GHOST', '$ALBA_FILM', 'movies');"
+renames() { db_query local "select count(*) from library_renames where $1;"; }
 
 echo "--- after a restart, with the user blocking an id of before that rename and the live Serie library"
 uid=$(dashed "$ALL" | tr a-f A-F)
-stopped "update Preferences set Value = '$(dashed "$GHOST"),$(dashed "$LIVE")' where Kind = 2 and UserId = '$uid';"
+stopped "update Preferences set Value = '$(dashed "$GHOST"),$(dashed "$LIVE")' where Kind = 2 and UserId = '$uid';" "$FORGED"
 want="[\"$ALBA_FILM\",\"$LIVE\"]"
 for i in $(seq 1 30); do [ "$(blocks)" = "$want" ] && break; sleep 1; done
 check "the start finishes the rewrite: the new id is blocked, the live Serie library stays blocked [rows 290, 360]" "$want" "$(blocks)"
-check "and the record is gone" 0 "$(docker exec "$PREFIX-local" sh -c "ls '$DATA' | grep -c '^library-renames.json$'" || true)"
-check "the forged record is set aside [rows 329, 360]" 1 "$(docker exec "$PREFIX-local" sh -c "grep -c '$(dashed "$LIVE")' '$DATA/library-renames.json.damaged'" || true)"
+check "and no rename is pending" 0 "$(renames "set_aside_utc is null")"
+check "the forged record is set aside [rows 329, 360]" 1 "$(renames "set_aside_utc is not null and old_id = '$LIVE'")"
 as all GET "/Items/$(dashed "$(film "Tears of Steel" Alba)")" >/dev/null
 check "and cannot open its film" 404 "$(status)"
 # The Serie library was blocked only to prove the set-aside: the user sees it again for the checks below.
