@@ -85,6 +85,14 @@ public class TrackDedupTests
     }
 
     [Fact]
+    public void ASharedTrackIdNeverJoinsTwoRecordings()
+    {
+        var decisions = TrackDedup.Resolve([Track("a", "a1", recording: "rec-1", trackId: "trk-1"), Track("b", "b1", recording: "rec-2", trackId: "trk-1")]);
+
+        Assert.Equal(["Track|mbr:rec-1", "Track|mbr:rec-2"], decisions.Select(decision => decision.Identity.Key));
+    }
+
+    [Fact]
     public void DifferentTrackIdsLeaveTheTagsToDecide()
     {
         var decisions = TrackDedup.Resolve([Track("a", "a1", trackId: "trk-1"), Track("b", "b1", trackId: "trk-2")]);

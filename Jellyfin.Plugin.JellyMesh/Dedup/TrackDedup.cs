@@ -14,9 +14,8 @@ public static class TrackDedup
     private static readonly long _durationTolerance = TimeSpan.FromSeconds(2).Ticks;
 
     /// <summary>
-    /// Works out one decision per track identity, whatever the order of the input. Copies with the same MusicBrainz
-    /// recording or track ID are one track; otherwise copies with the same album artist, album, disc, number and normalized
-    /// title, and durations within 2 s, are one. Different recording IDs always keep two copies apart.
+    /// Works out one decision per track, whatever the input order: by MusicBrainz recording or track ID, else by album place
+    /// with durations within 2 s. Different recording IDs always keep two copies apart.
     /// </summary>
     /// <param name="tracks">The tracks of every remote server.</param>
     /// <returns>The decisions, sorted by key: the best copy as winner, every other copy best first as backups.</returns>
@@ -30,22 +29,24 @@ public static class TrackDedup
             .OrderBy(track => track.ServerId, StringComparer.Ordinal)
             .ThenBy(track => track.ItemId, StringComparer.Ordinal)
             .ToList();
+        var positions = items.Select(PositionOf).ToArray();
         var sets = new Components(items);
 
         JoinBy(items, sets, track => track.RecordingId);
         JoinBy(items, sets, track => track.TrackId);
-        JoinByPosition(items, sets);
+        JoinByPosition(items, positions, sets);
 
         return Enumerable.Range(0, items.Count)
             .GroupBy(sets.Find)
-            .Select(group => Decide(group.Select(index => items[index]).ToList()))
+            .Select(group => Decide(group.ToList(), items, positions))
             .OrderBy(decision => decision.Identity.Key, StringComparer.Ordinal)
             .ToList();
     }
 
+    // Joins the copies sharing an ID, unless their groups hold different recordings.
     private static void JoinBy(List<TrackItem> items, Components sets, Func<TrackItem, string?> idOf)
     {
-        var first = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var holders = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < items.Count; index++)
         {
             if (Id(idOf(items[index])) is not { } id)
@@ -53,22 +54,26 @@ public static class TrackDedup
                 continue;
             }
 
-            if (first.TryGetValue(id, out var other))
+            if (!holders.TryGetValue(id, out var earlier))
             {
-                sets.Union(other, index);
+                earlier = [];
+                holders[id] = earlier;
             }
-            else
+
+            foreach (var other in earlier)
             {
-                first[id] = index;
+                sets.UnionIfRecordingsAgree(other, index);
             }
+
+            earlier.Add(index);
         }
     }
 
     // Copies in the same place of the same album, joined when their durations are within 2 s and their recordings agree.
-    private static void JoinByPosition(List<TrackItem> items, Components sets)
+    private static void JoinByPosition(List<TrackItem> items, string?[] positions, Components sets)
     {
         var buckets = Enumerable.Range(0, items.Count)
-            .Select(index => (Index: index, Key: PositionOf(items[index])))
+            .Select(index => (Index: index, Key: positions[index]))
             .Where(entry => entry.Key is not null)
             .GroupBy(entry => entry.Key!, entry => entry.Index, StringComparer.Ordinal)
             .OrderBy(bucket => bucket.Key, StringComparer.Ordinal);
@@ -100,23 +105,24 @@ public static class TrackDedup
         return string.Create(CultureInfo.InvariantCulture, $"{artist}\n{album}\n{track.DiscNumber ?? 1}\n{number}\n{title}");
     }
 
-    private static FederationDecision Decide(List<TrackItem> copies)
+    private static FederationDecision Decide(List<int> indexes, List<TrackItem> items, string?[] positions)
     {
+        var copies = indexes.Select(index => items[index]).ToList();
         var ranked = QualityRanking.RankAudio(copies.SelectMany(copy => copy.ToSources()));
         var remoteItems = copies
             .Select(copy => new RemoteItemKey(copy.ServerId, copy.ItemId))
             .OrderBy(item => item.ServerId, StringComparer.Ordinal)
             .ThenBy(item => item.ItemId, StringComparer.Ordinal)
             .ToList();
-        return new FederationDecision(IdentityOf(copies), ranked[0], ranked.Skip(1).ToList()) { RemoteItems = remoteItems };
+        var position = indexes.Select(index => positions[index]).OfType<string>().Order(StringComparer.Ordinal).FirstOrDefault();
+        return new FederationDecision(IdentityOf(copies, position), ranked[0], ranked.Skip(1).ToList()) { RemoteItems = remoteItems };
     }
 
     // The key of a group: its lowest recording ID, else its lowest track ID, else its place in the album, else its item.
-    private static ContentIdentity IdentityOf(List<TrackItem> copies)
+    private static ContentIdentity IdentityOf(List<TrackItem> copies, string? position)
     {
         var recording = LowestOf(copies, track => track.RecordingId);
         var trackId = LowestOf(copies, track => track.TrackId);
-        var position = copies.Select(PositionOf).OfType<string>().Order(StringComparer.Ordinal).FirstOrDefault();
         var first = copies[0];
         var (key, match) = (recording, trackId, position) switch
         {
