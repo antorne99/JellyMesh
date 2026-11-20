@@ -1328,8 +1328,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
 
                 try
                 {
-                    // With no refresh: Jellyfin would scan at once, also while a shared library lacks its blocks (D42).
+                    // With no refresh: Jellyfin would scan at once, also while a shared library lacks its blocks (D42),
+                    // so the top folders are validated before the next scan, which drops the library from the views.
                     await _libraries.RemoveVirtualFolder(next.Name, false).ConfigureAwait(false);
+                    _sharedValidationOwed = true;
                     onRemove();
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
