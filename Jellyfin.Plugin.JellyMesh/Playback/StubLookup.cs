@@ -238,7 +238,7 @@ public sealed class StubLookup
         return _libraryManager.GetItemById(itemId) switch
         {
             Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) ? _stubs.Find(stubId) : null,
-            var item when IsPlaceholder(item) => _stubs.FindByPath(item!.Path),
+            var item when PlaceholderPath(item) is { } path => _stubs.FindByPath(path),
             _ => null
         };
     }
@@ -255,7 +255,7 @@ public sealed class StubLookup
         {
             Video video when PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) => _stubs.Find(stubId),
             Audio audio when PathInFolder(audio.Path) is { } path => _stubs.FindByPath(path),
-            var item when IsPlaceholder(item) => _stubs.FindByPath(item!.Path),
+            var item when PlaceholderPath(item) is { } path => _stubs.FindByPath(path),
             _ => null
         };
     }
@@ -325,8 +325,18 @@ public sealed class StubLookup
         return false;
     }
 
-    private bool IsPlaceholder(BaseItem? item)
-        => item is Book && _store.ReadOr(config => config.FederatedFolderPath, null) is { } root && FederatedPaths.IsInside(root, item.Path);
+    private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
+
+    // The path of a book in the federated folder, also through an alias of it, spelled under the folder; else null.
+    private string? PlaceholderPath(BaseItem? item)
+    {
+        if (item is not Book { Path: { Length: > 0 } path } || _store.ReadOr(config => config.FederatedFolderPath, null) is not { Length: > 0 } root)
+        {
+            return null;
+        }
+
+        return FederatedPaths.IsInside(root, path) ? path : RealPath.Rebase(root, path);
+    }
 
     private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
 
