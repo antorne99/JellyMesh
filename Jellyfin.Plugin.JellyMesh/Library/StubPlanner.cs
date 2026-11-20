@@ -48,7 +48,9 @@ public static partial class StubPlanner
         var flat = input.State.Stubs.Where(stub => stub.ServerId is null).ToList();
         var flatSeries = input.State.Series.Where(series => series.ServerId is null).ToList();
         var matcher = new StubMatcher(flat);
-        var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
+
+        // Music videos exist only in the server folders.
+        var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents.Where(content => content.Identity.Kind != ContentKind.MusicVideo).ToList()));
 
         var paths = new PathAllocator(flat, flatSeries, input.IgnoreRules);
         var scope = new SeriesScope(null, flatSeries, ByWork(input.View.Contents), (_, _, title, year, id) => paths.SeriesFolder(TypeFolder.Series.Name, title, year, id), input.LocalSeriesOf);
@@ -67,7 +69,7 @@ public static partial class StubPlanner
 
             if (content.Identity.Kind == ContentKind.Movie)
             {
-                works.Add(MovieWork(input, content, stub, winner, catalog, null, id => FederatedPaths.MovieStub(paths.MovieFolderName(TypeFolder.Movies.Name, winner.Name, winner.ProductionYear, id))));
+                works.Add(MovieWork(input, content, stub, winner, catalog, null, StubKind.Movie, id => FederatedPaths.MovieStub(paths.MovieFolderName(TypeFolder.Movies.Name, winner.Name, winner.ProductionYear, id))));
             }
             else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
             {
@@ -137,10 +139,11 @@ public static partial class StubPlanner
         var legacy = input.KeepsOlderLayout;
         foreach (var server in input.Servers)
         {
-            var contents = ServerContents(input.View, input.Snapshot, catalog, server);
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book) && !IsVideoKind(stub.Kind) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
+            var contents = ServerContents(input.View, input.Snapshot, catalog, server).Where(content => !legacy || content.Identity.Kind != ContentKind.MusicVideo).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book) && !IsUntitledVideo(stub.Kind, legacy) && (legacy || IsCurrent(stub.RelativePath))).ToList();
             var ownBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Book).ToList();
-            var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsVideoKind(stub.Kind)).ToList();
+            var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsUntitledVideo(stub.Kind, legacy)).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
             var parts = legacy
@@ -161,10 +164,11 @@ public static partial class StubPlanner
                         continue;
                     }
 
-                    if (content.Identity.Kind == ContentKind.Movie)
+                    if (content.Identity.Kind is ContentKind.Movie or ContentKind.MusicVideo)
                     {
-                        var folder = part.FolderOf([winner], TypeFolder.Movies);
-                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id, label), label)), content, winner));
+                        var (kind, type) = content.Identity.Kind == ContentKind.Movie ? (StubKind.Movie, TypeFolder.Movies) : (StubKind.MusicVideo, TypeFolder.MusicVideos);
+                        var folder = part.FolderOf([winner], type);
+                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, kind, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id, label), label)), content, winner));
                     }
                     else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
                     {
@@ -191,14 +195,13 @@ public static partial class StubPlanner
                 claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
             }
 
-            // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
             if (legacy)
             {
                 claimed.UnionWith(ownVideos.Select(stub => stub.Id));
             }
             else
             {
-                videoWorks.AddRange(VideoWorks(input, catalog, server, label, ownVideos, claimed, unplaceable));
+                videoWorks.AddRange(VideoWorks(input, catalog, server, ownVideos, claimed, unplaceable));
             }
 
             books.AddRange(BookWorks(input, server.Id, ownBooks, legacy, claimed, unplaceable));
@@ -264,7 +267,7 @@ public static partial class StubPlanner
         foreach (var server in servers)
         {
             var contents = ServerContents(view, snapshot, catalog, server);
-            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath) && !IsVideoKind(stub.Kind)).ToList();
+            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath) && !IsUntitledVideo(stub.Kind, legacy: false)).ToList();
             var parts = PartsOf(placementOf ?? StubPlanInput.DefaultPlacement, catalog, server.Id, contents, own, [], []);
             claims.AddRange(parts.SelectMany(part => new StubMatcher(part.Stubs).ClaimAll(StubContents.Group(part.Contents))));
         }
@@ -570,21 +573,23 @@ public static partial class StubPlanner
             .ToList();
     }
 
-    private static StubWork MovieWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, IndexItemLookup catalog, Guid? serverId, Func<string, string> newPath)
+    // A film, or a music video: one title in a folder of its own, its .nfo named after the stub (F52).
+    private static StubWork MovieWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, IndexItemLookup catalog, Guid? serverId, StubKind kind, Func<string, string> newPath)
     {
         var id = stub?.Id ?? NewId();
         var relative = stub?.RelativePath ?? newPath(id);
         var folder = Path.GetDirectoryName(relative)!;
 
-        var entry = (stub ?? NewEntry(id, StubKind.Movie, relative)) with
+        var entry = (stub ?? NewEntry(id, kind, relative)) with
         {
             ServerId = serverId,
             IdentityKey = content.Identity.Key,
             Sources = SourcesOf(content, catalog)
         };
 
-        var metadata = StubMetadata.From(winner, input.IsProtected, input.WritesCollections);
-        var nfo = NfoDocument.Movie(metadata);
+        var isFilm = kind == StubKind.Movie;
+        var metadata = isFilm ? StubMetadata.From(winner, input.IsProtected, input.WritesCollections) : StubMetadata.From(winner, input.IsProtected);
+        var nfo = isFilm ? NfoDocument.Movie(metadata) : NfoDocument.MusicVideo(metadata);
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();
         var slots = _titleImages.Select(image => (image.Type, Path.Combine(folder, image.Stem))).ToList();
@@ -593,7 +598,8 @@ public static partial class StubPlanner
             AddRemote(images, winner, content.Winner!.ServerId, type, stem);
         }
 
-        return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner))
+        var nfoPath = isFilm ? Path.Combine(folder, "movie.nfo") : Path.ChangeExtension(relative, ".nfo");
+        return new StubWork(entry, stub is null, metadata, nfo, nfoPath, url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner))
         {
             RemovedImages = Removed(entry.ImageTag, slots, images)
         };

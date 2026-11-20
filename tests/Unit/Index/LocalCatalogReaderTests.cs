@@ -100,6 +100,29 @@ public class LocalCatalogReaderTests
     }
 
     [Fact]
+    public void AMusicVideoIsOneTitleWithItsArtists()
+    {
+        var clip = new MusicVideo
+        {
+            Id = Guid.NewGuid(),
+            Name = "Clip",
+            ProductionYear = 2019,
+            Path = "/media/video/clip.mp4",
+            Artists = ["Artist"],
+            ProviderIds = new Dictionary<string, string> { ["Imdb"] = "tt9" }
+        };
+
+        var item = Assert.Single(ReaderOver(clip).Read());
+
+        Assert.Equal(ContentKind.MusicVideo, item.Kind);
+        Assert.Equal(clip.Id.ToString("N"), item.ItemId);
+        Assert.Equal(("Clip", 2019), (item.Title, item.Year));
+        Assert.Equal(["Artist"], item.Artists);
+        Assert.Equal("tt9", item.Ids.Imdb);
+        Assert.Null(item.SeriesId);
+    }
+
+    [Fact]
     public void AFilmWithoutIdsThatJellyfinHasNotRefreshedAwaitsARefresh()
     {
         var film = Film("/media/film/a.mkv");
@@ -254,7 +277,7 @@ public class LocalCatalogReaderTests
     }
 
     [Fact]
-    public void TheQueryAsksForFilmsAndEpisodesWithoutVirtualItems()
+    public void TheQueryAsksForFilmsEpisodesAndMusicVideosWithoutVirtualItems()
     {
         InternalItemsQuery? query = null;
         _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>()))
@@ -263,7 +286,7 @@ public class LocalCatalogReaderTests
 
         new LocalCatalogReader(_library.Object, _store).Read();
 
-        Assert.Equal([BaseItemKind.Movie, BaseItemKind.Episode], query!.IncludeItemTypes);
+        Assert.Equal([BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.MusicVideo], query!.IncludeItemTypes);
         Assert.True(query.Recursive);
         Assert.False(query.IsVirtualItem);
     }

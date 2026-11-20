@@ -60,6 +60,7 @@ public sealed record TypeFolder(string Name, CollectionTypeOptions LibraryType)
     {
         ContentKind.Movie => Movies,
         ContentKind.Episode => Series,
+        ContentKind.MusicVideo => MusicVideos,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }
