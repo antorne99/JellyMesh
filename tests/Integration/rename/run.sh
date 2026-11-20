@@ -248,6 +248,13 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
 }
 
 rename_to Casa Mare
+# A rename is refused while a renamed library waits for a restart, as the page asks.
+echo "--- restart"
+docker restart "$PREFIX-local" >/dev/null
+sleep 3
+wait_ready local
+login local
+check "the restart clears the request" false "$(get local /JellyMesh/Admin/Status | jq -r .RenamedLibrariesNeedRestart)"
 rename_to Mare Alba
 
 echo "--- a library rename left with a user to rewrite [row 290], and a forged record whose old id is another live library [rows 329, 360]"
