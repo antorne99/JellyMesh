@@ -19,7 +19,7 @@ public static class BookPlaceholders
     private const ushort ZipDate = 0x21; // 1 January 1980, the first DOS date.
 
     // The 1x1 grey JPEG (Pillow, quality 50) of the comic placeholder the F48 probes tested.
-    private const string PageJpeg =
+    internal const string PageJpeg =
         "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19i" +
         "Z2hnPk1xeXBkeFxlZ2P/2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2Nj" +
         "Y2NjY2NjY2P/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF" +

@@ -434,9 +434,9 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
 
     private async Task WriteStubAsync(Run run, StubWork work, CancellationToken cancellationToken)
     {
-        if (work.Entry.Kind == StubKind.Book)
+        if (work.Entry.Kind is StubKind.Book or StubKind.Photo)
         {
-            await WriteBookAsync(run, work, cancellationToken).ConfigureAwait(false);
+            await WritePlaceholderAsync(run, work, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -513,14 +513,14 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    // The item an image of a stub belongs to: a track carries the cover of its album, which is the album folder's.
-    private BaseItem? ImageOwnerOf(StubWork work, string strm, LazyItem existing) => work.Entry.Kind != StubKind.Track
+    // The item an image of a stub belongs to: a track or photo carries the cover of its album, which is the album folder's.
+    private BaseItem? ImageOwnerOf(StubWork work, string strm, LazyItem existing) => work.Entry.Kind is not (StubKind.Track or StubKind.Photo)
         ? existing.Value
         : work.Images.Count + work.RemovedImages.Count > 0 ? _library.FindByPath(Path.GetDirectoryName(strm)!, true) : null;
 
     private async Task SignStubAsync(Run run, StubEntry stub, CancellationToken cancellationToken)
     {
-        if (stub.Kind == StubKind.Book)
+        if (stub.Kind is StubKind.Book or StubKind.Photo)
         {
             return;
         }
