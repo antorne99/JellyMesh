@@ -3371,16 +3371,26 @@ def edit_locks(s, width):
     status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
     ids = {server["Name"]: server["Id"] for server in status["Servers"]}
 
+    rename = [{"Busy": False, "Pending": True, "Failed": False, "Stuck": False}]
+    login = [False]
+    offline = [True]
+
     def check_answer(data, url):
         if ids["peer"] in url:
-            data.update(RemoteOffline=True, Libraries=[])
+            if offline[0]:
+                data.update(RemoteOffline=True, Libraries=[])
         else:
             data.update(RemoteWarning="Timeout")
 
-    rename = [{"Busy": False, "Pending": True, "Failed": False, "Stuck": False}]
+    def status(data):
+        of_server(data, "stock").update(Rename=rename[0])
+        of_server(data, "peer").update(Connection="Offline" if offline[0] else "Online")
+        if login[0]:
+            data.update(KeyState="Wrong")
+            of_server(data, "stock").update(NeedsPassword=True)
 
     def cases(context):
-        fake(context, "Status", lambda data: of_server(data, "stock").update(Rename=rename[0]))
+        fake(context, "Status", status)
 
         def answer(route):
             if route.request.method != "POST":
@@ -3416,6 +3426,12 @@ def edit_locks(s, width):
     check(name + " a rename that ends unlocks the open form", until(page, unlocked, 25), form.inner_text())
     rename[0] = dict(rename[0], Pending=True)
     check(name + " a rename that starts locks the open form", until(page, lambda: not unlocked(), 25), form.inner_text())
+    login[0] = True
+    asks = lambda: "no longer decrypts" in form.inner_text() and stock.locator(u.LIBRARY).count() == 0
+    check(name + " a login that no longer decrypts asks for it in the open form", until(page, asks, 25), form.inner_text())
+    login[0] = False
+    reads = lambda: "no longer decrypts" not in form.inner_text() and stock.locator(u.LIBRARY).count() == 2
+    check(name + " a login that decrypts again reads the libraries in the open form", until(page, reads, 25), form.inner_text())
 
     peer = u.server_row(page, "peer")
     u.button(peer, "edit").click()
@@ -3428,6 +3444,13 @@ def edit_locks(s, width):
     check(name + " an offline remote lists no library", peer.locator(u.LIBRARY).count() == 0)
     healthy(page, name)
     u.shot(page, f"edit-offline-lock-{width}")
+    offline[0] = False
+    answers = lambda: "does not answer" not in form.inner_text() and peer.locator(u.LIBRARY).count() > 0
+    check(name + " a remote that answers again lists its libraries in the open form", until(page, answers, 25), form.inner_text())
+    check(name + " a remote that answers again unlocks the login", form.get_by_label("User", exact=True).is_enabled())
+    offline[0] = True
+    stops = lambda: "does not answer" in form.inner_text() and peer.locator(u.LIBRARY).count() == 0
+    check(name + " a remote that stops answering says so in the open form", until(page, stops, 25), form.inner_text())
     u.close(page)
 
 
