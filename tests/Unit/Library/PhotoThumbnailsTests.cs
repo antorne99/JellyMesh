@@ -30,7 +30,7 @@ public sealed class PhotoThumbnailsTests
     [Fact]
     public void TheBytesOfAnApp1InsideAnotherSegmentAreNotOne()
     {
-        Assert.True(PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(0xFE, [0xFF, 0xE1, 0x00, 0x10]))));
+        Assert.True(PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(0xE0, [0xFF, 0xE1, 0x00, 0x10]))));
     }
 
     [Theory]
@@ -51,6 +51,34 @@ public sealed class PhotoThumbnailsTests
         byte[] bytes = [.. Jpeg(Jfif)[..^2], .. Segment(0xE1, Encoding.ASCII.GetBytes("Exif\0\0")), .. _scan, 0xFF, 0xD9];
 
         Assert.False(PhotoThumbnails.IsCleanJpeg(bytes));
+    }
+
+    // A restart, TEM or SOI marker has no length: read as one, it would hide the APP1 after it.
+    [Theory]
+    [InlineData(0xD0)]
+    [InlineData(0x01)]
+    [InlineData(0xD8)]
+    public void AMarkerWithNoLengthOutsideAScanIsRefused(byte marker)
+    {
+        // Read as a length, FF E1 skips exactly this APP1 of 0xFFE1 bytes.
+        var app1 = Segment(0xE1, [.. Encoding.ASCII.GetBytes("Exif\0\0"), .. new byte[0xFFE1 - 4 - 6]]);
+
+        Assert.False(PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, [0xFF, marker, .. app1])));
+    }
+
+    // Only the segments of a plain image pass: IPTC, comments and other application data may carry a position.
+    [Theory]
+    [InlineData(0xED, false)]
+    [InlineData(0xFE, false)]
+    [InlineData(0xEF, false)]
+    [InlineData(0xE2, true)]
+    [InlineData(0xEE, true)]
+    [InlineData(0xDD, true)]
+    [InlineData(0xC4, true)]
+    [InlineData(0xC2, true)]
+    public void OnlyTheSegmentsOfAPlainImageAreAllowed(byte marker, bool allowed)
+    {
+        Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(marker, [0x00, 0x04]))));
     }
 
     [Fact]

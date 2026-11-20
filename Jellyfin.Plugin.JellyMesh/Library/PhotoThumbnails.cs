@@ -19,7 +19,6 @@ public static class PhotoThumbnails
     private const byte StartOfImage = 0xD8;
     private const byte EndOfImage = 0xD9;
     private const byte StartOfScan = 0xDA;
-    private const byte App1 = 0xE1;
 
     /// <summary>Gives the path of the thumbnail of a photo stub.</summary>
     /// <param name="root">The federated folder.</param>
@@ -71,10 +70,10 @@ public static class PhotoThumbnails
     }
 
     /// <summary>
-    /// Tells whether a file is a whole JPEG with no APP1 segment, the one that carries EXIF, GPS included, and XMP (row 470).
+    /// Tells whether a file is a whole JPEG with only the segments of the image, so no EXIF, GPS, XMP or IPTC (row 470).
     /// </summary>
     /// <param name="bytes">The file.</param>
-    /// <returns>True for such a JPEG; false for one with an APP1, a truncated one or any other format.</returns>
+    /// <returns>True for such a JPEG; false for one with other data, a truncated one or any other format.</returns>
     public static bool IsCleanJpeg(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length < 4 || bytes[0] != Marker || bytes[1] != StartOfImage)
@@ -112,7 +111,7 @@ public static class PhotoThumbnails
                 return scanned && i + 2 == bytes.Length;
             }
 
-            if (marker == App1 || marker == 0x00 || i + 3 >= bytes.Length)
+            if (!IsPlainImageSegment(marker) || i + 3 >= bytes.Length)
             {
                 return false;
             }
@@ -130,4 +129,10 @@ public static class PhotoThumbnails
 
         return false;
     }
+
+    // The segments an encoder writes for the image itself: JFIF, ICC profile, Adobe, tables, frames, restart interval
+    // and scans. Markers with no length and any other application data or comment are refused.
+    private static bool IsPlainImageSegment(byte marker)
+        => marker is 0xE0 or 0xE2 or 0xEE or 0xDB or 0xC4 or 0xCC or 0xDD or StartOfScan
+            || (marker is >= 0xC0 and <= 0xCF && marker is not (0xC4 or 0xC8 or 0xCC));
 }
