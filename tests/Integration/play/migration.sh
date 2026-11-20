@@ -24,6 +24,12 @@ name_of() { case $1 in alice | bob) echo "$PREFIX-local" ;; *) echo "$PREFIX-$1"
 port_of() { case $1 in local | alice | bob) echo "$PORT" ;; a) echo $((PORT + 1)) ;; b) echo $((PORT + 2)) ;; c) echo $((PORT + 3)) ;; d) echo $((PORT + 4)) ;; esac; }
 # vid_any <path>: the N-format id of the item with exactly that path, of any type.
 vid_any() { sql "select lower(replace(Id, '-', '')) from BaseItems where Path = '$1' limit 1;"; }
+# old_import_all <server id>: every library of a server, with the route of 0.4.
+old_import_all() {
+  local ids
+  ids=$(get local "/JellyMesh/Admin/Servers/$1/Libraries" | jq -c '{LibraryIds: map(.Id)}')
+  post local "/JellyMesh/Admin/Servers/$1/Libraries" "$ids" >/dev/null
+}
 # type_folder <server id> <Film|Serie>: the type folder of the one remote library of that kind of a server.
 type_folder() { docker exec "$PREFIX-local" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null" | head -1; }
 
@@ -58,8 +64,8 @@ login local
 old_settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id_a=$(add_remote local a "http://host.docker.internal:$(port_of a)" jellymesh)
 id_b=$(add_remote local b "http://host.docker.internal:$(port_of b)" jellymesh)
-import_all local "$id_a"
-import_all local "$id_b"
+old_import_all "$id_a"
+old_import_all "$id_b"
 sync_now local
 scan local
 # A scan queued by the sync can end first: scan again until the flat film and a flat series are in the library.
