@@ -12,14 +12,14 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public static class ProviderLibraryTypes
 {
-    // Photos wait for F60: home videos read without them, and adding Photo here shares them.
+    // Photos wait for F60, their albums with them since their cover is made of photos: F60 adds Photo and PhotoAlbum.
     private static readonly (CollectionTypeOptions Type, string Name, RemoteItemType[] Items)[] _types =
     [
         (CollectionTypeOptions.movies, "movies", [RemoteItemType.Movie]),
         (CollectionTypeOptions.tvshows, "tvshows", [RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode]),
         (CollectionTypeOptions.music, "music", [RemoteItemType.Audio]),
         (CollectionTypeOptions.musicvideos, "musicvideos", [RemoteItemType.MusicVideo]),
-        (CollectionTypeOptions.homevideos, "homevideos", [RemoteItemType.Video, RemoteItemType.PhotoAlbum, RemoteItemType.Folder]),
+        (CollectionTypeOptions.homevideos, "homevideos", [RemoteItemType.Video, RemoteItemType.Folder]),
         (CollectionTypeOptions.books, "books", [RemoteItemType.Book, RemoteItemType.AudioBook]),
         (CollectionTypeOptions.mixed, "mixed", [RemoteItemType.Movie, RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode])
     ];

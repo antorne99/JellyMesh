@@ -152,12 +152,19 @@ public class ProviderCatalogTests
     }
 
     [Fact]
-    public void A_photo_stays_hidden_until_photos_are_shared()
+    public void A_photo_and_its_album_stay_hidden_until_photos_are_shared()
     {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.homevideos, "/media/casa");
         var photo = Guid.NewGuid();
-        _fixture.AddItem(photo, new Photo { Path = "/media/casa/a.jpg" }, ProviderFixture.SharedLibrary);
+        var album = Guid.NewGuid();
+        var video = Guid.NewGuid();
+        _fixture.AddItem(photo, new Photo { Path = "/media/casa/Album/a.jpg" }, ProviderFixture.SharedLibrary);
+        _fixture.AddItem(album, new PhotoAlbum { Path = "/media/casa/Album" }, ProviderFixture.SharedLibrary);
+        _fixture.AddItem(video, new Video { Path = "/media/casa/gita.mkv" }, ProviderFixture.SharedLibrary);
 
         Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, photo));
+        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, album));
+        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, video));
     }
 
     [Theory]
@@ -761,7 +768,6 @@ public class ProviderControllerTests
     [InlineData(RemoteItemType.Audio, BaseItemKind.Audio, CollectionTypeOptions.music)]
     [InlineData(RemoteItemType.MusicVideo, BaseItemKind.MusicVideo, CollectionTypeOptions.musicvideos)]
     [InlineData(RemoteItemType.Video, BaseItemKind.Video, CollectionTypeOptions.homevideos)]
-    [InlineData(RemoteItemType.PhotoAlbum, BaseItemKind.PhotoAlbum, CollectionTypeOptions.homevideos)]
     [InlineData(RemoteItemType.Folder, BaseItemKind.Folder, CollectionTypeOptions.homevideos)]
     [InlineData(RemoteItemType.Book, BaseItemKind.Book, CollectionTypeOptions.books)]
     [InlineData(RemoteItemType.AudioBook, BaseItemKind.AudioBook, CollectionTypeOptions.books)]
@@ -778,11 +784,15 @@ public class ProviderControllerTests
     }
 
     // A refusal would fail the whole read of a home video library, so a type no library gives yet reads as empty.
-    [Fact]
-    public async Task Photos_read_as_empty_until_they_are_shared()
+    [Theory]
+    [InlineData(RemoteItemType.Photo)]
+    [InlineData(RemoteItemType.PhotoAlbum)]
+    public async Task Photos_and_their_albums_read_as_empty_until_they_are_shared(RemoteItemType type)
     {
-        Assert.Equal(0, (await _controller.GetItems(RemoteItemType.Photo, ProviderFixture.SharedLibrary, null)).Value!.TotalRecordCount);
-        Assert.Equal(0, (await _controller.GetItems(RemoteItemType.Photo, null, ProviderFixture.SharedItem.ToString("N"))).Value!.TotalRecordCount);
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.homevideos, "/media/casa");
+
+        Assert.Equal(0, (await _controller.GetItems(type, ProviderFixture.SharedLibrary, null)).Value!.TotalRecordCount);
+        Assert.Equal(0, (await _controller.GetItems(type, null, ProviderFixture.SharedItem.ToString("N"))).Value!.TotalRecordCount);
         _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
     }
 
@@ -1455,6 +1465,7 @@ public class ChangeFeedRecorderTests
         var cursor = await StartAsync();
 
         RaiseAdded(new Photo { Id = Guid.NewGuid(), Path = "/media/casa/a.jpg" });
+        RaiseAdded(new PhotoAlbum { Id = Guid.NewGuid(), Path = "/media/casa/Album" });
 
         Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
     }
@@ -1469,7 +1480,6 @@ public class ChangeFeedRecorderTests
             new MusicVideo { Id = Guid.NewGuid(), Path = "/media/clip/a.mkv" },
             new Video { Id = Guid.NewGuid(), Path = "/media/casa/gita.mkv" },
             new Folder { Id = Guid.NewGuid(), Path = "/media/casa/Gita" },
-            new PhotoAlbum { Id = Guid.NewGuid(), Path = "/media/casa/Album" },
             new Book { Id = Guid.NewGuid(), Path = "/media/libri/a.epub" },
             new AudioBook { Id = Guid.NewGuid(), Path = "/media/libri/b.m4b" }
         ];
