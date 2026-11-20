@@ -1853,6 +1853,7 @@ def link_warnings(page, name):
     fake(page, "Status", unlinked)
     check(name + " warns about the path of the server", until(page, lambda: "is not linked" in block.inner_text(), 20), block.inner_text())
     check(name + " leaves the other server alone", "is not linked" not in u.server_folder(page, "peer").inner_text(), u.server_folder(page, "peer").inner_text())
+    check(name + " fits the warning in the block", block.locator(".jmFolderWarning").first.evaluate("node => node.scrollWidth <= node.clientWidth"))
     check(name + " keeps the row", u.is_marked(button))
     check(name + " keeps the focus", u.has_focus(button))
     u.shot(page, f"folder-warning-{page.viewport_size['width']}")
@@ -2850,7 +2851,7 @@ def overview_half(s, width):
     check(name + " names the server waiting", "Still to choose: " + HOSTILE in libraries.inner_text(), libraries.inner_text())
     check(name + " keeps remote text as text", page.locator(u.SETUP + " b").count() == 0)
     link_step = u.step(page, "Link the folders of each server").inner_text()
-    check(name + " says what is done by hand or by the automatic libraries", "in Dashboard > Libraries, or turn on the automatic libraries" in link_step, link_step)
+    check(name + " says what is done by hand or by the automatic libraries", "in Dashboard > Libraries, or choose a library mode for the server" in link_step, link_step)
     check(name + " marks state in the text and the icon", u.step(page, "Add a remote server").locator(".check_circle").count() == 1)
     for label, tab in [("Add a remote server", "servers"), ("Choose libraries to import", "servers"), ("Choose the federated folder", "settings"),
                        ("Run the first sync", "catalog"), ("Link the folders of each server", "settings")]:
