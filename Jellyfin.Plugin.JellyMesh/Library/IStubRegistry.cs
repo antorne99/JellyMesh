@@ -51,7 +51,10 @@ public interface IStubRegistry
     /// <returns>The folders, or null while the registry cannot tell, as for <see cref="HasTitlesOf"/>.</returns>
     IReadOnlyList<string>? TypeFoldersOf(Guid serverId, TypeFolder type);
 
-    /// <summary>Tells whether any title is still in the flat or the 0.5 server folder layout, which new titles then follow too.</summary>
+    /// <summary>
+    /// Tells whether any title is still in the flat or the 0.5 server folder layout, or whether the registry is empty while the
+    /// federated folder holds stub files of those layouts, as after a damage (§10 row 444).
+    /// </summary>
     /// <returns>The answer, or null while the registry cannot tell, as for <see cref="HasTitlesOf"/>.</returns>
     bool? UsesOlderLayout();
 }

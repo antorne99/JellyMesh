@@ -29,7 +29,7 @@ public sealed record StubPlanInput(
 
     /// <summary>
     /// Gets a value indicating whether the folder still holds stubs of an older layout that the registry does not know, as
-    /// after a damaged registry: new stubs then follow that layout too.
+    /// after a damaged registry: the stubs then follow the 0.5 layout, so that the migration carries from their items.
     /// </summary>
     public bool KeepsOlderLayout { get; init; }
 

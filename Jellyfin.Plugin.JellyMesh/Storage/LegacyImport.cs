@@ -311,10 +311,22 @@ public sealed class LegacyImport
             : null;
     }
 
+    // Keeps the folder migration chosen in 0.5; an automatic one migrates again, from the addition of the paths (§10 row 444).
+    private static void RememberLayoutChoice(LayoutMigrationConfig migration)
+    {
+        if (migration.Mode == LayoutMigrationMode.Automatic)
+        {
+            migration.Step = AutomaticMigrationStep.AddPaths;
+            migration.Error = AutomaticMigrationError.None;
+            migration.ErrorLibrary = string.Empty;
+        }
+    }
+
     private static void Write(SqliteConnection connection, SqliteTransaction transaction, LegacyData data)
     {
         if (data.Configuration is { } configuration)
         {
+            RememberLayoutChoice(configuration.LayoutMigration);
             ConfigurationTables.Write(connection, transaction, ConfigurationTables.Read(connection, transaction), ConfigurationRows.From(configuration));
         }
 

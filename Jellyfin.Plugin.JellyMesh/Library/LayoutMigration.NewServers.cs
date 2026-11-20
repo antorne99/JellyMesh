@@ -115,13 +115,11 @@ public sealed partial class LayoutMigration
 
         await _scans.WaitIdleAsync(cancellationToken).ConfigureAwait(false);
         _materializer.PrepareServerFolders();
-        if (_registry.UsesOlderLayout() is not { } usesOlder)
+        if (_registry.UsesOlderLayout() is not { } olderLayout)
         {
             _logger.LogInformation("Migration to the server folders: the stubs are not read yet, so the new servers wait for the next sync");
             return;
         }
-
-        var olderLayout = usesOlder || StubLayout.HasOlderStubFiles(root);
 
         // The follow first, so a renamed automatic library is known as one (§10 row 385); busy is checked after the read,
         // so that a job started before it is seen (row 384).
@@ -276,8 +274,8 @@ public sealed partial class LayoutMigration
         }
     });
 
-    // Records the servers whose folders the migration added, so only those linked later, and the libraries imported later,
-    // are placed.
+    // Records the servers whose folders the migration added, so only those linked later, and the libraries imported later
+    // or not read yet, are placed.
     private void SeedPlaced(IReadOnlyCollection<Guid> servers) => _store.Update(config =>
     {
         foreach (var server in servers.Where(server => !config.LayoutMigration.PlacedServers.Contains(server)))
@@ -287,7 +285,12 @@ public sealed partial class LayoutMigration
 
         foreach (var server in config.Servers.Where(server => servers.Contains(server.Id)))
         {
+            var unread = server.ImportedLibraryIds.Where(id => IsUnread(server, id)).ToList();
             server.LibrariesToPlace.Clear();
+            foreach (var id in unread)
+            {
+                server.LibrariesToPlace.Add(id);
+            }
         }
     });
 

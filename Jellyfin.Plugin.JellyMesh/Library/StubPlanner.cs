@@ -112,7 +112,7 @@ public static class StubPlanner
     /// <summary>
     /// Makes the plan of the layout with one folder per server. Each server folder holds one stub per title, with the best
     /// copy of that server and its other copies as internal sources, even when a local copy exists. The stubs of one title,
-    /// and its local copy, form a version group; episodes only with the same range. Stubs of the flat layout are left as
+    /// and its local copy, form a version group; episodes only with the same range. Stubs of the older layouts are left as
     /// they are. Pure, like <see cref="Plan"/>.
     /// </summary>
     /// <param name="input">What is known.</param>
@@ -130,12 +130,13 @@ public static class StubPlanner
         var merged = new HashSet<string>(StringComparer.Ordinal);
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
 
-        var legacy = input.KeepsOlderLayout || StubLayout.IsLegacy(input.State);
+        // Stubs of an older layout are left as they are, out of every part, until the migration empties them (§10 row 444).
+        var legacy = input.KeepsOlderLayout;
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id).ToList();
-            var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
             var parts = legacy
                 ? [ServerPart.Legacy(server.Id, contents, own, ownSeries)]
@@ -179,7 +180,7 @@ public static class StubPlanner
         }
 
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
-        var unclaimed = input.State.Stubs.Where(stub => stub.ServerId is not null && !claimed.Contains(stub.Id)).ToList();
+        var unclaimed = input.State.Stubs.Where(stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)) && !claimed.Contains(stub.Id)).ToList();
 
         var held = new Dictionary<(Guid ServerId, string LibraryId), int>();
         var servers = input.Servers.ToDictionary(server => server.Id);
@@ -187,7 +188,7 @@ public static class StubPlanner
         var removals = new List<StubEntry>();
         var unconfigured = Sweep(input, servers, removed, unclaimed, held, removals);
 
-        // Stubs of the flat layout, merged stubs and those still in doubt stay as they are.
+        // Stubs of the older layouts, merged stubs and those still in doubt stay as they are.
         var stubs = input.State.Stubs
             .Where(stub => !written.ContainsKey(stub.Id))
             .Concat(works.Select(work => work.Entry))
@@ -198,7 +199,7 @@ public static class StubPlanner
             .ToList();
 
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
-        var groups = Groups(input, placed, stubs, removals.Select(stub => stub.Id).Concat(merged));
+        var groups = Groups(input, placed, stubs.Where(stub => legacy || IsCurrent(stub.RelativePath)).ToList(), removals.Select(stub => stub.Id).Concat(merged));
         var state = (input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups, Labels = labels })
             .WithServerNames(input.Servers.Select(server => (server.Id, server.Name)));
         return new StubPlan(state, works, seriesWorks, removals, HeldLibraries(input, held), unplaceable.Count)
@@ -210,7 +211,7 @@ public static class StubPlanner
 
     /// <summary>
     /// Claims the stubs of each server folder against the contents as that server sees them, as <see cref="PlanByServer"/>
-    /// does: a merged stub is always merged into a stub of its own server. Stubs of the flat layout are left out.
+    /// does: a merged stub is always merged into a stub of its own server. Stubs of the older layouts are left out.
     /// </summary>
     /// <param name="view">The resolved catalog.</param>
     /// <param name="snapshot">The index the view was read from.</param>
@@ -231,15 +232,12 @@ public static class StubPlanner
         ArgumentNullException.ThrowIfNull(stubs);
 
         var catalog = IndexItemLookup.Build(snapshot);
-        var legacy = StubLayout.IsLegacy(stubs, []);
         var claims = new List<StubClaim>();
         foreach (var server in servers)
         {
             var contents = ServerContents(view, snapshot, catalog, server);
-            var own = stubs.Where(stub => stub.ServerId == server.Id).ToList();
-            var parts = legacy
-                ? [ServerPart.Legacy(server.Id, contents, own, [])]
-                : PartsOf(placementOf ?? StubPlanInput.DefaultPlacement, catalog, server.Id, contents, own, [], []);
+            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath)).ToList();
+            var parts = PartsOf(placementOf ?? StubPlanInput.DefaultPlacement, catalog, server.Id, contents, own, [], []);
             claims.AddRange(parts.SelectMany(part => new StubMatcher(part.Stubs).ClaimAll(StubContents.Group(part.Contents))));
         }
 
@@ -510,6 +508,9 @@ public static class StubPlanner
                 (items, type) => FederatedPaths.TypeFolderOf(serverId, items.SelectMany(LibrariesOf).First(library => placementOf(serverId, library, type) == key), type)))
             .ToList();
     }
+
+    // Whether a stub or series path is in the remote library layout, not in an older one.
+    private static bool IsCurrent(string relativePath) => FederatedPaths.RemoteLibraryOf(relativePath) is not null;
 
     // The remote libraries of an entry that can name a folder.
     private static IEnumerable<string> LibrariesOf(IndexedItem? item) => item?.LibraryIds.Where(FederatedPaths.IsLibraryId) ?? [];
@@ -951,8 +952,8 @@ public static class StubPlanner
     }
 
     /// <summary>
-    /// The stubs of one server that share a local library, with the contents they are planned from. In the older layouts a
-    /// server is one part, in its 0.5 folder.
+    /// The stubs of one server that share a local library, with the contents they are planned from. While the folder keeps the
+    /// 0.5 layout a server is one part, in its 0.5 folder.
     /// </summary>
     /// <param name="Contents">The contents, with only the copies in the type folders of the part.</param>
     /// <param name="Stubs">The stubs of the part.</param>

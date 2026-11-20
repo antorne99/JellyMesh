@@ -99,9 +99,16 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     public bool? UsesOlderLayout()
     {
         var lookup = _lookup;
-        return !lookup.TitlesKnown || !_loaded || _database.Generation != Interlocked.Read(ref _readGeneration)
-            ? null
-            : StubLayout.IsLegacy(lookup.State);
+        if (!lookup.TitlesKnown || !_loaded || _database.Generation != Interlocked.Read(ref _readGeneration))
+        {
+            return null;
+        }
+
+        var state = lookup.State;
+        return StubLayout.IsLegacy(state)
+            || (state.Stubs.Count == 0 && state.Series.Count == 0
+                && _store.ReadOr(config => config.FederatedFolderPath, null) is { Length: > 0 } root
+                && StubLayout.HasOlderStubFiles(root));
     }
 
     /// <summary>

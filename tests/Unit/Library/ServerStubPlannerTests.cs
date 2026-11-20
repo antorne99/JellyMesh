@@ -121,6 +121,16 @@ public class ServerStubPlannerTests
         });
     }
 
+    private static StubEntry OldServerStub(string id, Guid server, string itemId) => new()
+    {
+        Id = id,
+        Kind = StubKind.Movie,
+        ServerId = server,
+        RelativePath = FederatedPaths.MovieStub(server, id + " (2019)", "Casa"),
+        IdentityKey = "k",
+        Sources = [new StubSource(server, itemId, itemId) { LibraryId = Library }]
+    };
+
     private static StubWork On(StubPlan plan, Guid server) => Assert.Single(plan.Stubs, stub => stub.Entry.ServerId == server);
 
     private static (string Id, string Key, string Stubs, string Local, string? Primary) Shape(VersionGroup group)
@@ -236,25 +246,71 @@ public class ServerStubPlannerTests
     }
 
     [Fact]
-    public void WhileAStubOfTheServerFoldersIsLeftNewTitlesGoThereToo()
+    public void AStubOfTheServerFoldersStaysAsItIsWhileItsTitleAndNewOnesGoToTheRemoteLibraryLayout()
     {
-        var old = new StubEntry
-        {
-            Id = "old",
-            Kind = StubKind.Movie,
-            ServerId = _serverA,
-            RelativePath = FederatedPaths.MovieStub(_serverA, "Old (2019)", "Casa"),
-            IdentityKey = "old",
-            Sources = [new StubSource(_serverA, "o", "o") { LibraryId = Library }]
-        };
+        // §10 row 444: the new layout is written beside the old one, which plays as before with no new titles (Q49).
+        var old = OldServerStub("old", _serverA, "o");
 
         var plan = Plan(
             [Title("old", OnA("o")), Title("k", OnB("z"))],
             [Catalog(_serverA, Film("o", "Old") with { ProductionYear = 2019 }), Catalog(_serverB, Film("z"))],
             StubState.Empty with { Stubs = [old] });
 
-        Assert.Equal(old.RelativePath, On(plan, _serverA).Entry.RelativePath);
-        Assert.Equal(Path.Combine(B, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), On(plan, _serverB).Entry.RelativePath);
+        Assert.Equal(Path.Combine(A, Library, "Film", "Old (2019)", "Old (2019) - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
+        Assert.Equal(Path.Combine(B, Library, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), On(plan, _serverB).Entry.RelativePath);
+        Assert.Contains(old, plan.State.Stubs);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(0, plan.MergedStubs);
+    }
+
+    [Fact]
+    public void AStubOfTheServerFoldersWhoseTitleIsGoneStaysForTheMigration()
+    {
+        var old = OldServerStub("old", _serverA, "gone");
+
+        var plan = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], StubState.Empty with { Stubs = [old] });
+
+        Assert.Contains(old, plan.State.Stubs);
+        Assert.Empty(plan.Removals);
+    }
+
+    [Fact]
+    public void StubsOfTheServerFoldersLeaveTheirVersionGroupForTheNewStubs()
+    {
+        // D12: the old stubs play as before and stay out of the groups, so a carry never targets one of them.
+        var local = Guid.NewGuid();
+        var oldA = OldServerStub("oldA", _serverA, "m");
+        var oldB = OldServerStub("oldB", _serverB, "z");
+        var group = new VersionGroup { Id = "g", IdentityKey = "k", StubIds = ["oldA", "oldB"], LocalItemIds = [local] };
+
+        var plan = Plan(
+            [Local(Title("k", OnA("m"), OnB("z")), local)],
+            [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))],
+            StubState.Empty with { Stubs = [oldA, oldB], Groups = [group] });
+
+        var kept = Assert.Single(plan.State.Groups);
+        Assert.Equal(new[] { On(plan, _serverA).Entry.Id, On(plan, _serverB).Entry.Id }.Order(), kept.StubIds.Order());
+        Assert.Equal([local], kept.LocalItemIds);
+        Assert.Contains(oldA, plan.State.Stubs);
+        Assert.Contains(oldB, plan.State.Stubs);
+    }
+
+    [Fact]
+    public void AFlatInstallGoesStraightToTheRemoteLibraryLayout()
+    {
+        // From 0.4 the migration is one step: no new stub in the 0.5 server folders.
+        var flat = new StubEntry
+        {
+            Id = "flat",
+            Kind = StubKind.Movie,
+            RelativePath = Path.Combine("Film", "Film (2020)", "Film (2020).strm"),
+            IdentityKey = "k",
+            Sources = [new StubSource(_serverA, "m", "m") { LibraryId = Library }]
+        };
+
+        var plan = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], StubState.Empty with { Stubs = [flat] });
+
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
     }
 
     [Fact]

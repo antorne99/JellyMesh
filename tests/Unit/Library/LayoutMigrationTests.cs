@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -170,6 +171,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
     [Fact]
     public async Task WithoutTheNewPathsNothingIsCarriedAndTheOldStubsStay()
     {
+        BothServersImport();
         var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms));
@@ -186,7 +188,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
         var library = Assert.Single(status.Libraries);
         Assert.Equal("Film", library.Name);
         Assert.Equal([OldFilms], library.OldPaths);
-        Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], library.MissingPaths);
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], library.MissingPaths);
         Assert.Empty(status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
@@ -194,6 +196,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
     [Fact]
     public async Task OldPathsRemovedBeforeTheNewOnesAreAddedKeepTheOldStubs()
     {
+        BothServersImport();
         var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         _items.Remove(oldItem.Id);
@@ -206,13 +209,14 @@ public sealed partial class LayoutMigrationTests : IDisposable
         var status = migration.GetStatus(Root)!;
         Assert.Equal(LayoutMigrationStep.AddPaths, status.Step);
         Assert.Empty(status.Libraries);
-        Assert.Equal([FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)], status.UnlinkedFolders);
+        Assert.Equal([NewFilms(_serverA), NewFilms(_serverB)], status.UnlinkedFolders);
         Assert.Equal(1, status.OldTitles);
     }
 
     [Fact]
     public async Task TheOldFoldersWaitForTheSeriesFoldersOfEachServerInSomeLibrary()
     {
+        BothServersImport();
         var (old, _) = OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
         var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
@@ -220,17 +224,17 @@ public sealed partial class LayoutMigrationTests : IDisposable
         var (newShow, _) = NewShow(_serverA, "s1");
         NewEpisode(newShow, _serverA, "e1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies,
-            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+            [OldFilms, NewFilms(_serverA), NewFilms(_serverB)]));
 
         var migration = await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
 
         Assert.NotNull(_registry.Find(old.Id));
         Assert.Equal(LayoutMigrationStep.AddPaths, migration.GetStatus(Root)!.Step);
-        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
+        Assert.Equal([NewSeries(_serverA), NewSeries(_serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
 
         _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
-            [FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)]));
+            [NewSeries(_serverA), NewSeries(_serverB)]));
         await migration.RunAsync(CancellationToken.None);
 
         Assert.DoesNotContain(_registry.State.Stubs, stub => stub.ServerId is null);
@@ -243,7 +247,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
         var (old, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         _libraries.Add(Library("Film", CollectionTypeOptions.movies,
-            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+            [OldFilms, NewFilms(_serverA), NewFilms(_serverB)]));
         _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, OldSeries));
         Row(_mario, oldItem).IsFavorite = true;
 
@@ -267,7 +271,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
         var (newShow, newShowItem) = NewShow(_serverA, "s1");
         NewEpisode(newShow, _serverA, "e1");
         _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
-            [OldSeries, FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)]));
+            [OldSeries, NewSeries(_serverA), NewSeries(_serverB)]));
         Row(_mario, oldShowItem).IsFavorite = true;
 
         var migration = await MigrationAsync();
@@ -282,17 +286,18 @@ public sealed partial class LayoutMigrationTests : IDisposable
     [Fact]
     public async Task AnOldEpisodeAloneNeedsTheSeriesFolders()
     {
+        BothServersImport();
         var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
         var (episode, _) = OldEpisode(oldShow, (_serverA, "e1"));
         _series.Remove(oldShow);
         _libraries.Add(Library("Film", CollectionTypeOptions.movies,
-            [OldFilms, FederatedFolderLayout.ServerMoviesPath(Root, _serverA), FederatedFolderLayout.ServerMoviesPath(Root, _serverB)]));
+            [OldFilms, NewFilms(_serverA), NewFilms(_serverB)]));
 
         var migration = await MigrationAsync();
         await migration.RunAsync(CancellationToken.None);
 
         Assert.NotNull(_registry.Find(episode.Id));
-        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverA), FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
+        Assert.Equal([NewSeries(_serverA), NewSeries(_serverB)], migration.GetStatus(Root)!.UnlinkedFolders);
     }
 
     [Fact]
@@ -311,15 +316,16 @@ public sealed partial class LayoutMigrationTests : IDisposable
     [Fact]
     public async Task ALibraryOnTheOldSeriesPathNeedsOnlyTheSeriesPathsOfEachServer()
     {
+        BothServersImport();
         OldFilm("Dune", (_serverA, "a1"));
         OldShow("Lost", (_serverA, "s1"));
-        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, OldSeries, FederatedFolderLayout.ServerSeriesPath(Root, _serverA)));
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows, OldSeries, NewSeries(_serverA)));
 
         var status = (await MigrationAsync()).GetStatus(Root)!;
 
         var library = Assert.Single(status.Libraries);
         Assert.Equal([OldSeries], library.OldPaths);
-        Assert.Equal([FederatedFolderLayout.ServerSeriesPath(Root, _serverB)], library.MissingPaths);
+        Assert.Equal([NewSeries(_serverB)], library.MissingPaths);
     }
 
     [Fact]
@@ -360,7 +366,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
     public async Task AFreshInstallShowsNoMigration()
     {
         NewFilm(_serverA, "a1");
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, FederatedFolderLayout.ServerMoviesPath(Root, _serverA)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, NewFilms(_serverA)));
 
         Assert.Null((await MigrationAsync()).GetStatus(Root));
     }
@@ -954,8 +960,26 @@ public sealed partial class LayoutMigrationTests : IDisposable
 
     private StubRegistry NewRegistry() => new(_database, _store, new CapturingLogger<StubRegistry>());
 
-    private IEnumerable<string> NewPaths() => new[] { _serverA, _serverB }
-        .SelectMany(server => new[] { FederatedFolderLayout.ServerMoviesPath(Root, server), FederatedFolderLayout.ServerSeriesPath(Root, server) });
+    // Servers A and B importing their films and series, so each has the type folders the migration adds.
+    private void BothServersImport()
+    {
+        foreach (var server in new[] { _serverA, _serverB })
+        {
+            var config = new RemoteServerConfig { Id = server };
+            config.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Films, Name = "Film", CollectionType = "movies" });
+            config.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Shows, Name = "Serie", CollectionType = "tvshows" });
+            config.ImportedLibraryIds.Add(TestLibraries.Films);
+            config.ImportedLibraryIds.Add(TestLibraries.Shows);
+            _store.Configuration.Servers.Add(config);
+        }
+    }
+
+    private IEnumerable<string> NewPaths() => new[] { _serverA, _serverB }.SelectMany(server => new[] { NewFilms(server), NewSeries(server) });
+
+    // The type folders of the films and the series of a server, where the migration carries the old titles.
+    private string NewFilms(Guid server) => FederatedFolderLayout.TypeFolderPath(Root, server, TestLibraries.Films, TypeFolder.Movies);
+
+    private string NewSeries(Guid server) => FederatedFolderLayout.TypeFolderPath(Root, server, TestLibraries.Shows, TypeFolder.Series);
 
     // One mixed library with the old paths and every new one.
     private void AllPathsLinked() => _libraries.Add(Library("Film", CollectionTypeOptions.mixed, NewPaths().Prepend(OldSeries).Prepend(OldFilms).ToArray()));
@@ -983,11 +1007,29 @@ public sealed partial class LayoutMigrationTests : IDisposable
             Id = name,
             ServerId = server,
             Kind = StubKind.Movie,
-            RelativePath = Path.Combine(FederatedPaths.ServerFolder(server), "Film", name, name + ".strm"),
+            RelativePath = Path.Combine(FederatedPaths.TypeFolderOf(server, TestLibraries.Films, TypeFolder.Movies), name, name + ".strm"),
             IdentityKey = "new:" + itemId,
             Sources = [Source((server, itemId))]
         };
         _stubs.Add(stub);
+        return Add(new Movie { Path = FederatedPaths.Resolve(Root, stub.RelativePath) });
+    }
+
+    // A film of a server in its 0.5 folder.
+    private Movie ServerFolderFilm(Guid server, string itemId)
+    {
+        var name = Id();
+        var stub = new StubEntry
+        {
+            Id = name,
+            ServerId = server,
+            Kind = StubKind.Movie,
+            RelativePath = Path.Combine(FederatedPaths.ServerFolder(server), "Film", name, name + ".strm"),
+            IdentityKey = "old:" + itemId,
+            Sources = [Source((server, itemId))]
+        };
+        _stubs.Add(stub);
+        _indexed.Add((server, itemId));
         return Add(new Movie { Path = FederatedPaths.Resolve(Root, stub.RelativePath) });
     }
 
@@ -1006,7 +1048,7 @@ public sealed partial class LayoutMigrationTests : IDisposable
         {
             Id = name,
             ServerId = server,
-            RelativePath = Path.Combine(FederatedPaths.ServerFolder(server), "Serie", name),
+            RelativePath = Path.Combine(FederatedPaths.TypeFolderOf(server, TestLibraries.Shows, TypeFolder.Series), name),
             WorkKey = "work:" + name,
             Sources = [Source((server, itemId))]
         };
@@ -1106,12 +1148,20 @@ public sealed partial class LayoutMigrationTests : IDisposable
         _manager?.Dispose();
         _renamer.Setup(renamer => renamer.HasPending).Returns(() => _managerBusy);
         _manager = new ServerLibraryManager(
-            _store, _library.Object, Mock.Of<IFileSystem>(), _scans.Object, _materializer.Object, _renamer.Object, _registry,
+            _store, _library.Object, FileSystem(), _scans.Object, _materializer.Object, _renamer.Object, _registry,
             new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), Mock.Of<MediaBrowser.Controller.IServerApplicationHost>(), new CapturingLogger<ServerLibraryManager>());
         _migration = new LayoutMigration(
             _registry, _store, _library.Object, _servers.Object, _index.Object, carrier, new StubRemover(_library.Object), _linker.Object,
             new LibraryPaths(_library.Object, new CapturingLogger<LibraryPaths>()), _scans.Object, _materializer.Object, _managerOverride ?? _manager, _logger, _keeper?.Object, _sync.Object);
         return _migration;
+    }
+
+    // A file system that keeps library names as they are.
+    private static IFileSystem FileSystem()
+    {
+        var fileSystem = new Mock<IFileSystem>();
+        fileSystem.Setup(files => files.GetValidFilename(It.IsAny<string>())).Returns((string name) => name);
+        return fileSystem.Object;
     }
 
     private UserItemData Row(User user, BaseItem item) => _userData.Object.GetUserData(user, item)!;
