@@ -2159,6 +2159,24 @@ public class PlaybackFiltersTests
         Assert.Empty(_fixture.Client.Opened);
     }
 
+    // Jellyfin shows an item in no library to everyone, so a book the user sees only that way is not found (D17).
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_visible_book_in_no_library_is_not_found(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+        Assert.Empty(BodyOf(context));
+    }
+
     [Theory]
     [InlineData("GetFile", true)]
     [InlineData("GetDownload", true)]
