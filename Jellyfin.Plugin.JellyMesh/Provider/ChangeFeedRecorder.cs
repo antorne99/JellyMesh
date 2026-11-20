@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -9,7 +10,8 @@ using Microsoft.Extensions.Hosting;
 namespace Jellyfin.Plugin.JellyMesh.Provider;
 
 /// <summary>
-/// Feeds the <see cref="ChangeJournal"/> from the events of the library. A stub never enters it (§4.4).
+/// Feeds the <see cref="ChangeJournal"/> from the events of the library, an album too so that its tracks reach the peer.
+/// A stub never enters it (§4.4).
 /// </summary>
 public sealed class ChangeFeedRecorder : IHostedService
 {
@@ -48,7 +50,8 @@ public sealed class ChangeFeedRecorder : IHostedService
 
     private void OnItemChanged(object? sender, ItemChangeEventArgs e)
     {
-        if (ProviderLibraryTypes.Reads(e.Item.GetBaseItemKind()) && !IsFederated(e.Item))
+        var kind = e.Item.GetBaseItemKind();
+        if ((ProviderLibraryTypes.Reads(kind) || kind == BaseItemKind.MusicAlbum) && !IsFederated(e.Item))
         {
             _journal.Record(e.Item.Id);
         }

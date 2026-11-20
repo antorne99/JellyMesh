@@ -163,17 +163,7 @@ public class ProviderController : ControllerBase
         }
 
         var window = _journal.Read(cursor, caller.Grant.ShareKey, Math.Min(limit, ProviderProtocol.MaxChangesPerPage));
-        var changes = new List<ProviderChange>();
-        foreach (var itemId in window.ItemIds)
-        {
-            // A change no read of its libraries would return would only make the consumer index it.
-            if (_catalog.FindVisible(caller, itemId) is { } item && _catalog.LibrariesGiving(caller.Grant, item) is { Count: > 0 } libraries)
-            {
-                changes.Add(new ProviderChange(item.Id.ToString("N"), item.GetBaseItemKind().ToString(), libraries));
-            }
-        }
-
-        return new ProviderChangesResponse(window.Reset, window.Cursor, window.HasMore, changes);
+        return new ProviderChangesResponse(window.Reset, window.Cursor, window.HasMore, _catalog.ReadChanges(caller, window.ItemIds));
     }
 
     /// <summary>

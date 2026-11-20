@@ -12,6 +12,7 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
@@ -127,21 +128,46 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
-    /// Finds the libraries shared with a peer that give it an item: those whose type gives that kind of item
-    /// (<see cref="ProviderLibraryTypes.Gives"/>).
-    /// </summary>
-    /// <param name="grant">The peer.</param>
-    /// <param name="item">The item.</param>
-    /// <returns>The libraries.</returns>
-    public IReadOnlyList<string> LibrariesGiving(PeerGrant grant, BaseItem item) => LibrariesGiving(grant, item, new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes));
-
-    /// <summary>
     /// Finds an item a peer may reach: a real one that a library shared with it gives.
     /// </summary>
     /// <param name="caller">The peer.</param>
     /// <param name="itemId">The item.</param>
     /// <returns>The item, null if it does not exist as far as the peer is concerned.</returns>
     public BaseItem? FindVisible(PeerCaller caller, Guid itemId) => FindVisible(caller, itemId, new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes));
+
+    /// <summary>
+    /// Turns changed items into the changes a peer is told of: those it may reach, each once with the libraries that give
+    /// it, and an album as its tracks. A change no read of its libraries would return would only make the consumer index it.
+    /// </summary>
+    /// <param name="caller">The peer.</param>
+    /// <param name="itemIds">The changed items.</param>
+    /// <returns>The changes.</returns>
+    public IReadOnlyList<ProviderChange> ReadChanges(PeerCaller caller, IEnumerable<Guid> itemIds)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(itemIds);
+
+        var types = new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes);
+        var announced = new HashSet<Guid>();
+        var changes = new List<ProviderChange>();
+        foreach (var itemId in itemIds)
+        {
+            if (FindVisible(caller, itemId, types) is not { } item)
+            {
+                continue;
+            }
+
+            foreach (var entry in item is MusicAlbum ? TracksOf(caller, item) : [item])
+            {
+                if (announced.Add(entry.Id) && !IsFederated(entry) && LibrariesGiving(caller.Grant, entry, types) is { Count: > 0 } libraries)
+                {
+                    changes.Add(new ProviderChange(entry.Id.ToString("N"), entry.GetBaseItemKind().ToString(), libraries));
+                }
+            }
+        }
+
+        return changes;
+    }
 
     /// <summary>
     /// Reads one page of a shared library.
@@ -224,6 +250,15 @@ public sealed class ProviderCatalog
         return ToResponse(caller, items, items.Count);
     }
 
+    // The tracks of an album the user of the peer can see, at any depth.
+    private IReadOnlyList<BaseItem> TracksOf(PeerCaller caller, BaseItem album) => _library.GetItemList(new InternalItemsQuery(caller.User)
+    {
+        ParentId = album.Id,
+        Recursive = true,
+        IncludeItemTypes = [BaseItemKind.Audio],
+        IsVirtualItem = false
+    });
+
     // The type of each library of this server, by its identifier.
     private Dictionary<string, CollectionTypeOptions?> LibraryTypes() => _library.GetVirtualFolders()
         .Where(folder => Guid.TryParse(folder.ItemId, out _))
@@ -242,6 +277,7 @@ public sealed class ProviderCatalog
         return false;
     }
 
+    // The libraries shared with a peer whose type gives it an item (ProviderLibraryTypes.Gives).
     private IReadOnlyList<string> LibrariesGiving(PeerGrant grant, BaseItem item, Lazy<Dictionary<string, CollectionTypeOptions?>> types)
     {
         ArgumentNullException.ThrowIfNull(item);

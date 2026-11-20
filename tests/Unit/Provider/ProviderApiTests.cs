@@ -845,6 +845,82 @@ public class ProviderControllerTests
         Assert.All(changes, change => Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], change.LibraryIds));
     }
 
+    // The album of a track and some of its tracks, as the library answers for the peer.
+    private (Guid Album, Guid[] Tracks, Func<InternalItemsQuery?> Query) WithAlbum(CollectionTypeOptions? type, params string[] trackPaths)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/musica");
+        var album = Guid.NewGuid();
+        _fixture.AddItem(album, new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Path = "/media/musica/A" }, ProviderFixture.SharedLibrary);
+        var tracks = trackPaths.Select(path => new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = path }).ToList();
+        foreach (var track in tracks)
+        {
+            _fixture.AddItem(track.Id, track, ProviderFixture.SharedLibrary);
+        }
+
+        InternalItemsQuery? seen = null;
+        _fixture.Library.Setup(manager => manager.GetItemList(It.Is<InternalItemsQuery>(query => query.ParentId == album)))
+            .Callback<InternalItemsQuery>(query => seen = query)
+            .Returns(tracks.Cast<BaseItem>().ToList());
+        return (album, tracks.Select(track => track.Id).ToArray(), () => seen);
+    }
+
+    [Fact]
+    public async Task An_album_change_reaches_the_peer_as_its_tracks()
+    {
+        var (album, tracks, query) = WithAlbum(CollectionTypeOptions.music, "/media/musica/A/1.flac", "/media/musica/A/2.flac");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(album);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal(tracks.Select(id => (id.ToString("N"), "Audio")), changes.Select(change => (change.Id, change.Type)));
+        Assert.All(changes, change => Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], change.LibraryIds));
+        Assert.Same(_fixture.Peer, query()!.User);
+        Assert.True(query()!.Recursive);
+        Assert.Equal([BaseItemKind.Audio], query()!.IncludeItemTypes);
+    }
+
+    [Fact]
+    public async Task An_album_change_leaves_out_the_stubs_among_its_tracks()
+    {
+        var (album, tracks, _) = WithAlbum(
+            CollectionTypeOptions.music,
+            "/media/musica/A/1.flac",
+            "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/A/2.strm");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(album);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal([tracks[0].ToString("N")], changes.Select(change => change.Id));
+    }
+
+    [Fact]
+    public async Task A_track_changed_with_its_album_is_announced_once()
+    {
+        var (album, tracks, _) = WithAlbum(CollectionTypeOptions.music, "/media/musica/A/1.flac", "/media/musica/A/2.flac");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(tracks[0]);
+        _journal.Record(album);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal(tracks.Select(id => id.ToString("N")), changes.Select(change => change.Id));
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.movies)]
+    [InlineData(CollectionTypeOptions.mixed)]
+    [InlineData(null)]
+    public async Task An_album_in_a_library_that_gives_no_tracks_announces_nothing(CollectionTypeOptions? type)
+    {
+        var (album, _, _) = WithAlbum(type, "/media/musica/A/1.flac");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(album);
+
+        Assert.Empty((await _controller.GetChanges(cursor)).Value!.Changes);
+    }
+
     [Fact]
     public async Task A_change_of_the_share_resets_the_feed()
     {
@@ -1368,7 +1444,6 @@ public class ChangeFeedRecorderTests
         var cursor = await StartAsync();
 
         RaiseAdded(new CollectionFolder { Id = Guid.NewGuid(), Path = "/media" });
-        RaiseAdded(new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Id = Guid.NewGuid(), Path = "/media/musica/a" });
         RaiseAdded(new BoxSet { Id = Guid.NewGuid() });
 
         Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
@@ -1405,6 +1480,27 @@ public class ChangeFeedRecorderTests
         }
 
         Assert.Equal(items.Select(item => item.Id), _journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task Records_a_changed_album_so_that_its_tracks_reach_the_peer()
+    {
+        var cursor = await StartAsync();
+        var album = new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Id = Guid.NewGuid(), Path = "/media/musica/a" };
+
+        RaiseUpdated(album);
+
+        Assert.Equal([album.Id], _journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task An_album_stub_never_enters_the_feed()
+    {
+        var cursor = await StartAsync();
+
+        RaiseUpdated(new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/A/Album" });
+
+        Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
     }
 
     [Fact]
