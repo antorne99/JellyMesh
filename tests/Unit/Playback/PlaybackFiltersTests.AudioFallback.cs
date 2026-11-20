@@ -293,6 +293,20 @@ public partial class PlaybackFiltersTests
         Assert.Equal(2, _fixture.Client.Opened.Count);
     }
 
+    // After PlaybackInfo named the copy, direct play reads its file under the track, and a seek stays on that copy.
+    [Fact]
+    public async Task A_static_stream_naming_a_copy_of_the_track_reads_the_file_of_that_copy()
+    {
+        var (store, _, _) = TrackWithCopy();
+        RemoteServes();
+        var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true), ("mediaSourceId", _copyId.ToString("N")));
+        context.HttpContext.Request.Headers.Range = "bytes=500-";
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.StartsWith("/Videos/item-b/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Universal_of_a_track_never_falls_back_to_a_copy_the_user_cannot_see()
     {
