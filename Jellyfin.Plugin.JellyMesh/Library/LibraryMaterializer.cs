@@ -705,7 +705,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         // Row 470: no position ever reaches the disk, so a thumbnail that still has its EXIF is never written.
         if (!PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span))
         {
-            _logger.LogWarning("A photo thumbnail from a remote was not a whole JPEG without EXIF and was not saved");
+            _logger.LogWarning("A photo thumbnail from a remote was not a whole JPEG of the thumbnail size without EXIF and was not saved");
             return false;
         }
 
@@ -761,7 +761,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
 
         if (image.IsPhotoCover && !PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span))
         {
-            _logger.LogWarning("An album cover from a remote was not a whole JPEG without EXIF and was not saved");
+            _logger.LogWarning("An album cover from a remote was not a whole JPEG of the thumbnail size without EXIF and was not saved");
             return null;
         }
 

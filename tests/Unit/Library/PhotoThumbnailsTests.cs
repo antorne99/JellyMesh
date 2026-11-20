@@ -15,7 +15,13 @@ public sealed class PhotoThumbnailsTests
     private static byte[] Segment(byte marker, byte[] payload)
         => [0xFF, marker, (byte)((payload.Length + 2) >> 8), (byte)((payload.Length + 2) & 0xFF), .. payload];
 
-    private static byte[] Jpeg(params byte[][] segments) => [0xFF, 0xD8, .. segments.SelectMany(segment => segment), .. _scan, 0xFF, 0xD9];
+    private static byte[] Frame(int width, int height, byte marker = 0xC0)
+        => Segment(marker, [0x08, (byte)(height >> 8), (byte)height, (byte)(width >> 8), (byte)width, 0x01, 0x01, 0x11, 0x00]);
+
+    private static byte[] Jpeg(params byte[][] segments) => Sized(640, 480, segments);
+
+    private static byte[] Sized(int width, int height, params byte[][] segments)
+        => [0xFF, 0xD8, .. segments.SelectMany(segment => segment), .. Frame(width, height), .. _scan, 0xFF, 0xD9];
 
     private static byte[] Jfif => Segment(0xE0, [.. Encoding.ASCII.GetBytes("JFIF\0"), 1, 1, 0, 0, 1, 0, 1, 0, 0]);
 
@@ -78,7 +84,34 @@ public sealed class PhotoThumbnailsTests
     [InlineData(0xC2, true)]
     public void OnlyTheSegmentsOfAPlainImageAreAllowed(byte marker, bool allowed)
     {
-        Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(marker, [0x00, 0x04]))));
+        Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(marker, [0x08, 0x00, 0x01, 0x00, 0x01, 0x00]))));
+    }
+
+    // The remote is asked for 640 pixels at most; a larger image never reaches the disk.
+    [Theory]
+    [InlineData(640, 640, true)]
+    [InlineData(1, 1, true)]
+    [InlineData(641, 480, false)]
+    [InlineData(480, 641, false)]
+    [InlineData(4000, 3000, false)]
+    [InlineData(0, 480, false)]
+    [InlineData(480, 0, false)]
+    public void AnImageLargerThanTheThumbnailIsRefused(int width, int height, bool allowed)
+    {
+        Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Sized(width, height, Jfif)));
+    }
+
+    [Fact]
+    public void EveryFrameMustFitTheThumbnail()
+    {
+        Assert.False(PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Frame(4000, 3000, 0xC2))));
+    }
+
+    [Fact]
+    public void AnImageWithoutAFrameOrWithAShortOneIsRefused()
+    {
+        Assert.False(PhotoThumbnails.IsCleanJpeg([0xFF, 0xD8, .. Jfif, .. _scan, 0xFF, 0xD9]));
+        Assert.False(PhotoThumbnails.IsCleanJpeg([0xFF, 0xD8, .. Jfif, .. Segment(0xC0, [0x08, 0x00, 0x01]), .. _scan, 0xFF, 0xD9]));
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Entities;
 
@@ -70,7 +71,8 @@ public static class PhotoThumbnails
     }
 
     /// <summary>
-    /// Tells whether a file is a whole JPEG with only the segments of the image, so no EXIF, GPS, XMP or IPTC (row 470).
+    /// Tells whether a file is a whole JPEG with only the segments of the image, so no EXIF, GPS, XMP or IPTC (row 470),
+    /// and no larger than the thumbnail asked of the remote.
     /// </summary>
     /// <param name="bytes">The file.</param>
     /// <returns>True for such a JPEG; false for one with other data, a truncated one or any other format.</returns>
@@ -83,6 +85,7 @@ public static class PhotoThumbnails
 
         var inScan = false;
         var scanned = false;
+        var framed = false;
         var i = 2;
         while (i < bytes.Length - 1)
         {
@@ -108,7 +111,7 @@ public static class PhotoThumbnails
 
             if (marker == EndOfImage)
             {
-                return scanned && i + 2 == bytes.Length;
+                return framed && scanned && i + 2 == bytes.Length;
             }
 
             if (!IsPlainImageSegment(marker) || i + 3 >= bytes.Length)
@@ -122,6 +125,17 @@ public static class PhotoThumbnails
                 return false;
             }
 
+            if (IsFrame(marker))
+            {
+                // Precision, then height and width: neither may be above the side asked of the remote.
+                if (length < 7 || !FitsThumbnail((bytes[i + 5] << 8) | bytes[i + 6]) || !FitsThumbnail((bytes[i + 7] << 8) | bytes[i + 8]))
+                {
+                    return false;
+                }
+
+                framed = true;
+            }
+
             inScan = marker == StartOfScan;
             scanned |= inScan;
             i += 2 + length;
@@ -130,9 +144,13 @@ public static class PhotoThumbnails
         return false;
     }
 
+    private static bool IsFrame(byte marker) => marker is >= 0xC0 and <= 0xCF && marker is not (0xC4 or 0xC8 or 0xCC);
+
+    private static bool FitsThumbnail(int side) => side is > 0 and <= JellyfinRemoteClient.PhotoThumbnailSide;
+
     // The segments an encoder writes for the image itself: JFIF, ICC profile, Adobe, tables, frames, restart interval
     // and scans. Markers with no length and any other application data or comment are refused.
     private static bool IsPlainImageSegment(byte marker)
         => marker is 0xE0 or 0xE2 or 0xEE or 0xDB or 0xC4 or 0xCC or 0xDD or StartOfScan
-            || (marker is >= 0xC0 and <= 0xCF && marker is not (0xC4 or 0xC8 or 0xCC));
+            || IsFrame(marker);
 }

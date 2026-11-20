@@ -120,6 +120,16 @@ public sealed class PhotoMaterializerTests : IDisposable
         return [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, (byte)'h', (byte)'i', .. clean[2..]];
     }
 
+    // The placeholder JPEG with the size of its frame changed.
+    private static byte[] Sized(int side)
+    {
+        var bytes = PhotoPlaceholders.For("jpg").ToArray();
+        var frame = Enumerable.Range(0, bytes.Length - 1).First(i => bytes[i] == 0xFF && bytes[i + 1] == 0xC0);
+        bytes[frame + 5] = bytes[frame + 7] = (byte)(side >> 8);
+        bytes[frame + 6] = bytes[frame + 8] = (byte)side;
+        return bytes;
+    }
+
     private static byte[] WithExif()
     {
         var clean = PhotoPlaceholders.For("jpg");
@@ -152,6 +162,23 @@ public sealed class PhotoMaterializerTests : IDisposable
         await _fixture.Materializer.MaterializeAsync(true, CancellationToken.None);
 
         Assert.Equal(1, PhotoReads());
+    }
+
+    [Fact]
+    public async Task AThumbnailLargerThanAskedNeverReachesTheDisk()
+    {
+        var a = await AddPhotosAsync();
+        _fixture.Sync.Client.Thumbnail = Sized(641);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(File.Exists(ThumbnailOfTheStub()));
+        Assert.Equal(["IMG_0001.jpg"], Directory.GetFiles(AlbumPath(a)).Select(Path.GetFileName));
+
+        _fixture.Sync.Client.Thumbnail = Sized(640);
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(Sized(640), await File.ReadAllBytesAsync(ThumbnailOfTheStub()));
     }
 
     [Fact]
