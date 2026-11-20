@@ -37,6 +37,7 @@ internal static class TrackStubPlanner
         // A federated track has no version of its own once the mapper drops the stub sources (no cycles).
         var tracks = input.Snapshot.Find(serverId)?.Items.Where(item => item.Kind == IndexedItemKind.Audio && item.Versions.Count > 0).ToList() ?? [];
         var albums = tracks.GroupBy(AlbumKeyOf, StringComparer.Ordinal).ToDictionary(group => group.Key, Album.Of, StringComparer.Ordinal);
+        var keys = KeysOf(input.View, serverId);
         var paths = new Paths(serverId, stubs, input.PlacementOf, stub => stub.Sources.Select(source => catalog.Find(serverId, source.ItemId)).OfType<IndexedItem>().Select(AlbumKeyOf).FirstOrDefault());
 
         var works = new List<StubWork>();
@@ -50,7 +51,8 @@ internal static class TrackStubPlanner
                 var id = stub?.Id ?? Guid.NewGuid().ToString("N");
                 var relative = stub?.RelativePath ?? paths.NewTrack(library, album, FileNameOf(track, album.HasDiscs), id);
                 var folder = Path.GetDirectoryName(relative)!;
-                works.Add(WorkOf(input, serverId, track, library, stub, id, relative, covered.Add(folder) ? album : null));
+                var key = keys.GetValueOrDefault(track.ItemId) ?? string.Create(CultureInfo.InvariantCulture, $"Track|item:{serverId}:{track.ItemId}");
+                works.Add(WorkOf(input, serverId, track, library, stub, id, relative, key, covered.Add(folder) ? album : null));
             }
         }
 
@@ -80,13 +82,28 @@ internal static class TrackStubPlanner
                 : string.Create(CultureInfo.InvariantCulture, $"{number:00} - {title}");
     }
 
-    private static StubWork WorkOf(StubPlanInput input, Guid serverId, IndexedItem track, string library, StubEntry? stub, string id, string relative, Album? cover)
+    // The dedup key of each track of the server (row 453); a track the view does not hold keeps a key of its own item.
+    private static Dictionary<string, string> KeysOf(FederationView view, Guid serverId)
+    {
+        var keys = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var track in view.Tracks)
+        {
+            foreach (var item in track.RemoteItems.Where(item => item.ServerId == serverId))
+            {
+                keys.TryAdd(item.ItemId, track.Identity.Key);
+            }
+        }
+
+        return keys;
+    }
+
+    private static StubWork WorkOf(StubPlanInput input, Guid serverId, IndexedItem track, string library, StubEntry? stub, string id, string relative, string key, Album? cover)
     {
         var version = track.Versions[0];
         var entry = (stub ?? new StubEntry { Id = id, Kind = StubKind.Track, RelativePath = relative, Sources = [], IdentityKey = string.Empty }) with
         {
             ServerId = serverId,
-            IdentityKey = string.Create(CultureInfo.InvariantCulture, $"Track|item:{serverId}:{track.ItemId}"),
+            IdentityKey = key,
             Sources = [new StubSource(serverId, track.ItemId, version.MediaSourceId) { LibraryId = library }]
         };
 

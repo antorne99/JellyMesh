@@ -72,12 +72,27 @@ public class TrackStubPlannerTests
         RemoteItems = [new ResolvedItem(_server, itemId)]
     };
 
-    private static StubPlan Plan(IReadOnlyList<IndexedItem> items, StubState? state = null, bool isProtected = true, IReadOnlyList<ResolvedContent>? contents = null, bool keepsOlderLayout = false)
+    private static ResolvedContent TrackTitle(string key, params string[] itemIds) => new(
+        new ContentIdentity(key, key, ContentKind.Track, MatchKind.ProviderId),
+        false,
+        null,
+        [])
+    {
+        RemoteItems = itemIds.Select(itemId => new ResolvedItem(_server, itemId)).ToList()
+    };
+
+    private static StubPlan Plan(
+        IReadOnlyList<IndexedItem> items,
+        StubState? state = null,
+        bool isProtected = true,
+        IReadOnlyList<ResolvedContent>? contents = null,
+        IReadOnlyList<ResolvedContent>? tracks = null,
+        bool keepsOlderLayout = false)
     {
         var catalog = new ServerCatalog { ServerId = _server, State = ServerSyncState.Complete, Items = items };
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [catalog] };
         return StubPlanner.PlanByServer(new StubPlanInput(
-            new FederationView(IndexHealth.Ok, 0, contents ?? [], []),
+            new FederationView(IndexHealth.Ok, 0, contents ?? [], []) { Tracks = tracks ?? [] },
             snapshot,
             state ?? StubState.Empty,
             [new RemoteServerInfo(_server, "Casa", "http://server", RemoteMode.Standard, 0, [Films, Music], null, null)],
@@ -105,6 +120,33 @@ public class TrackStubPlannerTests
         Assert.Equal(string.Empty, work.NfoPath);
         Assert.Equal(string.Empty, work.Nfo);
         Assert.Equal("http://127.0.0.1:8096/JellyMesh/Play/" + work.Entry.Id, work.StrmUrl);
+    }
+
+    [Fact]
+    public void ATrackTakesTheIdentityKeyOfTheDedupAndKeepsItsStubWhenTheKeyChanges()
+    {
+        var first = Plan([Track("t1", "One", 1)]);
+        var byTrackId = Plan([Track("t1", "One", 1)], first.State, tracks: [TrackTitle("Track|mbt:mb-t1", "t1")]);
+        var byRecording = Plan([Track("t1", "One", 1)], byTrackId.State, tracks: [TrackTitle("Track|mbr:rec", "t1")]);
+
+        var before = Assert.Single(first.Stubs).Entry;
+        Assert.Equal("Track|mbt:mb-t1", Assert.Single(byTrackId.Stubs).Entry.IdentityKey);
+        var after = Assert.Single(byRecording.Stubs);
+        Assert.Equal("Track|mbr:rec", after.Entry.IdentityKey);
+        Assert.Equal((before.Id, before.RelativePath), (after.Entry.Id, after.Entry.RelativePath));
+        Assert.False(after.IsNew);
+        Assert.Empty(byRecording.Removals);
+    }
+
+    [Fact]
+    public void TwoCopiesOfOneTrackOnAServerKeepTwoStubsAndNoVersionGroup()
+    {
+        var plan = Plan([Track("t1", "Song", 1), Track("t2", "Song", 1, albumId: "album2")], tracks: [TrackTitle("Track|mbr:rec", "t1", "t2")]);
+
+        Assert.Equal(2, plan.Stubs.Count);
+        Assert.All(plan.Stubs, work => Assert.Equal("Track|mbr:rec", work.Entry.IdentityKey));
+        Assert.Equal(2, plan.Stubs.Select(work => work.Entry.Id).Distinct().Count());
+        Assert.Empty(plan.State.Groups);
     }
 
     [Fact]
