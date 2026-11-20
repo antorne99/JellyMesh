@@ -12,6 +12,7 @@ using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -35,7 +36,7 @@ public sealed class StubItemUpdater
 
     /// <summary>
     /// Applies metadata to an item. Without protection only title, year, IDs, the artists and album of a music video and the
-    /// date of a home video are the plugin's: the rest belongs to the fetchers, except on a book.
+    /// date of a home video are the plugin's: the rest belongs to the fetchers, except on a book or a photo.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <param name="metadata">The metadata.</param>
@@ -75,6 +76,23 @@ public sealed class StubItemUpdater
         return !string.Equals(before, BookFieldsOf(book), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Writes the fields of a photo, its size, its EXIF with no position and its lock, as the update does, for the providers
+    /// of a refresh (D7, D26, D45). Nothing is saved.
+    /// </summary>
+    /// <param name="photo">The photo.</param>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>Whether a field changed.</returns>
+    public static bool WritePhoto(Photo photo, StubMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(photo);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        var before = PhotoFieldsOf(photo);
+        WriteFields(photo, metadata);
+        return !string.Equals(before, PhotoFieldsOf(photo), StringComparison.Ordinal);
+    }
+
     // Writes the fields of an item without saving it, and tells whether its people are the plugin's too.
     private static bool WriteFields(BaseItem item, StubMetadata metadata)
     {
@@ -96,8 +114,8 @@ public sealed class StubItemUpdater
             WriteTrack(audio, metadata);
         }
 
-        // A book gets all its data also without protection, only unlocked (D62).
-        var writesAll = metadata.IsProtected || item is Book;
+        // A book or a photo gets all its data also without protection, only unlocked (D62, D45).
+        var writesAll = metadata.IsProtected || item is Book or Photo;
         if (writesAll)
         {
             item.OriginalTitle = metadata.OriginalTitle;
@@ -129,6 +147,11 @@ public sealed class StubItemUpdater
             book.SeriesName = metadata.SeriesName;
         }
 
+        if (item is Photo photo)
+        {
+            WritePhotoFields(photo, metadata.Photo);
+        }
+
         if (metadata.IsProtected && item is Movie or Series)
         {
             item.RemoteTrailers = metadata.TrailerIds.Select(id => new MediaUrl { Url = YouTubeTrailer.WatchPrefix + id }).ToArray();
@@ -141,6 +164,30 @@ public sealed class StubItemUpdater
         }
 
         return writesAll;
+    }
+
+    // The size and camera data of a photo; where it was taken is never kept (D26).
+    private static void WritePhotoFields(Photo photo, IndexedPhoto? data)
+    {
+        photo.Latitude = null;
+        photo.Longitude = null;
+        photo.Altitude = null;
+        if (data is null)
+        {
+            return;
+        }
+
+        photo.Width = data.Width ?? photo.Width;
+        photo.Height = data.Height ?? photo.Height;
+        photo.CameraMake = data.CameraMake;
+        photo.CameraModel = data.CameraModel;
+        photo.Software = data.Software;
+        photo.ExposureTime = data.ExposureTime;
+        photo.FocalLength = data.FocalLength;
+        photo.Aperture = data.Aperture;
+        photo.ShutterSpeed = data.ShutterSpeed;
+        photo.IsoSpeedRating = data.IsoSpeedRating;
+        photo.Orientation = Enum.TryParse<ImageOrientation>(data.ImageOrientation, true, out var orientation) && Enum.IsDefined(orientation) ? orientation : null;
     }
 
     // Keys that differ only by case keep the first in ordinal order, so that the same ids always give the same item.
@@ -312,6 +359,40 @@ public sealed class StubItemUpdater
         book.PremiereDate,
         book.EndDate,
         book.SeriesName
+    });
+
+    private static string PhotoFieldsOf(Photo photo) => JsonSerializer.Serialize(new
+    {
+        photo.Name,
+        photo.ProductionYear,
+        ProviderIds = photo.ProviderIds.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).ToList(),
+        photo.IsLocked,
+        photo.LockedFields,
+        photo.OriginalTitle,
+        photo.Overview,
+        photo.Tagline,
+        photo.Genres,
+        photo.Studios,
+        photo.Tags,
+        photo.OfficialRating,
+        photo.CommunityRating,
+        photo.CriticRating,
+        photo.PremiereDate,
+        photo.EndDate,
+        photo.Width,
+        photo.Height,
+        photo.CameraMake,
+        photo.CameraModel,
+        photo.Software,
+        photo.ExposureTime,
+        photo.FocalLength,
+        photo.Aperture,
+        photo.ShutterSpeed,
+        photo.IsoSpeedRating,
+        photo.Orientation,
+        photo.Latitude,
+        photo.Longitude,
+        photo.Altitude
     });
 
     private static PersonInfo? ToPerson(IndexedPerson person)

@@ -35,13 +35,17 @@ public sealed class StubBeforeProbeProvider : StubMetadataProvider
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        // A book has no .nfo and nothing to probe: its fields come from the index (D62).
-        if (IsBookInFederatedFolder(item))
+        // A book or a photo has no .nfo and nothing to probe: its fields come from the index (D62, D45).
+        if (IsPlaceholderInFederatedFolder(item))
         {
-            return Registry.FindByPath(item.Path) is { Kind: StubKind.Book } book
-                && Technical.WriteBook(item, book, Store.ReadOr(config => config.MetadataProtection, true))
-                ? ItemUpdateType.MetadataImport
-                : ItemUpdateType.None;
+            var isProtected = Store.ReadOr(config => config.MetadataProtection, true);
+            var written = Registry.FindByPath(item.Path) switch
+            {
+                { Kind: StubKind.Book } book => Technical.WriteBook(item, book, isProtected),
+                { Kind: StubKind.Photo } photo => Technical.WritePhoto(item, photo, isProtected),
+                _ => false
+            };
+            return written ? ItemUpdateType.MetadataImport : ItemUpdateType.None;
         }
 
         if (!IsInFederatedFolder(item))

@@ -22,6 +22,7 @@ public abstract class StubMetadataProvider :
     ICustomMetadataProvider<MusicVideo>,
     ICustomMetadataProvider<Video>,
     ICustomMetadataProvider<Book>,
+    ICustomMetadataProvider<Photo>,
     IHasOrder,
     IForcedProvider,
     IPreRefreshProvider
@@ -78,6 +79,10 @@ public abstract class StubMetadataProvider :
     public Task<ItemUpdateType> FetchAsync(Book item, MetadataRefreshOptions options, CancellationToken cancellationToken)
         => Task.FromResult(Run(item, options, cancellationToken));
 
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Photo item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
     /// <summary>
     /// Handles a refresh of a file in the federated folder.
     /// </summary>
@@ -104,17 +109,26 @@ public abstract class StubMetadataProvider :
     }
 
     /// <summary>
-    /// Tells whether an item is a book in the federated folder: only a known folder has placeholders.
+    /// Tells whether an item is a book or a photo in the federated folder: only a known folder has placeholders.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>Whether it is.</returns>
-    protected bool IsBookInFederatedFolder(BaseItem item)
+    protected bool IsPlaceholderInFederatedFolder(BaseItem item) => IsPlaceholderInFederatedFolder(item, Store);
+
+    /// <summary>
+    /// Tells whether an item is a book or a photo in the federated folder that the configuration names.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="store">The configuration store.</param>
+    /// <returns>Whether it is.</returns>
+    internal static bool IsPlaceholderInFederatedFolder(BaseItem item, IPluginConfigurationStore store)
     {
         ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(store);
 
-        return item is Book
+        return item is Book or Photo
             && item.Path is { } path
-            && Store.ReadOr(config => config.FederatedFolderPath, null) is { } root
+            && store.ReadOr(config => config.FederatedFolderPath, null) is { } root
             && FederatedPaths.RelativeTo(root, path) is not null;
     }
 }
