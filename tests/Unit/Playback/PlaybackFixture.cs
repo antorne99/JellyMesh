@@ -221,6 +221,16 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
         return Open(request, cancellationToken);
     }
 
+    public List<string> LyricsAsked { get; } = [];
+
+    public Func<string, RemoteResult<RemoteLyrics>> Lyrics { get; set; } = _ => RemoteResult.Success(RemoteLyrics.None);
+
+    public Task<RemoteResult<RemoteLyrics>> GetLyricsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    {
+        LyricsAsked.Add(itemId);
+        return Task.FromResult(Lyrics(itemId));
+    }
+
     public Task<RemoteResult<bool>> StopEncodingAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         Stopped.Add(playSessionId);

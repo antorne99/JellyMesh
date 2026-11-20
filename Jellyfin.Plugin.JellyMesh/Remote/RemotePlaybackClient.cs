@@ -15,6 +15,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Extensions.Json;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Model.Dlna;
+using MediaBrowser.Model.Lyrics;
 using MediaBrowser.Model.MediaInfo;
 
 namespace Jellyfin.Plugin.JellyMesh.Remote;
@@ -43,6 +44,14 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     /// Most segments kept for one item. A film has a handful; the rest would only be rows a remote makes us store.
     /// </summary>
     public const int MaxSegments = 64;
+
+    /// <summary>
+    /// Most lines kept of the lyrics of a track. A song has a few dozen.
+    /// </summary>
+    public const int MaxLyricLines = 2000;
+
+    // Largest lyrics document accepted, in bytes.
+    private const int MaxLyricsBytes = 1024 * 1024;
 
     private const string AcceptJson = "application/json; profile=\"PascalCase\"";
 
@@ -232,6 +241,25 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     }
 
     /// <inheritdoc />
+    public async Task<RemoteResult<RemoteLyrics>> GetLyricsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(itemId);
+
+        using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/Audio/" + Uri.EscapeDataString(itemId) + "/Lyrics");
+        var (document, status) = await ReadAnswerAsync(message, MaxLyricsBytes, cancellationToken).ConfigureAwait(false);
+        if (!document.IsSuccess)
+        {
+            return status == HttpStatusCode.NotFound ? RemoteResult.Success(RemoteLyrics.None) : RemoteResult.Fail<RemoteLyrics>(document.Failure);
+        }
+
+        return Parse<LyricsBody>(document.Value!) is { } body
+            ? RemoteResult.Success(new RemoteLyrics(ToLyrics(body)))
+            : RemoteResult.Fail<RemoteLyrics>(RemoteFailure.InvalidResponse);
+    }
+
+    /// <inheritdoc />
     public async Task<RemoteResult<bool>> StopEncodingAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
@@ -273,7 +301,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         ArgumentNullException.ThrowIfNull(itemId);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/MediaSegments/" + Uri.EscapeDataString(itemId));
-        var (document, status) = await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false);
+        var (document, status) = await ReadAnswerAsync(message, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
         if (!document.IsSuccess)
         {
             return IsItemRefusal(status)
@@ -316,6 +344,36 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         }
 
         return new RemoteSegment(type, entry.StartTicks, entry.EndTicks);
+    }
+
+    // Copies the fields stock defines, and nothing else the remote sent.
+    private static LyricDto ToLyrics(LyricsBody body)
+    {
+        var metadata = body.Metadata;
+        return new LyricDto
+        {
+            Metadata = new LyricMetadata
+            {
+                Artist = metadata?.Artist,
+                Album = metadata?.Album,
+                Title = metadata?.Title,
+                Author = metadata?.Author,
+                Length = metadata?.Length,
+                By = metadata?.By,
+                Offset = metadata?.Offset,
+                Creator = metadata?.Creator,
+                Version = metadata?.Version,
+                IsSynced = metadata?.IsSynced
+            },
+            Lyrics = (body.Lyrics ?? [])
+                .Where(line => line?.Text is not null)
+                .Take(MaxLyricLines)
+                .Select(line => new LyricLine(
+                    line!.Text!,
+                    line.Start,
+                    line.Cues?.OfType<LyricCueBody>().Select(cue => new LyricLineCue(cue.Position, cue.EndPosition, cue.Start, cue.End)).ToList()))
+                .ToList()
+        };
     }
 
     private static string StreamPath(string playSessionId) => "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
@@ -384,11 +442,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
 
     private async Task<RemoteResult<byte[]>> ReadDocumentAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
     {
-        return (await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false)).Document;
+        return (await ReadAnswerAsync(message, MaxDocumentBytes, cancellationToken).ConfigureAwait(false)).Document;
     }
 
     // Reads a document with the status of the answer, null when none came.
-    private async Task<(RemoteResult<byte[]> Document, HttpStatusCode? Status)> ReadAnswerAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
+    private async Task<(RemoteResult<byte[]> Document, HttpStatusCode? Status)> ReadAnswerAsync(HttpRequestMessage? message, int maxBytes, CancellationToken cancellationToken)
     {
         if (message is null)
         {
@@ -404,7 +462,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
                 return (RemoteResult.Fail<byte[]>(FailureOf(response)), response.StatusCode);
             }
 
-            var body = await RemoteBody.ReadLimitedAsync(response.Content, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
+            var body = await RemoteBody.ReadLimitedAsync(response.Content, maxBytes, cancellationToken).ConfigureAwait(false);
             return (body is null ? RemoteResult.Fail<byte[]>(RemoteFailure.ResponseTooLarge) : RemoteResult.Success(body), response.StatusCode);
         }
         catch (HttpRequestException)
@@ -432,6 +490,14 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         bool? AllowVideoStreamCopy,
         bool? AllowAudioStreamCopy,
         bool? AlwaysBurnInSubtitleWhenTranscoding);
+
+    private sealed record LyricsBody(LyricMetadataBody? Metadata, IReadOnlyList<LyricLineBody?>? Lyrics);
+
+    private sealed record LyricMetadataBody(string? Artist, string? Album, string? Title, string? Author, long? Length, string? By, long? Offset, string? Creator, string? Version, bool? IsSynced);
+
+    private sealed record LyricLineBody(string? Text, long? Start, IReadOnlyList<LyricCueBody?>? Cues);
+
+    private sealed record LyricCueBody(int Position, int EndPosition, long Start, long? End);
 
     private sealed record SegmentPage(IReadOnlyList<SegmentEntry?>? Items);
 
