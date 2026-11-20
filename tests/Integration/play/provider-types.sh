@@ -169,7 +169,9 @@ check "the lyrics of a stub track" 404 "$(as_jm GET "/Audio/$stub_track/Lyrics")
 check "the file of a stub track" 404 "$(as_jm GET "/Items/$stub_track/File")"
 check "the file of a stub book" 404 "$(as_jm GET "/Items/$stub_book/File")"
 photo_parent=$(get local "/Items/$photo" | jq -r '.ParentId // ""')
-echo "info the folder of a photo: $(get local "/Items?Ids=$photo_parent" | jq -c '.Items[0] | {Type, HasPrimary: (.ImageTags.Primary != null)}'), its cover to the peer: $(as_jm GET "/Items/$photo_parent/Images/Primary")"
+check "the album of a photo is a photo album" PhotoAlbum "$(get local "/Items?Ids=$photo_parent" | jq -r '.Items[0].Type')"
+check "the cover of a photo album" 404 "$(as_jm GET "/Items/$photo_parent/Images/Primary")"
+check "photo albums read as empty" '200 0' "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=PhotoAlbum&parentId=$home") $(jq '.Items | length' "$WORK/jm-body")"
 check "the file of a photo" 404 "$(as_jm GET "/Items/$photo/File")"
 check "the image of a photo" 404 "$(as_jm GET "/Items/$photo/Images/Primary")"
 check "the file of an album" 404 "$(as_jm GET "/Items/$album/File")"
@@ -242,7 +244,10 @@ check "its lyrics come from local" 200 "$(get peer "/Audio/$peer_track/Lyrics" >
 check "the lyrics are those of the .lrc" true "$(jq '[.Lyrics[].Text] | index("Prima riga di prova") != null' "$WORK/body")"
 check "a music video" 1 "$(items peer MusicVideo stub | count)"
 check "the home videos" 3 "$(items peer Video stub | count)"
-check "a home video in its folders" 1 "$(get peer '/Items?Recursive=true&IncludeItemTypes=Video&Fields=Path' | jq '[.Items[] | select((.Path // "") | test("/2025/Estate/"))] | length')"
+get peer '/Items?Recursive=true&IncludeItemTypes=Video&Fields=Path' >"$WORK/peer-videos"
+check "a home video in its folders" 1 "$(jq '[.Items[] | select((.Path // "") | test("/2025/Inverno/"))] | length' "$WORK/peer-videos")"
+# A folder with photos is a photo album, held back with the photos until F60: its video lands without that folder.
+check "a home video beside photos, without their album" '1 0' "$(jq -r '"\([.Items[] | select(.Name == "Spiaggia")] | length) \([.Items[] | select((.Path // "") | test("/Estate/"))] | length)"' "$WORK/peer-videos")"
 check "no photo" 0 "$(items peer Photo stub | count)"
 peer_book=$(get peer '/Items?Recursive=true&IncludeItemTypes=Book&Fields=Path' | jq -r '[.Items[] | select((.Path // "") | (startswith("/federata") and endswith(".epub")))][0].Id // ""')
 check "the epub book" true "$([ -n "$peer_book" ] && echo true || echo false)"
