@@ -37,7 +37,12 @@ locations() { folder "$1" | jq -c '.Locations | sort'; }
 remote_id() { get remote /Library/VirtualFolders | jq -r --arg n "$1" '.[] | select(.Name == $n) | .ItemId'; }
 on_disk() { docker exec "$PREFIX-local" sh -c '[ -d "$1" ] && echo yes || echo no' sh "$FOLDER/$1"; }
 strms() { docker exec "$PREFIX-local" sh -c 'find "$1" -name "*.strm" 2>/dev/null | wc -l | tr -d " "' sh "$FOLDER/$1"; }
-switch() { post local "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" "$1" >/dev/null; status; }
+# form <json>: the edit form of the server with those fields changed.
+form() { get local /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" --argjson c "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""} + $c'; }
+switch() { # switch <mode>: saves the library mode with the edit form, and prints the status
+  req local PUT "/JellyMesh/Admin/Servers/$SERVER" "$(form "{\"LibraryMode\":\"$1\"}")" >/dev/null
+  status
+}
 wait_own() {
   local i
   for i in $(seq 1 300); do
@@ -94,7 +99,7 @@ scan remote
 sync_now local
 FILM_PATHS=$(own | jq -c '[.ManualPaths[] | select(.LibraryType == "movies") | .Path] | sort')
 make "Film miei" movies "$FILM_PATHS"
-check "switching on answers 202" 202 "$(switch '{"Enabled":true}')"
+check "switching on answers 200" 200 "$(switch ByType)"
 wait_own
 scan local
 check "the film library is adopted and the series one made" '[["Casa - Serie",false],["Film miei",true]]' "$(registry)"
