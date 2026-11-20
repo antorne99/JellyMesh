@@ -388,7 +388,7 @@ public sealed partial class LayoutMigration
         return !HasOldTitles(_registry.State);
     }
 
-    // Removes the old paths from every library holding them, once no old title is left.
+    // Removes the old paths from every library holding them, once no old title is left, after adding their new folders.
     private AutomaticMigrationStep? RemoveOldPaths(string root)
     {
         if (HasOldTitles(_registry.State))
@@ -414,8 +414,15 @@ public sealed partial class LayoutMigration
             return null;
         }
 
+        // Add, then remove: a library on an old path since the addition step gets the new folders first (§10 row 445).
         foreach (var library in libraries.OnOldPaths)
         {
+            if (!libraries.Adds[library.Name].All(path => IsDone(_paths.Add(root, library.Name, path))))
+            {
+                Stop(AutomaticMigrationError.AddFailed, library.Name);
+                return null;
+            }
+
             if (!library.OldPaths.All(path => IsDone(_paths.Remove(root, library.Name, path))))
             {
                 Stop(AutomaticMigrationError.RemoveFailed, library.Name);

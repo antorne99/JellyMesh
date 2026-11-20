@@ -159,6 +159,46 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task AnOldFolderTheAdminAddsAfterTheAdditionGetsTheNewFoldersBeforeItLeaves()
+    {
+        BothServersImport();
+        ServerFolderFilm(_serverA, "a1");
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        AtTheRemoval(() => _libraries.Add(Library("Altri film", CollectionTypeOptions.movies, ServerFilms(_serverA))));
+
+        await (await MigrationAsync()).Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
+        Assert.Equal([NewFilms(_serverA)], Locations("Altri film"));
+    }
+
+    [Fact]
+    public async Task AnAdoptedLibraryReleasedDuringTheMigrationGetsTheNewFoldersBeforeTheOldOneLeaves()
+    {
+        BothServersImport();
+        var a = _store.Configuration.Servers.Single(server => server.Id == _serverA);
+        a.LibraryMode = LibraryMode.ByType;
+        a.AutomaticLibraryRegistry.Add(new AutomaticLibraryConfig { Kind = ServerLibraryKind.Movies, Name = "A - Film", ItemId = IdOf("A - Film"), Adopted = true });
+        ServerFolderFilm(_serverA, "a1");
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("A - Film", CollectionTypeOptions.movies, ServerFilms(_serverA)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverB)));
+        AtTheRemoval(() =>
+        {
+            // The admin turns the libraries of the server off, so the plugin releases the library it adopted.
+            a.AutomaticLibraries = false;
+            a.LibraryMode = LibraryMode.None;
+            a.AutomaticLibraryRegistry.Clear();
+        });
+
+        await (await MigrationAsync()).Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal(AutomaticMigrationStep.Done, _store.Configuration.LayoutMigration.Step);
+        Assert.Equal([NewFilms(_serverA)], Locations("A - Film"));
+    }
+
+    [Fact]
     public async Task AStubFileLeftInAServerFolderStopsTheMigrationBeforeTheRemoval()
     {
         BothServersImport();
@@ -235,6 +275,22 @@ public sealed partial class LayoutMigrationTests
 
         Assert.Equal((1, true), (Row(_mario, films).PlayCount, Row(_mario, films).Played));
         Assert.DoesNotContain(_registry.State.Stubs, entry => entry.ServerId is null);
+    }
+
+    // Runs a change once, when the automatic migration waits for the scans before it removes the old paths.
+    private void AtTheRemoval(Action change)
+    {
+        var done = false;
+        _scans.Setup(scans => scans.WaitIdleAsync(It.IsAny<CancellationToken>())).Returns(() =>
+        {
+            if (!done && _store.Configuration.LayoutMigration.Step == AutomaticMigrationStep.RemoveOldPaths)
+            {
+                done = true;
+                change();
+            }
+
+            return Task.CompletedTask;
+        });
     }
 
     // A film of a server in the type folder of the given remote library.
