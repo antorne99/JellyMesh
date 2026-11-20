@@ -103,6 +103,11 @@ public sealed partial class LayoutMigration
     {
         lock (_jobLock)
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             _disposed = true;
         }
 
@@ -212,9 +217,9 @@ public sealed partial class LayoutMigration
                 _logger.LogInformation("Migration to the server folders: the automatic migration is at the step {Step}", next);
             }
         }
-        catch (OperationCanceledException)
+        catch (Exception exception) when (exception is OperationCanceledException || cancellationToken.IsCancellationRequested)
         {
-            // The server is shutting down: the step stays saved and the next scan or sync resumes it.
+            // The server is shutting down, and its services may be gone: the step stays saved and the next start resumes it.
         }
         catch (Exception exception)
         {

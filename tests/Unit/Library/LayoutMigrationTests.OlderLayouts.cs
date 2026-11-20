@@ -133,6 +133,32 @@ public sealed partial class LayoutMigrationTests
     }
 
     [Fact]
+    public async Task AShutdownAtTheEndOfTheMigrationKeepsTheStepForTheNextStart()
+    {
+        BothServersImport();
+        ServerFolderFilm(_serverA, "a1");
+        NewFilm(_serverA, "a1");
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, ServerFilms(_serverA), ServerFilms(_serverB)));
+        LayoutMigration? migration = null;
+        var manager = new Mock<IServerLibraryManager>();
+        manager.Setup(libraries => libraries.FollowForPlacement()).Returns(() => new PlacementLibraries(_libraries.ToList(), new HashSet<VirtualFolderInfo>()));
+        manager.SetupSequence(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true)
+            .Returns(() =>
+            {
+                // The server stops while the last scan runs, and its services are gone.
+                migration!.Dispose();
+                throw new ObjectDisposedException("library");
+            });
+        _managerOverride = manager.Object;
+        migration = await MigrationAsync();
+
+        await migration.Choose(LayoutMigrationMode.Automatic).Job;
+
+        Assert.Equal((AutomaticMigrationStep.Finish, AutomaticMigrationError.None), (_store.Configuration.LayoutMigration.Step, _store.Configuration.LayoutMigration.Error));
+    }
+
+    [Fact]
     public async Task AStubFileLeftInAServerFolderStopsTheMigrationBeforeTheRemoval()
     {
         BothServersImport();
