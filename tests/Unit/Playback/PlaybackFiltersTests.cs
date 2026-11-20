@@ -2242,6 +2242,26 @@ public class PlaybackFiltersTests
         Assert.Single(_fixture.Client.Requests);
     }
 
+    // The extension of a transcode comes from the remote, so the HEAD of universal tells an audio type only.
+    [Fact]
+    public async Task Head_of_universal_the_remote_transcodes_to_a_file_of_another_type_tells_an_audio_type()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            var source = answer.Value!.MediaSources[0];
+            source.TranscodingUrl = "/Audio/remote-item/stream.html?DeviceId=" + PlaybackValues.RemoteDevice;
+            source.TranscodingSubProtocol = Jellyfin.Data.Enums.MediaStreamProtocol.http;
+            return Task.FromResult(answer);
+        };
+        var head = Universal("HEAD");
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), head));
+        Assert.Equal("audio/mpeg", Assert.IsType<FileContentResult>(head.Result).ContentType);
+    }
+
     // The same query from another user or device is another playback: it never gets the session of the first.
     [Theory]
     [InlineData(true)]

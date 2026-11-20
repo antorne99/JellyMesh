@@ -25,7 +25,10 @@ public sealed class AudioStubRoutes
     // The type stock gives an HLS playlist; jellyfin-web picks its player by it on the HEAD of universal.
     private const string StockPlaylistType = "application/x-mpegURL";
 
-    private const int LockCount = 64;
+    private const int LockCount = 256;
+
+    // Longest wait for an opening of the same stripe; past it the client gets a clear error, not a hung request.
+    private static readonly TimeSpan _lockWait = TimeSpan.FromSeconds(30);
 
     private readonly PlaybackCoordinator _coordinator;
     private readonly PlaybackSessionStore _sessions;
@@ -103,7 +106,7 @@ public sealed class AudioStubRoutes
             (AudioRoute.Master or AudioRoute.Universal, PlaybackStreamKind.Hls) when head => new FileContentResult([], StockPlaylistType),
             (AudioRoute.Master or AudioRoute.Universal, PlaybackStreamKind.Hls)
                 => await _relay.PlaylistAsync(http, session, session.UpstreamPath, session.UpstreamFolder(), prefix, access.Token, StockPlaylistType, http.RequestAborted).ConfigureAwait(false),
-            (AudioRoute.Universal or AudioRoute.Stream, PlaybackStreamKind.Progressive) when head => new FileContentResult([], MimeTypes.GetMimeType(session.UpstreamPath.Split('?')[0]) ?? "audio/mpeg"),
+            (AudioRoute.Universal or AudioRoute.Stream, PlaybackStreamKind.Progressive) when head => new FileContentResult([], AudioTypeOf(session.UpstreamPath)),
             (AudioRoute.Universal or AudioRoute.Stream, PlaybackStreamKind.Direct or PlaybackStreamKind.Progressive)
                 => await _relay.StreamAsync(http, session, session.UpstreamPath, http.RequestAborted).ConfigureAwait(false),
             _ => new StatusCodeResult(StatusCodes.Status503ServiceUnavailable)
@@ -131,6 +134,12 @@ public sealed class AudioStubRoutes
         }
 
         return read.Value!.Lyrics is { } lyrics ? new OkObjectResult(lyrics) : new NotFoundResult();
+    }
+
+    // The type of a transcoded stream by its extension, an audio type only, since the extension comes from the remote.
+    private static string AudioTypeOf(string path)
+    {
+        return MimeTypes.GetMimeType(path.Split('?')[0]) is { } type && type.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ? type : "audio/mpeg";
     }
 
     private static AudioRoute RouteOf(string controller, string action) => (controller, action) switch
@@ -310,7 +319,11 @@ public sealed class AudioStubRoutes
     private async Task<(PlaybackSession? Session, string Text)> FindOrOpenAsync(string fingerprint, PlaybackOpenRequest request, CancellationToken cancellationToken)
     {
         var gate = _locks[(int)((uint)StringComparer.Ordinal.GetHashCode(fingerprint) % LockCount)];
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (!await gate.WaitAsync(_lockWait, cancellationToken).ConfigureAwait(false))
+        {
+            return (null, PlaybackRefusal.FailedText);
+        }
+
         try
         {
             if (_opened.TryGetValue(fingerprint, out var id) && _sessions.Find(id) is { HasFailed: false } open && open.Identity == request.Identity)

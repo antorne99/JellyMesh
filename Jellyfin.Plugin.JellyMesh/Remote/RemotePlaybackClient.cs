@@ -50,6 +50,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     /// </summary>
     public const int MaxLyricLines = 2000;
 
+    /// <summary>
+    /// Most timed cues kept for one line of lyrics, one per word or syllable.
+    /// </summary>
+    public const int MaxLyricCues = 512;
+
     // Largest lyrics document accepted, in bytes.
     private const int MaxLyricsBytes = 1024 * 1024;
 
@@ -371,7 +376,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
                 .Select(line => new LyricLine(
                     line!.Text!,
                     line.Start,
-                    line.Cues?.OfType<LyricCueBody>().Select(cue => new LyricLineCue(cue.Position, cue.EndPosition, cue.Start, cue.End)).ToList()))
+                    line.Cues?.OfType<LyricCueBody>().Take(MaxLyricCues).Select(cue => new LyricLineCue(cue.Position, cue.EndPosition, cue.Start, cue.End)).ToList()))
                 .ToList()
         };
     }

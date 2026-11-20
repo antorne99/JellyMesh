@@ -64,6 +64,17 @@ public class RemoteLyricsClientTests
         Assert.Equal(RemotePlaybackClient.MaxLyricLines, result.Value!.Lyrics!.Lyrics.Count);
     }
 
+    [Fact]
+    public async Task Only_a_bounded_number_of_cues_is_kept_for_a_line()
+    {
+        var cues = string.Join(',', Enumerable.Range(0, RemotePlaybackClient.MaxLyricCues + 10).Select(index => "{\"Position\":0,\"EndPosition\":1,\"Start\":" + index + "}"));
+        var (client, _) = Build(_ => StubHandler.Json("{\"Lyrics\":[{\"Text\":\"One\",\"Cues\":[" + cues + "]}]}"));
+
+        var result = await client.GetLyricsAsync(_endpoint, _session, "item", CancellationToken.None);
+
+        Assert.Equal(RemotePlaybackClient.MaxLyricCues, Assert.Single(result.Value!.Lyrics!.Lyrics).Cues!.Count);
+    }
+
     [Theory]
     [InlineData("not json")]
     [InlineData("[]")]
