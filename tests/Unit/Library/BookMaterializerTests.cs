@@ -71,6 +71,19 @@ public sealed class BookMaterializerTests : IDisposable
         Assert.Equal(BookPlaceholders.Epub(), await File.ReadAllBytesAsync(BookPath(a)));
     }
 
+    // The shape another JellyMesh skips (D62) is the one this server writes, so a change of layout cannot open a cycle.
+    [Fact]
+    public async Task APlaceholderWrittenHereHasTheShapeAnotherJellyMeshSkips()
+    {
+        var a = await AddBookServerAsync(Dune());
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.True(File.Exists(BookPath(a)));
+        Assert.True(FederatedBookMark.IsPlaceholder(BookPath(a), null));
+        Assert.True(FederatedBookMark.IsPlaceholder(Path.Combine(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).RelativePath), null));
+    }
+
     [Fact]
     public async Task ABookItemCarriesTheMarkOfAPlaceholderWithTheRemoteIds()
     {
