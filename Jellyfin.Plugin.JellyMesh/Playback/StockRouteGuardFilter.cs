@@ -21,6 +21,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Net.Http.Headers;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
@@ -49,6 +50,24 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// The start of the name a refused legacy request reaches stock with, which no file of the transcode folder has.
     /// </summary>
     internal const string MissingFilePrefix = "jellymesh-missing-";
+
+    // The extension a downloaded file gets for the media type of the remote file; any other type gets none.
+    private static readonly Dictionary<string, string> _videoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["video/x-matroska"] = ".mkv",
+        ["video/mp4"] = ".mp4",
+        ["video/x-m4v"] = ".m4v",
+        ["video/webm"] = ".webm",
+        ["video/x-msvideo"] = ".avi",
+        ["video/quicktime"] = ".mov",
+        ["video/mp2t"] = ".ts",
+        ["video/mpeg"] = ".mpg",
+        ["video/x-ms-wmv"] = ".wmv",
+        ["video/x-ms-asf"] = ".asf",
+        ["video/x-flv"] = ".flv",
+        ["video/ogg"] = ".ogv",
+        ["video/3gpp"] = ".3gp"
+    };
 
     private static readonly HashSet<string> _mediaControllers = new(StringComparer.Ordinal)
     {
@@ -341,6 +360,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
+        if (action == DownloadAction)
+        {
+            var disposition = new ContentDispositionHeaderValue("attachment");
+            disposition.SetHttpFileName(DownloadName(stub.RelativePath, opened.Headers.ContentType));
+            http.Response.Headers.ContentDisposition = disposition.ToString();
+        }
+
         var relayed = await StreamRelay.RelayAsync(opened, http, _coordinator.StallLimit, http.RequestAborted).ConfigureAwait(false);
         if (relayed.IsAbnormal)
         {
@@ -348,6 +374,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         return new EmptyResult();
+    }
+
+    // The name a download of a stub gets: the local name of its title with the extension of the remote file's media type.
+    internal static string DownloadName(string relativePath, string? contentType)
+    {
+        var type = contentType?.Split(';', 2)[0].Trim();
+        var extension = type is not null && _videoExtensions.TryGetValue(type, out var known) ? known : string.Empty;
+        return Path.GetFileNameWithoutExtension(relativePath) + extension;
     }
 
     // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.

@@ -1780,6 +1780,40 @@ public class PlaybackFiltersTests
         Assert.Equal("bytes=0-4", asked?.Range);
     }
 
+    [Theory]
+    [InlineData("video/x-matroska", "x.mkv")]
+    [InlineData("video/mp4; charset=binary", "x.mp4")]
+    [InlineData("video/mp2t", "x.ts")]
+    [InlineData("text/html", "x")]
+    [InlineData(null, "x")]
+    public async Task Download_of_a_stub_is_an_attachment_named_as_the_title_with_the_extension_of_the_remote_file(string? contentType, string name)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        _fixture.Client.Open = (request, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(
+            System.Net.HttpStatusCode.OK,
+            new RemoteContentHeaders(contentType, _remoteBytes.Length, null, "bytes"),
+            new MemoryStream(_remoteBytes))));
+        var context = FileRequest("GetDownload");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        var disposition = Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(context.HttpContext.Response.Headers.ContentDisposition.ToString());
+        Assert.Equal("attachment", disposition.DispositionType.ToString());
+        Assert.Equal(name, disposition.FileName.ToString().Trim('"'));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
+    [Fact]
+    public async Task File_of_a_stub_is_not_an_attachment()
+    {
+        CanSeeItem();
+        RemoteServes();
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+        Assert.Empty(context.HttpContext.Response.Headers.ContentDisposition.ToString());
+    }
+
     [Fact]
     public async Task File_needs_no_download_permission()
     {
