@@ -293,6 +293,48 @@ public partial class PlaybackFiltersTests
         Assert.Equal(2, _fixture.Client.Opened.Count);
     }
 
+    [Fact]
+    public async Task Universal_of_a_track_never_falls_back_to_a_copy_the_user_cannot_see()
+    {
+        var (store, track, _) = TrackWithCopy(seesCopy: false);
+        _fixture.Registry.Offline.Add(track.ServerId!.Value);
+        RemoteServes();
+        var context = Universal();
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.DoesNotContain(_fixture.Client.Requests, request => request.ItemId == "item-b");
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task Universal_naming_a_copy_the_user_cannot_see_is_not_found()
+    {
+        var (store, _, _) = TrackWithCopy(seesCopy: false);
+        var context = AudioRequest("UniversalAudio", "GetUniversalAudioStream", "GET", ("container", new[] { "flac" }), ("mediaSourceId", _copyId.ToString("N")));
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    // A copy the user no longer sees is never read again, even in the middle of a file it took over.
+    [Fact]
+    public async Task File_of_a_track_never_goes_on_in_a_copy_the_user_no_longer_sees()
+    {
+        var (store, track, _) = TrackWithCopy();
+        _fixture.Registry.Offline.Add(track.ServerId!.Value);
+        RemoteServes();
+        var guard = GuardFilter(store: store);
+        Assert.False(await RunAsync(guard, FileRequest("GetFile")));
+        _library.Setup(library => library.GetItemById<BaseItem>(_copyId, _user)).Returns((BaseItem?)null);
+
+        var context = FileRequest("GetFile", "bytes=500-");
+        Assert.False(await RunAsync(guard, context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Single(_fixture.Client.Opened);
+    }
+
     // Another device of the user reads its own file: the copy that took over on the first one is not its.
     [Fact]
     public async Task File_of_a_track_on_another_device_goes_on_in_its_own_copy()
