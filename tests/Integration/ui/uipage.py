@@ -460,7 +460,7 @@ def open_advanced(page):
 
 def copy_button(page, path):
     """Finds the copy button of a path to link."""
-    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy", include_hidden=True)
+    return page.locator(FOLDER_INFO).locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy", include_hidden=True)
 
 
 def pasted(page):
