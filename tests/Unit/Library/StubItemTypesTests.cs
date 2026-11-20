@@ -17,6 +17,7 @@ public sealed class StubItemTypesTests
     [InlineData(StubKind.Track, typeof(Audio))]
     [InlineData(StubKind.MusicVideo, typeof(MusicVideo))]
     [InlineData(StubKind.HomeVideo, typeof(Video))]
+    [InlineData(StubKind.Book, typeof(Book))]
     public void EachKindHasTheTypeOfItsItem(StubKind kind, Type type) => Assert.Equal(type, StubItemTypes.Of(kind));
 
     [Fact]
