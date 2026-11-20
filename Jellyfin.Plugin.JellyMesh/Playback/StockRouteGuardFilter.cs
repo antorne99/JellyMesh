@@ -35,6 +35,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
     private const string StopEncodingAction = "StopEncodingProcess";
 
+    private const string LyricsController = "Lyrics";
+
+    private const string GetLyricsAction = "GetLyrics";
+
     private const string DownloadAction = "GetDownload";
 
     private const string LegacySegmentAction = "GetHlsVideoSegmentLegacy";
@@ -205,6 +209,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             context.Result = await FileResultAsync(context, action, fileId).ConfigureAwait(false);
             return;
         }
+        else if (controller == LyricsController && StubLookup.ItemIdOf(context) is { } lyricsId && _stubs.IsAudioStub(lyricsId))
+        {
+            // The lyrics of a track stub come from its remote; stock would write managed ones inside the federated folder.
+            context.Result = await AudioStubResultAsync(context, controller, action, [lyricsId]).ConfigureAwait(false);
+            return;
+        }
         else if (_streamControllers.Contains(controller) && StubLookup.NamedItemIdsOf(context).Where(_stubs.IsAudioStub).ToList() is { Count: > 0 } tracks)
         {
             // Stock cannot play an audio .strm and would send its text, with the signed loopback URL, so it is never reached.
@@ -329,8 +339,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return new EmptyResult();
     }
 
-    // Serves a stock media route on audio stubs: 401 without a user, 404 for one who cannot see them. A static stream is
-    // the file, as File serves it; the other audio routes go through a session, and anything else is a bare 503.
+    // Serves a stock route on audio stubs: 401 without a user, 404 for one who cannot see them. Lyrics are read, never
+    // managed; a static stream is the file; the other audio routes go through a session, anything else is a bare 503.
     private async Task<IActionResult> AudioStubResultAsync(ActionExecutingContext context, string controller, string action, List<Guid> tracks)
     {
         var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
@@ -342,6 +352,15 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         if (!tracks.TrueForAll(id => _stubs.Sees(user, id)))
         {
             return new StatusCodeResult(StatusCodes.Status404NotFound);
+        }
+
+        if (controller == LyricsController)
+        {
+            return action != GetLyricsAction
+                ? new StatusCodeResult(StatusCodes.Status403Forbidden)
+                : _stubs.FindFile(tracks[0]) is { } lyricsStub
+                    ? await _audio.LyricsAsync(context.HttpContext, authorization.DeviceId ?? string.Empty, lyricsStub).ConfigureAwait(false)
+                    : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
         if (tracks is not [var track] || StubLookup.ItemIdOf(context) != track || _stubs.FindFile(track) is not { } stub || string.IsNullOrEmpty(authorization.Token))

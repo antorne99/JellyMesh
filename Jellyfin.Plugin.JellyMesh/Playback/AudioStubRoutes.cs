@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Http;
@@ -108,6 +109,29 @@ public sealed class AudioStubRoutes
                 => await _relay.StreamAsync(http, session, session.UpstreamPath, http.RequestAborted).ConfigureAwait(false),
             _ => new StatusCodeResult(StatusCodes.Status503ServiceUnavailable)
         };
+    }
+
+    /// <summary>
+    /// Serves the lyrics of a track stub the user sees from its remote: a remote that has none is a 404, and a remote that
+    /// cannot answer is a clear error.
+    /// </summary>
+    /// <param name="http">The request.</param>
+    /// <param name="deviceId">The device of the caller.</param>
+    /// <param name="stub">The stub of the track.</param>
+    /// <returns>The answer.</returns>
+    public async Task<IActionResult> LyricsAsync(HttpContext http, string deviceId, StubEntry stub)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(stub);
+
+        var read = await _coordinator.ReadLyricsAsync(stub, http.RequestAborted).ConfigureAwait(false);
+        if (!read.IsSuccess)
+        {
+            var offline = read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.UnknownServer;
+            return _refusal.Refuse(http, deviceId, offline ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);
+        }
+
+        return read.Value!.Lyrics is { } lyrics ? new OkObjectResult(lyrics) : new NotFoundResult();
     }
 
     private static AudioRoute RouteOf(string controller, string action) => (controller, action) switch

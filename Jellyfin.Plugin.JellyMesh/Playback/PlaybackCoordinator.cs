@@ -267,6 +267,36 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
+    /// Reads the lyrics of a track stub from the first source that answers, the one in use first.
+    /// </summary>
+    /// <param name="stub">The stub.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The lyrics, or the failure of the last source when none answered.</returns>
+    public async Task<RemoteResult<RemoteLyrics>> ReadLyricsAsync(StubEntry stub, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
+        var failed = RemoteResult.Fail<RemoteLyrics>(RemoteFailure.UnknownServer);
+        foreach (var source in Ordered(sources, ChosenFor(stub)?.Working.Source))
+        {
+            var read = await GatedAsync(
+                source.ServerId,
+                Times.StreamOpen,
+                (endpoint, session, token) => _client.GetLyricsAsync(endpoint, session, source.ItemId, token),
+                cancellationToken).ConfigureAwait(false);
+            if (read.IsSuccess)
+            {
+                return read;
+            }
+
+            failed = read;
+        }
+
+        return failed;
+    }
+
+    /// <summary>
     /// Tells whether the file of a stub was just refused by every source for its stream limit. Nothing holds a slot between
     /// the probe of the local transcode and the read of ffmpeg, so another stream can take it, and all that comes back from
     /// ffmpeg is that it failed. Asked once: the answer is used up.

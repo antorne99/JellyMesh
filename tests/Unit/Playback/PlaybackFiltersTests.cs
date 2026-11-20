@@ -27,6 +27,7 @@ using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Lyrics;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -2002,7 +2003,7 @@ public class PlaybackFiltersTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
-private ActionExecutingContext AudioRequest(string controller, string action, string method, params (string Key, object? Value)[] arguments)
+    private ActionExecutingContext AudioRequest(string controller, string action, string method, params (string Key, object? Value)[] arguments)
     {
         var context = Context(controller, action, new (string Key, object? Value)[] { ("itemId", _itemId) }.Concat(arguments).ToArray());
         context.HttpContext.Request.Method = method;
@@ -2184,6 +2185,99 @@ private ActionExecutingContext AudioRequest(string controller, string action, st
         Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
         Assert.Empty(_fixture.Sessions.All);
+    }
+
+    private ActionExecutingContext LyricsRequest(string action = "GetLyrics")
+    {
+        return AudioRequest("Lyrics", action, "GET");
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_track_stub_come_from_its_remote()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Success(new RemoteLyrics(new LyricDto { Lyrics = [new LyricLine("One", 10)] }));
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var lyrics = Assert.IsType<LyricDto>(Assert.IsType<OkObjectResult>(context.Result).Value);
+        Assert.Equal("One", Assert.Single(lyrics.Lyrics).Text);
+        Assert.Equal(["remote-item"], _fixture.Client.LyricsAsked);
+    }
+
+    [Fact]
+    public async Task Lyrics_the_remote_does_not_have_are_not_found()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Success(RemoteLyrics.None);
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.IsType<NotFoundResult>(context.Result);
+    }
+
+    // The title stays visible while its server is offline, and asking for its lyrics gets a clear error.
+    [Fact]
+    public async Task Lyrics_no_source_can_read_are_refused_with_a_clear_error()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Unreachable);
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_track_stub_want_a_user()
+    {
+        Anonymous();
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.LyricsAsked);
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_track_stub_the_user_cannot_see_are_not_found()
+    {
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.LyricsAsked);
+    }
+
+    // Stock would write the lyrics of a track stub next to its .strm, inside the federated folder.
+    [Theory]
+    [InlineData("UploadLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("DeleteLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("SearchRemoteLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("DownloadRemoteLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("UploadLyrics", false, StatusCodes.Status404NotFound)]
+    [InlineData("DownloadRemoteLyrics", false, StatusCodes.Status404NotFound)]
+    public async Task Lyrics_of_a_track_stub_are_never_managed(string action, bool sees, int status)
+    {
+        if (sees)
+        {
+            CanSeeItem();
+        }
+
+        var context = LyricsRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(status, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.LyricsAsked);
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_local_track_stay_with_stock()
+    {
+        CanSeeItem();
+        var context = LyricsRequest();
+
+        Assert.True(await RunAsync(GuardFilter(), context));
     }
 
     [Fact]
