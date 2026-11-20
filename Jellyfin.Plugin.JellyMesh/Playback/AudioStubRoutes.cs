@@ -17,9 +17,8 @@ using Microsoft.AspNetCore.Mvc.Filters;
 namespace Jellyfin.Plugin.JellyMesh.Playback;
 
 /// <summary>
-/// Serves the stock audio routes of a track stub through a session: <c>universal</c>, <c>/Audio/{id}/stream</c> and the
-/// HLS playlists. The parameters of the client become a device profile, the remote decides direct play or transcode, and
-/// the client reads the remote only through the session routes. A repeated request reuses its session.
+/// Serves universal, stream and the HLS playlists of a track stub through a session: the parameters of the client become
+/// a device profile, the remote decides direct play or transcode, and a repeated request reuses its session.
 /// </summary>
 public sealed class AudioStubRoutes
 {
