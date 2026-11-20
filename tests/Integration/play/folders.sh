@@ -179,9 +179,22 @@ to_05() {
 
 # to_06: the upgrade to this build, with a sync and a scan.
 to_06() {
+  SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   install current
   sync_now local
   scan local
+}
+
+# by_itself: whether this build ended an automatic migration with no choice of the admin. The banner goes before the
+# last scan, so it waits for the end.
+by_itself() {
+  local logs i
+  for i in $(seq 1 60); do
+    logs=$(docker logs --since "$SINCE" "$PREFIX-local" 2>&1)
+    grep -q 'the automatic migration is done' <<<"$logs" && break
+    sleep 2
+  done
+  echo "$(grep -c 'the automatic migration is done' <<<"$logs" || true) $(grep -c 'the admin chose' <<<"$logs" || true)"
 }
 
 # verify: the end of a migration, with the state of alice on the new stubs.
@@ -231,9 +244,9 @@ for case in $CASES; do
       CASA_FILM=$(library_id "Casa - Film")
       check "Casa - Film holds the folder of Casa" "[\"$(server_folder "$CASA")/Film\"]" "$(locations "Casa - Film")"
       to_06
-      check "the choice of 0.5 is kept" Automatic "$(migration | jq -r '.Mode // "Automatic"')"
       check "Casa keeps its libraries by type, Mare has none" "ByType None" "$(get local /JellyMesh/Admin/Status | jq -r --arg c "$CASA" --arg m "$MARE" '"\(.Servers[] | select(.Id == $c) | .AutomaticLibraries.Mode) \(.Servers[] | select(.Id == $m) | .AutomaticLibraries.Mode)"')"
       wait_run
+      check "the choice of 0.5 is kept: the migration ends with no choice" "1 0" "$(by_itself)"
       verify
       casa_films=$(locations Film | jq -c --arg c "$(server_folder "$CASA")/" 'map(select(startswith($c)))')
       for i in $(seq 1 30); do [ "$(locations "Casa - Film")" = "$casa_films" ] && break; sleep 2; done
@@ -275,8 +288,8 @@ for case in $CASES; do
       to_05 Automatic half
       echo "Film: $(locations Film), Serie: $(locations Serie)"
       to_06
-      check "the run starts again from the addition of the paths, without the error of 0.5" "Automatic None" "$(migration | jq -r '"\(.Mode // "Automatic") \(.Error // "None")"')"
       wait_run
+      check "the run starts again without the error of 0.5 and ends with no choice" "1 0" "$(by_itself)"
       verify
       ;;
   esac
