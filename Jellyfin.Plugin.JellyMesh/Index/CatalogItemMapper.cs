@@ -12,6 +12,9 @@ public static class CatalogItemMapper
 {
     private const string HdrRange = "HDR";
     private const string SdrRange = "SDR";
+    private const string AudioStream = "Audio";
+    private const string MusicBrainzRecording = "MusicBrainzRecording";
+    private const string MusicBrainzTrack = "MusicBrainzTrack";
 
     /// <summary>
     /// Gets the films, music videos and episodes of a server. An episode takes title, year and IDs from its series, because Jellyfin
@@ -80,6 +83,51 @@ public static class CatalogItemMapper
     }
 
     /// <summary>
+    /// Gets the music tracks of a server, as <see cref="TrackDedup"/> compares them (row 453).
+    /// </summary>
+    /// <param name="catalog">The catalog of the server.</param>
+    /// <returns>The tracks.</returns>
+    public static IReadOnlyList<TrackItem> ToTrackItems(ServerCatalog catalog)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+
+        var serverId = catalog.ServerId.ToString("N");
+        return catalog.Items
+            .Where(item => item.Kind == IndexedItemKind.Audio)
+            .Select(item => new TrackItem
+            {
+                ServerId = serverId,
+                ItemId = item.ItemId,
+                Title = item.Name,
+                AlbumArtists = item.AlbumArtists ?? [],
+                Artists = item.Artists ?? [],
+                Album = item.Album,
+                DiscNumber = item.ParentIndexNumber,
+                TrackNumber = item.IndexNumber,
+                RunTimeTicks = item.RunTimeTicks,
+                RecordingId = ProviderId(item, MusicBrainzRecording),
+                TrackId = ProviderId(item, MusicBrainzTrack),
+                Versions = item.Versions.Select(version => new MediaVersion(version.MediaSourceId, AudioQualityOf(version))).ToList()
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// Gets the quality of a track version from its default audio stream, else its first, with the container bitrate when
+    /// the stream has none (D65).
+    /// </summary>
+    /// <param name="version">The version.</param>
+    /// <returns>The quality.</returns>
+    public static SourceQuality AudioQualityOf(IndexedVersion version)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+
+        var audio = version.Streams.Where(stream => string.Equals(stream.Type, AudioStream, StringComparison.OrdinalIgnoreCase)).ToList();
+        var stream = audio.FirstOrDefault(stream => stream.IsDefault) ?? audio.FirstOrDefault();
+        return SourceQuality.Audio(stream?.Codec, stream?.BitDepth, stream?.SampleRate, stream?.BitRate ?? version.ContainerBitRate);
+    }
+
+    /// <summary>
     /// Gets the quality of a version, as the dedup compares it.
     /// </summary>
     /// <param name="version">The version.</param>
@@ -100,4 +148,7 @@ public static class CatalogItemMapper
     private static IReadOnlyList<string> ArtistsOf(IReadOnlyList<string> artists) => artists.Any(RemoteName.MayBeCut) ? [] : artists;
 
     private static MediaVersion ToMediaVersion(IndexedVersion version) => new(version.MediaSourceId, QualityOf(version));
+
+    private static string? ProviderId(IndexedItem item, string name) =>
+        item.ProviderIds.FirstOrDefault(entry => string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
 }
