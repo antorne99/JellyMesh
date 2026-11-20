@@ -20,8 +20,15 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - JellyMesh 0.5.0.0 and 0.5.0.1 stopped Jellyfin 12.1, 12.2 and 12.3 from starting; 0.5.0.2 starts on every Jellyfin from 12.1 on.
-  - If your server stopped, start Jellyfin again: it turns JellyMesh off by itself and starts. Then install 0.5.0.2 from the catalog.
-  - Downloading a film or an episode from another server now gives the video itself, as playing it does, instead of a small text file with an internal link; a download still needs the user's download permission.
+  - JellyMesh keeps its settings and state in one database file, jellymesh.db, in its data folder; at the first start the data of 0.5 or 0.4 moves into it, saved logins included, and the old files are kept in the folder migrated-0.5 for 30 days.
+  - Each night JellyMesh copies its database and keeps the last 2 copies; a damaged database starts again from the last copy, and the plugin page shows the date of that copy.
+  - A database written by a newer JellyMesh, or one that cannot be opened, is left as it is: sync and remote playback stop, and the plugin page says why and offers Try again.
+  - The settings are saved only through the plugin page, and Jellyfin no longer writes a configuration file for JellyMesh.
+  - Each server has one Edit form for its name, URL, login, libraries and library mode, which checks the server and lists what the change does before saving.
+  - Each library imported from a server gets its own folder; after the upgrade a banner moves your libraries to the new folders, automatically or by hand, and a choice made in 0.5 is kept.
+  - Each server has a library mode: one library per type, one library per remote library, or none; servers with automatic libraries in 0.5 keep them, by type.
+  - JellyMesh adopts a library you made that has exactly the folders and type it would give one, instead of making a second library.
+  - A new option makes one library per type with the folders of every server.
+  - A library that disappears from a server that answers is no longer imported after two syncs, and the plugin page says so.
 
-  Not verified: Jellyfin 12.2, installs outside Docker such as Windows and macOS, and the install from the catalog after the server stopped, checked by copying the plugin into place.
+  Not verified: Jellyfin 12.2 and 12.3, installs outside Docker such as Windows and macOS, and going back to 0.5 by hand after the folder migration.
