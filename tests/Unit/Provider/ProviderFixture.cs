@@ -103,11 +103,14 @@ internal sealed class ProviderFixture
     }
 
     /// <summary>Makes a film library with these paths the only one on the server.</summary>
-    public void WithLibrary(Guid id, params string[] locations)
+    public void WithLibrary(Guid id, params string[] locations) => WithTypedLibrary(id, CollectionTypeOptions.movies, locations);
+
+    /// <summary>Makes a library of a type, null for none, with these paths the only one on the server.</summary>
+    public void WithTypedLibrary(Guid id, CollectionTypeOptions? type, params string[] locations)
     {
         Library.Setup(manager => manager.GetVirtualFolders()).Returns(
         [
-            new VirtualFolderInfo { Name = "Film", ItemId = id.ToString(), CollectionType = CollectionTypeOptions.movies, Locations = locations }
+            new VirtualFolderInfo { Name = "Library", ItemId = id.ToString(), CollectionType = type, Locations = locations }
         ]);
     }
 

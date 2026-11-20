@@ -160,16 +160,95 @@ public class ProviderCatalogTests
         Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, photo));
     }
 
-    [Fact]
-    public void A_track_and_its_album_are_found_in_a_shared_library()
+    [Theory]
+    [InlineData(CollectionTypeOptions.music, true)]
+    [InlineData(CollectionTypeOptions.movies, false)]
+    [InlineData(CollectionTypeOptions.mixed, false)]
+    [InlineData(null, false)]
+    public void A_track_and_its_album_are_found_only_in_a_shared_library_that_gives_tracks(CollectionTypeOptions? type, bool found)
     {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/musica");
         var track = Guid.NewGuid();
         var album = Guid.NewGuid();
         _fixture.AddItem(track, new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/musica/a/1.flac" }, ProviderFixture.SharedLibrary);
         _fixture.AddItem(album, new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Path = "/media/musica/a" }, ProviderFixture.SharedLibrary);
 
-        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, track));
-        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, album));
+        Assert.Equal(found, _fixture.Catalog.FindVisible(_fixture.PeerCaller, track) is not null);
+        Assert.Equal(found, _fixture.Catalog.FindVisible(_fixture.PeerCaller, album) is not null);
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.movies)]
+    [InlineData(CollectionTypeOptions.mixed)]
+    [InlineData(null)]
+    public void A_film_or_mixed_library_gives_a_peer_no_track_book_or_home_video(CollectionTypeOptions? type)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/misti");
+        BaseItem[] items =
+        [
+            new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/misti/1.flac" },
+            new Book { Path = "/media/misti/a.epub" },
+            new AudioBook { Path = "/media/misti/b.m4b" },
+            new Video { Path = "/media/misti/gita.mkv" },
+            new MusicVideo { Path = "/media/misti/clip.mkv" },
+            new Folder { Path = "/media/misti/Gita" }
+        ];
+        foreach (var item in items)
+        {
+            _fixture.AddItem(Guid.NewGuid(), item, ProviderFixture.SharedLibrary);
+        }
+
+        Assert.All(items, item => Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, item.Id)));
+        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, ProviderFixture.SharedItem));
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.music, RemoteItemType.Movie)]
+    [InlineData(CollectionTypeOptions.movies, RemoteItemType.Audio)]
+    [InlineData(CollectionTypeOptions.movies, RemoteItemType.Series)]
+    [InlineData(CollectionTypeOptions.mixed, RemoteItemType.Book)]
+    [InlineData(null, RemoteItemType.Video)]
+    [InlineData(CollectionTypeOptions.tvshows, RemoteItemType.Movie)]
+    public void A_page_of_a_type_the_library_does_not_give_reads_as_empty(CollectionTypeOptions? libraryType, RemoteItemType type)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, libraryType, "/media/film");
+
+        var withRoot = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, type, 0, 10);
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+        var withoutRoot = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, type, 0, 10);
+
+        Assert.Empty(withRoot.Items);
+        Assert.Empty(withoutRoot.Items);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_page_of_a_library_no_longer_on_the_server_reads_as_empty_without_a_federated_folder()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+
+        var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.PrivateLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Empty(page.Items);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.music, true)]
+    [InlineData(CollectionTypeOptions.mixed, false)]
+    public void A_lookup_of_tracks_gives_only_those_of_a_library_that_gives_tracks(CollectionTypeOptions? type, bool given)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/musica");
+        var track = Guid.NewGuid();
+        _fixture.AddItem(track, new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/musica/a/1.flac" }, ProviderFixture.SharedLibrary);
+        IReadOnlyList<BaseItem>? sent = null;
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((items, _, _, _, _) => sent = items)
+            .Returns([]);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [track], RemoteItemType.Audio);
+
+        Assert.Equal(given ? [track] : [], sent!.Select(item => item.Id));
     }
 
     [Fact]
@@ -286,7 +365,7 @@ public class ProviderCatalogTests
     public void A_page_of_a_library_above_the_federated_folder_leaves_out_the_folder_itself()
     {
         _fixture.Store.Configuration.FederatedFolderPath = "/media/federata";
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media");
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, "/media");
         var root = _fixture.WithFolder("/media/federata");
         _fixture.Library.Setup(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>())).Returns([]);
         var seen = CaptureQuery();
@@ -679,15 +758,16 @@ public class ProviderControllerTests
     }
 
     [Theory]
-    [InlineData(RemoteItemType.Audio, BaseItemKind.Audio)]
-    [InlineData(RemoteItemType.MusicVideo, BaseItemKind.MusicVideo)]
-    [InlineData(RemoteItemType.Video, BaseItemKind.Video)]
-    [InlineData(RemoteItemType.PhotoAlbum, BaseItemKind.PhotoAlbum)]
-    [InlineData(RemoteItemType.Folder, BaseItemKind.Folder)]
-    [InlineData(RemoteItemType.Book, BaseItemKind.Book)]
-    [InlineData(RemoteItemType.AudioBook, BaseItemKind.AudioBook)]
-    public async Task A_page_of_a_new_type_reads_that_type(RemoteItemType type, BaseItemKind kind)
+    [InlineData(RemoteItemType.Audio, BaseItemKind.Audio, CollectionTypeOptions.music)]
+    [InlineData(RemoteItemType.MusicVideo, BaseItemKind.MusicVideo, CollectionTypeOptions.musicvideos)]
+    [InlineData(RemoteItemType.Video, BaseItemKind.Video, CollectionTypeOptions.homevideos)]
+    [InlineData(RemoteItemType.PhotoAlbum, BaseItemKind.PhotoAlbum, CollectionTypeOptions.homevideos)]
+    [InlineData(RemoteItemType.Folder, BaseItemKind.Folder, CollectionTypeOptions.homevideos)]
+    [InlineData(RemoteItemType.Book, BaseItemKind.Book, CollectionTypeOptions.books)]
+    [InlineData(RemoteItemType.AudioBook, BaseItemKind.AudioBook, CollectionTypeOptions.books)]
+    public async Task A_page_of_a_new_type_reads_that_type(RemoteItemType type, BaseItemKind kind, CollectionTypeOptions library)
     {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, library, "/media/film");
         InternalItemsQuery? seen = null;
         _fixture.Library.Setup(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()))
             .Callback<InternalItemsQuery>(query => seen = query)

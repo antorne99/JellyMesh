@@ -55,12 +55,14 @@ public static class ProviderLibraryTypes
     public static bool Reads(BaseItemKind kind) => TypeOf(kind) is { } type && Reads(type);
 
     /// <summary>
-    /// Tells whether items of a kind are kept from peers: a type the consumer reads that no library gives yet, the
-    /// photos until F60. Kinds it never reads, such as an album, are not: they reach a peer as images.
+    /// Tells whether a library of a type gives a peer an item of a kind: one it reads from it, or the album of the tracks
+    /// it reads, which reaches the peer as a cover. Any other kind, the photos until F60 among them, it never gives.
     /// </summary>
+    /// <param name="type">The library type, null for a library without one.</param>
     /// <param name="kind">The kind of the item.</param>
-    /// <returns>Whether they are.</returns>
-    public static bool IsWithheld(BaseItemKind kind) => TypeOf(kind) is { } type && !Reads(type);
+    /// <returns>Whether it does.</returns>
+    public static bool Gives(CollectionTypeOptions? type, BaseItemKind kind) =>
+        Reads(type, kind == BaseItemKind.MusicAlbum ? BaseItemKind.Audio : kind);
 
     /// <summary>
     /// Gets the kind of item a type is.

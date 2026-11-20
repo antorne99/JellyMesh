@@ -127,46 +127,21 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
-    /// Finds the libraries shared with a peer that give it an item: those whose type it reads that kind of item from.
+    /// Finds the libraries shared with a peer that give it an item: those whose type gives that kind of item
+    /// (<see cref="ProviderLibraryTypes.Gives"/>).
     /// </summary>
     /// <param name="grant">The peer.</param>
     /// <param name="item">The item.</param>
     /// <returns>The libraries.</returns>
-    public IReadOnlyList<string> LibrariesGiving(PeerGrant grant, BaseItem item)
-    {
-        ArgumentNullException.ThrowIfNull(item);
-
-        var shared = SharedLibrariesOf(grant, item);
-        if (shared.Count == 0)
-        {
-            return shared;
-        }
-
-        var kind = item.GetBaseItemKind();
-        var giving = _library.GetVirtualFolders()
-            .Where(folder => Guid.TryParse(folder.ItemId, out _) && ProviderLibraryTypes.Reads(folder.CollectionType, kind))
-            .Select(folder => Guid.Parse(folder.ItemId).ToString("N"))
-            .ToHashSet(StringComparer.Ordinal);
-        return shared.Where(giving.Contains).ToList();
-    }
+    public IReadOnlyList<string> LibrariesGiving(PeerGrant grant, BaseItem item) => LibrariesGiving(grant, item, new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes));
 
     /// <summary>
-    /// Finds an item a peer may reach.
+    /// Finds an item a peer may reach: a real one that a library shared with it gives.
     /// </summary>
     /// <param name="caller">The peer.</param>
     /// <param name="itemId">The item.</param>
     /// <returns>The item, null if it does not exist as far as the peer is concerned.</returns>
-    public BaseItem? FindVisible(PeerCaller caller, Guid itemId)
-    {
-        ArgumentNullException.ThrowIfNull(caller);
-
-        return _library.GetItemById<BaseItem>(itemId, caller.User) is { } item
-            && !IsFederated(item)
-            && !ProviderLibraryTypes.IsWithheld(item.GetBaseItemKind())
-            && SharedLibrariesOf(caller.Grant, item).Count > 0
-                ? item
-                : null;
-    }
+    public BaseItem? FindVisible(PeerCaller caller, Guid itemId) => FindVisible(caller, itemId, new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes));
 
     /// <summary>
     /// Reads one page of a shared library.
@@ -182,7 +157,7 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
 
         // The exclusion is in the query so that the total stays true for the paging of the consumer.
-        if (!ProviderLibraryTypes.Reads(type) || ScopeOf(libraryId) is not { } scope)
+        if (!ProviderLibraryTypes.Reads(type) || !Gives(libraryId, ProviderLibraryTypes.KindOf(type)) || ScopeOf(libraryId) is not { } scope)
         {
             return Empty();
         }
@@ -207,7 +182,7 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
 
         var collections = CollectionsOfFilms(caller);
-        if (collections.Count == 0 || ScopeOf(libraryId) is not { } scope)
+        if (collections.Count == 0 || !Gives(libraryId, BaseItemKind.Movie) || ScopeOf(libraryId) is not { } scope)
         {
             return new ProviderCollectionsResponse([], 0);
         }
@@ -240,12 +215,56 @@ public sealed class ProviderCatalog
         }
 
         var kind = ProviderLibraryTypes.KindOf(type);
+        var types = new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes);
         var items = itemIds
-            .Select(id => FindVisible(caller, id))
+            .Select(id => FindVisible(caller, id, types))
             .OfType<BaseItem>()
             .Where(item => item.GetBaseItemKind() == kind)
             .ToList();
         return ToResponse(caller, items, items.Count);
+    }
+
+    // The type of each library of this server, by its identifier.
+    private Dictionary<string, CollectionTypeOptions?> LibraryTypes() => _library.GetVirtualFolders()
+        .Where(folder => Guid.TryParse(folder.ItemId, out _))
+        .GroupBy(folder => Guid.Parse(folder.ItemId).ToString("N"), StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => group.First().CollectionType, StringComparer.Ordinal);
+
+    // Whether a library of this server gives items of a kind; a library no longer on it gives none.
+    private bool Gives(Guid libraryId, BaseItemKind kind)
+    {
+        if (LibraryTypes().TryGetValue(libraryId.ToString("N"), out var type))
+        {
+            return ProviderLibraryTypes.Gives(type, kind);
+        }
+
+        _logger.LogDebug("Library {LibraryId} is no longer on this server, so a page of it reads as empty", libraryId);
+        return false;
+    }
+
+    private IReadOnlyList<string> LibrariesGiving(PeerGrant grant, BaseItem item, Lazy<Dictionary<string, CollectionTypeOptions?>> types)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        var shared = SharedLibrariesOf(grant, item);
+        if (shared.Count == 0)
+        {
+            return shared;
+        }
+
+        var kind = item.GetBaseItemKind();
+        return shared.Where(id => types.Value.TryGetValue(id, out var type) && ProviderLibraryTypes.Gives(type, kind)).ToList();
+    }
+
+    private BaseItem? FindVisible(PeerCaller caller, Guid itemId, Lazy<Dictionary<string, CollectionTypeOptions?>> types)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        return _library.GetItemById<BaseItem>(itemId, caller.User) is { } item
+            && !IsFederated(item)
+            && LibrariesGiving(caller.Grant, item, types).Count > 0
+                ? item
+                : null;
     }
 
     // A type no library gives reads as empty rather than refused, so that the read of the rest of the library goes on.

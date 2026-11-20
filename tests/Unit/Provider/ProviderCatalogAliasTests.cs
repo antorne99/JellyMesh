@@ -70,7 +70,7 @@ public sealed class ProviderCatalogAliasTests : IDisposable
     [Fact]
     public void A_page_of_a_library_with_a_linked_federated_path_reads_only_under_its_real_path()
     {
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, Real, Linked);
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Real, Linked);
         var real = _fixture.WithFolder(Real);
         var seen = CaptureQuery();
 
@@ -83,7 +83,7 @@ public sealed class ProviderCatalogAliasTests : IDisposable
     [Fact]
     public void A_page_of_a_library_above_the_federated_folder_through_a_link_leaves_out_the_folder_as_jellyfin_names_it()
     {
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, Path.Combine(_folder, "alias"));
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Path.Combine(_folder, "alias"));
         var federated = _fixture.WithFolder(Path.Combine(_folder, "alias", "federata"));
         var stubSeries = Guid.NewGuid();
         _fixture.Library.Setup(manager => manager.GetItemIds(It.Is<InternalItemsQuery>(query => query.AncestorIds.SequenceEqual(new[] { federated.Id }))))
@@ -116,7 +116,7 @@ public sealed class ProviderCatalogAliasTests : IDisposable
         var root = Path.Combine(_folder, "lib", "federata");
         Directory.CreateSymbolicLink(root, Path.Combine(_folder, "outside", "fed"));
         _fixture.Store.Configuration.FederatedFolderPath = root;
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, Path.Combine(_folder, "lib"));
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Path.Combine(_folder, "lib"));
         var federated = _fixture.WithFolder(root);
         _fixture.Library.Setup(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>())).Returns([]);
         var seen = CaptureQuery();

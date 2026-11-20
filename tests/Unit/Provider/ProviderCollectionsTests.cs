@@ -94,6 +94,21 @@ public class ProviderCollectionsTests
         Assert.True(_filmQuery.EnableTotalRecordCount);
     }
 
+    [Theory]
+    [InlineData(CollectionTypeOptions.tvshows)]
+    [InlineData(CollectionTypeOptions.music)]
+    [InlineData(CollectionTypeOptions.homevideos)]
+    public async Task A_library_that_gives_no_films_has_no_collections(CollectionTypeOptions type)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/film");
+        WithBoxSets(BoxSet("Saga", null, ProviderFixture.SharedItem));
+
+        var page = await ReadAsync();
+
+        Assert.Empty(page.Items);
+        Assert.Null(_filmQuery);
+    }
+
     [Fact]
     public async Task A_library_with_federated_paths_is_read_only_under_its_real_paths()
     {
