@@ -21,5 +21,8 @@ public enum StubKind
     HomeVideo,
 
     /// <summary>An ebook, PDF or comic: a placeholder with the real extension instead of a <c>.strm</c> (D47).</summary>
-    Book
+    Book,
+
+    /// <summary>One file of an audiobook, a <c>.strm</c> with no <c>.nfo</c>.</summary>
+    AudioBook
 }
