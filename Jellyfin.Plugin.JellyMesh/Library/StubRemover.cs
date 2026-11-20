@@ -111,7 +111,7 @@ public sealed class StubRemover
         }
 
         // A folder left empty stays on a failure: its stub is gone either way.
-        foreach (var folder in stubs.Where(stub => stub.Kind == StubKind.HomeVideo && gone.Contains(stub.Id)).Select(stub => Path.GetDirectoryName(stub.RelativePath)!).Distinct(StringComparer.Ordinal))
+        foreach (var folder in stubs.Where(stub => stub.Kind is StubKind.HomeVideo or StubKind.Photo && gone.Contains(stub.Id)).Select(stub => Path.GetDirectoryName(stub.RelativePath)!).Distinct(StringComparer.Ordinal))
         {
             Try(failures, () => DeleteEmptyFolders(root, folder));
         }
@@ -248,9 +248,9 @@ public sealed class StubRemover
         {
             DeleteFolder(root, Path.GetDirectoryName(stub.RelativePath)!);
         }
-        else if (stub.Kind == StubKind.Track)
+        else if (stub.Kind is StubKind.Track or StubKind.Photo)
         {
-            // Track names are the remote's, so files sharing the stem, the album cover included, are not the track's.
+            // Track and photo names are the remote's, so files sharing the stem, the album cover included, are not theirs.
             File.Delete(strm);
         }
         else
@@ -294,15 +294,21 @@ public sealed class StubRemover
             && !name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
             && !name.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase);
 
-    // Deletes a home video folder and the parents it leaves empty, with their rows, up to the type folder, which stays.
+    // Deletes a home video or photo folder and the parents it leaves empty but for an album cover, with their rows, up to
+    // the type folder, which stays.
     private void DeleteEmptyFolders(string root, string relative)
     {
         while (relative.Split(Path.DirectorySeparatorChar).Length > TypeFolderDepth)
         {
             var folder = FederatedPaths.Resolve(root, relative);
-            if (!Directory.Exists(folder) || Directory.EnumerateFileSystemEntries(folder).Any())
+            if (!Directory.Exists(folder) || Directory.EnumerateFileSystemEntries(folder).Any(entry => !IsAlbumCover(entry)))
             {
                 return;
+            }
+
+            foreach (var cover in Directory.EnumerateFiles(folder).ToList())
+            {
+                File.Delete(cover);
             }
 
             DeleteRow(folder, true);
@@ -310,6 +316,12 @@ public sealed class StubRemover
             relative = Path.GetDirectoryName(relative)!;
         }
     }
+
+    // Whether an entry is the folder.* cover written for the album of the photos in its folder.
+    private static bool IsAlbumCover(string entry)
+        => File.Exists(entry)
+            && string.Equals(Path.GetFileNameWithoutExtension(entry), "folder", StringComparison.Ordinal)
+            && LibraryMaterializer.ImageExtensions.Contains(Path.GetExtension(entry), StringComparer.Ordinal);
 
     private static void DeleteFolder(string root, string relative)
     {

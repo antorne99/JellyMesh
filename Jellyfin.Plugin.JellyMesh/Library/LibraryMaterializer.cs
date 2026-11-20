@@ -103,6 +103,9 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
     /// <inheritdoc />
     public MaterializationReport? LastReport => _lastReport;
 
+    /// <summary>Gets the extensions the images of the plugin are written with.</summary>
+    internal static IReadOnlyList<string> ImageExtensions => _imageExtensions;
+
     /// <inheritdoc />
     public Task<MaterializationReport> MaterializeAsync(CancellationToken cancellationToken) => MaterializeAsync(false, cancellationToken);
 
