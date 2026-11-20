@@ -56,6 +56,7 @@ public class FederatedLayoutTests
         Assert.Equal(TypeFolder.Music, TypeFolder.Of(StubKind.Track));
         Assert.Equal(TypeFolder.MusicVideos, TypeFolder.Of(StubKind.MusicVideo));
         Assert.Equal(TypeFolder.HomeVideos, TypeFolder.Of(StubKind.HomeVideo));
+        Assert.Equal(TypeFolder.HomeVideos, TypeFolder.Of(StubKind.Photo));
         Assert.Equal(TypeFolder.Movies, TypeFolder.Of(ContentKind.Movie));
         Assert.Equal(TypeFolder.Series, TypeFolder.Of(ContentKind.Episode));
     }
