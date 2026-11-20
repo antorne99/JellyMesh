@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Integration 10 of the 0.6 spec (F38): a remote library absent from two consecutive correct answers leaves the imported
 # ones, its folder empties and the library the plugin made for it is deleted after the stubs; an adopted library only loses
-# its paths [D22]; with the remote off nothing is removed (§10 row 436). A stock remote with a film, a series and an empty library.
+# its paths [D22]; with the remote off nothing is removed (§10 row 436). The deleted library leaves the views of a user with
+# all folders. A stock remote with a film, a series and an empty library.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jellymesh-probe-f38] [PORT=19010] [KEEP=1] vanished.sh
 set -euo pipefail
 PREFIX=${PREFIX:-jellymesh-probe-f38}
@@ -33,6 +34,8 @@ vanished() { own | jq -c '.Vanished | sort'; }
 imported() { get local /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" '.Servers[] | select(.Id == $id) | .ImportedLibraryIds | sort'; }
 folder() { get local /Library/VirtualFolders | jq -c --arg n "$1" '.[] | select(.Name == $n)'; }
 exists() { [ -n "$(folder "$1")" ] && echo yes || echo no; }
+in_views() { get local "/UserViews?userId=$(user_id local admin)" | jq -r --arg n "$1" 'if any(.Items[]; .Name == $n) then "yes" else "no" end'; }
+in_media_folders() { get local /Library/MediaFolders | jq -r --arg n "$1" 'if any(.Items[]; .Name == $n) then "yes" else "no" end'; }
 locations() { folder "$1" | jq -c '.Locations | sort'; }
 remote_id() { get remote /Library/VirtualFolders | jq -r --arg n "$1" '.[] | select(.Name == $n) | .ItemId'; }
 on_disk() { docker exec "$PREFIX-local" sh -c '[ -d "$1" ] && echo yes || echo no' sh "$FOLDER/$1"; }
@@ -128,12 +131,15 @@ check "its titles stay" "$SERIE_STRMS" "$(strms "$SERIE_ID")"
 echo "--- the second absence in a row drops it, empties its folder and deletes the library the plugin made [row 436]"
 sync_now local
 for i in $(seq 1 120); do
-  [ "$(exists 'Casa - Serie')" = no ] && [ "$(on_disk "$SERIE_ID")" = no ] && break
+  [ "$(exists 'Casa - Serie')" = no ] && [ "$(on_disk "$SERIE_ID")" = no ] && [ "$(in_views 'Casa - Serie')" = no ] \
+    && [ "$(in_media_folders 'Casa - Serie')" = no ] && break
   sleep 1
 done
 check "only the film library stays imported" "[\"$FILM_ID\"]" "$(imported)"
 check "the stubs of the series are gone" 0 "$(strms "$SERIE_ID")"
 check "the library the plugin made is deleted" no "$(exists 'Casa - Serie')"
+check "it leaves the views of a user with all folders" no "$(in_views 'Casa - Serie')"
+check "it leaves the media folders" no "$(in_media_folders 'Casa - Serie')"
 check "the folder of the remote library is deleted" no "$(on_disk "$SERIE_ID")"
 check "the page warns" '["Serie"]' "$(vanished)"
 check "the film titles stay" yes "$([ "$(strms "$FILM_ID")" -gt 0 ] && echo yes || echo no)"
