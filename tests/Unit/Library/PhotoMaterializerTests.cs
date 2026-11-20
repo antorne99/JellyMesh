@@ -60,7 +60,8 @@ public sealed class PhotoMaterializerTests : IDisposable
 
         Assert.Equal(["IMG_0001.jpg", "folder.jpg"], Directory.GetFiles(AlbumPath(a)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
         Assert.Equal(PhotoPlaceholders.For("jpg"), await File.ReadAllBytesAsync(AlbumPath(a, "IMG_0001.jpg")));
-        Assert.Equal(["al1/Primary/0"], _fixture.Sync.Client.ImageReads);
+        Assert.Equal(["al1", "p1"], _fixture.Sync.Client.ThumbnailReads.Order(StringComparer.Ordinal));
+        Assert.Empty(_fixture.Sync.Client.ImageReads);
         Assert.Equal(StubKind.Photo, Assert.Single(_fixture.Registry.State.Stubs).Kind);
         _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
     }
@@ -79,7 +80,21 @@ public sealed class PhotoMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Equal(AlbumPath(a, "folder.jpg"), album.GetImageInfo(ImageType.Primary, 0)?.Path);
-        Assert.Equal(2, _fixture.Sync.Client.ImageReads.Count);
+        Assert.Equal(2, _fixture.Sync.Client.ThumbnailReads.Count(id => id == "al1"));
+    }
+
+    // The cover of an album is often a photo of the camera: it is read re-encoded, and refused with an EXIF segment (row 470).
+    [Fact]
+    public async Task AnAlbumCoverWithExifNeverReachesTheDisk()
+    {
+        var a = await AddPhotosAsync();
+        _fixture.Sync.Client.Thumbnail = WithExif();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["IMG_0001.jpg"], Directory.GetFiles(AlbumPath(a)).Select(Path.GetFileName));
+        Assert.Contains("al1", _fixture.Sync.Client.ThumbnailReads);
+        Assert.Empty(_fixture.Sync.Client.ImageReads);
     }
 
     [Fact]
@@ -93,6 +108,8 @@ public sealed class PhotoMaterializerTests : IDisposable
 
         Assert.Equal(PhotoPlaceholders.For("jpg"), await File.ReadAllBytesAsync(AlbumPath(a, "IMG_0001.jpg")));
     }
+
+    private int PhotoReads() => _fixture.Sync.Client.ThumbnailReads.Count(id => id == "p1");
 
     private string ThumbnailOfTheStub() => PhotoThumbnails.PathOf(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).Id)!;
 
@@ -119,8 +136,8 @@ public sealed class PhotoMaterializerTests : IDisposable
         var thumbnail = ThumbnailOfTheStub();
         Assert.Equal(Path.Combine(_fixture.Root, ".jellymesh-thumbs", Assert.Single(_fixture.Registry.State.Stubs).Id + ".jpg"), thumbnail);
         Assert.Equal(_fixture.Sync.Client.Thumbnail, await File.ReadAllBytesAsync(thumbnail));
-        Assert.Equal(["p1"], _fixture.Sync.Client.ThumbnailReads);
-        Assert.Equal(["al1/Primary/0"], _fixture.Sync.Client.ImageReads);
+        Assert.Equal(["al1", "p1"], _fixture.Sync.Client.ThumbnailReads.Order(StringComparer.Ordinal));
+        Assert.Empty(_fixture.Sync.Client.ImageReads);
         _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
     }
 
@@ -134,7 +151,7 @@ public sealed class PhotoMaterializerTests : IDisposable
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         await _fixture.Materializer.MaterializeAsync(true, CancellationToken.None);
 
-        Assert.Single(_fixture.Sync.Client.ThumbnailReads);
+        Assert.Equal(1, PhotoReads());
     }
 
     [Fact]
@@ -145,8 +162,9 @@ public sealed class PhotoMaterializerTests : IDisposable
 
         await _fixture.SyncAndMaterializeAsync();
 
+        // The thumbnail and the album cover, read the same way.
         Assert.False(File.Exists(ThumbnailOfTheStub()));
-        Assert.Equal(1, _fixture.Materializer.LastReport?.ImagesPending);
+        Assert.Equal(2, _fixture.Materializer.LastReport?.ImagesPending);
         Assert.DoesNotContain(_fixture.Files, file => file.EndsWith(".tmp", StringComparison.Ordinal));
 
         _fixture.Sync.Client.Thumbnail = PhotoPlaceholders.For("jpg");
@@ -178,7 +196,7 @@ public sealed class PhotoMaterializerTests : IDisposable
         var photo = new Photo { Id = Guid.NewGuid(), Path = AlbumPath(a, "IMG_0001.jpg"), Name = "IMG_0001" };
         _fixture.Library.Setup(library => library.FindByPath(photo.Path, false)).Returns(photo);
         await _fixture.SyncAndMaterializeAsync();
-        Assert.Single(_fixture.Sync.Client.ThumbnailReads);
+        Assert.Equal(1, PhotoReads());
 
         _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo() with
         {
@@ -186,7 +204,7 @@ public sealed class PhotoMaterializerTests : IDisposable
         };
         await _fixture.SyncAndMaterializeAsync();
 
-        Assert.Equal(2, _fixture.Sync.Client.ThumbnailReads.Count);
+        Assert.Equal(2, PhotoReads());
         Assert.Equal(ThumbnailOfTheStub(), photo.GetImageInfo(ImageType.Primary, 0)?.Path);
     }
 
@@ -219,7 +237,7 @@ public sealed class PhotoMaterializerTests : IDisposable
         await _fixture.SyncAndMaterializeAsync();
         await _fixture.SyncAndMaterializeAsync();
 
-        Assert.Equal(3, _fixture.Sync.Client.ThumbnailReads.Count);
+        Assert.Equal(3, PhotoReads());
         Assert.Equal(WithSecondApp0(), await File.ReadAllBytesAsync(ThumbnailOfTheStub()));
     }
 
@@ -232,7 +250,7 @@ public sealed class PhotoMaterializerTests : IDisposable
         _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo() with { Overview = "Another" };
         await _fixture.SyncAndMaterializeAsync();
 
-        Assert.Single(_fixture.Sync.Client.ThumbnailReads);
+        Assert.Equal(1, PhotoReads());
     }
 
     [Fact]

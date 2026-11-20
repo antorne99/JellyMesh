@@ -74,7 +74,12 @@ public static partial class StubPlanner
         var imageTag = string.Empty;
         if (carriesCover && AlbumOf(catalog, serverId, photo) is { } album)
         {
-            AddRemote(images, album, serverId, ImageType.Primary, stem);
+            // The cover of an album is often a camera photo, so it is read like a thumbnail, with no EXIF (row 470).
+            if (TagOf(album, ImageType.Primary) is not null)
+            {
+                images.Add(new StubImage(ImageType.Primary, stem, serverId, album.ItemId, null) { IsPhotoCover = true });
+            }
+
             imageTag = ImageTagOf(album, images);
         }
 

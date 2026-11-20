@@ -106,7 +106,7 @@ public class PhotoStubPlannerTests
         var works = Photos(Plan(items: [Album(), Photo("p1"), Photo("p2", "IMG_0002")]));
 
         var image = Assert.Single(works.SelectMany(work => work.Images));
-        Assert.Equal(new StubImage(ImageType.Primary, In("Trips", "folder"), _serverA, "a1", null), image);
+        Assert.Equal(new StubImage(ImageType.Primary, In("Trips", "folder"), _serverA, "a1", null) { IsPhotoCover = true }, image);
         Assert.Single(works, work => work.ImageTag.Length > 0);
     }
 

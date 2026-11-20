@@ -744,7 +744,9 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
 
         var read = await _servers.RunWithSessionAsync(
             serverId,
-            (endpoint, session, token) => _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
+            (endpoint, session, token) => image.IsPhotoCover
+                ? _client.GetPhotoThumbnailAsync(endpoint, session, itemId, token)
+                : _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
             cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
@@ -754,6 +756,12 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
                 run.UnreachableServers.TryAdd(serverId, true);
             }
 
+            return null;
+        }
+
+        if (image.IsPhotoCover && !PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span))
+        {
+            _logger.LogWarning("An album cover from a remote was not a whole JPEG without EXIF and was not saved");
             return null;
         }
 
