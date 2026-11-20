@@ -74,6 +74,9 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     public VersionGroup? FindGroupOfLocal(Guid itemId) => _lookup.GroupsByLocal.TryGetValue(itemId, out var group) ? group : null;
 
     /// <inheritdoc />
+    public IReadOnlyList<StubEntry> FindCopies(string identityKey) => _lookup.TracksByKey.TryGetValue(identityKey, out var copies) ? copies : [];
+
+    /// <inheritdoc />
     public bool HasTitlesOf(Guid serverId)
     {
         var lookup = _lookup;
@@ -422,6 +425,10 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
 
             GroupsByStub = byStub.ToFrozenDictionary(StringComparer.Ordinal);
             GroupsByLocal = byLocal.ToFrozenDictionary();
+            TracksByKey = state.Stubs
+                .Where(stub => stub.Kind == StubKind.Track && !string.IsNullOrEmpty(stub.IdentityKey))
+                .GroupBy(stub => stub.IdentityKey, StringComparer.Ordinal)
+                .ToFrozenDictionary(group => group.Key, group => (IReadOnlyList<StubEntry>)group.ToList(), StringComparer.Ordinal);
         }
 
         public StubState State { get; }
@@ -436,5 +443,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         public FrozenDictionary<string, VersionGroup> GroupsByStub { get; }
 
         public FrozenDictionary<Guid, VersionGroup> GroupsByLocal { get; }
+
+        public FrozenDictionary<string, IReadOnlyList<StubEntry>> TracksByKey { get; }
     }
 }
