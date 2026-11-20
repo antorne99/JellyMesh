@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Integration 16 of the 0.6-0.7 spec (F62, row 460): a JellyMesh peer reads music, music videos, home videos and books
 # from a JellyMesh provider. Stubs, photos and libraries of federated paths only stay out; the audio, lyrics and file
-# routes keep the share and the stream limit; the change feed carries a new track.
+# routes keep the share and the stream limit; the change feed carries a new track and an album as its tracks. A track of a
+# library without a type, which gives films and series only, stays out.
 #   remote  stock, media of remoto-standard: the provider federates its music and books, so it holds stubs of them
 #   local   the provider, media of remoto-jellymesh plus the home videos of remoto-standard and one .lrc
 #   peer    a JellyMesh consumer of local
@@ -84,6 +85,7 @@ echo "--- local: the provider"
 start local "$PREFIX-media:/media"
 for folder in musica libri videomusicali; do docker cp "$MEDIA/remoto-jellymesh/$folder" "$PREFIX-local:/media/$folder"; done
 docker cp "$MEDIA/remoto-standard/videodomestici" "$PREFIX-local:/media/videodomestici"
+docker exec "$PREFIX-local" sh -c "mkdir -p '/media/misti/Brano' && cp '/media/musica/JM Artista/JM Album Senza ID (2024)/01 - Ultima Nota.mp3' '/media/misti/Brano/01 - Brano Misto.mp3'"
 printf '[00:00.00]Prima riga di prova\n[00:02.00]Seconda riga di prova\n' >"$WORK/prima.lrc"
 docker cp "$WORK/prima.lrc" "$PREFIX-local:/media/musica/JM Artista/JM Album Federato (2026)/01 - Prima Traccia.lrc"
 # A track too large for the socket buffers between the host and the container, so that a slow reader holds its stream.
@@ -102,11 +104,14 @@ library local "Miei Libri" books /media/libri "$book_stubs"
 library local "Miei Video musicali" musicvideos /media/videomusicali
 library local "Miei Video domestici" homevideos /media/videodomestici
 library local "Solo federati" music /federata/Film
+library local "Misti" "" /media/misti
 scan local
 sync_now local
 scan local
 
-real_tracks=$(items local Audio real)
+misti_track=$(get local "/Items?Recursive=true&IncludeItemTypes=Audio&Fields=Path" | jq -r '[.Items[] | select((.Path // "") | startswith("/media/misti"))][0].Id // ""')
+check "local indexes the track of the library without a type" true "$([ -n "$misti_track" ] && echo true || echo false)"
+real_tracks=$(items local Audio real | grep -v -x -F "${misti_track:-none}")
 stub_tracks=$(items local Audio stub)
 stub_books=$(items local Book stub)
 real_book=$(get local '/Items?Recursive=true&IncludeItemTypes=Book&Fields=Path' | jq -r '[.Items[] | select((.Path // "") | endswith(".epub") and startswith("/media"))][0].Id')
@@ -118,7 +123,7 @@ check "local has its own photos" true "$([ "$(get local '/Items?Recursive=true&I
 echo "--- what local offers"
 offered=$(get local /JellyMesh/Admin/Peers/Options | jq -c '[.Libraries[] | {Name, CollectionType}] | sort_by(.Name)')
 check "the libraries offered, with their types" \
-  '[{"Name":"Mia Musica","CollectionType":"music"},{"Name":"Miei Libri","CollectionType":"books"},{"Name":"Miei Video domestici","CollectionType":"homevideos"},{"Name":"Miei Video musicali","CollectionType":"musicvideos"}]' \
+  '[{"Name":"Mia Musica","CollectionType":"music"},{"Name":"Miei Libri","CollectionType":"books"},{"Name":"Miei Video domestici","CollectionType":"homevideos"},{"Name":"Miei Video musicali","CollectionType":"musicvideos"},{"Name":"Misti","CollectionType":"mixed"}]' \
   "$offered"
 jm_uid=$(user local jellymesh)
 ids=$(get local /JellyMesh/Admin/Peers/Options | jq -c '[.Libraries[].Id]')
@@ -144,6 +149,9 @@ cp "$WORK/jm-body" "$WORK/jm-videos"
 check "each home video has its parent" 0 "$(jq '[.Items[] | select((.ParentId // "") == "")] | length' "$WORK/jm-videos")"
 check "books" 200 "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Book&parentId=$books")"
 check "only the book of local, sent as its format alone" '[".epub"]' "$(jq -c '[.Items[].Path] | sort' "$WORK/jm-body")"
+misti=$(library_of "Misti")
+check "the library without a type gives no track" '200 0' "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Audio&parentId=$misti") $(jq '.Items | length' "$WORK/jm-body")"
+check "its track is not read by id" '200 0' "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Audio&ids=$misti_track") $(jq '.Items | length' "$WORK/jm-body")"
 check "no path of local reaches the peer" 0 "$(cat "$WORK/jm-tracks" "$WORK/jm-videos" "$WORK/jm-body" | grep -c '/media/\|/federata/')"
 
 echo "--- stock routes, as the peer"
@@ -165,6 +173,14 @@ check "the image of a photo" 404 "$(as_jm GET "/Items/$photo/Images/Primary")"
 check "the file of an album" 404 "$(as_jm GET "/Items/$album/File")"
 check "the cover of an album" 200 "$(as_jm GET "/Items/$album/Images/Primary")"
 check "the cover of a stub album" 404 "$(as_jm GET "/Items/$stub_album/Images/Primary")"
+check "the stream of a track of the library without a type" 404 "$(as_jm GET "/Audio/$misti_track/stream?static=true")"
+check "its lyrics" 404 "$(as_jm GET "/Audio/$misti_track/Lyrics")"
+misti_album=$(get local "/Items?Recursive=true&IncludeItemTypes=MusicAlbum&Fields=Path" | jq -r '[.Items[] | select((.Path // "") | startswith("/media/misti"))][0].Id // ""')
+if [ -n "$misti_album" ]; then
+  check "the album of the library without a type" 404 "$(as_jm GET "/Items/$misti_album/Images/Primary")"
+else
+  echo "info no album in the library without a type"
+fi
 check "the universal audio route" 403 "$(as_jm GET "/Audio/$track/universal?Container=mp3")"
 check "the file of a book" 200 "$(as_jm GET "/Items/$real_book/File")"
 check "the file is the book" "$book_sha" "$(sha "$WORK/jm-body")"
@@ -208,7 +224,7 @@ start peer "$WORK/peer-media:/media"
 install peer
 settings peer '.FederatedFolderPath = "/federata"' >/dev/null
 local_id=$(post peer /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$PORT" '{Name:"Provider",Url:$u,Username:"jellymesh",Password:"jellymesh-test",LibraryMode:"ByType"}')" | jq -r .Id)
-check "the peer is offered the four libraries" 4 "$(check_server peer "$local_id" | jq '.Libraries | length')"
+check "the peer is offered the five libraries" 5 "$(check_server peer "$local_id" | jq '.Libraries | length')"
 import_all peer "$local_id"
 sync_now peer
 scan peer
@@ -243,13 +259,28 @@ sync_now peer
 scan peer
 check "the peer has the new track" "$(($(echo "$real_tracks" | count) + 1))" "$(items peer Audio stub | count)"
 
+echo "--- an album change in the feed"
+as_jm GET /JellyMesh/Provider/Changes >/dev/null
+cursor=$(jq -r .Cursor "$WORK/jm-body")
+album_tracks=$(get local "/Items?ParentId=$album&Recursive=true&IncludeItemTypes=Audio" | jq -r '[.Items[].Id | gsub("-"; "")] | sort | .[]')
+album_item=$(get local "/Items/$album")
+check "the album reads" 200 "$(status)"
+post local "/Items/$album" "$(echo "$album_item" | jq -c '.Overview = "Album modificato dalla prova"')" >/dev/null
+check "the album is edited" 204 "$(status)"
+check "the feed reads" 200 "$(as_jm GET "/JellyMesh/Provider/Changes?cursor=$cursor")"
+echo "feed after the album edit: $(jq -c '[.Changes[] | {Id, Type}]' "$WORK/jm-body")"
+check "the album has tracks" true "$([ "$(echo "$album_tracks" | count)" -gt 0 ] && echo true || echo false)"
+check "every track of the album is in it" "$(echo "$album_tracks" | count)" "$(jq -r '.Changes[] | select(.Type == "Audio") | .Id | gsub("-"; "")' "$WORK/jm-body" | grep -c -x -F -f <(echo "$album_tracks") || true)"
+check "the album itself is not" 0 "$(jq -r '.Changes[].Id | gsub("-"; "")' "$WORK/jm-body" | grep -c -x -F "$(echo "$album" | tr -d -)" || true)"
+check "no track of the library without a type is in it" 0 "$(jq -r '.Changes[].Id | gsub("-"; "")' "$WORK/jm-body" | grep -c -x -F "$(echo "$misti_track" | tr -d -)" || true)"
+
 echo "--- a cleared federated folder leaves no stub to a peer"
 settings local '.FederatedFolderPath = ""' >/dev/null
 check "the folder is cleared" '""' "$(get local /JellyMesh/Admin/Settings | jq -c .FederatedFolderPath)"
 check "a stub track" 404 "$(as_jm GET "/Audio/$stub_track/stream?static=true")"
 check "the file of a stub book" 404 "$(as_jm GET "/Items/$stub_book/File")"
 check "tracks of Mia Musica" 200 "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Audio&parentId=$music&limit=500")"
-check "still only the tracks of local" "$(items local Audio real | tr -d - | paste -sd, -)" "$(jq -r '[.Items[].Id | gsub("-"; "")] | sort | join(",")' "$WORK/jm-body")"
+check "still only the tracks of local" "$(items local Audio real | grep -v -x -F "$misti_track" | tr -d - | paste -sd, -)" "$(jq -r '[.Items[].Id | gsub("-"; "")] | sort | join(",")' "$WORK/jm-body")"
 
 echo "=== finished, failed: $FAILED"
 exit $FAILED
