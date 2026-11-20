@@ -41,4 +41,10 @@ public sealed record FederationView(
     /// Gets the local films and series without IDs whose metadata Jellyfin has not read yet (decision 214, Q244).
     /// </summary>
     public IReadOnlyList<Guid> LocalItemsAwaitingRefresh { get; init; } = [];
+
+    /// <summary>
+    /// Gets one entry per music track, with every remote copy best first (row 453). A track is never local (row 64), and
+    /// its copies are the fallback sources of playback.
+    /// </summary>
+    public IReadOnlyList<ResolvedContent> Tracks { get; init; } = [];
 }
