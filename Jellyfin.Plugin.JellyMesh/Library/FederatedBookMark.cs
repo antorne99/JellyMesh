@@ -19,6 +19,19 @@ public static class FederatedBookMark
     public static bool IsPlaceholder(string? path, IEnumerable<string>? providerIds)
         => HasPlaceholderShape(path) || (providerIds?.Any(key => string.Equals(key, ProviderId, StringComparison.OrdinalIgnoreCase)) ?? false);
 
+    /// <summary>Gives the ids of a book item with the mark of its stub over any the remote had (D62).</summary>
+    /// <param name="ids">The provider ids of the remote book.</param>
+    /// <param name="stubId">The stub.</param>
+    /// <returns>The ids to write.</returns>
+    public static Dictionary<string, string> WithMark(IReadOnlyDictionary<string, string> ids, string stubId)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        return new(ids.Where(pair => !string.Equals(pair.Key, ProviderId, StringComparison.OrdinalIgnoreCase)), StringComparer.Ordinal)
+        {
+            [ProviderId] = stubId
+        };
+    }
+
     // Looks for {server guid}/{library id}/Libri anywhere in the path, since the root of the remote is not known.
     private static bool HasPlaceholderShape(string? path)
     {

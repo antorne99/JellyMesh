@@ -46,6 +46,38 @@ public sealed class StubItemUpdater
         ArgumentNullException.ThrowIfNull(item);
         ArgumentNullException.ThrowIfNull(metadata);
 
+        var writesAll = WriteFields(item, metadata);
+
+        // Not MetadataEdit: on that reason Jellyfin rewrites any .nfo it finds, in its own format, inside the federated
+        // folder, even with its metadata savers off (observed on 12.4).
+        await SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
+
+        if (writesAll)
+        {
+            await _library.UpdatePeopleAsync(item, metadata.People.Select(ToPerson).OfType<PersonInfo>().ToList(), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Writes the fields of a book and its lock, as the update does, for the provider before its first refresh (D62).
+    /// Nothing is saved, and the authors stay with the update.
+    /// </summary>
+    /// <param name="book">The book.</param>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>Whether a field changed.</returns>
+    public static bool WriteBook(Book book, StubMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(book);
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        var before = BookFieldsOf(book);
+        WriteFields(book, metadata);
+        return !string.Equals(before, BookFieldsOf(book), StringComparison.Ordinal);
+    }
+
+    // Writes the fields of an item without saving it, and tells whether its people are the plugin's too.
+    private static bool WriteFields(BaseItem item, StubMetadata metadata)
+    {
         item.Name = metadata.Title ?? item.Name;
         item.ProductionYear = metadata.Year ?? item.ProductionYear;
         item.ProviderIds = ProviderIdsOf(metadata.ProviderIds);
@@ -108,14 +140,7 @@ public sealed class StubItemUpdater
             movie.CollectionName = metadata.CollectionName;
         }
 
-        // Not MetadataEdit: on that reason Jellyfin rewrites any .nfo it finds, in its own format, inside the federated
-        // folder, even with its metadata savers off (observed on 12.4).
-        await SaveAsync(item, ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
-
-        if (writesAll)
-        {
-            await _library.UpdatePeopleAsync(item, metadata.People.Select(ToPerson).OfType<PersonInfo>().ToList(), cancellationToken).ConfigureAwait(false);
-        }
+        return writesAll;
     }
 
     // Keys that differ only by case keep the first in ordinal order, so that the same ids always give the same item.
@@ -266,6 +291,27 @@ public sealed class StubItemUpdater
         audio.ParentIndexNumber,
         audio.Genres,
         audio.IsLocked
+    });
+
+    private static string BookFieldsOf(Book book) => JsonSerializer.Serialize(new
+    {
+        book.Name,
+        book.ProductionYear,
+        ProviderIds = book.ProviderIds.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).ToList(),
+        book.IsLocked,
+        book.LockedFields,
+        book.OriginalTitle,
+        book.Overview,
+        book.Tagline,
+        book.Genres,
+        book.Studios,
+        book.Tags,
+        book.OfficialRating,
+        book.CommunityRating,
+        book.CriticRating,
+        book.PremiereDate,
+        book.EndDate,
+        book.SeriesName
     });
 
     private static PersonInfo? ToPerson(IndexedPerson person)

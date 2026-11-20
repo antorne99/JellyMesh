@@ -129,6 +129,20 @@ public sealed record StubMetadata
     }
 
     /// <summary>
+    /// Builds the metadata of a book: every field, with the lock only with protection, and the mark of its stub (D62).
+    /// </summary>
+    /// <param name="item">The book.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <param name="stubId">The stub of the book.</param>
+    /// <returns>The metadata.</returns>
+    public static StubMetadata Book(IndexedItem item, bool isProtected, string stubId)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        return From(item, isProtected) with { ProviderIds = FederatedBookMark.WithMark(item.ProviderIds, stubId) };
+    }
+
+    /// <summary>
     /// Builds the metadata of a catalog entry.
     /// </summary>
     /// <param name="item">The entry.</param>

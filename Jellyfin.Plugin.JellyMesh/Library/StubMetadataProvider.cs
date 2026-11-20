@@ -21,6 +21,7 @@ public abstract class StubMetadataProvider :
     ICustomMetadataProvider<Audio>,
     ICustomMetadataProvider<MusicVideo>,
     ICustomMetadataProvider<Video>,
+    ICustomMetadataProvider<Book>,
     IHasOrder,
     IForcedProvider,
     IPreRefreshProvider
@@ -73,6 +74,10 @@ public abstract class StubMetadataProvider :
     public Task<ItemUpdateType> FetchAsync(Video item, MetadataRefreshOptions options, CancellationToken cancellationToken)
         => Task.FromResult(Run(item, options, cancellationToken));
 
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Book item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
     /// <summary>
     /// Handles a refresh of a file in the federated folder.
     /// </summary>
@@ -92,8 +97,24 @@ public abstract class StubMetadataProvider :
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        return item.Path is { } path
+        return item is not Book
+            && item.Path is { } path
             && path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
             && (Store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.RelativeTo(root, path) is not null);
+    }
+
+    /// <summary>
+    /// Tells whether an item is a book in the federated folder: only a known folder has placeholders.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <returns>Whether it is.</returns>
+    protected bool IsBookInFederatedFolder(BaseItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        return item is Book
+            && item.Path is { } path
+            && Store.ReadOr(config => config.FederatedFolderPath, null) is { } root
+            && FederatedPaths.RelativeTo(root, path) is not null;
     }
 }

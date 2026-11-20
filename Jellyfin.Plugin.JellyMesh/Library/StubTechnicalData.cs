@@ -188,6 +188,23 @@ public sealed class StubTechnicalData
     }
 
     /// <summary>
+    /// Writes the fields of a book from the index, with the mark of its stub and its lock (D62). Nothing is saved.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="stub">The stub.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <returns>Whether a field of the item changed.</returns>
+    public bool WriteBook(BaseItem item, StubEntry stub, bool isProtected)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        var lookup = CurrentLookup();
+        return item is Book book
+            && stub.Sources.Select(source => lookup.Find(source.ServerId, source.ItemId)).FirstOrDefault(found => found is not null) is { } source
+            && StubItemUpdater.WriteBook(book, StubMetadata.Book(source, isProtected, stub.Id));
+    }
+
+    /// <summary>
     /// Writes the streams and the chapters again, after <c>ProbeProvider</c> ran. Without a probe result it renumbers the
     /// streams, drops the external ones and stores an empty chapter list.
     /// </summary>
