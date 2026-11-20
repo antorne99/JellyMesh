@@ -155,4 +155,23 @@ public class StubLookupTests
             Directory.Delete(temp, true);
         }
     }
+
+    [Fact]
+    public void APhotoInTheFederatedFolderIsAPlaceholder()
+    {
+        _store.Configuration.FederatedFolderPath = "/federata";
+        var path = "/federata/S/L/Video domestici/Trips/IMG_0001.jpg";
+        var stub = new StubEntry { Id = "photo", Kind = StubKind.Photo, IdentityKey = "Photo|server1|p1", Sources = [], RelativePath = "S/L/Video domestici/Trips/IMG_0001.jpg" };
+        var photo = new Photo { Id = Guid.NewGuid(), Path = path };
+        var local = new Photo { Id = Guid.NewGuid(), Path = "/media/Foto/IMG_0001.jpg" };
+        _library.Setup(library => library.GetItemById(photo.Id)).Returns(photo);
+        _library.Setup(library => library.GetItemById(local.Id)).Returns(local);
+        _stubs.Setup(stubs => stubs.FindByPath(path)).Returns(stub);
+
+        Assert.True(Lookup().IsPlaceholder(photo.Id));
+        Assert.Same(stub, Lookup().FindFile(photo.Id));
+        Assert.Same(stub, Lookup().Find(photo.Id));
+        Assert.False(Lookup().IsPlaceholder(local.Id));
+        Assert.Null(Lookup().Find(local.Id));
+    }
 }

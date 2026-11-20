@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Frozen;
+using System.Collections.Generic;
+using System.IO;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -22,6 +25,27 @@ public static class PhotoPlaceholders
     private const string Tiff =
         "SUkqAAgAAAAJAAABAwABAAAAAQAAAAEBAwABAAAAAQAAAAIBAwABAAAACAAAAAMBAwABAAAAAQAAAAYBAwABAAAAAQAAABEBBAABAAAAegAAABUBAwAB" +
         "AAAAAQAAABYBAwABAAAAAQAAABcBBAABAAAAAQAAAAAAAACA";
+
+    private static readonly FrozenDictionary<string, string> _mediaTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        [".jpg"] = "image/jpeg",
+        [".jpeg"] = "image/jpeg",
+        [".png"] = "image/png",
+        [".gif"] = "image/gif",
+        [".webp"] = "image/webp",
+        [".bmp"] = "image/bmp",
+        [".tif"] = "image/tiff",
+        [".tiff"] = "image/tiff",
+        [".heic"] = "image/heic",
+        [".heif"] = "image/heif",
+        [".avif"] = "image/avif"
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Gives the media type a photo goes with, from the extension of its placeholder.</summary>
+    /// <param name="path">The path of the placeholder.</param>
+    /// <returns>The type of its format, application/octet-stream for a raw or any other format.</returns>
+    public static string MediaTypeOf(string path)
+        => _mediaTypes.TryGetValue(Path.GetExtension(path), out var type) ? type : "application/octet-stream";
 
     /// <summary>Returns the placeholder of a photo format.</summary>
     /// <param name="extension">The extension, without the dot.</param>

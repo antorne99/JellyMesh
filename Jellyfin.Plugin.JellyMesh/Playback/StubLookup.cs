@@ -327,10 +327,10 @@ public sealed class StubLookup
 
     private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
 
-    // The path of a book in the federated folder, also through an alias of it, spelled under the folder; else null.
+    // The path of a book or a photo in the federated folder, also through an alias of it, spelled under the folder; else null.
     private string? PlaceholderPath(BaseItem? item)
     {
-        if (item is not Book { Path: { Length: > 0 } path } || _store.ReadOr(config => config.FederatedFolderPath, null) is not { Length: > 0 } root)
+        if (item is not (Book or Photo) || item.Path is not { Length: > 0 } path || _store.ReadOr(config => config.FederatedFolderPath, null) is not { Length: > 0 } root)
         {
             return null;
         }

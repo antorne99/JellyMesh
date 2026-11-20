@@ -307,9 +307,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 : Unavailable(itemId);
         }
 
-        // A book goes with the type of its format, never the remote's (D62), and as a file with its local name on Download.
-        var mediaType = stub.Kind == StubKind.Book ? BookPlaceholders.MediaTypeOf(stub.RelativePath) : null;
-        if (stub.Kind == StubKind.Book)
+        // A book or a photo goes with the type of its format, never the remote's (D62), and as a file with its local name on Download.
+        var mediaType = stub.Kind switch
+        {
+            StubKind.Book => BookPlaceholders.MediaTypeOf(stub.RelativePath),
+            StubKind.Photo => PhotoPlaceholders.MediaTypeOf(stub.RelativePath),
+            _ => null
+        };
+        if (mediaType is not null)
         {
             http.Response.Headers.XContentTypeOptions = "nosniff";
             if (action == DownloadAction)
@@ -337,7 +342,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             : new StatusCodeResult(StatusCodes.Status404NotFound);
     }
 
-    // A 503, with a text for a book placeholder, whose readers show it.
+    // A 503, with a text for a book or photo placeholder, whose readers show it.
     private IActionResult Unavailable(Guid itemId)
     {
         return _stubs.IsPlaceholder(itemId)
