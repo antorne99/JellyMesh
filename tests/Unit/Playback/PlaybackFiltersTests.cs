@@ -1912,6 +1912,28 @@ public class PlaybackFiltersTests
         Assert.StartsWith("/Videos/remote-item/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
     }
 
+    // Finamp downloads a track through File, which wants no download permission (D12), and seeks with a Range.
+    [Fact]
+    public async Task File_of_a_track_stub_keeps_its_range_without_the_download_permission()
+    {
+        CanSeeItem();
+        MayDownload(false);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        RemoteStreamRequest? asked = null;
+        var serve = _fixture.Client.Open;
+        _fixture.Client.Open = (request, token) =>
+        {
+            asked = request;
+            return serve(request, token);
+        };
+        var context = FileRequest("GetFile", "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal("bytes 0-4/100", context.HttpContext.Response.Headers.ContentRange.ToString());
+        Assert.Equal("bytes=0-4", asked?.Range);
+    }
+
     [Fact]
     public async Task PlaybackInfo_of_a_visible_track_stub_comes_from_the_remote()
     {
