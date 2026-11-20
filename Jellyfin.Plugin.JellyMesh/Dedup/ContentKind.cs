@@ -1,7 +1,7 @@
 namespace Jellyfin.Plugin.JellyMesh.Dedup;
 
 /// <summary>
-/// The kinds of content that are deduplicated (plan §1.1).
+/// The kinds of content that are deduplicated (plan §1.1, §3.13).
 /// </summary>
 public enum ContentKind
 {
@@ -13,4 +13,7 @@ public enum ContentKind
 
     /// <summary>A music video, one title like a film (row 454).</summary>
     MusicVideo,
+
+    /// <summary>A music track (row 453). Tracks have no versions: each copy keeps its own stub.</summary>
+    Track,
 }
