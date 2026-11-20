@@ -171,6 +171,34 @@ public sealed partial class LayoutMigration
         }
     }
 
+    // Starts the move of the plugin libraries after the manual carry, in the background since it waits for a scan.
+    private void FinishManual()
+    {
+        lock (_jobLock)
+        {
+            if (_disposed || _job is { IsCompleted: false })
+            {
+                return;
+            }
+
+            var token = _shutdown.Token;
+            _job = Task.Run(() => FinishManualAsync(token));
+        }
+    }
+
+    // A failure or a shutdown leaves the plugin libraries to the next sync, which moves them as well.
+    private async Task FinishManualAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ReconcilePluginLibrariesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The server is shutting down.
+        }
+    }
+
     private async Task RunManualAsync()
     {
         try

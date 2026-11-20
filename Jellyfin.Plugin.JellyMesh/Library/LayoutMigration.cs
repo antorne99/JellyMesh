@@ -121,6 +121,12 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         }
 
         await MigrateLockedAsync(root, false, cancellationToken).ConfigureAwait(false);
+
+        // Once the last old title is carried, the plugin libraries leave the old folders now, not at the next sync (§10 row 445).
+        if (!HasOldTitles(_registry.State))
+        {
+            FinishManual();
+        }
     }
 
     /// <inheritdoc />
