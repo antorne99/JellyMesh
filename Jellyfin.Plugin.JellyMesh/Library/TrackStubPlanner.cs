@@ -51,7 +51,7 @@ internal static class TrackStubPlanner
                 var id = stub?.Id ?? Guid.NewGuid().ToString("N");
                 var relative = stub?.RelativePath ?? paths.NewTrack(library, album, FileNameOf(track, album.HasDiscs), id);
                 var folder = Path.GetDirectoryName(relative)!;
-                var key = keys.GetValueOrDefault(track.ItemId) ?? string.Create(CultureInfo.InvariantCulture, $"Track|item:{serverId}:{track.ItemId}");
+                var key = keys.GetValueOrDefault(track.ItemId) ?? string.Create(CultureInfo.InvariantCulture, $"Track|item:{serverId:N}:{track.ItemId}");
                 works.Add(WorkOf(input, serverId, track, library, stub, id, relative, key, covered.Add(folder) ? album : null));
             }
         }

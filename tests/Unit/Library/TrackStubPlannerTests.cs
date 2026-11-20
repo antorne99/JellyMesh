@@ -114,7 +114,7 @@ public class TrackStubPlannerTests
         Assert.Equal(StubKind.Track, work.Entry.Kind);
         Assert.Equal(PathIn("Artist", "Album", "03 - Song.strm"), work.Entry.RelativePath);
         Assert.Equal(_server, work.Entry.ServerId);
-        Assert.Equal("Track|item:" + _server.ToString("D") + ":t1", work.Entry.IdentityKey);
+        Assert.Equal("Track|item:" + _server.ToString("N") + ":t1", work.Entry.IdentityKey);
         Assert.Equal([new StubSource(_server, "t1", "t1") { LibraryId = Music }], work.Entry.Sources);
         Assert.True(work.IsNew);
         Assert.Equal(string.Empty, work.NfoPath);
