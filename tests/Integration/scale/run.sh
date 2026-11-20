@@ -235,10 +235,13 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
   echo "$(now_ms)" >"$WORK/scan-requested"
   post /Library/Refresh >/dev/null
   sleep 10
-  for i in $(seq 1 7200); do
+  # SCALE_SCAN_WAIT_S caps the wait (4 h by default); scan-state.txt says whether the scan ended within it.
+  scan_end=$(( $(date +%s) + ${SCALE_SCAN_WAIT_S:-14400} ))
+  while [ "$(date +%s)" -lt "$scan_end" ]; do
     [ "$(get /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary") | .State')" = Idle ] && break
     sleep 2
   done
+  get /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary") | "\(.State) \(.CurrentProgressPercentage // "-")"' >"$WORK/scan-state.txt"
   echo "$(now_ms)" >"$WORK/scan-seen"
   snapshot scan
   get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode,Series&Limit=0' | jq -r .TotalRecordCount >"$WORK/scan-items.txt"

@@ -218,6 +218,9 @@ for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-
             print("## scan of the linked federated folder (Jellyfin's own work, with the plugin's providers)")
             print(f"wall time                                 {seconds(seen - requested)} (polled every 2 s)")
             print(f"items in the library                      {(read('scan-items.txt') or '-').strip()}")
+            state = (read("scan-state.txt") or "").strip()
+            if state and not state.startswith("Idle"):
+                print(f"SCAN NOT FINISHED when the wait ended     {state}")
             music = "\n".join(text.strip() for text in (read("scan-music.txt"), read("scan-music-items.txt")) if text)
             if music:
                 print(f"music in the library                      {'; '.join(music.splitlines())}")
