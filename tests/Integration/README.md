@@ -179,7 +179,7 @@ bash playback/direct1.sh          # the direct-play fixture, then direct3.sh
 bash playback/final.sh            # the whole proof in order, then final2.sh, final3.sh and final4.sh
 ```
 
-`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`.
+`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. `NAME` and `PORT` (default `jm-play` on 18320) name the container and its port; give every script the same ones. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`, with your `NAME` in place of `jm-play`.
 
 ### `provider/`
 
