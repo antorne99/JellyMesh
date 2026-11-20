@@ -76,7 +76,7 @@ public sealed class MergeWatchStateCarry : IMergeWatchStateCarry
             }
 
             // A series names one head per episode entity: the groups are joined episode by episode (decision 51).
-            if (copy.Kind != ContentKind.Movie)
+            if (copy.Kind == ContentKind.Episode)
             {
                 heads.AddRange(_registry.FindEpisodesOfSeries(server, copy.ItemId)
                     .Select(episode => (Stub: episode, Item: FindStub(root, episode)))

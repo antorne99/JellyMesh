@@ -940,6 +940,21 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task TheStubsGroupedWithAMusicVideoCopyAreTheStubsOfItsGroup_AndNeverAFilmOfTheSameItem()
+    {
+        var (clipA, clipB) = (Stub("ma", _serverA, 1080, StubKind.MusicVideo), Stub("mb", _serverB, 720, StubKind.MusicVideo));
+        var (filmA, filmB) = (Stub("fa", _serverA, 1080), Stub("fb", _serverB, 720));
+        await SaveAsync([clipA, clipB, filmA, filmB], Group("g1", ["ma", "mb"]), Group("g2", ["fa", "fb"]));
+        MergedCopy[] copies =
+        [
+            new() { ServerId = _serverA.ToString("N"), ItemId = "item-ma", Kind = ContentKind.MusicVideo },
+            new() { ServerId = _serverA.ToString("N"), ItemId = "item-fa", Kind = ContentKind.MusicVideo }
+        ];
+
+        Assert.Equal(["ma", "mb"], _linker.GroupedStubsOf(copies).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task TheStubsGroupedWithASeriesCopyAreTheStubsOfItsEpisodesGroups()
     {
         var a1 = Stub("a1", _serverA, 1080, StubKind.Episode) with { SeriesStubId = "series-a" };
