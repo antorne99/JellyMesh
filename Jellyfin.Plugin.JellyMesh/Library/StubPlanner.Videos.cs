@@ -15,7 +15,7 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// Plans the music videos and home videos of a server: one stub per remote item and local library, read from the index.
+/// Plans the music videos, home videos and photos of a server: one stub per remote item and local library, read from the index.
 /// </summary>
 public static partial class StubPlanner
 {
@@ -38,9 +38,13 @@ public static partial class StubPlanner
         _naming.VideoExtraRules.Where(rule => rule.RuleType == ExtraRuleType.DirectoryName).Select(rule => rule.Token),
         StringComparer.OrdinalIgnoreCase);
 
-    private static bool IsVideoKind(StubKind kind) => kind is StubKind.MusicVideo or StubKind.HomeVideo;
+    // The names Jellyfin reads as artwork and never as a photo, when a file name starts with them.
+    private static readonly string[] _artworkNames = ["folder", "thumb", "landscape", "fanart", "backdrop", "poster", "cover", "logo", "default"];
 
-    // Plans the music videos and home videos of a server and claims their stubs; the others are left for the sweep.
+    // The kinds planned here; photos share the folders of the home videos.
+    private static bool IsVideoKind(StubKind kind) => kind is StubKind.MusicVideo or StubKind.HomeVideo or StubKind.Photo;
+
+    // Plans the music videos, home videos and photos of a server and claims their stubs; the others are left for the sweep.
     private static List<StubWork> VideoWorks(
         StubPlanInput input,
         IndexItemLookup catalog,
@@ -70,11 +74,19 @@ public static partial class StubPlanner
 
         var folders = new PathAllocator(own, [], input.IgnoreRules);
         var files = new HashSet<string>(own.Where(stub => stub.Kind == StubKind.HomeVideo).Select(stub => Path.ChangeExtension(stub.RelativePath, null)), StringComparer.OrdinalIgnoreCase);
+        var names = new FolderNames(own);
+        var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var items = serverCatalog.Items
-            .Where(item => item.Kind is IndexedItemKind.MusicVideo or IndexedItemKind.Video)
+            .Where(item => item.Kind is IndexedItemKind.MusicVideo or IndexedItemKind.Video || (item.Kind == IndexedItemKind.Photo && item.Extension is not null))
             .OrderBy(item => item.ItemId, StringComparer.Ordinal);
         foreach (var item in items)
         {
+            if (item.Kind == IndexedItemKind.Photo)
+            {
+                works.AddRange(PhotoWorks(input, catalog, server.Id, item, existing, names, covered, claimed, unplaceable));
+                continue;
+            }
+
             // Decision 11: an item whose every version is another JellyMesh's stub has none left, and is not imported.
             var ranked = QualityRanking.Rank(item.Versions.Select(version => new RemoteSource(server.Id.ToString(), item.ItemId, version.MediaSourceId, CatalogItemMapper.QualityOf(version))));
             if (ranked.Count == 0)
@@ -97,7 +109,7 @@ public static partial class StubPlanner
                 var sources = ranked.Select(source => new StubSource(server.Id, item.ItemId, source.MediaSourceId) { LibraryId = item.LibraryId }).ToList();
                 works.Add(kind == StubKind.MusicVideo
                     ? MusicVideoWork(input, item, stub, sources, id => FederatedPaths.MovieStubIn(typeFolder, folders.MovieFolderName(typeFolder, item.Name, item.ProductionYear, id, label), label))
-                    : HomeVideoWork(input, item, stub, sources, id => HomeVideoPath(catalog, server.Id, item, typeFolder, files, input.IgnoreRules, id)));
+                    : HomeVideoWork(input, item, stub, sources, id => HomeVideoPath(catalog, server.Id, item, typeFolder, files, names, input.IgnoreRules, id)));
                 if (stub is not null)
                 {
                     claimed.Add(stub.Id);
@@ -148,8 +160,24 @@ public static partial class StubPlanner
         };
     }
 
-    // The path of a new home video: the remote folders it is in, then its name, unique in its folder.
-    private static string HomeVideoPath(IndexItemLookup catalog, Guid serverId, IndexedItem item, string typeFolder, HashSet<string> taken, IServerIgnoreRules rules, string id)
+    // The path of a new home video: the remote folders it is in, then its name, unique in its folder and starting no photo.
+    private static string HomeVideoPath(IndexItemLookup catalog, Guid serverId, IndexedItem item, string typeFolder, HashSet<string> taken, FolderNames names, IServerIgnoreRules rules, string id)
+    {
+        var folder = FolderOf(catalog, serverId, item, typeFolder, rules);
+        var name = FederatedPaths.Sanitize(item.Name);
+        var stem = Path.Combine(folder, name);
+        if (IsTaken(taken, stem) || IsReadAsExtra(stem + ".strm") || rules.Ignores(folder, name + ".strm", false) || names.StartsAPhoto(folder, name))
+        {
+            stem = string.Create(CultureInfo.InvariantCulture, $"{stem} [{id[..8]}]");
+        }
+
+        taken.Add(stem);
+        names.AddVideo(folder, Path.GetFileName(stem));
+        return stem + ".strm";
+    }
+
+    // The folder of a new home video or photo: the remote folders and albums it is in.
+    private static string FolderOf(IndexItemLookup catalog, Guid serverId, IndexedItem item, string typeFolder, IServerIgnoreRules rules)
     {
         var folder = typeFolder;
         foreach (var parent in FolderChain(catalog, serverId, item))
@@ -157,15 +185,7 @@ public static partial class StubPlanner
             folder = Path.Combine(folder, FolderName(parent, folder, rules));
         }
 
-        var name = FederatedPaths.Sanitize(item.Name);
-        var stem = Path.Combine(folder, name);
-        if (IsTaken(taken, stem) || IsReadAsExtra(stem + ".strm") || rules.Ignores(folder, name + ".strm", false))
-        {
-            stem = string.Create(CultureInfo.InvariantCulture, $"{stem} [{id[..8]}]");
-        }
-
-        taken.Add(stem);
-        return stem + ".strm";
+        return folder;
     }
 
     // Whether a stem, or its thumbnail, is already one of the stubs or thumbnails of its folder.

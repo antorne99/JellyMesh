@@ -191,7 +191,7 @@ public static partial class StubPlanner
                 claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
             }
 
-            // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
+            // Music videos, home videos and photos exist only in the new layout: an older one keeps them as they are.
             if (legacy)
             {
                 claimed.UnionWith(ownVideos.Select(stub => stub.Id));
