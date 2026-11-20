@@ -113,9 +113,10 @@ wait_own() {
 strms() { docker exec "$PREFIX-local" sh -c "find '$FOLDER' -name '*$1.strm' | wc -l" | tr -d ' '; }
 played() { get local "/Users/$2/Items/$(dashed "$1")" | jq -r .UserData.Played; }
 position() { get local "/Users/$2/Items/$(dashed "$1")" | jq -r .UserData.PlaybackPositionTicks; }
-film() { vid "$FOLDER/Film/$1%- $2.strm"; }
-episode() { vid "$FOLDER/Serie/JM Serie Divisa%S01E03%- $1.strm"; }
-bare_episode() { vid "$FOLDER/Serie/Serie Senza ID%S01E02%- $1.strm"; }
+# The stubs sit in the type folder of their remote library, {server}/{remote library id}/{type}.
+film() { vid "$FOLDER/%/Film/$1%- $2.strm"; }
+episode() { vid "$FOLDER/%/Serie/JM Serie Divisa%S01E03%- $1.strm"; }
+bare_episode() { vid "$FOLDER/%/Serie/Serie Senza ID%S01E02%- $1.strm"; }
 home() { get local "/Users/$LIM" | jq -c --arg id "$1" '.Configuration | [(.OrderedViews | index($id) != null), (.MyMediaExcludes | index($id) != null), (.LatestItemsExcludes | index($id) != null)]'; }
 count_as() { as "$1" GET "/Items?ParentId=$(dashed "$2")&Recursive=true&IncludeItemTypes=$3" | jq -r '.TotalRecordCount // 0'; }
 
@@ -213,7 +214,7 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   sonda=$(film "Sonda Locale" "$new")
   film_lib=$(lib_id "$new - Film")
   serie_lib=$(lib_id "$new - Serie")
-  check "the old film item is gone" "" "$(vid "$FOLDER/Film/Tears of Steel%- $old.strm")"
+  check "the old film item is gone" "" "$(film "Tears of Steel" "$old")"
   check "the film is played for the admin" true "$(played "$tears" "$ADMIN")"
   check "and for the limited user" true "$(played "$tears" "$LIM")"
   check "the episode is played for the limited user" true "$(played "$ep" "$LIM")"
@@ -241,7 +242,7 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   sync_now local
   post local "/Items/$(dashed "$tears")/PlaybackInfo?userId=$ADMIN" "$DIRECT" >/dev/null
   check "the renamed film plays after a sync" 200 "$(status)"
-  check "its .strm holds no token" "" "$(docker exec "$PREFIX-local" sh -c "grep -il 'token\|api_key' \"\$(find '$FOLDER/Film' -name '*Tears of Steel*- $new.strm')\"" || true)"
+  check "its .strm holds no token" "" "$(docker exec "$PREFIX-local" sh -c "grep -il 'token\|api_key' \"\$(find '$FOLDER' -path '*/Film/*' -name '*Tears of Steel*- $new.strm')\"" || true)"
   scan local
   ghosts "after a scan"
 }
