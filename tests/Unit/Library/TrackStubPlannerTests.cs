@@ -72,7 +72,7 @@ public class TrackStubPlannerTests
         RemoteItems = [new ResolvedItem(_server, itemId)]
     };
 
-    private static StubPlan Plan(IReadOnlyList<IndexedItem> items, StubState? state = null, bool isProtected = true, IReadOnlyList<ResolvedContent>? contents = null)
+    private static StubPlan Plan(IReadOnlyList<IndexedItem> items, StubState? state = null, bool isProtected = true, IReadOnlyList<ResolvedContent>? contents = null, bool keepsOlderLayout = false)
     {
         var catalog = new ServerCatalog { ServerId = _server, State = ServerSyncState.Complete, Items = items };
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [catalog] };
@@ -83,7 +83,7 @@ public class TrackStubPlannerTests
             [new RemoteServerInfo(_server, "Casa", "http://server", RemoteMode.Standard, 0, [Films, Music], null, null)],
             isProtected,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => null));
+            _ => null) { KeepsOlderLayout = keepsOlderLayout });
     }
 
     private static StubWork WorkOf(StubPlan plan, string itemId) => Assert.Single(plan.Stubs, work => work.Entry.Sources.Any(source => source.ItemId == itemId));
@@ -269,11 +269,21 @@ public class TrackStubPlannerTests
     }
 
     [Fact]
-    public void TheOlderLayoutGetsNoTracks()
+    public void ATrackGoesToTheRemoteLibraryLayoutBesideAStubOfAnOlderLayout()
     {
+        // §10 row 444: new titles go to the remote library layout while the migration empties the older one (Q49).
         var flat = new StubEntry { Id = "old", Kind = StubKind.Movie, RelativePath = FederatedPaths.MovieStub("Film (2020)"), IdentityKey = "film", Sources = [] };
 
         var plan = Plan([Track("t1")], new StubState { Stubs = [flat] });
+
+        Assert.StartsWith(MusicFolder + Path.DirectorySeparatorChar, WorkOf(plan, "t1").Entry.RelativePath, StringComparison.Ordinal);
+        Assert.Contains(flat, plan.State.Stubs);
+    }
+
+    [Fact]
+    public void AFolderThatKeepsAnOlderLayoutGetsNoTracks()
+    {
+        var plan = Plan([Track("t1")], keepsOlderLayout: true);
 
         Assert.DoesNotContain(plan.Stubs, work => work.Entry.Kind == StubKind.Track);
     }
