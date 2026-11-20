@@ -1246,6 +1246,18 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task AnErrorReadingTheOldFilesLeavesTheStatus()
+    {
+        var database = new Mock<IPluginDatabase>();
+        database.Setup(item => item.Health).Returns(StoreHealth.Healthy);
+        database.Setup(item => item.MigratedKeptUntilAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/config/data/migrated-0.5 cannot be read"));
+
+        var status = (await ControllerFor(new RegistryFixture(), database: database.Object).GetStatus(CancellationToken.None)).Value!;
+
+        Assert.Contains("/config/data/migrated-0.5 cannot be read", status.Store!.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task TheStatusCarriesTheLibrariesOfAllServers()
     {
         var state = new SharedLibrariesState(true, false, [], ["Vecchia"], AutomaticLibrariesError.None) { Unblocked = ["Tutti i server - Film"] };

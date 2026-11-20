@@ -5667,7 +5667,7 @@
                     migrated.hidden = !store.MigratedKeptUntil;
                     var notice = el('#jmStore');
                     var key = JSON.stringify([store.State, store.Reason, store.Recovery]);
-                    notice.hidden = store.State === 'Healthy' && !store.Recovery;
+                    notice.hidden = store.State === 'Healthy' && !store.Recovery && !store.Reason;
                     if (notice.jmKey === key) {
                         return;
                     }
@@ -5687,6 +5687,9 @@
                                 return load();
                             }));
                         }));
+                    } else if (store.Reason) {
+                        // A healthy database whose old files could not be read says why.
+                        notice.appendChild(create('p', t('Reason: {reason}', { reason: store.Reason })));
                     }
 
                     var recovery = store.Recovery;

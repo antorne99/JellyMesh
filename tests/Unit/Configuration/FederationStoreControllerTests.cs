@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
 using Moq;
 using Xunit;
 
@@ -62,6 +64,29 @@ public sealed class FederationStoreControllerTests
         Assert.Equal((StoreState.Unavailable, "The database cannot be opened: disk full."), (store.State, store.Reason));
         Assert.Null(store.MigratedKeptUntil);
     }
+
+    // A file or SQLite error reading the old files shows as the reason, cleaned as the other reasons, and fails nothing.
+    [Theory]
+    [MemberData(nameof(ReadErrors))]
+    public async Task AnErrorReadingTheOldFilesShowsAsTheReason(Exception error, string shown)
+    {
+        _database.Setup(database => database.Health).Returns(StoreHealth.Healthy);
+        _database.Setup(database => database.MigratedKeptUntilAsync(It.IsAny<CancellationToken>())).ThrowsAsync(error);
+
+        var store = await Controller().GetStore(CancellationToken.None);
+
+        Assert.Equal(StoreState.Healthy, store.State);
+        Assert.Null(store.MigratedKeptUntil);
+        Assert.Contains(shown, store.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', store.Reason!);
+    }
+
+    public static TheoryData<Exception, string> ReadErrors() => new()
+    {
+        { new IOException("/config/data/migrated-0.5\ncannot be read"), "/config/data/migrated-0.5cannot be read" },
+        { new UnauthorizedAccessException("/config/data/migrated-0.5 is denied"), "/config/data/migrated-0.5 is denied" },
+        { new SqliteException("SQLite Error 10: 'disk I/O error'.", 10), "disk I/O error" }
+    };
 
     [Fact]
     public async Task RetryOpensTheStoreAgainAndAnswersWithItsStateAfter()

@@ -3781,6 +3781,15 @@ def store_notices(s, width):
     check(name + " the restore goes once checked", until(page, lambda: notice.is_hidden()), notice.inner_text())
     u.close(page)
 
+    store[0] = {"State": "Healthy", "Reason": "Until when the files of the older version are kept cannot be read: /config/data/migrated-0.5 is denied",
+                "Recovery": None, "MigratedKeptUntil": None}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " says why the old files cannot be read", until(page, lambda: notice.is_visible() and "migrated-0.5 is denied" in notice.inner_text()), notice.inner_text())
+    check(name + " a healthy database offers no retry", notice.get_by_role("button", name="Try again", exact=True).count() == 0)
+    healthy(page, name)
+    u.close(page)
+
     # A database never loaded makes the status answer 503, so the page reads the database state on its own.
     store[0] = {"State": "Damaged", "Reason": "The database is damaged and no copy could be restored.", "Recovery": None, "MigratedKeptUntil": None}
 
