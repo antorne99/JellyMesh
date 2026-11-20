@@ -3657,7 +3657,7 @@
 
                     if (folder.SeriesSplit) {
                         var sets = folder.Servers.filter(function (server) {
-                            return server.SeriesLibraries.length > 0;
+                            return server.SeriesSplitWith.length > 0;
                         }).map(function (server) {
                             return server.Name + ' (' + server.SeriesLibraries.join(', ') + ')';
                         });
@@ -4506,27 +4506,26 @@
                     return left.replace(/-/g, '').toLowerCase() === right.replace(/-/g, '').toLowerCase();
                 }
 
-                // The servers of a merged series whose Serie folders sit in different libraries, where Jellyfin does not
-                // group it (Q46). The library of a local copy, or of a server no longer configured, is not known here.
+                // The servers of a merged series that the status names split from another server of it (Q46, row 77).
+                // The library of a local copy, or of a server no longer configured, is not known here.
                 function seriesSplit(merge) {
                     var folder = statusSection.data && statusSection.data.FederatedFolder;
-                    if (!folder) {
+                    if (!folder || !folder.SeriesSplit) {
                         return [];
                     }
 
                     var servers = folder.Servers.filter(function (server) {
-                        return server.SeriesLibraries.length > 0 && merge.Copies.some(function (copy) {
+                        return merge.Copies.some(function (copy) {
                             return !copy.Copy.IsLocal && sameServer(copy.Copy.ServerId, server.Id);
                         });
                     });
-                    var sets = servers.map(function (server) {
-                        return server.SeriesLibraries.filter(function (name, index, names) {
-                            return names.indexOf(name) === index;
-                        }).sort().join('\n');
+                    return servers.filter(function (server) {
+                        return server.SeriesSplitWith.some(function (other) {
+                            return servers.some(function (each) {
+                                return sameServer(each.Id, other);
+                            });
+                        });
                     });
-                    return sets.some(function (set) {
-                        return set !== sets[0];
-                    }) ? servers : [];
                 }
 
                 function renderMerge(merge, kind) {

@@ -1816,6 +1816,66 @@ def merge_details(s, width):
     merge_forecasts(s, width, name + " forecast")
     merge_refresh(s, width, name + " refresh")
     merge_dates(s, width, name + " merged")
+    merge_split(s, width, name + " split series")
+
+
+def series_copy(server):
+    """A remote series copy of a merge, as the merge list gives it."""
+    return {"Copy": {"ServerId": server["Id"], "ItemId": "5e71e5000000400080000000000000" + server["Id"][:2], "Kind": "Episode", "IsLocal": False,
+                     "Title": "JM Serie Divisa", "Year": 2026}, "ServerName": server["Name"], "RunTimeTicks": None, "IsFound": True,
+            "Versions": [], "EpisodeCount": 3, "SeasonCount": 1}
+
+
+def merge_split(s, width, name):
+    """A merged series warns that it stays split only for the servers the status names as split (Q46, row 77),
+    and a server with no series library gets no series warning."""
+    status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
+    stock_id = of_server(status["FederatedFolder"], "stock")["Id"]
+    peer_id = of_server(status["FederatedFolder"], "peer")["Id"]
+    split = {"with": {}, "flag": False}
+
+    def merged(data):
+        data["Merges"] = [{"Id": "5e71e500-0000-4000-8000-000000000001", "CreatedUtc": "2026-11-01T10:00:00Z", "IsInEffect": True,
+                           "Copies": [series_copy(of_server(status, "stock")), series_copy(of_server(status, "peer"))]}]
+
+    def folders(data):
+        linked(data)
+        folder = data["FederatedFolder"]
+        folder["SeriesSplit"] = split["flag"]
+        stock, peer = of_server(folder, "stock"), of_server(folder, "peer")
+        stock["SeriesLibraries"] = ["Serie", "Anime"]
+        peer["SeriesLibraries"] = ["Serie"]
+        for server in (stock, peer):
+            server["SeriesSplitWith"] = split["with"].get(server["Id"], [])
+        # The peer has no series library: its kind has no folder and counts as linked with no library.
+        peer["Folders"] = [each for each in peer["Folders"] if each["LibraryType"] != "tvshows"]
+        peer["Series"] = dict(Link="Linked", Libraries=[])
+
+    def routes(context):
+        context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, merged))
+        fake(context, "Status", folders)
+
+    page = s.open("fresh", width, route=routes)
+    merge = page.locator("#jmSeriesMerges " + u.MERGE)
+    warning = merge.locator(".jmMergeSplit")
+    peer_block = u.server_folder(page, "peer")
+    check(name + " shows the merged series", until(page, lambda: merge.count() == 1), page.locator("#jmSeriesMerges").inner_text())
+    check(name + " other series libraries alone do not warn", warning.count() == 0, merge.inner_text())
+    folder_info = page.locator(u.FOLDER_INFO)
+    check(name + " nor does the folder", "different libraries" not in folder_info.text_content(), folder_info.text_content())
+    check(name + " a server with no series library has no series warning", "serie" not in peer_block.text_content().lower(), peer_block.text_content())
+
+    split.update(flag=True, **{"with": {stock_id: [peer_id], peer_id: [stock_id]}})
+    check(name + " warns once the status names its servers split", until(page, lambda: warning.count() == 1, 20), merge.inner_text())
+    check(name + " names both servers", warning.count() == 1 and "stock" in warning.inner_text() and "peer" in warning.inner_text(), merge.inner_text())
+    check(name + " the folder names them too", until(page, lambda: "stock (Serie, Anime); peer (Serie)" in folder_info.text_content()), folder_info.text_content())
+    healthy(page, name)
+    u.shot(page, f"merge-split-{width}")
+
+    split.update(flag=True, **{"with": {stock_id: ["0f0f0f0f-0000-4000-8000-000000000009"]}})
+    check(name + " a split with a server outside the merge does not warn on it", until(page, lambda: warning.count() == 0, 20), merge.inner_text())
+    check(name + " the folder names only the split server", "stock (Serie, Anime)" in folder_info.text_content() and "peer (Serie)" not in folder_info.text_content(), folder_info.text_content())
+    u.close(page)
 
 
 def copy_with_api(s, width):
