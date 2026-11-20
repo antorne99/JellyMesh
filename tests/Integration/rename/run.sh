@@ -244,7 +244,10 @@ rename_to() { # rename_to <old> <new>: renames the server and checks what Q38 as
   sync_now local
   post local "/Items/$(dashed "$tears")/PlaybackInfo?userId=$ADMIN" "$DIRECT" >/dev/null
   check "the renamed film plays after a sync" 200 "$(status)"
-  check "its .strm holds no token" "" "$(docker exec "$PREFIX-local" sh -c "grep -il 'token\|api_key' \"\$(find '$FOLDER' -path '*/Film/*' -name '*Tears of Steel*- $new.strm')\"" || true)"
+  local strm
+  strm=$(docker exec "$PREFIX-local" find "$FOLDER" -path '*/Film/*' -name "*Tears of Steel*- $new.strm")
+  check "the renamed film has one .strm" 1 "$(printf '%s' "$strm" | grep -c . || true)"
+  check "its .strm holds no token" "" "$(docker exec "$PREFIX-local" grep -il 'token\|api_key' "$strm" || true)"
   scan local
   ghosts "after a scan"
 }
