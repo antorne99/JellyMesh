@@ -42,9 +42,12 @@ public sealed class StubPhotoProvider : ICustomMetadataProvider<Photo>, IHasOrde
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        var changed = StubMetadataProvider.IsPlaceholderInFederatedFolder(item, _store)
+        // PhotoProvider points the Primary at the placeholder; the thumbnail takes it back.
+        var update = StubMetadataProvider.IsPlaceholderInFederatedFolder(item, _store)
+            && _store.ReadOr(config => config.FederatedFolderPath, null) is { } root
             && _registry.FindByPath(item.Path) is { Kind: StubKind.Photo } stub
-            && _technical.WritePhoto(item, stub, _store.ReadOr(config => config.MetadataProtection, true));
-        return Task.FromResult(changed ? ItemUpdateType.MetadataImport : ItemUpdateType.None);
+                ? _technical.WritePhoto(item, stub, _store.ReadOr(config => config.MetadataProtection, true), root)
+                : ItemUpdateType.None;
+        return Task.FromResult(update);
     }
 }

@@ -39,13 +39,12 @@ public sealed class StubBeforeProbeProvider : StubMetadataProvider
         if (IsPlaceholderInFederatedFolder(item))
         {
             var isProtected = Store.ReadOr(config => config.MetadataProtection, true);
-            var written = Registry.FindByPath(item.Path) switch
+            return Registry.FindByPath(item.Path) switch
             {
-                { Kind: StubKind.Book } book => Technical.WriteBook(item, book, isProtected),
-                { Kind: StubKind.Photo } photo => Technical.WritePhoto(item, photo, isProtected),
-                _ => false
+                { Kind: StubKind.Book } book => Technical.WriteBook(item, book, isProtected) ? ItemUpdateType.MetadataImport : ItemUpdateType.None,
+                { Kind: StubKind.Photo } photo => Technical.WritePhoto(item, photo, isProtected, Store.ReadOr(config => config.FederatedFolderPath, null)!),
+                _ => ItemUpdateType.None
             };
-            return written ? ItemUpdateType.MetadataImport : ItemUpdateType.None;
         }
 
         if (!IsInFederatedFolder(item))

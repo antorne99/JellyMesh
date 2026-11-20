@@ -60,6 +60,8 @@ public sealed class PhotoProviderTests : IDisposable
         return _fixture.PathIn(a, TestLibraries.HomeVideos, "Video domestici", "Trips", "IMG_0001.jpg");
     }
 
+    private string Thumbnail() => PhotoThumbnails.PathOf(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).Id)!;
+
     private static Photo Located(string path) => new()
     {
         Id = Guid.NewGuid(),
@@ -113,8 +115,38 @@ public sealed class PhotoProviderTests : IDisposable
 
         var result = await Before().FetchAsync(item, Options(), CancellationToken.None);
 
-        Assert.Equal(ItemUpdateType.MetadataImport, result);
+        Assert.Equal(ItemUpdateType.MetadataImport | ItemUpdateType.ImageUpdate, result);
         AssertFromTheRemote(item, isProtected);
+        Assert.Equal(Thumbnail(), item.GetImageInfo(ImageType.Primary, 0)?.Path);
+    }
+
+    // PhotoProvider points the Primary of an unlocked photo at the 1x1 placeholder: the thumbnail takes it back.
+    [Fact]
+    public async Task AnUnlockedPhotoGetsItsThumbnailBackAfterPhotoProvider()
+    {
+        _fixture.Sync.Store.Configuration.MetadataProtection = false;
+        var item = Located(await PhotoStubAsync());
+        await Before().FetchAsync(item, Options(), CancellationToken.None);
+        item.SetImage(new ItemImageInfo { Path = item.Path, Type = ImageType.Primary }, 0);
+
+        var result = await AfterPhotoProvider().FetchAsync(item, Options(), CancellationToken.None);
+
+        Assert.Equal(ItemUpdateType.ImageUpdate, result);
+        var primary = Assert.Single(item.GetImages(ImageType.Primary));
+        Assert.Equal(Thumbnail(), primary.Path);
+        Assert.Equal(System.IO.File.GetLastWriteTimeUtc(Thumbnail()), primary.DateModified);
+    }
+
+    [Fact]
+    public async Task APhotoWithoutAThumbnailGetsNoPrimary()
+    {
+        var item = Located(await PhotoStubAsync());
+        System.IO.File.Delete(Thumbnail());
+
+        var result = await Before().FetchAsync(item, Options(), CancellationToken.None);
+
+        Assert.Equal(ItemUpdateType.MetadataImport, result);
+        Assert.Null(item.GetImageInfo(ImageType.Primary, 0));
     }
 
     // Without protection PhotoProvider runs and reads the 1x1 placeholder, so the plugin writes the photo again after it.

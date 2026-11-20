@@ -94,6 +94,110 @@ public sealed class PhotoMaterializerTests : IDisposable
         Assert.Equal(PhotoPlaceholders.For("jpg"), await File.ReadAllBytesAsync(AlbumPath(a, "IMG_0001.jpg")));
     }
 
+    private string ThumbnailOfTheStub() => PhotoThumbnails.PathOf(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).Id)!;
+
+    // A JPEG with an EXIF segment, as a remote that sent its original file would give.
+    private static byte[] WithExif()
+    {
+        var clean = PhotoPlaceholders.For("jpg");
+        return [0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x08, (byte)'E', (byte)'x', (byte)'i', (byte)'f', 0, 0, .. clean[2..]];
+    }
+
+    [Fact]
+    public async Task APhotoGetsItsThumbnailOutsideTheTypeFoldersBeforeTheScan()
+    {
+        await AddPhotosAsync();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var thumbnail = ThumbnailOfTheStub();
+        Assert.Equal(Path.Combine(_fixture.Root, ".jellymesh-thumbs", Assert.Single(_fixture.Registry.State.Stubs).Id + ".jpg"), thumbnail);
+        Assert.Equal(_fixture.Sync.Client.Thumbnail, await File.ReadAllBytesAsync(thumbnail));
+        Assert.Equal(["p1"], _fixture.Sync.Client.ThumbnailReads);
+        Assert.Equal(["al1/Primary/0"], _fixture.Sync.Client.ImageReads);
+        _fixture.Library.Verify(library => library.QueueLibraryScan(), Times.Once);
+    }
+
+    [Fact]
+    public async Task AThumbnailOnDiskIsNotReadAgain()
+    {
+        await AddPhotosAsync();
+        await _fixture.SyncAndMaterializeAsync();
+
+        await _fixture.SyncAndMaterializeAsync();
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Materializer.MaterializeAsync(true, CancellationToken.None);
+
+        Assert.Single(_fixture.Sync.Client.ThumbnailReads);
+    }
+
+    [Fact]
+    public async Task AThumbnailWithExifNeverReachesTheDiskAndIsTriedAgain()
+    {
+        await AddPhotosAsync();
+        _fixture.Sync.Client.Thumbnail = WithExif();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.False(File.Exists(ThumbnailOfTheStub()));
+        Assert.Equal(1, _fixture.Materializer.LastReport?.ImagesPending);
+        Assert.DoesNotContain(_fixture.Files, file => file.EndsWith(".tmp", StringComparison.Ordinal));
+
+        _fixture.Sync.Client.Thumbnail = PhotoPlaceholders.For("jpg");
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.True(File.Exists(ThumbnailOfTheStub()));
+    }
+
+    [Fact]
+    public async Task AThumbnailReadLaterBecomesThePrimaryOfThePhoto()
+    {
+        var a = await AddPhotosAsync();
+        _fixture.Sync.Client.ThumbnailFailure = RemoteFailure.InvalidResponse;
+        await _fixture.SyncAndMaterializeAsync();
+        var photo = new Photo { Id = Guid.NewGuid(), Path = AlbumPath(a, "IMG_0001.jpg"), Name = "IMG_0001" };
+        _fixture.Library.Setup(library => library.FindByPath(photo.Path, false)).Returns(photo);
+        _fixture.Sync.Client.ThumbnailFailure = RemoteFailure.None;
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(ThumbnailOfTheStub(), photo.GetImageInfo(ImageType.Primary, 0)?.Path);
+    }
+
+    [Fact]
+    public async Task APhotoEditedOnTheRemoteGetsANewThumbnail()
+    {
+        var a = await AddPhotosAsync();
+        await _fixture.SyncAndMaterializeAsync();
+        var photo = new Photo { Id = Guid.NewGuid(), Path = AlbumPath(a, "IMG_0001.jpg"), Name = "IMG_0001" };
+        _fixture.Library.Setup(library => library.FindByPath(photo.Path, false)).Returns(photo);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Single(_fixture.Sync.Client.ThumbnailReads);
+
+        _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo() with
+        {
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "edited" }
+        };
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(2, _fixture.Sync.Client.ThumbnailReads.Count);
+        Assert.Equal(ThumbnailOfTheStub(), photo.GetImageInfo(ImageType.Primary, 0)?.Path);
+    }
+
+    [Fact]
+    public async Task ARemovedPhotoTakesItsThumbnail()
+    {
+        await AddPhotosAsync();
+        await _fixture.SyncAndMaterializeAsync();
+        var thumbnail = ThumbnailOfTheStub();
+
+        _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)].Clear();
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Empty(_fixture.Registry.State.Stubs);
+        Assert.False(File.Exists(thumbnail));
+    }
+
     [Fact]
     public async Task APhotoInAnotherFormatGetsAPlaceholderOfThatFormat()
     {

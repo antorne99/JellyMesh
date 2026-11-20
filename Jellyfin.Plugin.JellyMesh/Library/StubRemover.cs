@@ -252,6 +252,10 @@ public sealed class StubRemover
         {
             // Track and photo names are the remote's, so files sharing the stem, the album cover included, are not theirs.
             File.Delete(strm);
+            if (stub.Kind == StubKind.Photo && PhotoThumbnails.PathOf(root, stub.Id) is { } thumbnail && File.Exists(thumbnail))
+            {
+                File.Delete(thumbnail);
+            }
         }
         else
         {

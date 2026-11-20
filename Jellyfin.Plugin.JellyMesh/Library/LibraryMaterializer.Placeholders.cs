@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -32,13 +33,24 @@ public sealed partial class LibraryMaterializer
                 changed = true;
             }
 
+            var applied = false;
             if ((!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || run.VerifyEveryStub)
                 && existing.Value is { } item
                 && (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || HasLost(item, work.Metadata)))
             {
                 await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
                 entry = entry with { ContentHash = work.ContentHash };
-                changed = true;
+                changed = applied = true;
+            }
+
+            // A thumbnail read after the scan reaches the photo here; one read before it, through the providers.
+            if (entry.Kind == StubKind.Photo
+                && (applied || run.VerifyEveryStub || run.Thumbnails.ContainsKey(entry.Id))
+                && existing.Value is Photo photo
+                && PhotoThumbnails.PathOf(run.Root, entry.Id) is { } thumbnail
+                && PhotoThumbnails.SetPrimary(photo, thumbnail))
+            {
+                await _updater.SaveAsync(photo, ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)

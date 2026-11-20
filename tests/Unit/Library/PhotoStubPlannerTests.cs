@@ -241,4 +241,16 @@ public class PhotoStubPlannerTests
         Assert.Equal(Assert.Single(first.Stubs).ContentHash, same);
         Assert.NotEqual(same, changed);
     }
+
+    // A photo edited on the remote gets a new Primary tag there, so its thumbnail is read again.
+    [Fact]
+    public void TheHashFollowsThePhotoImage()
+    {
+        var first = Plan(items: [Album(), Photo("p1")]);
+        var edited = Photo("p1") with { ImageTags = new Dictionary<string, string> { ["Primary"] = "edited" } };
+
+        var changed = Assert.Single(Plan(first.State, items: [Album(), edited]).Stubs).ContentHash;
+
+        Assert.NotEqual(Assert.Single(first.Stubs).ContentHash, changed);
+    }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Text;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -63,6 +64,25 @@ public sealed class PhotoThumbnailsTests
         Assert.False(PhotoThumbnails.IsCleanJpeg(jpeg[..10]));
         Assert.False(PhotoThumbnails.IsCleanJpeg([0xFF, 0xD8, 0xFF, 0xD9]));
         Assert.False(PhotoThumbnails.IsCleanJpeg([0xFF, 0xD8, 0x00, 0xFF, 0xD9]));
+    }
+
+    [Fact]
+    public void TheThumbnailOfAStubIsInAHiddenFolderOfTheRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "federata");
+
+        Assert.Equal(Path.Combine(root, ".jellymesh-thumbs", "0123abcd.jpg"), PhotoThumbnails.PathOf(root, "0123abcd"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("..")]
+    [InlineData(".hidden")]
+    [InlineData("a/b")]
+    [InlineData("a\0b")]
+    public void AnIdThatIsNotAFileNameHasNoThumbnail(string id)
+    {
+        Assert.Null(PhotoThumbnails.PathOf("/federata", id));
     }
 
     [Fact]

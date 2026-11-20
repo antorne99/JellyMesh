@@ -81,7 +81,7 @@ public static partial class StubPlanner
         List<StubImage> removed = carriesCover && images.Count == 0 && !string.IsNullOrEmpty(entry.ImageTag)
             ? [new StubImage(ImageType.Primary, stem, null, null, null)]
             : [];
-        return new StubWork(entry, stub is null, metadata, string.Empty, string.Empty, string.Empty, Hash(JsonSerializer.Serialize(metadata), photo.Extension!), images, imageTag, string.Empty)
+        return new StubWork(entry, stub is null, metadata, string.Empty, string.Empty, string.Empty, Hash(JsonSerializer.Serialize(metadata), photo.Extension!, photo.ImageTags.GetValueOrDefault("Primary") ?? string.Empty), images, imageTag, string.Empty)
         {
             RemovedImages = removed
         };
