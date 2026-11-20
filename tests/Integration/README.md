@@ -261,6 +261,12 @@ MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] bash
 MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-store] [PORT=18530] bash play/store.sh
 ```
 
+`data-migration.sh` proves integration test 2 of the 0.6 spec: the data of 0.5 and of 0.4 moves into the plugin database. For each tag in `CASES` (default `v0.5.0.2 v0.4.3.0`) it builds that release in `jellymesh-sdk` from `git archive`, sets a consumer up on it with two servers with saved passwords, a connected JellyMesh server, a manual merge and a changed setting, and on 0.5 the watch state kept from a removed server. After installing this build it checks the database is healthy, the same servers, connected server, merge, setting and folder are there, a sync logs in with the saved passwords, the XML and the old files are in `migrated-0.5`, owner-only, for 30 days, the passwords are stored encrypted, and on 0.5 the kept watch state comes back when the removed server is added again. It makes `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` and `$PREFIX-gone` (default `jm-data-migration`, on `PORT` and the next three, default 18540) and removes them at the end unless `KEEP=1`.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-data-migration] [PORT=18540] [CASES="v0.5.0.2 v0.4.3.0"] bash play/data-migration.sh
+```
+
 ### `merge/`
 
 Proves manual merges on the per-server layout (decision 20, Q23), on two stock remotes and a consumer whose Film library holds both server folders. Copies of one server keep one stub, which takes the state of the other; copies of two servers and a local copy become versions, linked as soon as the merge is saved; a new stub is linked by the scan that makes its item (Q145). The containers are `$PREFIX-local`, `$PREFIX-remote` and `$PREFIX-peer` (default `jm-merge`, on `PORT` and the next two, default 18441). Checks marked `PENDING (row 144)` wait for the thorough detach that dissolves a group after an undo.
