@@ -22,7 +22,7 @@ public sealed record MergeForecast(MergeCopyView? Copy, MediaVersion? Version, b
     public static MergeForecast Of(IEnumerable<MergeTitleView> titles)
     {
         var copies = titles.SelectMany(title => title.Copies).ToList();
-        if (copies.Exists(copy => copy.Copy.Kind != ContentKind.Movie))
+        if (copies.Exists(copy => copy.Copy.Kind == ContentKind.Episode))
         {
             return new MergeForecast(null, null, false);
         }

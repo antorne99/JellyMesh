@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.JellyMesh.Index;
 
 /// <summary>
-/// Merges film or series titles by hand and undoes it (decisions 20 and 51). A merge only changes what the resolver returns,
+/// Merges film, series or music video titles by hand and undoes it (decisions 20 and 51, row 454). A merge only changes what the resolver returns,
 /// so everything after it is the path of any two copies that became one title: copies of one server keep one stub, whose
 /// post-scan task hands the state of the other over (decision 2), and copies of different servers or a local one become
 /// versions (Q23), for a series episode by episode with the same range (D3). When titles of one library become one entity,
@@ -61,10 +61,11 @@ public sealed class ManualMergeService
     public ManualMergeList GetList()
     {
         var view = _resolver.Resolve();
-        var films = view.MergeCases.Where(entry => entry.ContentKind == ContentKind.Movie).ToList();
-        return new ManualMergeList(films, view.ManualMerges, _store.IsDamaged)
+        List<MergeCaseView> CasesOf(ContentKind kind) => view.MergeCases.Where(entry => entry.ContentKind == kind).ToList();
+        return new ManualMergeList(CasesOf(ContentKind.Movie), view.ManualMerges, _store.IsDamaged)
         {
-            SeriesCases = view.MergeCases.Where(entry => entry.ContentKind != ContentKind.Movie).ToList()
+            SeriesCases = CasesOf(ContentKind.Episode),
+            MusicVideoCases = CasesOf(ContentKind.MusicVideo)
         };
     }
 
@@ -139,7 +140,7 @@ public sealed class ManualMergeService
 
         if (undone is not null)
         {
-            _logger.LogInformation("Undid a manual merge of {Kind} titles", undone.Copies.Any(copy => copy.Kind != ContentKind.Movie) ? "series" : "film");
+            _logger.LogInformation("Undid a manual merge of {Kind} titles", KindOf(undone.Copies));
             await ApplyUndoAsync(undone, cancellationToken).ConfigureAwait(false);
         }
 
@@ -189,8 +190,15 @@ public sealed class ManualMergeService
         return merge.Copies.Any(copy => IsOn(copy, serverId));
     }
 
-    private static string KindOf(List<MergeTitleView> titles) =>
-        titles.SelectMany(title => title.Copies).Any(copy => copy.Copy.Kind != ContentKind.Movie) ? "series" : "film";
+    private static string KindOf(List<MergeTitleView> titles) => KindOf(titles.SelectMany(title => title.Copies).Select(copy => copy.Copy).ToList());
+
+    // How the log names the titles of a merge.
+    private static string KindOf(IReadOnlyList<MergedCopy> copies) => copies.Select(copy => copy.Kind).FirstOrDefault() switch
+    {
+        ContentKind.Episode => "series",
+        ContentKind.MusicVideo => "music video",
+        _ => "film"
+    };
 
     // A local copy is never on a remote server, whatever its server ID says.
     private static bool IsOn(MergedCopy copy, string serverId)
@@ -239,6 +247,7 @@ public sealed class ManualMergeService
         }
 
         var titles = _resolver.Resolve().MergeCases
+            .Where(entry => entry.ContentKind is ContentKind.Movie or ContentKind.Episode or ContentKind.MusicVideo)
             .Select(entry => entry.Titles.Where(title => keys.Contains(title.WorkKey, StringComparer.Ordinal)).ToList())
             .FirstOrDefault(found => found.Count == keys.Count);
         if (titles is null)
@@ -248,7 +257,7 @@ public sealed class ManualMergeService
 
         if (titles.Count(title => title.HasLocalCopy) > 1)
         {
-            return (KindOf(titles) == "series" ? ManualMergeOutcome.TwoLocalSeries : ManualMergeOutcome.TwoLocalTitles, titles);
+            return (titles[0].Copies[0].Copy.Kind == ContentKind.Episode ? ManualMergeOutcome.TwoLocalSeries : ManualMergeOutcome.TwoLocalTitles, titles);
         }
 
         return (ManualMergeOutcome.Merged, titles);

@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace Jellyfin.Plugin.JellyMesh.Dedup;
 
 /// <summary>
-/// One film or series copy of a <see cref="ManualMerge"/>, named so that it can be found again. A work key is not a
+/// One film, series or music video copy of a <see cref="ManualMerge"/>, named so that it can be found again. A work key is not a
 /// permanent name, so a copy is kept by its server and item, and by its IDs as they were. A series is named by its series
 /// item, never by an episode (decision 51).
 /// </summary>
@@ -19,10 +19,10 @@ public sealed record MergedCopy
     /// <summary>Gets the server, as in <see cref="CatalogItem.ServerId"/>.</summary>
     public required string ServerId { get; init; }
 
-    /// <summary>Gets the item on that server: the film, or the series of a series copy.</summary>
+    /// <summary>Gets the item on that server: the film or music video, or the series of a series copy.</summary>
     public required string ItemId { get; init; }
 
-    /// <summary>Gets whether this is a film or a series, whose items are episodes. A file written before series is films.</summary>
+    /// <summary>Gets whether this is a film, a music video or a series, whose items are episodes. A file written before series is films.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter<ContentKind>))]
     public ContentKind Kind { get; init; }
 
@@ -45,25 +45,25 @@ public sealed record MergedCopy
     public int? Year { get; init; }
 
     /// <summary>
-    /// Names a copy: a film by its item, a series by the series of its episode.
+    /// Names a copy: a film or music video by its item, a series by the series of its episode.
     /// </summary>
-    /// <param name="item">The film, or an episode of the series.</param>
+    /// <param name="item">The film or music video, or an episode of the series.</param>
     /// <param name="isLocal">Whether it is in the local library.</param>
     /// <returns>The copy.</returns>
     public static MergedCopy From(CatalogItem item, bool isLocal)
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        var isFilm = item.Kind == ContentKind.Movie;
+        var isEpisode = item.Kind == ContentKind.Episode;
         return new MergedCopy
         {
             ServerId = item.ServerId,
-            ItemId = isFilm ? item.ItemId : item.SeriesId ?? item.ItemId,
+            ItemId = isEpisode ? item.SeriesId ?? item.ItemId : item.ItemId,
             Kind = item.Kind,
             IsLocal = isLocal,
             Tmdb = WorkResolver.Canonical(item.Ids.Tmdb),
             Imdb = WorkResolver.Canonical(item.Ids.Imdb),
-            Tvdb = isFilm ? null : WorkResolver.Canonical(item.Ids.Tvdb),
+            Tvdb = isEpisode ? WorkResolver.Canonical(item.Ids.Tvdb) : null,
             Title = item.Title,
             Year = item.Year
         };

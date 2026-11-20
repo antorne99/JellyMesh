@@ -61,14 +61,14 @@ public sealed class FederationResolver : IFederationResolver
         MergeCopyView ToCopyView(WorkCopy copy)
         {
             var merged = MergedCopy.From(copy.Item, copy.IsLocal);
-            return WithEpisodes(new MergeCopyView(merged, NameOf(merged), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, true) { Versions = BestFirst(FilmOnly(copy.Item)) }, copy.Item);
+            return WithEpisodes(new MergeCopyView(merged, NameOf(merged), TitleOnly(copy.Item)?.Metadata.RunTimeTicks, true) { Versions = BestFirst(TitleOnly(copy.Item)) }, copy.Item);
         }
 
         MergeCopyView ToMergedCopyView(AppliedCopy copy) =>
-            WithEpisodes(new(copy.Copy, NameOf(copy.Copy), FilmOnly(copy.Item)?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(FilmOnly(copy.Item)) }, copy.Item);
+            WithEpisodes(new(copy.Copy, NameOf(copy.Copy), TitleOnly(copy.Item)?.Metadata.RunTimeTicks, copy.Item is not null) { Versions = BestFirst(TitleOnly(copy.Item)) }, copy.Item);
 
         MergeCopyView WithEpisodes(MergeCopyView view, CatalogItem? item) =>
-            item is { Kind: not ContentKind.Movie } && episodes.TryGetValue((view.Copy.IsLocal, item.ServerId, WorkResolver.CopyItemOf(item)), out var found)
+            item is { Kind: ContentKind.Episode } && episodes.TryGetValue((view.Copy.IsLocal, item.ServerId, WorkResolver.CopyItemOf(item)), out var found)
                 ? view with { EpisodeCount = found.Episodes, SeasonCount = found.Seasons }
                 : view;
 
@@ -115,7 +115,7 @@ public sealed class FederationResolver : IFederationResolver
             // A series is refreshed as a whole, never episode by episode (Q244).
             LocalItemsAwaitingRefresh = local
                 .Where(item => item.AwaitsRefresh)
-                .Select(item => ToLocalId(item.Kind == ContentKind.Movie ? item.ItemId : item.SeriesId ?? string.Empty))
+                .Select(item => ToLocalId(item.Kind == ContentKind.Episode ? item.SeriesId ?? string.Empty : item.ItemId))
                 .Where(id => id != Guid.Empty)
                 .Distinct()
                 .ToList()
@@ -129,7 +129,7 @@ public sealed class FederationResolver : IFederationResolver
     {
         return local.Select(item => (IsLocal: true, Item: item))
             .Concat(remote.Select(item => (IsLocal: false, Item: item)))
-            .Where(entry => entry.Item.Kind != ContentKind.Movie && entry.Item.SeriesId is not null)
+            .Where(entry => entry.Item.Kind == ContentKind.Episode && entry.Item.SeriesId is not null)
             .GroupBy(entry => (entry.IsLocal, entry.Item.ServerId, (string?)entry.Item.SeriesId))
             .ToDictionary(
                 group => group.Key,
@@ -146,7 +146,7 @@ public sealed class FederationResolver : IFederationResolver
     }
 
     // A series copy is shown by one of its episodes, whose duration and versions say nothing of the series.
-    private static CatalogItem? FilmOnly(CatalogItem? item) => item?.Kind == ContentKind.Movie ? item : null;
+    private static CatalogItem? TitleOnly(CatalogItem? item) => item?.Kind == ContentKind.Episode ? null : item;
 
     private static Guid ToLocalId(string itemId) => Guid.TryParse(itemId, out var id) ? id : Guid.Empty;
 
