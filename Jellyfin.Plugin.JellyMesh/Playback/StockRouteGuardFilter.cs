@@ -222,8 +222,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return;
         }
         else if (IsMedia(controller, action)
-            && StubsOf(context, named, out var recorded) is var stubs
-            && (stubs.Count > 0 || recorded))
+            && StubsOf(context, named, out var recorded, out var guarded) is var stubs
+            && (guarded.Count > 0 || recorded))
         {
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
             if (authorization.User is not { } user)
@@ -233,7 +233,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
 
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
-            if (stubs.Keys.Any(id => !_stubs.Sees(user, id)) || named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)))
+            if (guarded.Any(id => !_stubs.Sees(user, id)) || named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)))
             {
                 await RefuseAsync(context, next, new StatusCodeResult(StatusCodes.Status404NotFound), controller, action).ConfigureAwait(false);
                 return;
@@ -526,8 +526,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     }
 
     // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
-    // play session counts even when its stub no longer resolves.
-    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, IReadOnlyList<string> sessions, out bool recorded)
+    // play session counts even when its stub no longer resolves. Guarded adds the named stubs of any kind the registry lacks.
+    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, IReadOnlyList<string> sessions, out bool recorded, out HashSet<Guid> guarded)
     {
         var stubs = new Dictionary<Guid, StubEntry>();
         var named = StubLookup.NamedItemIdsOf(context).ToList();
@@ -535,11 +535,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         recorded = played.Count > 0;
         named.AddRange(played);
 
+        guarded = [];
         foreach (var id in named)
         {
             if (_stubs.Find(id) is { } stub)
             {
                 stubs[id] = stub;
+                guarded.Add(id);
+            }
+            else if (_stubs.IsStub(id))
+            {
+                guarded.Add(id);
             }
         }
 

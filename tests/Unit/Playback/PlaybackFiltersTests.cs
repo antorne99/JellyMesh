@@ -41,7 +41,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
 
-public class PlaybackFiltersTests
+public partial class PlaybackFiltersTests
 {
     private const string Token = PlaybackValues.LocalToken;
     private static readonly Guid _itemId = Guid.Parse("33333333-3333-3333-3333-333333333333");
