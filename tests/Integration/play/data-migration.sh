@@ -4,6 +4,7 @@
 # JellyMesh server, a manual merge, a changed setting and, on 0.5, the watch state kept from a removed server. After the
 # upgrade to this build the same servers, connected server, merge and setting are there, a sync logs in with the saved
 # passwords, the old files are kept in migrated-0.5 for 30 days, and the kept watch state comes back with the server.
+# The 0.5 case then goes back to 0.5 by hand as the README says, and finds the same servers, merge and logins.
 #   local   $PREFIX-local   $PORT    plugin, user alice, connected server user mesh
 #   remote  $PREFIX-remote  $PORT+1  stock, Film of remoto-standard and /extra
 #   peer    $PREFIX-peer    $PORT+2  stock, Film of remoto-jellymesh and /extra
@@ -82,6 +83,27 @@ episode() {
 played() {
   get alice '/Items?Recursive=true&IncludeItemTypes=Episode&Fields=Path' |
     jq -r --arg k "$1" '[.Items[] | select((.Path // "") | startswith("/federata/")) | select("\(.SeriesName) S\(.ParentIndexNumber)E\(.IndexNumber)" == $k) | .UserData.Played] | any'
+}
+
+# restore_05 <tag>: the README's manual return to 0.5 while migrated-0.5 exists: with Jellyfin stopped, the old files go
+# back, the database goes aside, and the older build starts.
+restore_05() {
+  docker stop "$PREFIX-local" >/dev/null
+  docker run --rm -v "$PREFIX-local-config:/config" --entrypoint sh "$IMAGE" -c "
+    set -e
+    mv '$DATA/migrated-0.5/Jellyfin.Plugin.JellyMesh.xml' '$OLD_XML'
+    mv '$DATA'/migrated-0.5/* '$DATA'/
+    rmdir '$DATA/migrated-0.5'
+    mkdir -p /config/jellymesh-0.6-aside
+    mv '$DATA'/jellymesh.db* /config/jellymesh-0.6-aside/
+    rm -rf /config/plugins/JellyMesh_*
+    mkdir -p '/config/plugins/JellyMesh_$(cat "$WORK/plugin-$1/version")'"
+  docker cp "$WORK/plugin-$1/Jellyfin.Plugin.JellyMesh.dll" "$PREFIX-local:/config/plugins/JellyMesh_$(cat "$WORK/plugin-$1/version")/" >/dev/null
+  docker cp "$WORK/plugin-$1/meta.json" "$PREFIX-local:/config/plugins/JellyMesh_$(cat "$WORK/plugin-$1/version")/" >/dev/null
+  docker start "$PREFIX-local" >/dev/null
+  sleep 3
+  wait_ready local
+  login local
 }
 
 run_case() {
@@ -199,6 +221,19 @@ run_case() {
   check "the move is logged" 1 "$(docker logs "$PREFIX-local" 2>&1 | grep -cm1 'The data of the older JellyMesh version moved into the plugin database' || true)"
   check "no load or old file error is logged" 0 \
     "$(docker logs "$PREFIX-local" 2>&1 | grep -cE 'FileLoadException|TypeInitializationException|DllNotFoundException|MissingMethodException|The old JellyMesh (file|configuration|files).*(cannot|damaged)' || true)"
+  if [ "$tag" != v0.4.3.0 ]; then
+    echo "--- back to $tag by hand"
+    restore_05 "$tag"
+    req local GET /JellyMesh/Admin/Store >/dev/null
+    check "$tag runs again, with no database route" 404 "$(status)"
+    check "$tag has the same servers" "$before_servers" "$(servers)"
+    check "$tag has the same connected server" "$before_peers" "$(peers)"
+    check "$tag has the same merge" "$before_merges" "$(merges)"
+    check "$tag reads its setting from the XML" 1200 "$(get local "/Plugins/$PLUGIN/Configuration" | jq -r .SyncIntervalSeconds)"
+    check "$tag asks for no password" false "$(get local /JellyMesh/Admin/Status | jq '[.Servers[].NeedsPassword] | any')"
+    sync_now local
+    check "$tag logs in to both servers with the saved passwords" true "$(get local /JellyMesh/Admin/Sync | jq '([.Servers[] | .Failure == null and .IsOffline == false] | all) and ([.Servers[].Movies > 0] | all)')"
+  fi
 }
 
 mkdir -p "$WORK"
