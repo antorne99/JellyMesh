@@ -168,6 +168,9 @@ check "the cover of a stub album" 404 "$(as_jm GET "/Items/$stub_album/Images/Pr
 check "the universal audio route" 403 "$(as_jm GET "/Audio/$track/universal?Container=mp3")"
 check "the file of a book" 200 "$(as_jm GET "/Items/$real_book/File")"
 check "the file is the book" "$book_sha" "$(sha "$WORK/jm-body")"
+check "the download of a book" 200 "$(as_jm GET "/Items/$real_book/Download")"
+echo "Download sends: $(grep -i '^content-disposition:' "$WORK/jm-head" | tr -d '\r')"
+check "the download names no folder of local" 0 "$(grep -i '^content-disposition:' "$WORK/jm-head" | grep -c '/media\|/federata')"
 check "an audio stream" 200 "$(as_jm GET "/Audio/$track/stream?static=true")"
 check "an audio stream by container" 200 "$(as_jm GET "/Audio/$track/stream.mp3?static=true")"
 check "no slot left behind" 0 "$(wait_free)"
@@ -191,6 +194,14 @@ check "an audio stream holds the slot" 1 "$(active_streams)"
 check "a file over the limit" 429 "$(as_jm GET "/Items/$music_video/File")"
 kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 check "the aborted audio stream frees its slot" 0 "$(wait_free)"
+
+echo "--- without the download permission"
+jm_policy=$(get local "/Users/$jm_uid" | jq -c '.Policy | .EnableContentDownloading = false')
+post local "/Users/$jm_uid/Policy" "$jm_policy" >/dev/null
+check "the policy is saved" 204 "$(status)"
+check "the download of a book is refused" 403 "$(as_jm GET "/Items/$real_book/Download")"
+check "its file is served" 200 "$(as_jm GET "/Items/$real_book/File")"
+check "no slot left behind" 0 "$(wait_free)"
 
 echo "--- the peer"
 start peer "$WORK/peer-media:/media"
@@ -231,6 +242,14 @@ check "no stub is in it" 0 "$(jq -r '.Changes[].Id' "$WORK/jm-body" | tr -d - | 
 sync_now peer
 scan peer
 check "the peer has the new track" "$(($(echo "$real_tracks" | count) + 1))" "$(items peer Audio stub | count)"
+
+echo "--- a cleared federated folder leaves no stub to a peer"
+settings local '.FederatedFolderPath = ""' >/dev/null
+check "the folder is cleared" '""' "$(get local /JellyMesh/Admin/Settings | jq -c .FederatedFolderPath)"
+check "a stub track" 404 "$(as_jm GET "/Audio/$stub_track/stream?static=true")"
+check "the file of a stub book" 404 "$(as_jm GET "/Items/$stub_book/File")"
+check "tracks of Mia Musica" 200 "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Audio&parentId=$music&limit=500")"
+check "still only the tracks of local" "$(items local Audio real | tr -d - | paste -sd, -)" "$(jq -r '[.Items[].Id | gsub("-"; "")] | sort | join(",")' "$WORK/jm-body")"
 
 echo "=== finished, failed: $FAILED"
 exit $FAILED
