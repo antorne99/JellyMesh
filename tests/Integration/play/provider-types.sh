@@ -168,6 +168,8 @@ check "a stub track" 404 "$(as_jm GET "/Audio/$stub_track/stream?static=true")"
 check "the lyrics of a stub track" 404 "$(as_jm GET "/Audio/$stub_track/Lyrics")"
 check "the file of a stub track" 404 "$(as_jm GET "/Items/$stub_track/File")"
 check "the file of a stub book" 404 "$(as_jm GET "/Items/$stub_book/File")"
+photo_parent=$(get local "/Items/$photo" | jq -r '.ParentId // ""')
+echo "info the folder of a photo: $(get local "/Items?Ids=$photo_parent" | jq -c '.Items[0] | {Type, HasPrimary: (.ImageTags.Primary != null)}'), its cover to the peer: $(as_jm GET "/Items/$photo_parent/Images/Primary")"
 check "the file of a photo" 404 "$(as_jm GET "/Items/$photo/File")"
 check "the image of a photo" 404 "$(as_jm GET "/Items/$photo/Images/Primary")"
 check "the file of an album" 404 "$(as_jm GET "/Items/$album/File")"
