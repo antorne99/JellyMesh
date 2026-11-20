@@ -84,7 +84,7 @@ public sealed class StubRemover
         var usedSeries = remaining.Select(entry => entry.SeriesStubId).OfType<string>().ToHashSet(StringComparer.Ordinal);
         var episodes = stubs.Where(stub => stub.Kind == StubKind.Episode && gone.Contains(stub.Id)).ToList();
         var kept = new HashSet<string>(StringComparer.Ordinal);
-        RemoveMusicFolders(root, remaining, stubs.Where(stub => stub.Kind == StubKind.Track && gone.Contains(stub.Id)).ToList(), kept, failures);
+        RemoveAudioFolders(root, remaining, stubs.Where(stub => stub.Kind is StubKind.Track or StubKind.AudioBook && gone.Contains(stub.Id)).ToList(), kept, failures);
 
         foreach (var season in episodes.GroupBy(stub => Path.GetDirectoryName(stub.RelativePath)!, StringComparer.Ordinal))
         {
@@ -197,11 +197,11 @@ public sealed class StubRemover
     }
 
     // Removes the album and artist folders the removed tracks leave without a stub, deepest first, up to the music folder.
-    private void RemoveMusicFolders(string root, List<StubEntry> remaining, List<StubEntry> tracks, HashSet<string> kept, List<Exception> failures)
+    private void RemoveAudioFolders(string root, List<StubEntry> remaining, List<StubEntry> tracks, HashSet<string> kept, List<Exception> failures)
     {
         // Ignoring case: on such a disk "Artist" and "artist" are one folder.
         var holding = remaining.SelectMany(entry => FoldersAbove(entry.RelativePath, string.Empty)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var folders = tracks.SelectMany(MusicFoldersOf).Distinct(StringComparer.Ordinal).OrderByDescending(folder => folder.Length);
+        var folders = tracks.SelectMany(FoldersBelowTypeFolderOf).Distinct(StringComparer.Ordinal).OrderByDescending(folder => folder.Length);
         foreach (var folder in folders)
         {
             if (holding.Contains(folder) || Try(failures, () => DeleteFolderAndRow(root, folder)))
@@ -214,10 +214,10 @@ public sealed class StubRemover
         }
     }
 
-    // The folders of a track below the music folder of its remote library.
-    private static IEnumerable<string> MusicFoldersOf(StubEntry track) =>
+    // The folders of a track or audiobook part below the type folder of its remote library.
+    private static IEnumerable<string> FoldersBelowTypeFolderOf(StubEntry track) =>
         track.ServerId is { } server && FederatedPaths.RemoteLibraryOf(track.RelativePath) is { } library
-            ? FoldersAbove(track.RelativePath, FederatedPaths.TypeFolderOf(server, library, TypeFolder.Music))
+            ? FoldersAbove(track.RelativePath, FederatedPaths.TypeFolderOf(server, library, TypeFolder.Of(track.Kind)))
             : [];
 
     // The folders holding a path, deepest first, down to the given one, which is left out; every folder for an empty one.
@@ -251,10 +251,10 @@ public sealed class StubRemover
         {
             DeleteFolder(root, Path.GetDirectoryName(stub.RelativePath)!);
         }
-        else if (stub.Kind == StubKind.Track)
+        else if (stub.Kind is StubKind.Track or StubKind.AudioBook)
         {
-            // Track names are the remote's, so files sharing the stem, the album cover included, are not the track's. Only the
-            // lyrics Jellyfin saves next to it are.
+            // Track and part names are the remote's, so files sharing the stem, the album cover included, are not theirs.
+            // Only the lyrics Jellyfin saves next to them are.
             File.Delete(strm);
             foreach (var extension in _lyricExtensions)
             {
