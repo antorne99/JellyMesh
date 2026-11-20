@@ -121,7 +121,8 @@ public class VersionGuardTests
             _fixture.Sessions,
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
-            _peerSlots);
+            _peerSlots,
+            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock));
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
