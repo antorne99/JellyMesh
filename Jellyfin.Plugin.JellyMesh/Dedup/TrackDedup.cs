@@ -29,7 +29,8 @@ public static class TrackDedup
             .OrderBy(track => track.ServerId, StringComparer.Ordinal)
             .ThenBy(track => track.ItemId, StringComparer.Ordinal)
             .ToList();
-        var positions = items.Select(PositionOf).ToArray();
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        var positions = items.Select(item => PositionOf(item, names)).ToArray();
         var sets = new Components(items);
 
         JoinBy(items, sets, track => track.RecordingId);
@@ -91,11 +92,11 @@ public static class TrackDedup
     }
 
     // The normalized album artists, album, disc, number and title, or null when one is missing or there is no duration.
-    private static string? PositionOf(TrackItem track)
+    private static string? PositionOf(TrackItem track, Dictionary<string, string> names)
     {
         var artists = track.AlbumArtists.Any(name => !string.IsNullOrWhiteSpace(name)) ? track.AlbumArtists : track.Artists;
-        var artist = string.Join('\t', artists.Select(name => TitleNormalizer.Normalize(name, null)).Where(name => name.Length > 0));
-        var album = TitleNormalizer.Normalize(track.Album, null);
+        var artist = string.Join('\t', artists.Select(name => Normalized(name, names)).Where(name => name.Length > 0));
+        var album = Normalized(track.Album, names);
         var title = TitleNormalizer.Normalize(track.Title, null);
         if (artist.Length == 0 || album.Length == 0 || title.Length == 0 || track.TrackNumber is not { } number || track.RunTimeTicks is null)
         {
@@ -105,10 +106,28 @@ public static class TrackDedup
         return string.Create(CultureInfo.InvariantCulture, $"{artist}\n{album}\n{track.DiscNumber ?? 1}\n{number}\n{title}");
     }
 
+    // Artist and album names repeat across the tracks of an album, so each is normalized once.
+    private static string Normalized(string? name, Dictionary<string, string> names)
+    {
+        if (name is null)
+        {
+            return string.Empty;
+        }
+
+        if (!names.TryGetValue(name, out var normalized))
+        {
+            normalized = TitleNormalizer.Normalize(name, null);
+            names[name] = normalized;
+        }
+
+        return normalized;
+    }
+
     private static FederationDecision Decide(List<int> indexes, List<TrackItem> items, string?[] positions)
     {
         var copies = indexes.Select(index => items[index]).ToList();
-        var ranked = QualityRanking.RankAudio(copies.SelectMany(copy => copy.ToSources()));
+        var sources = copies.SelectMany(copy => copy.ToSources()).ToList();
+        var ranked = sources.Count == 1 ? sources : QualityRanking.RankAudio(sources);
         var remoteItems = copies
             .Select(copy => new RemoteItemKey(copy.ServerId, copy.ItemId))
             .OrderBy(item => item.ServerId, StringComparer.Ordinal)
@@ -142,18 +161,16 @@ public static class TrackDedup
 
     private static string? Id(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    // Union-find over the tracks, keeping the recording IDs of each group so that two recordings never meet.
+    // Union-find over the tracks, keeping the recording ID of each group so that two recordings never meet.
     private sealed class Components
     {
         private readonly int[] _parent;
-        private readonly HashSet<string>?[] _recordings;
+        private readonly string?[] _recordings;
 
         public Components(List<TrackItem> items)
         {
             _parent = Enumerable.Range(0, items.Count).ToArray();
-            _recordings = items
-                .Select(item => Id(item.RecordingId) is { } id ? new HashSet<string>([id], StringComparer.OrdinalIgnoreCase) : null)
-                .ToArray();
+            _recordings = items.Select(item => Id(item.RecordingId)).ToArray();
         }
 
         public int Find(int index)
@@ -167,29 +184,19 @@ public static class TrackDedup
             return index;
         }
 
-        public void Union(int left, int right)
+        // Every join goes through here, so a group holds at most one recording.
+        public void UnionIfRecordingsAgree(int left, int right)
         {
             var (a, b) = (Find(left), Find(right));
-            if (a == b)
+            var (first, second) = (_recordings[a], _recordings[b]);
+            if (a == b || (first is not null && second is not null && !string.Equals(first, second, StringComparison.OrdinalIgnoreCase)))
             {
                 return;
             }
 
             var (root, child) = a < b ? (a, b) : (b, a);
             _parent[child] = root;
-            if (_recordings[child] is { } moved)
-            {
-                (_recordings[root] ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).UnionWith(moved);
-            }
-        }
-
-        public void UnionIfRecordingsAgree(int left, int right)
-        {
-            var (a, b) = (_recordings[Find(left)], _recordings[Find(right)]);
-            if (a is null || b is null || a.Overlaps(b))
-            {
-                Union(left, right);
-            }
+            _recordings[root] ??= _recordings[child];
         }
     }
 }
