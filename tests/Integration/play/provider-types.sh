@@ -172,6 +172,8 @@ photo_parent=$(get local "/Items/$photo" | jq -r '.ParentId // ""')
 check "the album of a photo is a photo album" PhotoAlbum "$(get local "/Items?Ids=$photo_parent" | jq -r '.Items[0].Type')"
 check "the cover of a photo album" 404 "$(as_jm GET "/Items/$photo_parent/Images/Primary")"
 check "photo albums read as empty" '200 0' "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=PhotoAlbum&parentId=$home") $(jq '.Items | length' "$WORK/jm-body")"
+year_folder=$(get local '/Items?Recursive=true&IncludeItemTypes=Folder&Fields=Path' | jq -r '[.Items[] | select(.Path == "/media/videodomestici/2025")][0].Id // ""')
+echo "info the folder above a photo album: $(get local "/Items?Ids=$year_folder" | jq -c '.Items[0] | {Type, HasPrimary: (.ImageTags.Primary != null)}'), its cover to the peer: $(as_jm GET "/Items/$year_folder/Images/Primary")"
 check "the file of a photo" 404 "$(as_jm GET "/Items/$photo/File")"
 check "the image of a photo" 404 "$(as_jm GET "/Items/$photo/Images/Primary")"
 check "the file of an album" 404 "$(as_jm GET "/Items/$album/File")"
