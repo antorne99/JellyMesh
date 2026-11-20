@@ -98,6 +98,24 @@ def memory_of(phase):
     return values
 
 
+def tables_of(phase):
+    tables = {}
+    for line in (read(f"{phase}-tables.txt") or "").splitlines():
+        parts = line.split()
+        if len(parts) == 3:
+            tables[parts[0]] = (int(parts[1]), parts[2])
+    return tables
+
+
+# The store tables a phase wrote, against the phase before it: "name rows-before->rows-after" for each one that differs.
+def tables_written(before, phase):
+    old, new = tables_of(before), tables_of(phase)
+    if not old or not new:
+        return None
+    changed = [name for name in sorted(set(old) | set(new)) if old.get(name) != new.get(name)]
+    return ", ".join(f"{name} {old.get(name, (0,))[0]}->{new.get(name, (0,))[0]}" for name in changed) or "none"
+
+
 def sum_reads(read_lines):
     if not read_lines:
         return "-"
@@ -107,7 +125,7 @@ def sum_reads(read_lines):
     return f"Read {' + '.join(map(str, counts))} entries from {len(read_lines)} servers"
 
 
-def report(phase):
+def report(phase, before=None):
     status_text = read(f"{phase}-status.json")
     if not status_text:
         return None
@@ -180,6 +198,9 @@ def report(phase):
     database, log = files.get("jellymesh.db"), files.get("jellymesh.db-wal")
     lines.append(f"jellymesh.db                              {database[0] / 1048576:.1f} MiB" if database else "jellymesh.db                              -")
     lines.append(f"jellymesh.db-wal                          {log[0] / 1048576:.1f} MiB" if log else "jellymesh.db-wal                          -")
+    written = tables_written(before, phase) if before else None
+    if written is not None:
+        lines.append(f"store tables written since {before:<14} {written}")
     groups = (read(f"{phase}-groups.txt") or "").strip()
     if groups:
         lines.append(f"version groups in the registry            {groups}")
@@ -208,6 +229,7 @@ if remotes > 1:
     print(f"{remotes} remote servers with that catalog each")
 idle = memory_of("idle")
 print(f"idle before the first sync: VmHWM {idle.get('VmHWM', '-')} MiB, VmRSS {idle.get('VmRSS', '-')} MiB\n")
+before = "idle"
 for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-scanned", "incremental-scanned-again",
               "incremental-scanned-third", "nightly-scanned", "incremental-after-nightly"):
     if phase == "scan":
@@ -227,7 +249,11 @@ for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-
             if scan_samples:
                 print(f"memory, docker stats peak sample          {max(s[1] for s in scan_samples)} MiB")
             print(f"memory, process VmHWM after               {memory.get('VmHWM', '-')} MiB\n")
+            if read("scan-tables.txt"):
+                before = "scan"
         continue
-    text = report(phase)
+    text = report(phase, before)
     if text:
         print(text + "\n")
+    if read(f"{phase}-tables.txt"):
+        before = phase

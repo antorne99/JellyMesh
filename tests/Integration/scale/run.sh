@@ -82,15 +82,17 @@ sample() {
   done
 }
 
-# Prints the number of version groups in the plugin's store, read from a copy of the database and its log.
-store_groups() {
-  local copy="$WORK/store-copy" f
+# Reads a copy of the plugin's store and its log: the number of version groups goes to <phase>-groups.txt, and each
+# table's row count and a digest of its rows to <phase>-tables.txt, so that a phase that wrote a table shows: <phase>.
+store_snapshot() {
+  local phase=$1 copy="$WORK/store-copy" f
   rm -rf "$copy" && mkdir -p "$copy"
   for f in jellymesh.db jellymesh.db-wal; do
     docker cp "$NAME:/config/plugins/Jellyfin.Plugin.JellyMesh/$f" "$copy/" >/dev/null 2>&1
   done
   python3 -I -c 'import sqlite3, sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM stub_groups").fetchone()[0])' \
-    "$copy/jellymesh.db" 2>/dev/null
+    "$copy/jellymesh.db" >"$WORK/$phase-groups.txt" 2>/dev/null
+  python3 -I "$S/store_tables.py" "$copy/jellymesh.db" >"$WORK/$phase-tables.txt" 2>/dev/null
   rm -rf "$copy"
 }
 
@@ -100,7 +102,7 @@ snapshot() {
   get /JellyMesh/Admin/Sync >"$WORK/$phase-status.json"
   in_box "awk '/VmHWM|VmRSS/ { print \$1, int(\$2 / 1024) }' /proc/$JPID/status; echo cgroup-peak \$(( \$(cat /sys/fs/cgroup/memory.peak) / 1048576 ))" >"$WORK/$phase-memory.txt"
   in_box "for f in \$(find /config -name 'jellymesh.db*'); do echo \$(basename \$f) \$(stat -c '%s %.3Y' \$f); done" >"$WORK/$phase-files.txt"
-  store_groups >"$WORK/$phase-groups.txt"
+  store_snapshot "$phase"
   # After the scan: the films and episodes Jellyfin lists, by how many versions each one holds.
   [ -f "$WORK/scan-requested" ] && get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=MediaSourceCount' |
     jq -c '[.Items[] | .MediaSourceCount // 0] | group_by(.) | map({versions: .[0], items: length})' >"$WORK/$phase-links.txt"
