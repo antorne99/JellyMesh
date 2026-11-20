@@ -102,7 +102,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
 
             var stubs = state.Stubs.ToList();
             // Tracks and home videos have no versions, so their names carry no label.
-            var paths = stubs.Select(stub => stub.ServerId == serverId && stub.Kind is not (StubKind.Track or StubKind.HomeVideo) ? NewPath(stub.RelativePath, old, label) : null).ToList();
+            var paths = stubs.Select(stub => stub.ServerId == serverId && stub.Kind is not (StubKind.Track or StubKind.HomeVideo or StubKind.AudioBook) ? NewPath(stub.RelativePath, old, label) : null).ToList();
             var live = LivePaths(state, paths.OfType<string>());
 
             // The old files of a stub that left go now, so that a file written at their path is not deleted later; their item
