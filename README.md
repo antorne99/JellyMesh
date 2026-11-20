@@ -301,7 +301,7 @@ Watch state moves to the new titles user by user: the resume position goes to th
 
 Everything that changed since the upgrade is lost. Going back after the folder migration has run has not been tested.
 
-**There is no going back to 0.4** from 0.5 or 0.6. 0.5 saves its state in a format that 0.4 discards, and an older plugin would read merged series as films.
+**There is no going back to 0.4** from 0.5 or 0.6. 0.5 saves its state in a format that 0.4 discards, and an older plugin would read merged series as films. After an upgrade from 0.4 to 0.6, the files of 0.4 are kept in `migrated-0.5` too, but they are not a way back to 0.4.
 
 ## Stream limit and fallback
 
