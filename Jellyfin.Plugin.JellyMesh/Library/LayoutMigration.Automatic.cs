@@ -470,7 +470,7 @@ public sealed partial class LayoutMigration
                 ? Directory.EnumerateDirectories(root).Where(folder => Guid.TryParseExact(Path.GetFileName(folder), "D", out _)).Prepend(root)
                 : [];
             return parents
-                .SelectMany(parent => TypeFolder.Written.Select(type => Path.Combine(parent, type.Name)))
+                .SelectMany(parent => TypeFolder.Older.Select(type => Path.Combine(parent, type.Name)))
                 .Where(Directory.Exists)
                 .Any(folder => Directory.EnumerateFiles(folder, "*.strm", SearchOption.AllDirectories).Any());
         }

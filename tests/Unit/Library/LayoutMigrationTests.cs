@@ -284,6 +284,31 @@ public sealed partial class LayoutMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task TheMusicFoldersOfTheServersAreNoFolderTheMigrationWaitsFor()
+    {
+        // The older layouts held only films and series, so the type folders of the 0.7 kinds have no old folder to replace.
+        BothServersImport();
+        foreach (var config in _store.Configuration.Servers)
+        {
+            config.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Music, Name = "Musica", CollectionType = "music" });
+            config.ImportedLibraryIds.Add(TestLibraries.Music);
+        }
+
+        var (oldShow, _) = OldShow("Lost", (_serverA, "s1"));
+        OldEpisode(oldShow, (_serverA, "e1"));
+        var (newShow, _) = NewShow(_serverA, "s1");
+        NewEpisode(newShow, _serverA, "e1");
+        _libraries.Add(Library("Serie", CollectionTypeOptions.tvshows,
+            [OldSeries, NewSeries(_serverA), NewSeries(_serverB)]));
+
+        var status = (await MigrationAsync()).GetStatus(Root)!;
+
+        Assert.Empty(status.UnlinkedFolders);
+        Assert.All(status.Libraries, library => Assert.Empty(library.MissingPaths));
+        Assert.Equal(LayoutMigrationStep.Carrying, status.Step);
+    }
+
+    [Fact]
     public async Task AnOldEpisodeAloneNeedsTheSeriesFolders()
     {
         BothServersImport();

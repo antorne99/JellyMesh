@@ -232,7 +232,7 @@ public sealed partial class LayoutMigration
         var parts = FederatedPaths.RelativeTo(root, Path.TrimEndingDirectorySeparator(location))?.Split(Path.DirectorySeparatorChar);
         var (serverPart, typePart, typeFolders) = parts switch
         {
-            [var server, var type] => (server, type, TypeFolder.Written),
+            [var server, var type] => (server, type, TypeFolder.Older),
             [var server, var library, var type] when FederatedPaths.IsLibraryId(library) => (server, type, TypeFolder.All),
             _ => (null, null, (IReadOnlyList<TypeFolder>)[])
         };
