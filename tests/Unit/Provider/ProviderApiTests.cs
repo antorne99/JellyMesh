@@ -390,6 +390,34 @@ public class ProviderCatalogTests
     }
 
     [Fact]
+    public void A_peer_gets_the_parent_of_each_item_for_the_folders_of_home_videos()
+    {
+        MediaBrowser.Controller.Dto.DtoOptions? options = null;
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((_, value, _, _, _) => options = value)
+            .Returns([new BaseItemDto { Id = ProviderFixture.SharedItem }]);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.Contains(MediaBrowser.Model.Querying.ItemFields.ParentId, options!.Fields);
+    }
+
+    [Theory]
+    [InlineData("/media/libri/Autore/Libro.EPUB", ".epub")]
+    [InlineData("/media/libri/Fumetto.cbz", ".cbz")]
+    [InlineData("/media/libri/Senza estensione", null)]
+    [InlineData(null, null)]
+    public void A_book_sends_only_the_extension_of_its_file(string? path, string? sent)
+    {
+        var book = new BaseItemDto { Id = Guid.NewGuid(), Type = BaseItemKind.Book, Path = path };
+        _fixture.WithDtos(book);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.Equal(sent, book.Path);
+    }
+
+    [Fact]
     public void The_watch_state_of_this_server_never_reaches_a_peer()
     {
         MediaBrowser.Controller.Dto.DtoOptions? options = null;
@@ -444,10 +472,13 @@ public class ProviderCatalogTests
     {
         var dto = ProviderFixture.DtoWith("ms", new MediaStream { Type = MediaStreamType.Subtitle, Path = "/media/secret.srt" });
         dto.Chapters = [new ChapterInfo { Name = "Intro", ImagePath = "/config/metadata/secret.jpg" }];
+        dto.Type = BaseItemKind.Movie;
+        dto.Path = "/media/secret.mkv";
         _fixture.WithDtos(dto);
 
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
 
+        Assert.Null(dto.Path);
         Assert.Null(dto.MediaSources[0].Path);
         Assert.Null(dto.MediaSources[0].MediaStreams[0].Path);
         Assert.Null(dto.Chapters[0].ImagePath);

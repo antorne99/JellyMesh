@@ -42,7 +42,9 @@ public sealed class ProviderCatalog
         ItemFields.Taglines,
         ItemFields.OriginalTitle,
         ItemFields.Chapters,
-        ItemFields.RemoteTrailers
+        ItemFields.RemoteTrailers,
+        ItemFields.ParentId,
+        ItemFields.Path
     ];
 
     private readonly ILibraryManager _library;
@@ -237,6 +239,13 @@ public sealed class ProviderCatalog
         EnableTotalRecordCount = true
     };
 
+    // The consumer needs only the format of a book for its placeholder (D47), so no name or folder of this server leaves.
+    private static string? ExtensionOf(string? path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension is { Length: >= 2 and <= 6 } && extension[1..].All(char.IsAsciiLetterOrDigit) ? extension.ToLowerInvariant() : null;
+    }
+
     private static RemoteQuality? QualityOf(MediaSourceInfo source)
     {
         var videos = source.MediaStreams?.Where(stream => stream.Type == MediaStreamType.Video).ToList() ?? [];
@@ -271,6 +280,7 @@ public sealed class ProviderCatalog
         foreach (var dto in dtos)
         {
             dto.UserData = null;
+            dto.Path = dto.Type == BaseItemKind.Book ? ExtensionOf(dto.Path) : null;
         }
 
         // The file of a chapter image is a path of this server too.
