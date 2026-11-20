@@ -6,6 +6,7 @@ using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
 
 namespace Jellyfin.Plugin.JellyMesh.Playback;
@@ -57,6 +58,12 @@ public sealed class PlaybackVersions
         if (GroupOf(itemId) is { } group && GroupOf(versionId) is { } other && string.Equals(group.Id, other.Id, StringComparison.Ordinal))
         {
             return true;
+        }
+
+        // Two stubs of one track share its dedup key (row 457, D65); a track is never linked.
+        if (TrackKeyOf(itemId) is { } key)
+        {
+            return string.Equals(key, TrackKeyOf(versionId), StringComparison.Ordinal);
         }
 
         // The other files of a local film link up to it and not down from it, so the two climbs must meet.
@@ -113,6 +120,11 @@ public sealed class PlaybackVersions
         ArgumentNullException.ThrowIfNull(stub);
         ArgumentNullException.ThrowIfNull(user);
 
+        if (stub.Kind == StubKind.Track)
+        {
+            return TrackCopies(stub, user);
+        }
+
         var group = _registry.FindGroup(stub.Id);
         var linked = CopiesOf(itemId);
         if (group is null && linked.Count < 2)
@@ -130,6 +142,45 @@ public sealed class PlaybackVersions
         return StubRanking.Order([.. items.Keys], _registry.Find, CurrentLookup())
             .Select(stubId => _registry.Find(stubId) is { } entry ? new PlaybackCandidate(items[stubId], entry) : null)
             .OfType<PlaybackCandidate>()
+            .ToList();
+    }
+
+    // The dedup key of a track stub, null for any other item.
+    private string? TrackKeyOf(Guid itemId)
+        => _stubs.IsAudioStub(itemId) && _stubs.FindFile(itemId) is { Kind: StubKind.Track, IdentityKey: { Length: > 0 } key } ? key : null;
+
+    // The other copies of a track the user sees, best first by audio quality (row 457); a remote track counts once.
+    private List<PlaybackCandidate> TrackCopies(StubEntry stub, User user)
+    {
+        var root = _store.Read(config => config.FederatedFolderPath);
+        if (string.IsNullOrEmpty(root))
+        {
+            return [];
+        }
+
+        var items = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        foreach (var copy in _registry.FindCopies(stub.IdentityKey))
+        {
+            if (!string.Equals(copy.Id, stub.Id, StringComparison.Ordinal)
+                && _libraryManager.FindByPath(FederatedPaths.Resolve(root, copy.RelativePath), false) is Audio item
+                && _stubs.Sees(user, item.Id))
+            {
+                items[copy.Id] = item.Id;
+            }
+        }
+
+        if (items.Count == 0)
+        {
+            return [];
+        }
+
+        var played = stub.Sources.Select(source => (source.ServerId, source.ItemId)).ToHashSet();
+        var ordered = items.Count == 1 ? [.. items.Keys] : StubRanking.OrderTracks([.. items.Keys], _registry.Find, CurrentLookup());
+        return ordered
+            .Select(_registry.Find)
+            .OfType<StubEntry>()
+            .Where(copy => copy.Sources.Count > 0 && played.Add((copy.Sources[0].ServerId, copy.Sources[0].ItemId)))
+            .Select(copy => new PlaybackCandidate(items[copy.Id], copy))
             .ToList();
     }
 

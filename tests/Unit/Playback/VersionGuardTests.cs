@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
@@ -122,7 +123,8 @@ public class VersionGuardTests
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
             _peerSlots,
-            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock));
+            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock),
+            new PlaybackVersions(new StubLookup(_library.Object, _stubs.Object, _store), _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, _store));
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)

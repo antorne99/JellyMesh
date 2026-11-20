@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -40,6 +41,7 @@ public sealed class PlaybackCoordinator
     private readonly ITranscodeManager? _transcodes;
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(Guid UserId, string StubId), FileCopy> _fileCopies = new();
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
@@ -150,7 +152,8 @@ public sealed class PlaybackCoordinator
             refused += attempt.AtLimit ? 1 : 0;
         }
 
-        foreach (var (version, source) in reachable)
+        // No local audio transcode (row 457): a track ends its chain on the remote copies.
+        foreach (var (version, source) in reachable.Where(step => step.Version.Stub.Kind != StubKind.Track))
         {
             if (await CanReadFileAsync(source, cancellationToken).ConfigureAwait(false))
             {
@@ -239,23 +242,58 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(stub);
 
-        var chosen = ChosenFor(stub);
-        IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
-        var refused = 0;
-        var tried = 0;
-        foreach (var source in Ordered(sources, chosen?.Working.Source))
+        var (content, refused, tried) = await ReadFileAsync(stub, method, range, cancellationToken).ConfigureAwait(false);
+        if (content is null && tried > 0 && refused == tried)
         {
-            tried++;
-            var request = new RemoteStreamRequest(method, stub.Kind == StubKind.Book ? BookPath(source) : FilePath(source), range);
-            var stream = await OpenAsync(source.ServerId, request, cancellationToken).ConfigureAwait(false);
-            if (stream.IsSuccess)
-            {
-                // Without a playback that chose, the source is kept for the next read, as a source of no user.
-                _workingSources[chosen?.Key ?? (Guid.Empty, stub.Id)] = new WorkingSource(source, _clock.GetUtcNow());
-                return stream.Value;
-            }
+            _filesAtLimit[stub.Id] = _clock.GetUtcNow();
+        }
 
-            refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
+        return content;
+    }
+
+    /// <summary>
+    /// Opens the remote file of a track for a user: the copy in use first, then the others the user sees, best first (row
+    /// 457). A read that starts past byte 0 stays in the copy it began in, since the bytes of another file would not match.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <param name="stub">The stub of the track.</param>
+    /// <param name="copies">The other copies of the track the user sees, best first.</param>
+    /// <param name="method">GET or HEAD.</param>
+    /// <param name="range">The <c>Range</c> header, if any.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The stream, null if no copy gives it.</returns>
+    public async Task<RemoteContent?> OpenTrackFileAsync(Guid userId, StubEntry stub, IReadOnlyList<StubEntry> copies, HttpMethod method, string? range, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+        ArgumentNullException.ThrowIfNull(copies);
+
+        var key = (userId, stub.Id);
+        var now = _clock.GetUtcNow();
+        var current = _fileCopies.TryGetValue(key, out var taken) && now - taken.At < Times.SessionRetention
+            ? copies.FirstOrDefault(copy => string.Equals(copy.Id, taken.StubId, StringComparison.Ordinal)) ?? stub
+            : stub;
+        IEnumerable<StubEntry> order = StartsAtZero(range)
+            ? new[] { current }.Concat(new[] { stub }.Concat(copies).Where(copy => copy != current))
+            : [current];
+
+        var (refused, tried) = (0, 0);
+        foreach (var copy in order)
+        {
+            var read = await ReadFileAsync(copy, method, range, cancellationToken).ConfigureAwait(false);
+            (refused, tried) = (refused + read.Refused, tried + read.Tried);
+            if (read.Content is not null)
+            {
+                if (copy == stub)
+                {
+                    _fileCopies.TryRemove(key, out _);
+                }
+                else
+                {
+                    _fileCopies[key] = new FileCopy(copy.Id, _clock.GetUtcNow());
+                }
+
+                return read.Content;
+            }
         }
 
         if (tried > 0 && refused == tried)
@@ -517,6 +555,11 @@ public sealed class PlaybackCoordinator
             _workingSources.TryRemove(entry);
         }
 
+        foreach (var entry in _fileCopies.Where(entry => now - entry.Value.At >= times.SessionRetention))
+        {
+            _fileCopies.TryRemove(entry);
+        }
+
         _failures.ForgetOld(now);
     }
 
@@ -581,6 +624,35 @@ public sealed class PlaybackCoordinator
 
     // The remote file of a book: File asks the remote user for no download permission (F48, probe 7).
     private static string BookPath(StubSource source) => "/Items/" + Uri.EscapeDataString(source.ItemId) + "/File";
+
+    // Reads the file of one stub from its sources, the one last chosen first; a stub stays on its server.
+    private async Task<(RemoteContent? Content, int Refused, int Tried)> ReadFileAsync(StubEntry stub, HttpMethod method, string? range, CancellationToken cancellationToken)
+    {
+        var chosen = ChosenFor(stub);
+        IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
+        var refused = 0;
+        var tried = 0;
+        foreach (var source in Ordered(sources, chosen?.Working.Source))
+        {
+            tried++;
+            var request = new RemoteStreamRequest(method, stub.Kind == StubKind.Book ? BookPath(source) : FilePath(source), range);
+            var stream = await OpenAsync(source.ServerId, request, cancellationToken).ConfigureAwait(false);
+            if (stream.IsSuccess)
+            {
+                // Without a playback that chose, the source is kept for the next read, as a source of no user.
+                _workingSources[chosen?.Key ?? (Guid.Empty, stub.Id)] = new WorkingSource(source, _clock.GetUtcNow());
+                return (stream.Value, refused, tried);
+            }
+
+            refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
+        }
+
+        return (null, refused, tried);
+    }
+
+    // A read with no Range, or one whose first range starts at byte 0.
+    private static bool StartsAtZero(string? range)
+        => string.IsNullOrEmpty(range) || (RangeHeaderValue.TryParse(range, out var parsed) && parsed.Ranges.FirstOrDefault()?.From == 0);
 
     private static string FilePath(StubSource source, string? playSessionId = null)
     {
@@ -1078,6 +1150,9 @@ public sealed class PlaybackCoordinator
     private sealed record Attempt(PlaybackInfoResponse? Response, bool Reachable, bool AtLimit = false);
 
     private sealed record WorkingSource(StubSource Source, DateTimeOffset At);
+
+    // The copy of a track that took over its file for a user.
+    private sealed record FileCopy(string StubId, DateTimeOffset At);
 
     private sealed record CachedPolicy(RemoteTranscodePolicy Policy, DateTimeOffset ReadAt);
 }

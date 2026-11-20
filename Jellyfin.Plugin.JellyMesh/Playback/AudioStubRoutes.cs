@@ -69,12 +69,14 @@ public sealed class AudioStubRoutes
     /// <param name="context">The request, its arguments bound by stock.</param>
     /// <param name="access">Who asks, with the local token and device.</param>
     /// <param name="stub">The stub of the track.</param>
+    /// <param name="copies">The other copies of the track the user sees, best first: where the playback goes when it cannot serve.</param>
     /// <returns>The answer; a route it does not serve is a bare 503.</returns>
-    public async Task<IActionResult> ServeAsync(ActionExecutingContext context, AudioAccess access, StubEntry stub)
+    public async Task<IActionResult> ServeAsync(ActionExecutingContext context, AudioAccess access, StubEntry stub, IReadOnlyList<PlaybackCandidate> copies)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(access);
         ArgumentNullException.ThrowIfNull(stub);
+        ArgumentNullException.ThrowIfNull(copies);
 
         var (controller, action) = StubLookup.ActionOf(context);
         var route = RouteOf(controller, action);
@@ -85,7 +87,7 @@ public sealed class AudioStubRoutes
 
         var http = context.HttpContext;
         var arguments = new Arguments(context.ActionArguments);
-        var request = OpenRequest(route, arguments, access, stub);
+        var request = OpenRequest(route, arguments, access, stub, copies);
         var opened = await FindOrOpenAsync(Fingerprint(route, access, context.ActionArguments), request, http.RequestAborted).ConfigureAwait(false);
         if (opened.Session is not { } session)
         {
@@ -169,7 +171,7 @@ public sealed class AudioStubRoutes
         _ => value?.ToString() ?? string.Empty
     };
 
-    private static PlaybackOpenRequest OpenRequest(AudioRoute route, Arguments arguments, AudioAccess access, StubEntry stub)
+    private static PlaybackOpenRequest OpenRequest(AudioRoute route, Arguments arguments, AudioAccess access, StubEntry stub, IReadOnlyList<PlaybackCandidate> copies)
     {
         var hls = route is AudioRoute.Master or AudioRoute.Variant;
         var profile = route switch
@@ -182,7 +184,7 @@ public sealed class AudioStubRoutes
         {
             Identity = new PlaybackIdentity(access.UserId, access.DeviceId, access.ItemId, stub.Id),
             Stub = stub,
-            Fallbacks = [],
+            Fallbacks = copies,
             LocalToken = access.Token,
             DeviceProfile = profile,
             StartTimeTicks = arguments.Value<long>("startTimeTicks"),
@@ -326,7 +328,8 @@ public sealed class AudioStubRoutes
 
         try
         {
-            if (_opened.TryGetValue(fingerprint, out var id) && _sessions.Find(id) is { HasFailed: false } open && open.Identity == request.Identity)
+            // After a fallback the session is under the copy that serves, one of the versions of the request.
+            if (_opened.TryGetValue(fingerprint, out var id) && _sessions.Find(id) is { HasFailed: false } open && IsVersionOf(open.Identity, request))
             {
                 return (open, PlaybackRefusal.Text);
             }
@@ -354,6 +357,10 @@ public sealed class AudioStubRoutes
             gate.Release();
         }
     }
+
+    private static bool IsVersionOf(PlaybackIdentity identity, PlaybackOpenRequest request)
+        => identity == request.Identity
+            || request.Fallbacks.Any(copy => identity == request.Identity with { ItemId = copy.ItemId, StubId = copy.Stub.Id });
 
     private sealed class Arguments
     {
