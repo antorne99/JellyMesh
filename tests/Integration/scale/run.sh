@@ -256,6 +256,31 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
   measure incremental-scanned-third start_incremental
   measure nightly-scanned start_nightly
   measure incremental-after-nightly start_incremental
+  # The provider guard reads the libraries on each peer request: /Library/VirtualFolders runs the same read, /System/Info
+  # is an authenticated call that reads none. Timed with the scanned libraries, then with ten more of two empty paths each.
+  # Calls the two in turn 300 times, so that a change of load on the host weighs on both alike.
+  time_pair() {
+    local i token
+    token=$(cat "$WORK/token")
+    for i in $(seq 1 300); do
+      for path in /Library/VirtualFolders /System/Info; do
+        echo "$path $(curl -sS -o /dev/null -w '%{time_total}' -H "$ACCEPT" -H "Authorization: $AUTH, Token=\"$token\"" "$U$path")"
+      done
+    done | sort -k1,1 -k2,2n | awk '{ n[$1]++; v[$1, n[$1]] = $2 }
+      END { for (p in n) printf "%s %.2f ms median, %.2f ms fastest\n", p, v[p, int((n[p] + 1) / 2)] * 1000, v[p, 1] * 1000 }'
+  }
+  library_read() {
+    echo "libraries-$1 $(get /Library/VirtualFolders | jq length)"
+    time_pair | sed "s|^/Library/VirtualFolders|virtual-folders-$1|; s|^/System/Info|system-info-$1|" | sort
+  }
+  {
+    library_read scanned
+    for n in $(seq 1 10); do
+      in_box "mkdir -p /tmp/extra/$n/a /tmp/extra/$n/b"
+      post "/Library/VirtualFolders?name=Extra$n&collectionType=music&refreshLibrary=false&paths=/tmp/extra/$n/a&paths=/tmp/extra/$n/b" '{"LibraryOptions":{}}' >/dev/null
+    done
+    library_read extra
+  } >"$WORK/library-read.txt"
 fi
 
 sleep 3

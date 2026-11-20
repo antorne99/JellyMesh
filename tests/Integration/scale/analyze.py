@@ -257,3 +257,9 @@ for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-
         print(text + "\n")
     if read(f"{phase}-tables.txt"):
         before = phase
+library_read = read("library-read.txt")
+if library_read:
+    print("## library read of the provider guard (GetVirtualFolders, through /Library/VirtualFolders)")
+    for line in library_read.splitlines():
+        name, _, value = line.partition(" ")
+        print(f"{name:<42}{value}")
