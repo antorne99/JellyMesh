@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Test 8 of the spec (Q40, Q47, Q49, Q55-Q57, D12, D15): a flat layout made by a 0.4.x that records the last server
+# Test 8 of the 0.5 spec (Q40, Q47, Q49, Q55-Q57, D12, D15): a flat layout made by a 0.4.x that records the last server
 # that served each user, an upgrade, the banner and its choice, the old stubs working while the new paths are not linked,
 # then the paths added, the scan, the state carried as Q47 says and the old folders emptied down to their .jellymesh.
+# Since 0.6 the new paths are the type folders of each remote library (§10 rows 444-445).
 # MODE=manual: the admin adds and removes the paths. MODE=automatic: the plugin does, after a failed step and a restart,
 # then places a server linked later in the libraries of the others but not in their own (Q58, D21, D24), until the
 # settings set the new servers to manual.
@@ -23,6 +24,8 @@ name_of() { case $1 in alice | bob) echo "$PREFIX-local" ;; *) echo "$PREFIX-$1"
 port_of() { case $1 in local | alice | bob) echo "$PORT" ;; a) echo $((PORT + 1)) ;; b) echo $((PORT + 2)) ;; c) echo $((PORT + 3)) ;; d) echo $((PORT + 4)) ;; esac; }
 # vid_any <path>: the N-format id of the item with exactly that path, of any type.
 vid_any() { sql "select lower(replace(Id, '-', '')) from BaseItems where Path = '$1' limit 1;"; }
+# type_folder <server id> <Film|Serie>: the type folder of the one remote library of that kind of a server.
+type_folder() { docker exec "$PREFIX-local" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null" | head -1; }
 
 down_migration() {
   docker rm -f "$PREFIX-local" "$PREFIX-a" "$PREFIX-b" "$PREFIX-c" "$PREFIX-d" >/dev/null 2>&1 || true
@@ -126,7 +129,7 @@ check "a later scan changes nothing" AddPaths "$(scan local && step)"
 check "the old stubs are still there" "$flat_count" "$(stubs)"
 
 verify_carried() {
-  tears_of() { stub_of "$1" "Tears of Steel"; }
+  tears_of() { vid "$(type_folder "$1" Film)/Tears of Steel"; }
   tears_w=$(tears_of "$(id_of "$winner")")
   tears_b=$(tears_of "$(id_of "$backup")")
   primary=$tears_w
@@ -138,7 +141,7 @@ verify_carried() {
   check "bob's position lands on the best version (Q47)" 200000000 "$(data "$uid_bob" "$tears_w" | jq -r .PlaybackPositionTicks)"
   check "bob's favorite and rating land on the primary (Q47)" "true 8" "$(data "$uid_bob" "$primary" | jq -r '"\(.IsFavorite) \(.Rating)"')"
   for id in "$id_a" "$id_b"; do
-    series=$(vid_any "$(server_folder "$id")/Serie/$series_name")
+    series=$(vid_any "$(type_folder "$id" Serie)/$series_name")
     check "each server has the new series" 1 "$([ -n "$series" ] && echo 1 || echo 0)"
     [ -n "$series" ] && check "bob's series favorite lands on the series of each server" true "$(data "$uid_bob" "$series" | jq -r .IsFavorite)"
   done
@@ -151,8 +154,8 @@ if [ "$MODE" = manual ]; then
   # The admin adds the new paths: the scan links the versions and the state goes over.
   check "the admin does it by hand" 200 "$(choose Manual)"
   for id in "$id_a" "$id_b"; do
-    check "the Film folder joins" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
-    check "the Serie folder joins" 204 "$(link_folder local Serie "$(server_folder "$id")/Serie")"
+    check "the Film folder joins" 204 "$(link_folder local Film "$(type_folder "$id" Film)")"
+    check "the Serie folder joins" 204 "$(link_folder local Serie "$(type_folder "$id" Serie)")"
   done
   check "the banner waits for the scan" Carrying "$(step)"
   for i in 1 2 3 4 5; do
@@ -169,7 +172,7 @@ if [ "$MODE" = manual ]; then
   check "the banner is gone" none "$(step)"
 else
   # Q56: a step that cannot be done stops the run with the library named, and nothing else changes.
-  b_serie="$(server_folder "$id_b")/Serie"
+  b_serie=$(type_folder "$id_b" Serie)
   docker exec "$PREFIX-local" sh -c "mv '$b_serie' /tmp/serie-away && touch '$b_serie'"
   check "the plugin does it" 202 "$(choose Automatic)"
   wait_run() { # wait_run: until the run stops, scanning when it waits at the carry for the new stubs
@@ -209,9 +212,9 @@ else
   check "the banner is gone" null "$(migration)"
   verify_carried
   check "Film holds the local media and the Film folders of the servers" \
-    "$(printf '%s\n' /media/film "$(server_folder "$id_a")/Film" "$(server_folder "$id_b")/Film" | sort | paste -sd, -)" "$(locations Film)"
+    "$(printf '%s\n' /media/film "$(type_folder "$id_a" Film)" "$(type_folder "$id_b" Film)" | sort | paste -sd, -)" "$(locations Film)"
   check "Serie holds the Serie folders of the servers" \
-    "$(printf '%s\n' "$(server_folder "$id_a")/Serie" "$(server_folder "$id_b")/Serie" | sort | paste -sd, -)" "$(locations Serie)"
+    "$(printf '%s\n' "$(type_folder "$id_a" Serie)" "$(type_folder "$id_b" Serie)" | sort | paste -sd, -)" "$(locations Serie)"
 
   echo "--- a server linked after the migration joins the libraries of the others, not their own (Q58, D21, D24)"
   folder_mode() { get local /JellyMesh/Admin/Status | jq -r '.FederatedFolder.NewServerMode'; }
@@ -242,11 +245,11 @@ else
   a_libraries=$(own_names "$id_a")
   echo "own libraries of a: $(paste -sd, - <<<"$a_libraries")"
   id_c=$(link_later c)
-  for i in $(seq 1 60); do [ "$(holds Film "$(server_folder "$id_c")/Film")$(holds Serie "$(server_folder "$id_c")/Serie")" = 11 ] && break; sleep 3; done
+  for i in $(seq 1 60); do [ "$(holds Film "$(type_folder "$id_c" Film)")$(holds Serie "$(type_folder "$id_c" Serie)")" = 11 ] && break; sleep 3; done
   check "Film gains the Film folder of c" \
-    "$(printf '%s\n' /media/film "$(server_folder "$id_a")/Film" "$(server_folder "$id_b")/Film" "$(server_folder "$id_c")/Film" | sort | paste -sd, -)" "$(locations Film)"
+    "$(printf '%s\n' /media/film "$(type_folder "$id_a" Film)" "$(type_folder "$id_b" Film)" "$(type_folder "$id_c" Film)" | sort | paste -sd, -)" "$(locations Film)"
   check "Serie gains the Serie folder of c" \
-    "$(printf '%s\n' "$(server_folder "$id_a")/Serie" "$(server_folder "$id_b")/Serie" "$(server_folder "$id_c")/Serie" | sort | paste -sd, -)" "$(locations Serie)"
+    "$(printf '%s\n' "$(type_folder "$id_a" Serie)" "$(type_folder "$id_b" Serie)" "$(type_folder "$id_c" Serie)" | sort | paste -sd, -)" "$(locations Serie)"
   while IFS= read -r library; do
     check "the own library $library of a holds no folder of c (D24)" 0 "$(locations "$library" | grep -c "$(server_folder "$id_c")" || true)"
   done <<<"$a_libraries"
@@ -266,8 +269,8 @@ else
   id_d=$(link_later d)
   scan local
   sleep 20
-  check "the folders of d stay out of Film" 0 "$(holds Film "$(server_folder "$id_d")/Film")"
-  check "and out of Serie" 0 "$(holds Serie "$(server_folder "$id_d")/Serie")"
+  check "the folders of d stay out of Film" 0 "$(locations Film | tr ',' '\n' | grep -c "^$(server_folder "$id_d")/" || true)"
+  check "and out of Serie" 0 "$(locations Serie | tr ',' '\n' | grep -c "^$(server_folder "$id_d")/" || true)"
   check "the mode stays manual" Manual "$(folder_mode)"
 fi
 check "the status names no remote address" 0 "$(get local /JellyMesh/Admin/Status | jq -c '.FederatedFolder' | grep -c "host.docker.internal" || true)"
