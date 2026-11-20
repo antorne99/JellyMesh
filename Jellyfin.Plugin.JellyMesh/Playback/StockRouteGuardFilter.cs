@@ -314,7 +314,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             : null;
     }
 
-    // Finds the entry of the stub table for the action and the stubs it names that the entry covers; null when it names none.
+    // Finds the first entry of the stub table for the action that covers a stub it names, with those stubs; null for none.
     private StubRoute? StubRouteOf(ActionExecutingContext context, string controller, string action, out List<Guid> covered)
     {
         covered = [];
@@ -326,7 +326,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             }
 
             covered = StubLookup.NamedItemIdsOf(context).Where(id => route.Covers == StubCover.Audio ? _stubs.IsAudioStub(id) : _stubs.IsStub(id)).ToList();
-            return covered.Count > 0 ? route : null;
+            if (covered.Count > 0)
+            {
+                return route;
+            }
         }
 
         return null;
