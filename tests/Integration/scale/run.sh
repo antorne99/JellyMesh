@@ -214,13 +214,20 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
     films="$films&paths=/federata/$server/Film"
     shows="$shows&paths=/federata/$server/Serie"
   done
-  post "/Library/VirtualFolders?name=Films&collectionType=movies&refreshLibrary=false$films" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
-  post "/Library/VirtualFolders?name=Shows&collectionType=tvshows&refreshLibrary=false$shows" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  [ "${SCALE_FILMS:-5000}" -gt 0 ] &&
+    post "/Library/VirtualFolders?name=Films&collectionType=movies&refreshLibrary=false$films" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  [ "${SCALE_SERIES:-500}" -gt 0 ] &&
+    post "/Library/VirtualFolders?name=Shows&collectionType=tvshows&refreshLibrary=false$shows" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
   if [ "$TRACKS" -gt 0 ]; then
-    # The music folders are where the status page says to add them, one per server and remote library.
+    # The music folders are where the status page says to add them, one per server and remote library. No online
+    # fetcher: stock asks MusicBrainz for every album and artist otherwise, which for invented names only waits on it.
     music=$(get /JellyMesh/Admin/Status | jq -r '[.Servers[].AutomaticLibraries.ManualPaths[]? | select(.LibraryType == "music") | "&paths=" + (.Path | @uri)] | join("")')
+    offline='{"LibraryOptions":{"EnableInternetProviders":false,"EnableLUFSScan":false,"TypeOptions":['
+    offline+='{"Type":"MusicArtist","MetadataFetchers":[],"MetadataFetcherOrder":[],"ImageFetchers":[],"ImageFetcherOrder":[]},'
+    offline+='{"Type":"MusicAlbum","MetadataFetchers":[],"MetadataFetcherOrder":[],"ImageFetchers":[],"ImageFetcherOrder":[]},'
+    offline+='{"Type":"Audio","MetadataFetchers":[],"MetadataFetcherOrder":[],"ImageFetchers":[],"ImageFetcherOrder":[]}]}}'
     if [ -n "$music" ]; then
-      post "/Library/VirtualFolders?name=Music&collectionType=music&refreshLibrary=false$music" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+      post "/Library/VirtualFolders?name=Music&collectionType=music&refreshLibrary=false$music" "$offline" >/dev/null
     else
       echo "the status page lists no music folder: no Music library" | tee "$WORK/scan-music.txt"
     fi
