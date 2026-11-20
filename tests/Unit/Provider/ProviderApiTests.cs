@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -119,6 +120,26 @@ public class ProviderCatalogTests
 
         Assert.True(_fixture.Catalog.IsFederated(stub));
         Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, id));
+    }
+
+    [Fact]
+    public void A_stub_reached_through_a_link_to_an_old_server_folder_never_reaches_a_peer()
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-old-root");
+        try
+        {
+            var music = Directory.CreateDirectory(Path.Combine(temp.FullName, "vecchia", "0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679742540de944be07fc1f90ae7", "Musica", "Artista"));
+            File.WriteAllText(Path.Combine(music.FullName, "01 - Uno.strm"), "stub");
+            var alias = Path.Combine(temp.FullName, "alias");
+            Directory.CreateSymbolicLink(alias, music.FullName);
+            _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+            Assert.True(_fixture.Catalog.IsFederated(new MediaBrowser.Controller.Entities.Audio.Audio { Path = Path.Combine(alias, "01 - Uno.strm") }));
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
     }
 
     [Fact]

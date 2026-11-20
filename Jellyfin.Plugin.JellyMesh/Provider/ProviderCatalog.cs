@@ -82,13 +82,18 @@ public sealed class ProviderCatalog
             return true;
         }
 
-        if (HasServerFolderLayout(item.Path))
+        if (string.IsNullOrWhiteSpace(item.Path))
+        {
+            return false;
+        }
+
+        var path = FolderPath.Of(item.Path);
+        if (HasServerFolderLayout(path.Lexical) || HasServerFolderLayout(path.Canonical))
         {
             return true;
         }
 
-        var root = FederatedRoot();
-        return root is not null && !string.IsNullOrWhiteSpace(item.Path) && FolderPath.Of(item.Path).IsWithin(root);
+        return FederatedRoot() is { } root && path.IsWithin(root);
     }
 
     /// <summary>
@@ -341,19 +346,14 @@ public sealed class ProviderCatalog
     }
 
     // Looks for {server guid}/{library id}/{type folder} anywhere in the path, as the plugin writes the folder of a server.
-    private static bool HasServerFolderLayout(string? path)
+    private static bool HasServerFolderLayout(string path)
     {
-        if (string.IsNullOrEmpty(path))
-        {
-            return false;
-        }
-
         var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i + 2 < parts.Length; i++)
         {
             if (Guid.TryParseExact(parts[i], "D", out _)
                 && FederatedPaths.IsLibraryId(parts[i + 1])
-                && TypeFolder.Written.Any(type => string.Equals(type.Name, parts[i + 2], StringComparison.Ordinal)))
+                && TypeFolder.Written.Any(type => string.Equals(type.Name, parts[i + 2], PathIdentity.Comparison)))
             {
                 return true;
             }
