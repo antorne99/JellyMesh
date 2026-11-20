@@ -41,7 +41,7 @@ public sealed class PlaybackCoordinator
     private readonly ITranscodeManager? _transcodes;
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<(Guid UserId, string StubId), FileCopy> _fileCopies = new();
+    private readonly ConcurrentDictionary<(Guid UserId, string DeviceId, string StubId), FileCopy> _fileCopies = new();
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
@@ -256,18 +256,19 @@ public sealed class PlaybackCoordinator
     /// 457). A read that starts past byte 0 stays in the copy it began in, since the bytes of another file would not match.
     /// </summary>
     /// <param name="userId">The user.</param>
+    /// <param name="deviceId">The device of the user, which reads its own file.</param>
     /// <param name="stub">The stub of the track.</param>
     /// <param name="copies">The other copies of the track the user sees, best first.</param>
     /// <param name="method">GET or HEAD.</param>
     /// <param name="range">The <c>Range</c> header, if any.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The stream, null if no copy gives it.</returns>
-    public async Task<RemoteContent?> OpenTrackFileAsync(Guid userId, StubEntry stub, IReadOnlyList<StubEntry> copies, HttpMethod method, string? range, CancellationToken cancellationToken)
+    public async Task<RemoteContent?> OpenTrackFileAsync(Guid userId, string deviceId, StubEntry stub, IReadOnlyList<StubEntry> copies, HttpMethod method, string? range, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stub);
         ArgumentNullException.ThrowIfNull(copies);
 
-        var key = (userId, stub.Id);
+        var key = (userId, deviceId ?? string.Empty, stub.Id);
         var now = _clock.GetUtcNow();
         var current = _fileCopies.TryGetValue(key, out var taken) && now - taken.At < Times.SessionRetention
             ? copies.FirstOrDefault(copy => string.Equals(copy.Id, taken.StubId, StringComparison.Ordinal)) ?? stub
@@ -1151,7 +1152,7 @@ public sealed class PlaybackCoordinator
 
     private sealed record WorkingSource(StubSource Source, DateTimeOffset At);
 
-    // The copy of a track that took over its file for a user.
+    // The copy of a track that took over its file for a device of a user.
     private sealed record FileCopy(string StubId, DateTimeOffset At);
 
     private sealed record CachedPolicy(RemoteTranscodePolicy Policy, DateTimeOffset ReadAt);

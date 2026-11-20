@@ -323,7 +323,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
         // A track falls back to its copies the user sees (row 457); a video stub stays on its server (D22).
         using var opened = stub.Kind == StubKind.Track
-            ? await _coordinator.OpenTrackFileAsync(user.Id, stub, _versions.Fallbacks(itemId, stub, user).Select(copy => copy.Stub).ToList(), method, asked, http.RequestAborted).ConfigureAwait(false)
+            ? await _coordinator.OpenTrackFileAsync(user.Id, authorization.DeviceId ?? string.Empty, stub, _versions.Fallbacks(itemId, stub, user).Select(copy => copy.Stub).ToList(), method, asked, http.RequestAborted).ConfigureAwait(false)
             : await _coordinator.OpenFileAsync(stub, method, asked, http.RequestAborted).ConfigureAwait(false);
         if (opened is null)
         {

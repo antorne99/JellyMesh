@@ -293,6 +293,25 @@ public partial class PlaybackFiltersTests
         Assert.Equal(2, _fixture.Client.Opened.Count);
     }
 
+    // Another device of the user reads its own file: the copy that took over on the first one is not its.
+    [Fact]
+    public async Task File_of_a_track_on_another_device_goes_on_in_its_own_copy()
+    {
+        var (store, track, _) = TrackWithCopy();
+        _fixture.Registry.Offline.Add(track.ServerId!.Value);
+        RemoteServes();
+        var guard = GuardFilter(store: store);
+        Assert.False(await RunAsync(guard, FileRequest("GetFile")));
+        _fixture.Registry.Offline.Remove(track.ServerId!.Value);
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .ReturnsAsync(new AuthorizationInfo { User = _user, Token = Token, DeviceId = "another-device" });
+
+        var context = FileRequest("GetFile", "bytes=500-");
+        Assert.False(await RunAsync(guard, context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.StartsWith("/Videos/item-a/", _fixture.Client.Opened[^1], StringComparison.Ordinal);
+    }
+
     // No local audio transcode: when every copy answers but none can serve, the track stays with a clear error.
     [Fact]
     public async Task PlaybackInfo_of_a_track_no_copy_can_serve_tries_each_copy_and_never_reads_a_file()
