@@ -37,13 +37,14 @@ flat_paths_off() {
   done
 }
 
-# link_server_folders <server>: adds the Film and Serie folders of each remote to the library of that kind, as the admin does.
+# link_server_folders <server>: adds the type folders of each remote to the library of their kind, as the admin does.
 link_server_folders() {
   local kind path
   while read -r kind path; do
+    docker exec "$(container_of "$1")" test -d "$path" || { echo "no folder $path to link" >&2; return 1; }
     post "$1" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$path" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
     [ "$(cat "$WORK/status")" = 204 ] || { echo "linking $path failed: $(cat "$WORK/status")" >&2; return 1; }
-  done < <(get "$1" /JellyMesh/Admin/Status | jq -r '.FederatedFolder.Servers[] | "Film \(.MoviesPath)", "Serie \(.SeriesPath)"')
+  done < <(get "$1" /JellyMesh/Admin/Status | jq -r '.FederatedFolder.Servers[].Folders[] | "\(if .LibraryType == "tvshows" then "Serie" else "Film" end) \(.Path)"')
 }
 # The plugin keeps its credential key in a file now (decision 42), so these servers run without the old variable.
 

@@ -256,7 +256,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         return done;
     }
 
-    // Only when the libraries could be read and none has either folder of the server or one over them.
+    // Only when the libraries could be read, the server has folders and none of them, or one over them, is in a library.
     private bool InNoLibrary(Guid serverId)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
@@ -268,7 +268,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         var report = _links.Check(root, [serverId]);
         return report.IsChecked && report.Servers.Count > 0
             && report.Covering.Count == 0
-            && report.Servers.All(server => server.Movies.Link == FederatedPathLink.NotLinked && server.Series.Link == FederatedPathLink.NotLinked);
+            && report.Servers.All(server => server.Folders.Count > 0 && server.Folders.All(folder => folder.Link.Link == FederatedPathLink.NotLinked));
     }
 
     private void MarkUnfinished(Guid serverId, bool unfinished) => _store.Update(config =>

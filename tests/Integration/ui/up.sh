@@ -29,12 +29,12 @@ start fresh
 flat_paths_off fresh
 install_plugin fresh
 configure fresh true
-# The servers keep the folders of 0.5 in the admin's libraries, so JellyMesh makes no library for them.
+# The servers keep their type folders in the admin's libraries, so JellyMesh makes no library for them.
 req fresh PUT /JellyMesh/Admin/Settings '{"NewServerLibraryMode":"None"}' >/dev/null
 add_remote fresh stock "http://$(container_of stock):8096" >"$WORK/id-fresh-stock"
 add_remote fresh peer "http://$(container_of peer):8096" >"$WORK/id-fresh-peer"
 sync_and_scan fresh
-# The page is checked on the layout of 0.5: the folders of each server in the libraries, with no migration to do.
+# The page is checked with the type folders of each server in the libraries, and no migration to do.
 link_server_folders fresh
 scan fresh
 settle fresh

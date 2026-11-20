@@ -3,7 +3,8 @@
 # starting points, each made with the real older builds: a 0.5 that migrated automatically, one that migrated by hand,
 # a 0.4 flat layout and a 0.5 automatic migration stopped half-way. The 0.5 choice is kept, the admin's libraries get the
 # type folders in place of the old folders, the watch state goes over, and a title in two remote libraries of one local
-# library is one stub with its state once (D19).
+# library is one stub with its state once (D19). By hand, a library JellyMesh made shows each title twice until the
+# carry (D61), then moves to the type folders with no sync after it (F45).
 #   local   $PREFIX-local   $PORT    plugin, consumer of Casa and Mare, user alice
 #   remote  $PREFIX-remote  $PORT+1  Casa: stock, remoto-standard; "Film 4K" lists the same films as "Film"
 #   peer    $PREFIX-peer    $PORT+2  Mare: stock, remoto-jellymesh
@@ -108,6 +109,15 @@ film() {
     [.Items[] | select((.Path // "") | (startswith($f + "/") and contains($t)
       and (if $f == "/federata" then startswith("/federata/Film/") else test("/[0-9a-f]{32}/") end)))][0].Id // ""'
 }
+# in_library <library> <title>: how many films of that title a library lists.
+in_library() {
+  get local "/Items?userId=$ME&ParentId=$(library_id "$1")&Recursive=true&IncludeItemTypes=Movie" | jq -r --arg t "$2" '
+    [.Items[] | select(.Name | contains($t))] | length'
+}
+# film_folders <server id>: the film type folders of a server, as locations prints them.
+film_folders() {
+  docker exec "$PREFIX-local" sh -c "ls -d '$(server_folder "$1")'/*/Film 2>/dev/null" | jq -R -s -c 'split("\n") | map(select(length > 0)) | sort'
+}
 # copies <title>: how many films of that title the Film library lists, and how many stubs of it Casa has.
 copies() {
   get local "/Items?userId=$ME&ParentId=$(library_id Film)&Recursive=true&IncludeItemTypes=Movie" | jq -r --arg t "$1" '
@@ -177,6 +187,17 @@ to_05() {
   check "Film holds the folders of both servers" "$(jq -nc --arg c "$(server_folder "$CASA")/Film" --arg m "$(server_folder "$MARE")/Film" '[$c, $m] | sort')" "$(locations Film)"
 }
 
+# casa_libraries: 0.5 makes the libraries of Casa by type, on its server folders.
+casa_libraries() {
+  local i
+  post local "/JellyMesh/Admin/Servers/$CASA/AutomaticLibraries" '{"Enabled":true}' >/dev/null
+  check "0.5 makes the libraries of Casa" 202 "$(status)"
+  for i in $(seq 1 60); do [ "$(get local /JellyMesh/Admin/Status | jq -r --arg id "$CASA" '.Servers[] | select(.Id == $id) | .AutomaticLibraries.Busy')" = false ] && break; sleep 1; done
+  scan local
+  CASA_FILM=$(library_id "Casa - Film")
+  check "Casa - Film holds the folder of Casa" "[\"$(server_folder "$CASA")/Film\"]" "$(locations "Casa - Film")"
+}
+
 # to_06: the upgrade to this build, with a sync and a scan.
 to_06() {
   SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -237,12 +258,7 @@ for case in $CASES; do
       echo "--- from a 0.5 that migrated on its own: the choice is kept and the migration runs again by itself [§10 row 444]"
       fresh_04
       to_05 Automatic
-      post local "/JellyMesh/Admin/Servers/$CASA/AutomaticLibraries" '{"Enabled":true}' >/dev/null
-      check "0.5 makes the libraries of Casa" 202 "$(status)"
-      for i in $(seq 1 60); do [ "$(get local /JellyMesh/Admin/Status | jq -r --arg id "$CASA" '.Servers[] | select(.Id == $id) | .AutomaticLibraries.Busy')" = false ] && break; sleep 1; done
-      scan local
-      CASA_FILM=$(library_id "Casa - Film")
-      check "Casa - Film holds the folder of Casa" "[\"$(server_folder "$CASA")/Film\"]" "$(locations "Casa - Film")"
+      casa_libraries
       to_06
       check "Casa keeps its libraries by type, Mare has none" "ByType None" "$(get local /JellyMesh/Admin/Status | jq -r --arg c "$CASA" --arg m "$MARE" '"\(.Servers[] | select(.Id == $c) | .AutomaticLibraries.Mode) \(.Servers[] | select(.Id == $m) | .AutomaticLibraries.Mode)"')"
       wait_run
@@ -257,19 +273,33 @@ for case in $CASES; do
       echo "--- from a 0.5 migrated by hand: the banner stays manual and the admin moves the paths [§10 row 444]"
       fresh_04
       to_05 Manual
+      casa_libraries
       to_06
       check "the choice of 0.5 is kept" "AddPaths Manual" "$(migration | jq -r '"\(.Step) \(.Mode)"')"
       check "the banner lists both libraries on their server folders" "Film,Serie" "$(migration | jq -r '[.Libraries[].Name] | sort | join(",")')"
       check "with the type folders to add" 5 "$(migration | jq '[.Libraries[].MissingPaths[]] | length')"
+      casa_films=$(film_folders "$CASA")
+      # Until the carry the plugin adds only the type folders that hold titles beside the old folder of Casa.
+      beside() { locations "Casa - Film" | jq -r --arg o "$(server_folder "$CASA")/Film" 'index($o) != null and (map(select(test("/[0-9a-f]{32}/Film$"))) | length) > 0'; }
+      for i in $(seq 1 30); do [ "$(beside)" = true ] && break; sleep 2; done
+      check "until the carry Casa - Film holds the old folder of Casa beside a film type folder" true "$(beside)"
+      scan local
+      check "so it shows Tears of Steel twice (D61)" 2 "$(in_library "Casa - Film" "Tears of Steel")"
+      check "and the banner says so while titles are left to carry" true "$(migration | jq '.OldTitles > 0')"
       while IFS=$'\t' read -r name path; do
         link_folder local "$name" "$path" >/dev/null
       done < <(migration | jq -r '.Libraries[] | .Name as $n | .MissingPaths[] | [$n, .] | @tsv')
       scan_until RemoveOldPaths
       check "the banner asks to remove the old paths" RemoveOldPaths "$(step)"
+      for i in $(seq 1 30); do [ "$(locations "Casa - Film")" = "$casa_films" ] && break; sleep 2; done
+      check "right after the carry, with no sync, Casa - Film moves to the film type folders of Casa (F45)" "$casa_films" "$(locations "Casa - Film")"
+      check "and keeps its id" "$CASA_FILM" "$(library_id "Casa - Film")"
       while IFS=$'\t' read -r name path; do
         unlink_folder local "$name" "$path" >/dev/null
       done < <(migration | jq -r '.Libraries[] | .Name as $n | .OldPaths[] | [$n, .] | @tsv')
       verify
+      scan local
+      check "Casa - Film shows Tears of Steel once" 1 "$(in_library "Casa - Film" "Tears of Steel")"
       ;;
     flat)
       echo "--- from a 0.4 flat layout: the banner asks, and the automatic choice moves it all [§10 row 445]"

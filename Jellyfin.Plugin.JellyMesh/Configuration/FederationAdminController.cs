@@ -974,12 +974,14 @@ public class FederationAdminController : ControllerBase
         return new ServerFolderStatus(
             link.ServerId,
             name,
-            link.MoviesPath,
-            link.SeriesPath,
+            link.Folders,
             link.Movies,
             link.Series,
             link.SeriesGroupingOff,
             link.SeriesLibraries,
-            unregistered);
+            unregistered)
+        {
+            SeriesSplitWith = link.SeriesSplitWith
+        };
     }
 }

@@ -642,7 +642,8 @@ def quiet(s, width):
     page.context.close()
 
 
-MIGRATION_STEP = {"Step": "RemoveOldPaths", "Libraries": [{"Name": "Film", "OldPaths": ["/federata/Film"], "MissingPaths": []}],
+MIGRATION_STEP = {"Step": "RemoveOldPaths", "Libraries": [{"Name": "Film", "OldPaths": ["/federata/Film"], "MissingPaths": [], "PathsToAdd": []},
+                                                {"Name": "Serie", "OldPaths": ["/federata/Serie"], "MissingPaths": [], "PathsToAdd": ["/federata/x/y/Serie"]}],
                   "OldTitles": 0, "UnlinkedFolders": [], "Mode": "None", "AutomaticStep": None, "Running": False, "Error": "None"}
 
 
@@ -681,7 +682,7 @@ def migration(s, width):
     page = s.open("fresh", width, route=routes)
     page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
     banner = page.locator(u.MIGRATION)
-    check(name + " shows the choice", banner.is_visible() and text(page, u.MIGRATION_TITLE) == "Choose how to move to the folders of each server", text(page, u.MIGRATION_TITLE))
+    check(name + " shows the choice", banner.is_visible() and text(page, u.MIGRATION_TITLE) == "Choose how to move to the folders of each remote library", text(page, u.MIGRATION_TITLE))
     check(name + " offers both ways", page.locator(u.MIGRATE_AUTOMATIC).is_visible() and page.locator(u.MIGRATE_MANUAL).is_visible())
     mode = page.locator(u.NEW_SERVER_MODE)
     check(name + " shows the mode of the servers linked later", mode.is_enabled() and mode.input_value() == "Manual", mode.input_value())
@@ -692,12 +693,24 @@ def migration(s, width):
     check(name + " a choice reads the status at once", until(page, lambda: "Status" in reads, 3), reads)
     check(name + " by hand names the step", until(page, lambda: text(page, u.MIGRATION_TITLE) == "Remove the old folders from the libraries", 3), text(page, u.MIGRATION_TITLE))
     check(name + " by hand lists the old folders", "/federata/Film" in text(page, u.MIGRATION_LIBRARIES), text(page, u.MIGRATION_LIBRARIES))
+    listed = text(page, u.MIGRATION_LIBRARIES)
+    check(name + " by hand lists the folders to add before the old ones to remove",
+          "Then remove" in listed and 0 <= listed.find("/federata/x/y/Serie") < listed.find("/federata/Serie"), listed)
+    check(name + " with no titles left says nothing of titles shown twice", page.locator(u.MIGRATION_TWICE).is_hidden())
     check(name + " by hand drops its own choice", page.locator(u.MIGRATE_MANUAL).is_hidden())
     page.unroute("**/JellyMesh/Admin/Migration")
 
-    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Step": "Carrying", "OldTitles": 3, "AutomaticStep": "Carry", "Running": True}))
+    # Stopped after the old paths left the libraries: nothing is left by hand, so the banner asks only for a retry.
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Libraries": [], "AutomaticStep": "Finish", "Error": "Failed"}))
+    page.locator(u.MIGRATE_AUTOMATIC).click()
+    check(name + " a run stopped at the end asks to try again", until(page, lambda: text(page, u.MIGRATION_TEXT).endswith("Try again to finish the migration."), 3), text(page, u.MIGRATION_TEXT))
+    check(name + " a run stopped at the end lists no step by hand", page.locator(u.MIGRATION_NEXT).is_hidden() and page.locator(u.MIGRATION_LIBRARIES).is_hidden())
+    page.unroute("**/JellyMesh/Admin/Migration")
+
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Step": "Carrying", "OldTitles": 3, "AutomaticStep": "Carry", "Error": "None", "Running": True}))
     page.locator(u.MIGRATE_AUTOMATIC).click()
     check(name + " a running migration says its step", until(page, lambda: text(page, u.MIGRATION_TEXT) == "Moving the watch state to the new titles.", 3), text(page, u.MIGRATION_TEXT))
+    check(name + " until it runs the titles show twice", text(page, u.MIGRATION_TWICE).startswith("Until the migration runs, each title shows twice"), text(page, u.MIGRATION_TWICE))
     page.wait_for_timeout(500)
     reads.clear()
     times.clear()
@@ -1724,10 +1737,10 @@ def folder_chosen(page, name):
 
 
 def folder_paths(server, remote=None):
-    """Returns the paths to link that the server reports: the Film then the Serie folder of each remote, or of the one named."""
+    """Returns the paths to link that the server reports: the folders of each remote, or of the one named."""
     folder = u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["FederatedFolder"]
     remotes = [of_server(folder, remote)] if remote else folder["Servers"]
-    return [path for each in remotes for path in (each["MoviesPath"], each["SeriesPath"])]
+    return [each_folder["Path"] for each in remotes for each_folder in each["Folders"]]
 
 
 def copied_over_http(page, name):
@@ -1803,6 +1816,66 @@ def merge_details(s, width):
     merge_forecasts(s, width, name + " forecast")
     merge_refresh(s, width, name + " refresh")
     merge_dates(s, width, name + " merged")
+    merge_split(s, width, name + " split series")
+
+
+def series_copy(server):
+    """A remote series copy of a merge, as the merge list gives it."""
+    return {"Copy": {"ServerId": server["Id"], "ItemId": "5e71e5000000400080000000000000" + server["Id"][:2], "Kind": "Episode", "IsLocal": False,
+                     "Title": "JM Serie Divisa", "Year": 2026}, "ServerName": server["Name"], "RunTimeTicks": None, "IsFound": True,
+            "Versions": [], "EpisodeCount": 3, "SeasonCount": 1}
+
+
+def merge_split(s, width, name):
+    """A merged series warns that it stays split only for the servers the status names as split (Q46, row 77),
+    and a server with no series library gets no series warning."""
+    status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
+    stock_id = of_server(status["FederatedFolder"], "stock")["Id"]
+    peer_id = of_server(status["FederatedFolder"], "peer")["Id"]
+    split = {"with": {}, "flag": False}
+
+    def merged(data):
+        data["Merges"] = [{"Id": "5e71e500-0000-4000-8000-000000000001", "CreatedUtc": "2026-11-01T10:00:00Z", "IsInEffect": True,
+                           "Copies": [series_copy(of_server(status, "stock")), series_copy(of_server(status, "peer"))]}]
+
+    def folders(data):
+        linked(data)
+        folder = data["FederatedFolder"]
+        folder["SeriesSplit"] = split["flag"]
+        stock, peer = of_server(folder, "stock"), of_server(folder, "peer")
+        stock["SeriesLibraries"] = ["Serie", "Anime"]
+        peer["SeriesLibraries"] = ["Serie"]
+        for server in (stock, peer):
+            server["SeriesSplitWith"] = split["with"].get(server["Id"], [])
+        # The peer has no series library: its kind has no folder and counts as linked with no library.
+        peer["Folders"] = [each for each in peer["Folders"] if each["LibraryType"] != "tvshows"]
+        peer["Series"] = dict(Link="Linked", Libraries=[])
+
+    def routes(context):
+        context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, merged))
+        fake(context, "Status", folders)
+
+    page = s.open("fresh", width, route=routes)
+    merge = page.locator("#jmSeriesMerges " + u.MERGE)
+    warning = merge.locator(".jmMergeSplit")
+    peer_block = u.server_folder(page, "peer")
+    check(name + " shows the merged series", until(page, lambda: merge.count() == 1), page.locator("#jmSeriesMerges").inner_text())
+    check(name + " other series libraries alone do not warn", warning.count() == 0, merge.inner_text())
+    folder_info = page.locator(u.FOLDER_INFO)
+    check(name + " nor does the folder", "different libraries" not in folder_info.text_content(), folder_info.text_content())
+    check(name + " a server with no series library has no series warning", "serie" not in peer_block.text_content().lower(), peer_block.text_content())
+
+    split.update(flag=True, **{"with": {stock_id: [peer_id], peer_id: [stock_id]}})
+    check(name + " warns once the status names its servers split", until(page, lambda: warning.count() == 1, 20), merge.inner_text())
+    check(name + " names both servers", warning.count() == 1 and "stock" in warning.inner_text() and "peer" in warning.inner_text(), merge.inner_text())
+    check(name + " the folder names them too", until(page, lambda: "stock (Serie, Anime); peer (Serie)" in folder_info.text_content()), folder_info.text_content())
+    healthy(page, name)
+    u.shot(page, f"merge-split-{width}")
+
+    split.update(flag=True, **{"with": {stock_id: ["0f0f0f0f-0000-4000-8000-000000000009"]}})
+    check(name + " a split with a server outside the merge does not warn on it", until(page, lambda: warning.count() == 0, 20), merge.inner_text())
+    check(name + " the folder names only the split server", "stock (Serie, Anime)" in folder_info.text_content() and "peer (Serie)" not in folder_info.text_content(), folder_info.text_content())
+    u.close(page)
 
 
 def copy_with_api(s, width):
@@ -1840,13 +1913,14 @@ def link_warnings(page, name):
     fake(page, "Status", unlinked)
     check(name + " warns about the path of the server", until(page, lambda: "is not linked" in block.inner_text(), 20), block.inner_text())
     check(name + " leaves the other server alone", "is not linked" not in u.server_folder(page, "peer").inner_text(), u.server_folder(page, "peer").inner_text())
+    check(name + " fits the warning in the block", block.locator(".jmFolderWarning").first.evaluate("node => node.scrollWidth <= node.clientWidth"))
     check(name + " keeps the row", u.is_marked(button))
     check(name + " keeps the focus", u.has_focus(button))
     u.shot(page, f"folder-warning-{page.viewport_size['width']}")
     page.unroute("**/JellyMesh/Admin/Status")
 
     def long_path(status):
-        of_server(status["FederatedFolder"], "stock")["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
+        of_server(status["FederatedFolder"], "stock")["Folders"][0]["Path"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
 
     fake(page, "Status", long_path)
     check(name + " shows a long path", until(page, lambda: u.copy_button(page, "a-very-long-folder-name").count() == 1, 20))
@@ -2541,19 +2615,27 @@ def opens(page, name, node, tab):
 
 
 def link_folders(status, link, movies=None, series=None, grouping_off=()):
-    """Sets the link of the federated folder, and of the two folders of each server, or of the one named in movies and series."""
+    """Sets the link of the federated folder, and of the folders of each server, or of the one named in movies and series."""
     folder = status["FederatedFolder"]
     folder.update(Link=link, Path="/federata", Covering=[], SeriesSplit=False, Migration=None)
     for server in folder["Servers"]:
         server.update(SeriesGroupingOff=list(grouping_off), Unregistered=[])
         server["Movies"].update(Link="Linked", Libraries=["Film"])
         server["Series"].update(Link="Linked", Libraries=["Serie"])
+        for each in server["Folders"]:
+            each["Link"] = dict(Link="Linked", Libraries=["Serie" if each["LibraryType"] == "tvshows" else "Film"])
         if link == "NotLinked" and movies is None and series is None:
             server["Movies"].update(Link="NotLinked", Libraries=[])
             server["Series"].update(Link="NotLinked", Libraries=[])
+            for each in server["Folders"]:
+                each["Link"] = dict(Link="NotLinked", Libraries=[])
     for kind, named in [("Movies", movies), ("Series", series)]:
         if named:
-            of_server(folder, named[0])[kind].update(Link=named[1], Libraries=named[2])
+            target = of_server(folder, named[0])
+            target[kind].update(Link=named[1], Libraries=named[2])
+            for each in target["Folders"]:
+                if (each["LibraryType"] == "tvshows") == (kind == "Series"):
+                    each["Link"] = dict(Link=named[1], Libraries=named[2])
 
 
 def linked(status):
@@ -2829,7 +2911,7 @@ def overview_half(s, width):
     check(name + " names the server waiting", "Still to choose: " + HOSTILE in libraries.inner_text(), libraries.inner_text())
     check(name + " keeps remote text as text", page.locator(u.SETUP + " b").count() == 0)
     link_step = u.step(page, "Link the folders of each server").inner_text()
-    check(name + " says what is done by hand or by the automatic libraries", "in Dashboard > Libraries, or turn on the automatic libraries" in link_step, link_step)
+    check(name + " says what is done by hand or by the automatic libraries", "in Dashboard > Libraries, or choose a library mode for the server" in link_step, link_step)
     check(name + " marks state in the text and the icon", u.step(page, "Add a remote server").locator(".check_circle").count() == 1)
     for label, tab in [("Add a remote server", "servers"), ("Choose libraries to import", "servers"), ("Choose the federated folder", "settings"),
                        ("Run the first sync", "catalog"), ("Link the folders of each server", "settings")]:
