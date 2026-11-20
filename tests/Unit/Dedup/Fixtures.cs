@@ -62,6 +62,24 @@ internal static class Fixtures
         };
     }
 
+    public static CatalogItem MusicVideo(
+        string server,
+        string title,
+        int? year,
+        ContentIds? ids,
+        IReadOnlyList<string> artists,
+        params SourceQuality[] versions) => new()
+    {
+        ServerId = server,
+        ItemId = "item-mv-" + title,
+        Kind = ContentKind.MusicVideo,
+        Title = title,
+        Year = year,
+        Ids = ids ?? ContentIds.None,
+        Artists = artists,
+        Versions = Versions("item-mv-" + title, versions),
+    };
+
     /// <summary>
     /// Gives a film a runtime, the one piece of metadata a file no fetcher recognised still has.
     /// </summary>

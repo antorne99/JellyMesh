@@ -36,6 +36,7 @@ internal sealed class WorkResolver
 {
     private const string MoviePrefix = "movie";
     private const string SeriesPrefix = "series";
+    private const string MusicVideoPrefix = "musicvideo";
 
     private readonly Dictionary<WorkIds, string> _keysByIds;
     private readonly Dictionary<(string ServerId, string ItemId), Work> _filmsWithoutIds;
@@ -71,16 +72,20 @@ internal sealed class WorkResolver
         var signatures = items.Select(CanonicalIds).OfType<WorkIds>().Distinct().ToList();
         var resolver = new WorkResolver(LinkByIds(signatures, issues), issues);
         resolver.LinkFilmsWithoutIds(items);
+        resolver.LinkMusicVideosWithoutIds(items);
         resolver.ApplyMerges(items, merges);
 
         var possibleDuplicates = items
             .Where(item => !string.IsNullOrWhiteSpace(item.Title))
-            .GroupBy(item => (item.Kind, Title: TitleNormalizer.Normalize(item.Title, item.Year), item.Year))
+            .GroupBy(item => (item.Kind, Title: TitleNormalizer.Normalize(item.Title, item.Year), item.Year, Artists: ArtistsKey(item)))
             .Select(group => group.Select(item => resolver.Find(item)?.Key).OfType<string>().Distinct().Order(StringComparer.Ordinal).ToList())
             .Where(keys => keys.Count > 1)
             .Select(keys => new DedupIssue(DedupIssueKind.PossibleDuplicate, keys));
 
         issues.AddRange(possibleDuplicates);
+        var distinct = issues.DistinctBy(issue => (issue.Kind, string.Join('\n', issue.WorkKeys))).ToList();
+        issues.Clear();
+        issues.AddRange(distinct);
         issues.Sort(static (left, right) =>
         {
             var byKind = left.Kind.CompareTo(right.Kind);
@@ -106,7 +111,7 @@ internal sealed class WorkResolver
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>The item ID, null for an episode whose series is not known.</returns>
-    internal static string? CopyItemOf(CatalogItem item) => item.Kind == ContentKind.Movie ? item.ItemId : item.SeriesId;
+    internal static string? CopyItemOf(CatalogItem item) => item.Kind == ContentKind.Episode ? item.SeriesId : item.ItemId;
 
     /// <summary>
     /// Puts an ID in the form used for comparing.
@@ -116,7 +121,12 @@ internal sealed class WorkResolver
     internal static string? Canonical(string? id) =>
         string.IsNullOrWhiteSpace(id) ? null : id.Trim().ToLowerInvariant();
 
-    private static string Prefix(ContentKind kind) => kind == ContentKind.Movie ? MoviePrefix : SeriesPrefix;
+    private static string Prefix(ContentKind kind) => kind switch
+    {
+        ContentKind.Movie => MoviePrefix,
+        ContentKind.MusicVideo => MusicVideoPrefix,
+        _ => SeriesPrefix
+    };
 
     private static bool HasTitleAndYear(CatalogItem item) => !string.IsNullOrWhiteSpace(item.Title) && item.Year is not null;
 
@@ -129,7 +139,7 @@ internal sealed class WorkResolver
     private static WorkIds? CanonicalIds(CatalogItem item)
     {
         // IDs of different kinds never match: TMDb numbers films and series separately.
-        var tvdb = item.Kind == ContentKind.Movie ? null : Canonical(item.Ids.Tvdb);
+        var tvdb = item.Kind == ContentKind.Episode ? Canonical(item.Ids.Tvdb) : null;
         var ids = new ContentIds(Canonical(item.Ids.Tmdb), Canonical(item.Ids.Imdb), tvdb);
         return ids == ContentIds.None ? null : new WorkIds(item.Kind, ids);
     }
@@ -232,6 +242,20 @@ internal sealed class WorkResolver
 
     private static string CopyName(CatalogItem item) => item.ServerId + ":" + item.ItemId;
 
+    // The artists and title of a music video, null without either.
+    private static string? MusicVideoKey(CatalogItem item)
+    {
+        var artists = ArtistsKey(item);
+        var title = TitleNormalizer.Normalize(item.Title, item.Year);
+        return artists.Length == 0 || title.Length == 0
+            ? null
+            : string.Create(CultureInfo.InvariantCulture, $"{MusicVideoPrefix}|title:{title}|artists:{artists}");
+    }
+
+    private static string ArtistsKey(CatalogItem item) => string.Join(
+        ',',
+        item.Artists.Select(artist => TitleNormalizer.Normalize(artist, null)).Where(artist => artist.Length > 0).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
+
     // Copies of the work under other titles are not looked at: they may well be in another language.
     private static bool ConfirmsWork(CatalogItem copy, IEnumerable<CatalogItem> work)
     {
@@ -263,7 +287,7 @@ internal sealed class WorkResolver
             return true;
         }
 
-        var tvdb = copy.Kind == ContentKind.Movie ? null : Canonical(copy.Tvdb);
+        var tvdb = copy.Kind == ContentKind.Episode ? Canonical(copy.Tvdb) : null;
         var ids = new ContentIds(Canonical(copy.Tmdb), Canonical(copy.Imdb), tvdb);
         return ids != ContentIds.None && CanonicalIds(item) == new WorkIds(copy.Kind, ids);
     }
@@ -299,6 +323,11 @@ internal sealed class WorkResolver
         if (CanonicalIds(item) is { } ids)
         {
             return new Work(_keysByIds[ids], MatchKind.ProviderId);
+        }
+
+        if (item.Kind == ContentKind.MusicVideo)
+        {
+            return _filmsWithoutIds.GetValueOrDefault((item.ServerId, item.ItemId));
         }
 
         if (!HasTitleAndYear(item))
@@ -385,6 +414,59 @@ internal sealed class WorkResolver
             if (copies.Count > 0)
             {
                 LinkCandidates(candidates.Key, copies, withIds);
+            }
+        }
+    }
+
+    // D64: the same artists, in any order, and title match music videos with no metadata to confirm them. One year among
+    // the copies takes the yearless ones in; with several, those stay alone, like a copy that could join two sets of IDs.
+    private void LinkMusicVideosWithoutIds(IReadOnlyCollection<CatalogItem> items)
+    {
+        var videos = items.Where(item => item.Kind == ContentKind.MusicVideo && MusicVideoKey(item) is not null);
+        foreach (var candidates in videos.GroupBy(item => MusicVideoKey(item)!, StringComparer.Ordinal))
+        {
+            var copies = candidates
+                .Where(item => CanonicalIds(item) is null)
+                .DistinctBy(item => (item.ServerId, item.ItemId))
+                .OrderBy(CopyName, StringComparer.Ordinal)
+                .ToList();
+            if (copies.Count == 0)
+            {
+                continue;
+            }
+
+            var years = candidates.Select(item => item.Year).OfType<int>().Distinct().ToList();
+            int? YearOf(CatalogItem item) => years.Count == 1 ? years[0] : item.Year;
+
+            var alone = new List<string>();
+            foreach (var group in copies.GroupBy(YearOf))
+            {
+                var titleKey = string.Create(CultureInfo.InvariantCulture, $"{candidates.Key}|{group.Key}");
+                var works = candidates
+                    .Where(item => CanonicalIds(item) is not null && YearOf(item) == group.Key)
+                    .Select(item => _keysByIds[CanonicalIds(item)!.Value])
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                if ((group.Key is null && years.Count > 1) || works.Count > 1)
+                {
+                    foreach (var copy in group)
+                    {
+                        var key = titleKey + "|" + CopyName(copy);
+                        _filmsWithoutIds[(copy.ServerId, copy.ItemId)] = new Work(key, MatchKind.TitleYear);
+                        alone.Add(key);
+                    }
+
+                    continue;
+                }
+
+                var work = works.Count == 1 ? new Work(works[0], MatchKind.ProviderId) : new Work(titleKey, MatchKind.TitleYear);
+                group.ToList().ForEach(copy => _filmsWithoutIds[(copy.ServerId, copy.ItemId)] = work);
+            }
+
+            if (alone.Count > 0)
+            {
+                var keys = candidates.Select(item => FindNatural(item)!.Key).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+                _issues.Add(new DedupIssue(DedupIssueKind.PossibleDuplicate, keys));
             }
         }
     }
