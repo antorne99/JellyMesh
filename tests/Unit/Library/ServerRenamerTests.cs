@@ -380,6 +380,19 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task WithNoFolderListedForTheServer_TheStubsMove()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        var report = Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked);
+        _links.Setup(links => links.Check("/federated", new[] { _server }))
+            .Returns(report with { Servers = [report.Servers[0] with { Folders = [] }] });
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Contains("stubs Mare", _steps);
+    }
+
+    [Fact]
     public async Task WithALibraryOverTheFederatedFolder_TheStubsMove()
     {
         _store.Configuration.FederatedFolderPath = "/federated";
