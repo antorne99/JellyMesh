@@ -144,7 +144,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <inheritdoc />
     public AutomaticLibrariesState GetState(Guid serverId)
     {
-        var olderLayout = _stubs.UsesOlderLayout() ?? false;
+        var layout = _stubs.UsesOlderLayout();
+        var olderLayout = layout ?? false;
         var state = _store.Read(config => Find(config, serverId) is { } server
             ? new AutomaticLibrariesState(
                 server.AutomaticLibraries,
@@ -156,7 +157,8 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 Mode = server.LibraryMode,
                 Vanished = server.VanishedLibraries.Select(library => library.Name.Length > 0 ? library.Name : library.Id).ToList(),
                 LostAccess = LossesOf(server.LostAccess),
-                ManualPaths = config.FederatedFolderPath.Length == 0 ? [] : LibraryPlan.ManualPaths(server, config.FederatedFolderPath, olderLayout)
+                ManualPaths = config.FederatedFolderPath.Length == 0 ? [] : LibraryPlan.ManualPaths(server, config.FederatedFolderPath, olderLayout),
+                Missing = IsMissing(server, config.FederatedFolderPath, layout)
             }
             : new AutomaticLibrariesState(false, false, [], [], AutomaticLibrariesError.None));
         return WithDisabled(state) with { Busy = HasJob(serverId), Error = _errors.GetValueOrDefault(serverId), Conflicts = _conflicts.GetValueOrDefault(serverId) ?? [] };

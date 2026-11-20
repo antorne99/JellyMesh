@@ -339,6 +339,17 @@ public sealed partial class ServerEditTests : IDisposable
     }
 
     [Fact]
+    public async Task A_library_no_longer_visible_keeps_the_name_last_read()
+    {
+        var id = await AddAsync("1", "9");
+        _fixture.Store.Update(config => config.Servers.Single(server => server.Id == id).RemoteLibraries.Add(new RemoteLibraryConfig { Id = "9", Name = "Documentari", CollectionType = "movies" }));
+
+        var result = await Controller().CheckServerEdit(id, Edit(libraries: ["1"]), CancellationToken.None);
+
+        Assert.Equal([new ImportedLibraryRemoval("9", "Documentari", true)], Assert.IsType<ServerEditCheck>(result.Value).Consequences.RemovedLibraries);
+    }
+
+    [Fact]
     public async Task A_new_user_stops_the_streams_of_the_server_and_a_new_url_does_not()
     {
         var id = await AddAsync("1");

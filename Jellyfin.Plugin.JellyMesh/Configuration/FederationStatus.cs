@@ -43,4 +43,14 @@ public sealed record FederationStatus(
     /// Gets the removed servers whose removal waits until the watch state of their titles is saved (row 416), by name only.
     /// </summary>
     public IReadOnlyList<HeldRemoval> HeldRemovals { get; init; } = [];
+
+    /// <summary>
+    /// Gets the state of the plugin database (rows 427, 466, 469); <c>null</c> when it is not known.
+    /// </summary>
+    public StoreStatus? Store { get; init; }
+
+    /// <summary>
+    /// Gets the state of the libraries of all servers (§10 row 442); <c>null</c> when it is not known.
+    /// </summary>
+    public SharedLibrariesState? SharedLibraries { get; init; }
 }

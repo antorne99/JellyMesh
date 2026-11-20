@@ -703,6 +703,34 @@
                 margin-top: 1em;
             }
 
+            .jmStore p {
+                margin: 0;
+            }
+
+            .jmStore p + p {
+                margin-top: 0.5em;
+            }
+
+            .jmStore .jmActions {
+                margin-top: 0.75em;
+            }
+
+            .jmMigrated {
+                margin: 0 0 1em;
+            }
+
+            .jmOwnNotes .jmAlert {
+                margin: 0.75em 0 0;
+            }
+
+            .jmManualPaths {
+                margin-bottom: 1em;
+            }
+
+            .jmManualPaths .jmPathName {
+                width: 14em;
+            }
+
             .jmHeldRemovals p {
                 margin: 0;
             }
@@ -1310,6 +1338,7 @@
 
                 <div id="jmWarning" role="alert" hidden class="jmAlert"></div>
                 <div id="jmStatusFailure" role="alert" hidden class="jmAlert"></div>
+                <div id="jmStore" role="alert" hidden class="jmAlert jmStore"></div>
                 <div id="jmAnnounce" role="status" class="jmHidden"></div>
 
                 <section data-jm-tab="overview" role="tabpanel" aria-label="Overview">
@@ -1381,6 +1410,7 @@
                             </div>
                         </div>
                     </div>
+                    <p id="jmMigrated" class="fieldDescription jmMigrated" hidden></p>
                     <div class="jmColumns">
                         <dl id="jmSummary" class="jmFacts jmPanel"></dl>
                         <div id="jmSetup" hidden>
@@ -1503,6 +1533,14 @@
                             </div>
                         </div>
                         <div class="jmGroup">
+                            <h3 class="sectionTitle">Libraries</h3>
+                            <div class="selectContainer">
+                                <label class="selectLabel" for="jmNewServerLibraryMode">Library mode of a server linked later</label>
+                                <select id="jmNewServerLibraryMode" is="emby-select"></select>
+                                <div class="fieldDescription">Chosen in the form when a server is added. A server already linked keeps its own mode, which Edit changes.</div>
+                            </div>
+                        </div>
+                        <div class="jmGroup">
                             <h3 class="sectionTitle">Metadata</h3>
                             <div>
                                 <div class="checkboxContainer checkboxContainer-withDescription">
@@ -1566,6 +1604,20 @@
                             </div>
                         </details>
                     </form>
+                    <div id="jmShared" class="jmGroup">
+                        <h3 class="sectionTitle">Libraries of all servers</h3>
+                        <div>
+                                    <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input id="jmSharedLibraries" type="checkbox" is="emby-checkbox" disabled />
+                                    <span>One library per type with all servers</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">JellyMesh makes or adopts one library per type that holds the folders of every server, in any library mode. Saved when chosen; turning it off asks first.</div>
+                            </div>
+                            <p class="fieldDescription">In library mode By type or By remote library, a folder of a server is also in the library of that server, so its titles show in both libraries. Each is one title, with one watch state, as in Jellyfin when two libraries share a folder.</p>
+                            <div id="jmSharedNotes" class="jmOwnNotes"></div>
+                        </div>
+                    </div>
                     <div id="jmNewServers" class="jmGroup">
                         <h3 class="sectionTitle">New servers</h3>
                         <div class="selectContainer">
@@ -1639,6 +1691,38 @@
                     "Your library {library} holds {paths} together with other folders, so JellyMesh neither made nor adopted it. Take the other folders out of it for JellyMesh to adopt it, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} insieme ad altre cartelle, quindi JellyMesh non l'ha né creata né adottata. Togli le altre cartelle perché JellyMesh la adotti, oppure imposta su Nessuna la modalità delle librerie di questo server.",
                     "Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library for them. Take them out of {library}, or set the library mode of this server to None.": "La tua libreria {library} contiene {paths} con un altro tipo di contenuto, quindi JellyMesh non ha né creato né adottato una libreria per questi percorsi. Toglili da {library}, oppure imposta su Nessuna la modalità delle librerie di questo server.",
                     "{library} (adopted)": "{library} (adottata)",
+                    "Libraries of all servers": "Librerie di tutti i server",
+                    "Libraries": "Librerie",
+                    "Library mode of a server linked later": "Modalità delle librerie di un server collegato in seguito",
+                    "Chosen in the form when a server is added. A server already linked keeps its own mode, which Edit changes.": "Scelta nel modulo quando si aggiunge un server. Un server già collegato tiene la sua modalità, che si cambia con Modifica.",
+                    "One library per type with all servers": "Una sola libreria per tipo con tutti i server",
+                    "JellyMesh makes or adopts one library per type that holds the folders of every server, in any library mode. Saved when chosen; turning it off asks first.": "JellyMesh crea o adotta una libreria per tipo che contiene le cartelle di ogni server, in qualsiasi modalità delle librerie. Si salva quando la scegli; per spegnerla chiede prima conferma.",
+                    "In library mode By type or By remote library, a folder of a server is also in the library of that server, so its titles show in both libraries. Each is one title, with one watch state, as in Jellyfin when two libraries share a folder.": "Nella modalità delle librerie Per tipo o Per libreria remota, una cartella di un server sta anche nella libreria di quel server, quindi i suoi titoli compaiono in entrambe le librerie. Ognuno è un solo titolo, con un solo stato di visione, come in Jellyfin quando due librerie condividono una cartella.",
+                    "In the last change of library mode these users lost titles in {library}, because they could see only some of the libraries it joins: {names}. Give them access in Dashboard > Users if they should see them.": "Nell'ultimo cambio di modalità delle librerie questi utenti hanno perso dei titoli in {library}, perché vedevano solo alcune delle librerie che unisce: {names}. Dai loro l'accesso nel Pannello di controllo > Utenti se devono vederli.",
+                    "These remote libraries are no longer on this server, so JellyMesh stopped importing them: {names}.": "Queste librerie remote non sono più su questo server, quindi JellyMesh ha smesso di importarle: {names}.",
+                    "JellyMesh makes no library for this server. Add each of these folders in Dashboard > Libraries to a library of the type given:": "JellyMesh non crea librerie per questo server. Aggiungi ognuna di queste cartelle nel Pannello di controllo > Librerie a una libreria del tipo indicato:",
+                    "{kind} from {library}": "{kind} da {library}",
+                    "Your library {library} holds a folder above {paths}, so JellyMesh neither made nor adopted a library of all servers for them. Take that folder out of {library}.": "La tua libreria {library} contiene una cartella sopra {paths}, quindi JellyMesh non ha né creato né adottato una libreria di tutti i server per questi percorsi. Togli quella cartella da {library}.",
+                    "Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library of all servers for them. Take them out of {library}.": "La tua libreria {library} contiene {paths} con un altro tipo di contenuto, quindi JellyMesh non ha né creato né adottato una libreria di tutti i server per questi percorsi. Toglili da {library}.",
+                    "Your library {library} holds {paths} together with other folders, so JellyMesh neither made nor adopted it as a library of all servers. Take the other folders out of it for JellyMesh to adopt it.": "La tua libreria {library} contiene {paths} insieme ad altre cartelle, quindi JellyMesh non l'ha né creata né adottata come libreria di tutti i server. Togli le altre cartelle perché JellyMesh la adotti.",
+                    "The JellyMesh database was written by a newer version of JellyMesh, so sync and remote playback are suspended. Install that version again to go on.": "Il database di JellyMesh è stato scritto da una versione più recente di JellyMesh, quindi sincronizzazione e riproduzione remota sono sospese. Installa di nuovo quella versione per continuare.",
+                    "The JellyMesh database is damaged, so sync and remote playback are suspended.": "Il database di JellyMesh è danneggiato, quindi sincronizzazione e riproduzione remota sono sospese.",
+                    "The JellyMesh database cannot be opened, so sync and remote playback are suspended. Titles stay visible, and playing them gives an error.": "Il database di JellyMesh non si apre, quindi sincronizzazione e riproduzione remota sono sospese. I titoli restano visibili, e riprodurli dà un errore.",
+                    "The files of JellyMesh 0.5 are kept in the folder migrated-0.5 until {date}, then erased. Going back to JellyMesh 0.5 by hand works only until then.": "I file di JellyMesh 0.5 restano nella cartella migrated-0.5 fino al {date}, poi vengono cancellati. Tornare a mano a JellyMesh 0.5 funziona solo fino ad allora.",
+                    "Reason: {reason}": "Motivo: {reason}",
+                    "On {date} the JellyMesh database was damaged, so JellyMesh restored it from the nightly copy of {copy}. Servers added or removed after that copy may be wrong: check the list of servers.": "Il {date} il database di JellyMesh era danneggiato, quindi JellyMesh l'ha ripristinato dalla copia notturna del {copy}. I server aggiunti o rimossi dopo quella copia possono essere sbagliati: controlla l'elenco dei server.",
+                    "On {date} the JellyMesh database was damaged and there was no nightly copy, so JellyMesh started with an empty one. Check the list of servers.": "Il {date} il database di JellyMesh era danneggiato e non c'era una copia notturna, quindi JellyMesh è ripartito con uno vuoto. Controlla l'elenco dei server.",
+                    "The damaged file is kept as {file} in the plugin data folder.": "Il file danneggiato resta come {file} nella cartella dati del plugin.",
+                    "I checked the servers": "Ho controllato i server",
+                    "The libraries changed before the switch-off was done, so the option stayed on. Turn it off again to confirm the new list.": "Le librerie sono cambiate prima che lo spegnimento finisse, quindi l'opzione è rimasta accesa. Spegnila di nuovo per confermare il nuovo elenco.",
+                    "Libraries: {libraries}": "Librerie: {libraries}",
+                    "JellyMesh could not hide {libraries} from the users who cannot see the server libraries it holds, nor delete it. Until it can, JellyMesh holds its library scans and tries again at every sync.": "JellyMesh non è riuscito a nascondere {libraries} agli utenti che non vedono le librerie dei server che contiene, né a eliminarla. Finché non ci riesce, JellyMesh sospende le analisi della libreria e riprova a ogni sincronizzazione.",
+                    "Making or adopting the libraries of all servers. JellyMesh then scans them.": "Creazione o adozione delle librerie di tutti i server in corso. Poi JellyMesh le analizza.",
+                    "Deleting the libraries of all servers that JellyMesh made, and releasing the adopted ones.": "Eliminazione delle librerie di tutti i server create da JellyMesh e rilascio di quelle adottate in corso.",
+                    "JellyMesh stops keeping one library per type with the folders of all servers.": "JellyMesh smette di tenere una libreria per tipo con le cartelle di tutti i server.",
+                    "Turn off the libraries of all servers?": "Spegnere le librerie di tutti i server?",
+                    "{library}: no longer visible, will be removed": "{library}: non più visibile, verrà tolta",
+                    "A library no longer visible, will be removed": "Una libreria non più visibile, verrà tolta",
                     "{server} answered with a problem ({problem}). The edit can still be saved.": "{server} ha risposto con un problema ({problem}). La modifica si può salvare comunque.",
                     "{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.": "{server} non risponde. Finché non risponde, l'accesso e le librerie restano come sono. Un nuovo URL si salva solo se il server risponde a quell'indirizzo.",
                     "Add the folders of each remote library to the libraries": "Aggiungi alle librerie le cartelle di ogni libreria remota",
@@ -2255,7 +2339,8 @@
                     StreamOpenTimeoutSeconds: 'jmStreamOpenTimeout',
                     PlaybackIdleSeconds: 'jmPlaybackIdle',
                     SessionRetentionHours: 'jmSessionRetention',
-                    PolicyCacheMinutes: 'jmPolicyCache'
+                    PolicyCacheMinutes: 'jmPolicyCache',
+                    NewServerLibraryMode: 'jmNewServerLibraryMode'
                 };
                 var serverCount = null;
 
@@ -2552,6 +2637,7 @@
                                 failure.failure = data.Failure;
                                 failure.serverName = data.ServerName;
                                 failure.field = data.Field;
+                                failure.body = data;
                                 throw failure;
                             }
 
@@ -3053,8 +3139,14 @@
                         heading.className = 'jmLibrariesTitle';
                         libraries.appendChild(heading);
                         boxes = [];
+                        var gone = (check.Consequences ? check.Consequences.RemovedLibraries : []).filter(function (library) {
+                            return library.NoLongerVisible;
+                        });
                         if (check.Libraries.length === 0) {
                             addFormNote(libraries, t('This user sees no film or series libraries. Give it access on that server, then open Edit again.'));
+                        }
+
+                        if (check.Libraries.length === 0 && gone.length === 0) {
                             return;
                         }
 
@@ -3066,7 +3158,15 @@
                             box.checked = library.Selected;
                             return box;
                         });
-                        if (!check.Libraries.some(function (library) {
+
+                        // An imported library the user no longer sees goes at the save, whatever is ticked (row 434).
+                        gone.forEach(function (library) {
+                            var mark = addCheckbox(list, library.Id, library.Name
+                                ? t('{library}: no longer visible, will be removed', { library: library.Name })
+                                : t('A library no longer visible, will be removed'));
+                            mark.disabled = true;
+                        });
+                        if (check.Libraries.length > 0 && !check.Libraries.some(function (library) {
                             return library.Selected;
                         })) {
                             addFormNote(libraries, t('Nothing is imported from this server until you choose its libraries and save.'));
@@ -3182,12 +3282,33 @@
                     }));
                     fields.Name.value = server.Name;
                     fields.Url.value = server.Url;
-                    var rename = renameState(server);
-                    var restart = !!(statusSection.data && statusSection.data.RenamedLibrariesNeedRestart);
-                    if (rename.Busy || rename.Pending || rename.Failed || restart) {
-                        // An unfinished rename locks the name; a failed one runs again when the form is saved (920 Casi).
-                        fields.Name.readOnly = true;
-                        addFormNote(notes, t('The name cannot change now. {state}', {
+                    var lockNotes = create('div');
+                    notes.appendChild(lockNotes);
+
+                    // An unfinished rename locks the name, with its state, again at each status read while the form is
+                    // open; a failed one runs again when the form is saved (920 Casi).
+                    form.jmLocks = function (current) {
+                        server = current;
+                        var rename = renameState(current);
+                        var restart = !!(statusSection.data && statusSection.data.RenamedLibrariesNeedRestart);
+                        var locked = !!(rename.Busy || rename.Pending || rename.Failed || restart);
+                        var key = JSON.stringify([locked, rename.Pending && !rename.Busy, renameProblem(rename)]);
+                        if (lockNotes.jmKey === key) {
+                            return;
+                        }
+
+                        lockNotes.jmKey = key;
+                        lockNotes.textContent = '';
+                        if (fields.Name.readOnly !== locked) {
+                            fields.Name.value = current.Name;
+                            fields.Name.readOnly = locked;
+                        }
+
+                        if (!locked) {
+                            return;
+                        }
+
+                        addFormNote(lockNotes, t('The name cannot change now. {state}', {
                             state: renameProblem(rename) || t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts. Restart Jellyfin when you can.')
                         }), true);
                         if (rename.Pending && !rename.Busy) {
@@ -3195,42 +3316,97 @@
                             cancelRow.appendChild(button(t('Cancel the pending rename'), function () {
                                 cancelRename(server);
                             }));
-                            notes.appendChild(cancelRow);
+                            lockNotes.appendChild(cancelRow);
+                        }
+                    };
+                    var accessNotes = create('div');
+                    notes.appendChild(accessNotes);
+                    var accessKey = null;
+                    var reads = 0;
+
+                    // With the remote offline the login and the libraries stay; a new URL is checked on save (D28).
+                    function showOffline(current, offline) {
+                        fields.Username.disabled = offline;
+                        fields.Password.disabled = offline;
+                        accessNotes.textContent = '';
+                        if (offline) {
+                            addFormNote(accessNotes, t('{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.', { server: current.Name }), true);
                         }
                     }
 
-                    var focus = fields.Name.readOnly ? fields.Url : fields.Name;
-                    if (login) {
-                        // Credentials that no longer decrypt are entered again here, so the user and password are required.
-                        addFormNote(notes, t('The saved login no longer decrypts. Enter the user and the password again: JellyMesh logs in with them before saving them.'), true);
-                        addFormNote(libraries, t('The libraries are read once the login is saved.'));
-                        return { form: form, ready: Promise.resolve(), focus: fields.Username };
+                    // Asks for the login again while the saved one does not decrypt, or else reads the libraries with it; again
+                    // when a status read changes either, or whether the server answers (920 Casi).
+                    function showAccess(current) {
+                        var offline = current.Connection === 'Offline';
+                        var key = JSON.stringify([needsPassword(current), offline]);
+                        if (key === accessKey) {
+                            return null;
+                        }
+
+                        var keep = accessKey !== null && !login && !needsPassword(current) && boxes !== null;
+                        accessKey = key;
+                        if (keep) {
+                            // The libraries read stay with the admin's edit; the note and the login follow the server.
+                            showOffline(current, offline);
+                            return null;
+                        }
+
+                        var read = ++reads;
+                        login = needsPassword(current);
+                        accessNotes.textContent = '';
+                        libraries.textContent = '';
+                        boxes = null;
+                        fields.Username.disabled = false;
+                        fields.Password.disabled = false;
+                        if (login) {
+                            // Credentials that no longer decrypt are entered again here, so the user and password are required.
+                            fields.Username.placeholder = '';
+                            fields.Password.placeholder = '';
+                            addFormNote(accessNotes, t('The saved login no longer decrypts. Enter the user and the password again: JellyMesh logs in with them before saving them.'), true);
+                            addFormNote(libraries, t('The libraries are read once the login is saved.'));
+                            return Promise.resolve();
+                        }
+
+                        fields.Username.placeholder = t('Unchanged');
+                        fields.Password.placeholder = t('Unchanged');
+                        addFormNote(libraries, reading);
+                        return api('POST', 'Servers/' + current.Id + '/Edit/Check', { Name: current.Name, Url: current.Url, Username: '', Password: '' }).then(function (check) {
+                            if (read !== reads) {
+                                return null;
+                            }
+
+                            libraries.textContent = '';
+                            if (check.RemoteOffline) {
+                                showOffline(current, true);
+                                return null;
+                            }
+
+                            showLibraries(check);
+                            if (check.RemoteWarning) {
+                                addFormNote(accessNotes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: current.Name, problem: connectionLabel(check.RemoteWarning) }), true);
+                            }
+
+                            return null;
+                        }, function (error) {
+                            if (read !== reads) {
+                                return null;
+                            }
+
+                            libraries.textContent = '';
+                            addFormNote(libraries, t('The libraries could not be read, so they stay as they are. {reason}', { reason: error.message }), true);
+                            return error;
+                        });
                     }
 
-                    fields.Username.placeholder = t('Unchanged');
-                    fields.Password.placeholder = t('Unchanged');
-                    addFormNote(libraries, reading);
-                    var ready = api('POST', 'Servers/' + server.Id + '/Edit/Check', { Name: server.Name, Url: server.Url, Username: '', Password: '' }).then(function (check) {
-                        libraries.textContent = '';
-                        if (check.RemoteOffline) {
-                            // With the remote offline the login and the libraries stay; a new URL is checked on save (D28).
-                            fields.Username.disabled = true;
-                            fields.Password.disabled = true;
-                            addFormNote(notes, t('{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.', { server: server.Name }), true);
-                            return;
-                        }
+                    // Follows the server at each status read while the form is open.
+                    form.jmRefresh = function (current) {
+                        form.jmLocks(current);
+                        showAccess(current);
+                    };
 
-                        showLibraries(check);
-                        if (check.RemoteWarning) {
-                            addFormNote(notes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: server.Name, problem: connectionLabel(check.RemoteWarning) }), true);
-                        }
-
-                        return null;
-                    }, function (error) {
-                        libraries.textContent = '';
-                        addFormNote(libraries, t('The libraries could not be read, so they stay as they are. {reason}', { reason: error.message }), true);
-                        return error;
-                    });
+                    form.jmLocks(server);
+                    var focus = login ? fields.Username : fields.Name.readOnly ? fields.Url : fields.Name;
+                    var ready = showAccess(server);
                     return { form: form, ready: ready, focus: focus };
                 }
 
@@ -3288,9 +3464,14 @@
                             episodes: count(currentReport.Episodes, 'episode', 'episodes')
                         }) : t('Not read yet');
                         var problem = health.tone === 'jmStateBad' || health.tone === 'jmStateWarn' ? health.state : '';
-                        if (problem !== problemShown) {
-                            problemShown = problem;
-                            row.open = row.open || !!problem;
+                        var ownCurrent = ownState(server);
+                        var conflicts = ownCurrent.Conflicts || [];
+
+                        // A new problem or library conflict opens the card once; the admin can close it again.
+                        var shown = JSON.stringify([problem, conflicts]);
+                        if (shown !== problemShown) {
+                            problemShown = shown;
+                            row.open = row.open || !!problem || conflicts.length > 0;
                         }
 
                         setText(title, server.Name);
@@ -3307,7 +3488,6 @@
                         setText(catalog, catalogText);
                         setText(checked, server.LastCheckedUtc ? formatDate(server.LastCheckedUtc) : t('Not since this server started'));
                         setText(synced, currentReport ? sentence(formatDate(currentReport.LastSuccessUtc)) : t('Not read yet'));
-                        var ownCurrent = ownState(server);
                         setText(libraryMode, libraryModeLabel(ownCurrent.Mode || 'None'));
                         var ownNames = ownCurrent.Libraries.map(function (library) {
                             return library.Adopted ? t('{library} (adopted)', { library: library.Name }) : library.Name;
@@ -3335,6 +3515,10 @@
                         setText(renameNote, renameText);
                         renameNote.hidden = !renameText;
                         renameCancel.hidden = !renameCurrent.Pending || renameCurrent.Busy;
+                        var openForm = edit && edit.querySelector('.jmServerForm');
+                        if (openForm && openForm.jmRefresh) {
+                            openForm.jmRefresh(server);
+                        }
                     };
                     row.jmUpdate(server, report);
 
@@ -3439,6 +3623,28 @@
                     return row;
                 }
 
+                // Makes a paragraph that stands out as a warning.
+                function alertNote(text) {
+                    var note = create('p', text);
+                    note.className = 'jmAlert';
+                    return note;
+                }
+
+                // Says why a library of the admin keeps JellyMesh from making or adopting a library of all servers (D43).
+                function sharedConflictText(conflict) {
+                    var values = { library: conflict.Library, paths: conflict.Paths.join(', ') };
+                    switch (conflict.Reason) {
+                        case 'ParentPath':
+                            return t('Your library {library} holds a folder above {paths}, so JellyMesh neither made nor adopted a library of all servers for them. Take that folder out of {library}.', values);
+                        case 'OtherType':
+                            return t('Your library {library} holds {paths} with another content type, so JellyMesh neither made nor adopted a library of all servers for them. Take them out of {library}.', values);
+                        case 'OtherPaths':
+                            return t('Your library {library} holds {paths} together with other folders, so JellyMesh neither made nor adopted it as a library of all servers. Take the other folders out of it for JellyMesh to adopt it.', values);
+                        default:
+                            return t('Your library {library} already holds exactly {paths}, so JellyMesh made no other library for them.', values);
+                    }
+                }
+
                 // Says why a library of the admin keeps JellyMesh from making or adopting one, and what to do (D4, D30).
                 function conflictText(conflict) {
                     var values = { library: conflict.Library, paths: conflict.Paths.join(', ') };
@@ -3456,9 +3662,12 @@
 
                 // Shows the notes about the libraries of a server, and rebuilds them only when they change.
                 function renderOwnNotes(container, own, recreate) {
-                    var missing = own.Enabled && !own.Busy && own.Libraries.length < 2;
+                    var missing = !!own.Missing && !own.Busy;
                     var conflicts = own.Conflicts || [];
-                    var key = JSON.stringify([own.Enabled, own.Mode, own.Released, missing, conflicts]);
+                    var lost = own.LostAccess || [];
+                    var vanished = own.Vanished || [];
+                    var manual = own.Mode === 'None' ? own.ManualPaths || [] : [];
+                    var key = JSON.stringify([own.Enabled, own.Mode, own.Released, missing, conflicts, lost, vanished, manual]);
                     if (container.jmKey === key) {
                         return;
                     }
@@ -3475,10 +3684,28 @@
 
                     // A library of the admin in the way of one JellyMesh wants: neither made nor adopted, and what to do (D4, D30).
                     conflicts.forEach(function (conflict) {
-                        var note = create('p', conflictText(conflict));
-                        note.className = 'jmAlert';
-                        container.appendChild(note);
+                        container.appendChild(alertNote(conflictText(conflict)));
                     });
+
+                    lost.forEach(function (loss) {
+                        container.appendChild(alertNote(t('In the last change of library mode these users lost titles in {library}, because they could see only some of the libraries it joins: {names}. Give them access in Dashboard > Users if they should see them.', { library: loss.Library, names: loss.Users.join(', ') })));
+                    });
+
+                    if (vanished.length > 0) {
+                        container.appendChild(alertNote(t('These remote libraries are no longer on this server, so JellyMesh stopped importing them: {names}.', { names: vanished.join(', ') })));
+                    }
+
+                    if (manual.length > 0) {
+                        container.appendChild(create('p', t('JellyMesh makes no library for this server. Add each of these folders in Dashboard > Libraries to a library of the type given:')));
+                        var paths = create('div');
+                        paths.className = 'jmManualPaths';
+                        manual.forEach(function (path) {
+                            var kind = libraryKinds[path.LibraryType] || path.LibraryType;
+                            var label = path.RemoteLibrary ? t('{kind} from {library}', { kind: kind, library: path.RemoteLibrary }) : kind;
+                            paths.appendChild(renderCopyRow(sentence(label), path.Path, t('Copy: {label}', { label: path.Path })));
+                        });
+                        container.appendChild(paths);
+                    }
 
                     if (missing) {
                         var actions = actionRow();
@@ -3702,6 +3929,14 @@
                     renderFolder(status.FederatedFolder);
                     renderReleasedLibraries(status.ReleasedLibraries || []);
                     renderHeldRemovals(status.HeldRemovals || []);
+                    if (status.Store) {
+                        adopt(storeSection, status.Store);
+                    }
+
+                    if (status.SharedLibraries) {
+                        adopt(sharedSection, status.SharedLibraries);
+                    }
+
                     if (mergesSection.data) {
                         renderMergeLists(mergesSection.data);
                     }
@@ -4776,6 +5011,7 @@
                     el('#jmPlaybackIdle').value = config.PlaybackIdleSeconds;
                     el('#jmSessionRetention').value = config.SessionRetentionHours;
                     el('#jmPolicyCache').value = config.PolicyCacheMinutes;
+                    el('#jmNewServerLibraryMode').value = config.NewServerLibraryMode || 'ByType';
                     fixedSettings = (config.FixedByEnvironment || []).map(function (setting) {
                         return setting.Field;
                     });
@@ -4793,7 +5029,7 @@
                 }
 
                 function settingInputs() {
-                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input'));
+                    return Array.prototype.slice.call(el('#jmSettingsForm').querySelectorAll('input, select'));
                 }
 
                 // Remembers the form as the server holds it, so that the page can tell when it has changed.
@@ -5417,9 +5653,74 @@
                     setText(announce, problems > 0 || announce.textContent ? line : '');
                 }
 
+                var storeStates = {
+                    NewerSchema: t('The JellyMesh database was written by a newer version of JellyMesh, so sync and remote playback are suspended. Install that version again to go on.'),
+                    Damaged: t('The JellyMesh database is damaged, so sync and remote playback are suspended.'),
+                    Unavailable: t('The JellyMesh database cannot be opened, so sync and remote playback are suspended. Titles stay visible, and playing them gives an error.')
+                };
+
+                // Shows why the database cannot be used, with a retry (row 427), the last restore (row 466) and until when
+                // the files of JellyMesh 0.5 are kept (row 469). Rebuilds the notice only when it changes.
+                function renderStore(store) {
+                    var migrated = el('#jmMigrated');
+                    setText(migrated, store.MigratedKeptUntil ? t('The files of JellyMesh 0.5 are kept in the folder migrated-0.5 until {date}, then erased. Going back to JellyMesh 0.5 by hand works only until then.', { date: formatDate(store.MigratedKeptUntil) }) : '');
+                    migrated.hidden = !store.MigratedKeptUntil;
+                    var notice = el('#jmStore');
+                    var key = JSON.stringify([store.State, store.Reason, store.Recovery]);
+                    notice.hidden = store.State === 'Healthy' && !store.Recovery && !store.Reason;
+                    if (notice.jmKey === key) {
+                        return;
+                    }
+
+                    notice.jmKey = key;
+                    notice.textContent = '';
+                    var actions = actionRow();
+                    if (store.State !== 'Healthy') {
+                        notice.appendChild(create('p', storeStates[store.State] || storeStates.Unavailable));
+                        if (store.Reason) {
+                            notice.appendChild(create('p', t('Reason: {reason}', { reason: store.Reason })));
+                        }
+
+                        actions.appendChild(button(t('Try again'), function () {
+                            act(api('POST', 'Store/Retry').then(function (data) {
+                                adopt(storeSection, data);
+                                return load();
+                            }));
+                        }));
+                    } else if (store.Reason) {
+                        // A healthy database whose old files could not be read says why.
+                        notice.appendChild(create('p', t('Reason: {reason}', { reason: store.Reason })));
+                    }
+
+                    var recovery = store.Recovery;
+                    if (recovery) {
+                        notice.appendChild(create('p', recovery.CopyDate
+                            ? t('On {date} the JellyMesh database was damaged, so JellyMesh restored it from the nightly copy of {copy}. Servers added or removed after that copy may be wrong: check the list of servers.', { date: formatDate(recovery.RecoveredAt), copy: formatDate(recovery.CopyDate) })
+                            : t('On {date} the JellyMesh database was damaged and there was no nightly copy, so JellyMesh started with an empty one. Check the list of servers.', { date: formatDate(recovery.RecoveredAt) })));
+                        notice.appendChild(create('p', t('The damaged file is kept as {file} in the plugin data folder.', { file: recovery.DamagedFile })));
+                        actions.appendChild(button(t('I checked the servers'), function () {
+                            act(api('POST', 'Store/Recovery/Dismiss').then(function () {
+                                return loadStatus();
+                            }));
+                        }));
+                    }
+
+                    notice.appendChild(actions);
+                }
+
+                // The database state comes with the status; it is read on its own only when the status cannot be read.
+                var storeSection = section(function () {
+                    return read('Store');
+                }, renderStore, function () {});
+
                 var statusSection = section(function () {
                     return read('Status');
-                }, render, statusFailed);
+                }, render, function (reason) {
+                    statusFailed(reason);
+                    if (reason && storeSection.pending === 0) {
+                        refresh(storeSection);
+                    }
+                });
 
                 var syncSection = section(function () {
                     return read('Sync');
@@ -5463,6 +5764,122 @@
                     showFailure('#jmSettingsFailure', t('the settings'), t('Reload the page before saving.'), reason);
                 });
 
+                var sharedErrors = {
+                    NameTaken: t('A library name was taken, so a library was not created.'),
+                    CreateFailed: t('The server refused to create a library.'),
+                    RemoveFailed: t('The server refused to delete a library. Try again.'),
+                    ReadFailed: t('The list of libraries could not be read. Try again.'),
+                    RenameFailed: t('The change failed. Try again.'),
+                    Failed: t('The change failed. Try again.'),
+                    Unconfirmed: t('The libraries changed before the switch-off was done, so the option stayed on. Turn it off again to confirm the new list.')
+                };
+                var sharedAsking = false;
+
+                // Shows the libraries of all servers with their marks, errors and warnings (row 442, D29, D42, D43).
+                // Rebuilds the notes only when they change, so polling keeps the focus.
+                function renderShared(state) {
+                    var box = el('#jmSharedLibraries');
+                    if (!sharedAsking) {
+                        box.checked = state.Enabled;
+                    }
+
+                    box.disabled = state.Busy || sharedAsking;
+                    var notes = el('#jmSharedNotes');
+                    var key = JSON.stringify([state.Enabled, state.Busy, state.Libraries, state.Released, state.Error, state.Conflicts, state.Unblocked]);
+                    if (notes.jmKey === key) {
+                        return;
+                    }
+
+                    notes.jmKey = key;
+                    notes.textContent = '';
+                    if (state.Busy) {
+                        notes.appendChild(create('p', t('Being updated')));
+                    } else if (state.Enabled) {
+                        var names = state.Libraries.map(function (library) {
+                            return library.Adopted ? t('{library} (adopted)', { library: library.Name }) : library.Name;
+                        }).join(', ');
+                        notes.appendChild(create('p', t('Libraries: {libraries}', { libraries: names || t('None') })));
+                        notes.appendChild(create('p', t('Users with access to only some libraries do not see these until you enable them for those users in Dashboard > Users.')));
+                    }
+
+                    if (sharedErrors[state.Error]) {
+                        notes.appendChild(alertNote(sharedErrors[state.Error]));
+                    }
+
+                    if (state.Unblocked.length > 0) {
+                        notes.appendChild(alertNote(t('JellyMesh could not hide {libraries} from the users who cannot see the server libraries it holds, nor delete it. Until it can, JellyMesh holds its library scans and tries again at every sync.', { libraries: state.Unblocked.join(', ') })));
+                    }
+
+                    state.Conflicts.forEach(function (conflict) {
+                        notes.appendChild(alertNote(sharedConflictText(conflict)));
+                    });
+
+                    if (state.Released.length > 0) {
+                        notes.appendChild(create('p', t('JellyMesh no longer manages these libraries, because their path or type changed, they were deleted, or the federated folder changed: {libraries}. Any that are still there are yours to keep or delete.', { libraries: state.Released.join(', ') })));
+                    }
+                }
+
+                // Turns the libraries of all servers on, or off once the admin confirms the libraries named (D48).
+                function setShared(enabled, confirmed) {
+                    var body = { Enabled: enabled };
+                    if (confirmed) {
+                        body.Confirmed = true;
+                        body.ToDelete = confirmed.ToDelete;
+                        body.ToRelease = confirmed.ToRelease;
+                    }
+
+                    sharedAsking = true;
+                    el('#jmSharedLibraries').disabled = true;
+                    showMessage('');
+                    Dashboard.showLoadingMsg();
+                    return api('POST', 'SharedLibraries', body).then(function (state) {
+                        Dashboard.hideLoadingMsg();
+                        sharedAsking = false;
+                        adopt(sharedSection, state);
+                        showMessage(enabled
+                            ? t('Making or adopting the libraries of all servers. JellyMesh then scans them.')
+                            : t('Deleting the libraries of all servers that JellyMesh made, and releasing the adopted ones.'));
+                        return loadStatus();
+                    }, function (error) {
+                        Dashboard.hideLoadingMsg();
+                        if (error.body && error.body.Outcome === 'ConfirmationRequired') {
+                            confirmSharedOff(error.body);
+                            return null;
+                        }
+
+                        sharedAsking = false;
+                        showError(error.message);
+                        return loadStatus();
+                    });
+                }
+
+                // Asks before turning the libraries of all servers off, naming those deleted and released (D48, D55).
+                function confirmSharedOff(refusal) {
+                    var paragraphs = [escapeHtml(t('JellyMesh stops keeping one library per type with the folders of all servers.'))];
+                    if (refusal.ToDelete.length > 0) {
+                        paragraphs.push(t('These libraries are deleted now: {names}.', { names: escapeHtml(refusal.ToDelete.join(', ')) }));
+                    }
+
+                    if (refusal.ToRelease.length > 0) {
+                        paragraphs.push(t('These adopted libraries stay, and JellyMesh no longer manages them: {names}.', { names: escapeHtml(refusal.ToRelease.join(', ')) }));
+                    }
+
+                    Dashboard.confirm(paragraphs.join('<br/><br/>'), t('Turn off the libraries of all servers?'), function (confirmed) {
+                        if (confirmed) {
+                            setShared(false, refusal);
+                            return;
+                        }
+
+                        sharedAsking = false;
+                        if (sharedSection.data) {
+                            renderShared(sharedSection.data);
+                        }
+                    });
+                }
+
+                // The libraries of all servers come with the status.
+                var sharedSection = section(null, renderShared, function () {});
+
                 function loadStatus() {
                     return refresh(statusSection);
                 }
@@ -5490,7 +5907,8 @@
                 // Plans the next read while the page is open and its tab is shown, sooner while a sync or a migration runs.
                 function schedule() {
                     window.clearTimeout(pollTimer);
-                    var wait = syncRunning ? syncPollMilliseconds : migrationRunning ? migrationPollMilliseconds : idlePollMilliseconds;
+                    var sharedBusy = !!(sharedSection.data && sharedSection.data.Busy);
+                    var wait = syncRunning || sharedBusy ? syncPollMilliseconds : migrationRunning ? migrationPollMilliseconds : idlePollMilliseconds;
                     pollTimer = visible && !document.hidden ? window.setTimeout(poll, wait) : null;
                 }
 
@@ -5511,8 +5929,9 @@
                         nextMigrationPoll = Date.now() + migrationPollMilliseconds;
                     }
 
+                    var sharedBusy = !!(sharedSection.data && sharedSection.data.Busy);
                     var parts = [syncSection, statusSection, peersSection, mergesSection, historySection].filter(function (part) {
-                        return part.pending === 0 && (part === syncSection || part.stale || (part === statusSection && migrationDue)
+                        return part.pending === 0 && (part === syncSection || part.stale || (part === statusSection && (migrationDue || sharedBusy))
                             || (due && part !== mergesSection && part !== historySection));
                     });
                     polling = true;
@@ -5625,6 +6044,10 @@
                     }
                 });
 
+                el('#jmSharedLibraries').addEventListener('change', function (event) {
+                    setShared(event.target.checked);
+                });
+
                 el('#jmDismiss').addEventListener('click', function () {
                     showMessage('');
                 });
@@ -5683,6 +6106,12 @@
                     });
                 });
 
+                libraryModes.forEach(function (value) {
+                    var option = create('option', libraryModeLabel(value));
+                    option.value = value;
+                    el('#jmNewServerLibraryMode').appendChild(option);
+                });
+
                 el('#jmSettingsForm').addEventListener('input', showSaveBar);
                 el('#jmSettingsForm').addEventListener('change', showSaveBar);
 
@@ -5704,6 +6133,7 @@
                     config.PlaybackIdleSeconds = parseInt(el('#jmPlaybackIdle').value, 10);
                     config.SessionRetentionHours = parseInt(el('#jmSessionRetention').value, 10);
                     config.PolicyCacheMinutes = parseInt(el('#jmPolicyCache').value, 10);
+                    config.NewServerLibraryMode = el('#jmNewServerLibraryMode').value;
                     // A setting of the environment is left out, so it keeps the value of the variable.
                     fixedSettings.forEach(function (field) {
                         delete config[field];

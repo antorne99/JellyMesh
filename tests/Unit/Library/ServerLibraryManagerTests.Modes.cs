@@ -120,6 +120,25 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task The_state_says_a_library_is_missing_only_while_one_the_mode_wants_is_not_there()
+    {
+        var fixture = OnTypeFolders();
+        await fixture.Manager.Enable(_serverId, LibraryMode.ByRemoteLibrary).Job;
+        Assert.False(fixture.Manager.GetState(_serverId).Missing);
+        fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film 4K"));
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.True(fixture.Manager.GetState(_serverId).Missing);
+    }
+
+    [Fact]
+    public void In_none_mode_no_library_is_missing()
+    {
+        Assert.False(OnTypeFolders().Manager.GetState(_serverId).Missing);
+    }
+
+    [Fact]
     public async Task A_type_that_comes_with_a_new_remote_library_gets_its_library_at_the_next_check()
     {
         var fixture = OnTypeFolders();

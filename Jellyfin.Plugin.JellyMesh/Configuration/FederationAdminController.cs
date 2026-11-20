@@ -45,6 +45,7 @@ public class FederationAdminController : ControllerBase
     private readonly ILibraryChangeTracker? _changes;
     private readonly IServerRenamer? _renamer;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly IPluginDatabase? _database;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -63,6 +64,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="changes">The libraries that changed on the federated folder since the last sync.</param>
     /// <param name="renamer">The server rename.</param>
     /// <param name="keeper">The watch state kept for removed servers, for the removals it holds.</param>
+    /// <param name="database">The plugin database, whose state the status carries.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -77,7 +79,8 @@ public class FederationAdminController : ControllerBase
         ILayoutMigration? migration = null,
         ILibraryChangeTracker? changes = null,
         IServerRenamer? renamer = null,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        IPluginDatabase? database = null)
     {
         _registry = registry;
         _vault = vault;
@@ -93,15 +96,17 @@ public class FederationAdminController : ControllerBase
         _changes = changes;
         _renamer = renamer;
         _keeper = keeper;
+        _database = database;
     }
 
     /// <summary>
     /// Gets the state shown on the configuration page.
     /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The status.</returns>
     [HttpGet("Status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<FederationStatus> GetStatus()
+    public async Task<ActionResult<FederationStatus>> GetStatus(CancellationToken cancellationToken)
     {
         var keyState = _vault.GetKeyState();
 
@@ -121,7 +126,9 @@ public class FederationAdminController : ControllerBase
                     .Where(name => !held.HiddenReleasedLibraries.Contains(name, StringComparer.Ordinal))
                     .Select(name => new ReleasedLibrary(held.ServerId, name)))
                 .ToList()),
-            HeldRemovals = _keeper?.HeldRemovals ?? []
+            HeldRemovals = _keeper?.HeldRemovals ?? [],
+            Store = _database is null ? null : await StoreStatus.ReadAsync(_database, cancellationToken).ConfigureAwait(false),
+            SharedLibraries = _libraries.GetSharedState()
         };
     }
 
@@ -866,6 +873,8 @@ public class FederationAdminController : ControllerBase
         });
     }
 
+    private static string? NameOrNull(string? name) => string.IsNullOrEmpty(name) ? null : name;
+
     private void RunStep(string step, Action action)
     {
         try
@@ -886,11 +895,12 @@ public class FederationAdminController : ControllerBase
         var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
         var visible = report.Libraries ?? [];
         var kept = report.LibraryIds.ToHashSet(StringComparer.Ordinal);
+        var lastRead = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == serverId)?.RemoteLibraries.ToList() ?? []);
         var removed = (server?.ImportedLibraryIds ?? [])
             .Where(id => !kept.Contains(id))
             .Select(id => visible.FirstOrDefault(library => library.Id == id) is { } library
                 ? new ImportedLibraryRemoval(id, library.Name, false)
-                : new ImportedLibraryRemoval(id, null, true))
+                : new ImportedLibraryRemoval(id, NameOrNull(lastRead.FirstOrDefault(library => library.Id == id)?.Name), true))
             .ToList();
         var rename = server is not null && (report.Changes.HasFlag(RemoteEditChanges.Name) || retryRename)
             ? new ServerRenameConsequence(server.Name, name, _libraries.GetState(serverId).Libraries.Where(library => !library.Adopted).Select(library => library.Name).ToList())

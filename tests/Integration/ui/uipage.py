@@ -95,6 +95,12 @@ MIGRATION_LIBRARIES = "#jmMigrationLibraries"
 MIGRATE_AUTOMATIC = "#jmMigrateAutomatic"
 MIGRATE_MANUAL = "#jmMigrateManual"
 NEW_SERVER_MODE = "#jmNewServerMode"
+SHARED = "#jmSharedLibraries"
+SHARED_GROUP = "#jmShared"
+SHARED_NOTES = "#jmSharedNotes"
+STORE = "#jmStore"
+MIGRATED = "#jmMigrated"
+NEW_SERVER_LIBRARY_MODE = "#jmNewServerLibraryMode"
 ADD_PART = "#jmAddServerPart"
 ADD_BLOCKED = "#jmAddBlocked"
 LIBRARIES_NOTE = ".jmLibrariesNote"
@@ -122,6 +128,7 @@ SETTINGS = {
     "#jmPlaybackIdle": "PlaybackIdleSeconds",
     "#jmSessionRetention": "SessionRetentionHours",
     "#jmPolicyCache": "PolicyCacheMinutes",
+    "#jmNewServerLibraryMode": "NewServerLibraryMode",
 }
 BUTTON = {
     "test": "Test connection",
@@ -453,7 +460,7 @@ def open_advanced(page):
 
 def copy_button(page, path):
     """Finds the copy button of a path to link."""
-    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy", include_hidden=True)
+    return page.locator(FOLDER_INFO).locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy", include_hidden=True)
 
 
 def pasted(page):

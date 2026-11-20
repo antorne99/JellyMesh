@@ -277,6 +277,21 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<DateTimeOffset?> MigratedKeptUntilAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var writer = Writer();
+            return _legacy?.KeptUntil(writer);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         // Waits a bounded time for a write in progress, so its transaction ends before the writer closes.
@@ -636,7 +651,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         catch (SqliteException exception) when (exception.SqliteErrorCode is Corrupt or NotADatabase)
         {
             _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
-            return new StoreHealth(StoreState.Damaged, "The database is damaged: " + exception.Message);
+            return new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -663,7 +678,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be written, so the damaged database is not set aside. Sync and remote playback stay suspended");
-            return damage with { Reason = damage.Reason + " The recovery note cannot be written: " + exception.Message };
+            return damage with { Reason = damage.Reason + " The recovery note cannot be written: " + ReasonOf(exception) };
         }
 
         try
@@ -675,7 +690,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             TryDeleteNote();
             Volatile.Write(ref _note, null);
             _logger.LogWarning(exception, "The damaged JellyMesh database cannot be set aside. Sync and remote playback stay suspended");
-            return damage with { Reason = damage.Reason + " It cannot be set aside: " + exception.Message };
+            return damage with { Reason = damage.Reason + " It cannot be set aside: " + ReasonOf(exception) };
         }
 
         return Replace(now, damaged);
@@ -879,8 +894,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private StoreHealth Unavailable(string reason, Exception? exception)
     {
         _logger.LogWarning(exception, "{Reason}. Sync and remote playback stay suspended", reason);
-        return new StoreHealth(StoreState.Unavailable, exception is null ? reason + "." : reason + ": " + exception.Message);
+        return new StoreHealth(StoreState.Unavailable, exception is null ? reason + "." : reason + ": " + ReasonOf(exception));
     }
+
+    // The text of a file or SQLite error, which names only files and the schema; any other error, which may carry stored
+    // data such as a remote address, only by its kind, since the reason reaches the page.
+    internal static string ReasonOf(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException or SqliteException
+            ? LogText.CleanMessage(exception.Message) ?? string.Empty
+            : "an unexpected " + exception.GetType().Name + ", described in the Jellyfin log.";
 
     // A missing database is made empty and private, as SQLite reads an empty file as a new database, unless a recovery is
     // to restore it. An existing one, its side files and every copy next to it become private (rows 417, 428).

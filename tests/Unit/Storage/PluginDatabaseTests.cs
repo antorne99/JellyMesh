@@ -185,6 +185,29 @@ public sealed class PluginDatabaseTests : IDisposable
         Assert.False(File.Exists(DatabasePath));
     }
 
+    // The reason goes to the page, so a file error keeps its text, which names only files of the data folder.
+    [Fact]
+    public void AFileErrorSaysWhyInTheReason()
+    {
+        var database = Open(new RefusingGuard());
+
+        Assert.Contains("/secret", database.Health.Reason, StringComparison.Ordinal);
+    }
+
+    // Any other error may carry data the store holds, such as a remote address, so only its kind reaches the page.
+    [Fact]
+    public void AnUnexpectedErrorKeepsItsTextOutOfTheReason()
+    {
+        var migrations = new[] { new SchemaMigration(1, (_, _) => throw new InvalidOperationException("https://remote.invalid:8096/?api_key=secret-token")) };
+
+        var database = Open(migrations: migrations);
+
+        Assert.Equal(StoreState.Unavailable, database.Health.State);
+        Assert.DoesNotContain("remote.invalid", database.Health.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-token", database.Health.Reason, StringComparison.Ordinal);
+        Assert.Contains(nameof(InvalidOperationException), database.Health.Reason, StringComparison.Ordinal);
+    }
+
     // The tests run as root, which no file mode stops: a folder in the way stands for a file that does not open.
     [Fact]
     public void AFileThatDoesNotOpenIsUnavailableAndNoNewDatabaseTakesItsPlace()

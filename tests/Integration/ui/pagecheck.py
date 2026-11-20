@@ -3275,6 +3275,39 @@ def save_bar(s, width):
     u.close(page)
 
 
+def new_library_mode(s, width):
+    """The library mode of a server linked later: saved with Save, and preselected in the add form (row 437)."""
+    name = width + " new library mode"
+    saved = u.config("fresh")["NewServerLibraryMode"]
+    chosen = "ByRemoteLibrary" if saved != "ByRemoteLibrary" else "ByType"
+    page = s.open("fresh", width, tab="settings")
+    select = page.locator(u.NEW_SERVER_LIBRARY_MODE)
+    check(name + " shows the saved mode", select.input_value() == saved, select.input_value())
+    options = select.locator("option").all_inner_texts()
+    check(name + " offers the three modes", options == ["By type", "By remote library", "None"], options)
+    select.select_option(chosen)
+    check(name + " a change shows Save", page.locator(u.SAVE_BAR).is_visible())
+    select.scroll_into_view_if_needed()
+    u.shot(page, f"new-library-mode-{width}", full_page=False)
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " saves", until(page, lambda: u.config("fresh")["NewServerLibraryMode"] == chosen), u.config("fresh"))
+    u.wait_idle(page)
+    check(name + " a save hides Save", page.locator(u.SAVE_BAR).is_hidden())
+    u.show_tab(page, "servers")
+    if not page.locator(u.ADD_PART).evaluate("node => node.open"):
+        page.locator(u.ADD_PART + " > summary").click()
+    mode = page.locator(u.ADD_FORM).get_by_label(u.MODE_LABEL, exact=True)
+    check(name + " preselects it in the add form", until(page, lambda: mode.input_value() == chosen), mode.input_value())
+    u.settings("fresh", lambda config: config.update(NewServerLibraryMode=saved))
+    healthy(page, name)
+    u.close(page)
+
+    page = s.open("fresh", width, tab="settings", language="it")
+    group = page.locator(u.NEW_SERVER_LIBRARY_MODE).locator("xpath=ancestor::div[contains(@class,'jmGroup')]")
+    check(name + " speaks Italian", "Modalità delle librerie di un server collegato in seguito" in group.inner_text(), group.inner_text())
+    u.close(page)
+
+
 def edit_form(s, width):
     """The edit form of a server: its fields, a refusal shown on its field, and a confirmation listing only what happens."""
     name = width + " edit form"
@@ -3338,14 +3371,26 @@ def edit_locks(s, width):
     status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
     ids = {server["Name"]: server["Id"] for server in status["Servers"]}
 
+    rename = [{"Busy": False, "Pending": True, "Failed": False, "Stuck": False}]
+    login = [False]
+    offline = [True]
+
     def check_answer(data, url):
         if ids["peer"] in url:
-            data.update(RemoteOffline=True, Libraries=[])
+            if offline[0]:
+                data.update(RemoteOffline=True, Libraries=[])
         else:
             data.update(RemoteWarning="Timeout")
 
+    def status(data):
+        of_server(data, "stock").update(Rename=rename[0])
+        of_server(data, "peer").update(Connection="Offline" if offline[0] else "Online")
+        if login[0]:
+            data.update(KeyState="Wrong")
+            of_server(data, "stock").update(NeedsPassword=True)
+
     def cases(context):
-        fake(context, "Status", lambda data: of_server(data, "stock").update(Rename={"Busy": False, "Pending": True, "Failed": False, "Stuck": False}))
+        fake(context, "Status", status)
 
         def answer(route):
             if route.request.method != "POST":
@@ -3376,6 +3421,17 @@ def edit_locks(s, width):
     u.answer_confirm(page, False)
     healthy(page, name)
     u.shot(page, f"edit-rename-lock-{width}")
+    rename[0] = dict(rename[0], Pending=False)
+    unlocked = lambda: not form.get_by_label("Name", exact=True).evaluate("node => node.readOnly") and "The name cannot change now" not in form.inner_text()
+    check(name + " a rename that ends unlocks the open form", until(page, unlocked, 25), form.inner_text())
+    rename[0] = dict(rename[0], Pending=True)
+    check(name + " a rename that starts locks the open form", until(page, lambda: not unlocked(), 25), form.inner_text())
+    login[0] = True
+    asks = lambda: "no longer decrypts" in form.inner_text() and stock.locator(u.LIBRARY).count() == 0
+    check(name + " a login that no longer decrypts asks for it in the open form", until(page, asks, 25), form.inner_text())
+    login[0] = False
+    reads = lambda: "no longer decrypts" not in form.inner_text() and stock.locator(u.LIBRARY).count() == 2
+    check(name + " a login that decrypts again reads the libraries in the open form", until(page, reads, 25), form.inner_text())
 
     peer = u.server_row(page, "peer")
     u.button(peer, "edit").click()
@@ -3388,6 +3444,37 @@ def edit_locks(s, width):
     check(name + " an offline remote lists no library", peer.locator(u.LIBRARY).count() == 0)
     healthy(page, name)
     u.shot(page, f"edit-offline-lock-{width}")
+    offline[0] = False
+    answers = lambda: "does not answer" not in form.inner_text() and peer.locator(u.LIBRARY).count() > 0
+    check(name + " a remote that answers again lists its libraries in the open form", until(page, answers, 25), form.inner_text())
+    check(name + " a remote that answers again unlocks the login", form.get_by_label("User", exact=True).is_enabled())
+    offline[0] = True
+    stops = lambda: "does not answer" in form.inner_text() and form.get_by_label("User", exact=True).is_disabled()
+    check(name + " a remote that stops answering says so in the open form", until(page, stops, 25), form.inner_text())
+    check(name + " a remote that stops answering keeps the libraries read", peer.locator(u.LIBRARY).count() > 0)
+    u.close(page)
+
+
+def edit_gone(s, width):
+    """An imported library the user no longer sees shows in the edit form, marked as going at the save (row 434)."""
+    name = width + " edit gone"
+
+    def gone(context):
+        fake(context, "Servers/*/Edit/Check", lambda data: data["Consequences"]["RemovedLibraries"].extend([
+            {"Id": "gone-1", "Name": HOSTILE, "NoLongerVisible": True}, {"Id": "gone-2", "Name": None, "NoLongerVisible": True}]), "POST")
+
+    page = s.open("fresh", width, tab="servers", route=gone)
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    marks = stock.locator(u.LIBRARY + ":disabled")
+    check(name + " marks each library no longer visible", until(page, lambda: marks.count() == 2), form.inner_text())
+    check(name + " names it as text", HOSTILE + ": no longer visible, will be removed" in form.inner_text() and form.locator("b, i").count() == 0, form.inner_text())
+    check(name + " marks one with no name", "A library no longer visible, will be removed" in form.inner_text(), form.inner_text())
+    check(name + " leaves the marks unticked", stock.locator(u.LIBRARY + ":disabled:checked").count() == 0)
+    check(name + " keeps the libraries the user sees", stock.locator(u.LIBRARY + ":enabled").count() == 2)
+    healthy(page, name)
+    u.shot(page, f"edit-gone-{width}")
     u.close(page)
 
 
@@ -3456,7 +3543,7 @@ def recreate(s, width):
         fake(context, "Status", lambda data: of_server(data, "stock").update(
             Rename={"Busy": False, "Pending": False, "Failed": True, "Stuck": False},
             AutomaticLibraries={"Enabled": True, "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "ManualPaths": [],
-                                "Libraries": [], "Conflicts": []}))
+                                "Libraries": [], "Conflicts": [], "Missing": True}))
 
         def save(route):
             if route.request.method != "PUT":
@@ -3494,7 +3581,7 @@ def adopted(s, width):
 
     page = s.open("fresh", width, tab="servers", route=libraries)
     stock = u.server_row(page, "stock")
-    stock.locator("summary").click()
+    check(name + " a conflict opens the card", until(page, lambda: stock.evaluate("node => node.open")))
     check(name + " marks the adopted library", until(page, lambda: u.card_fact(stock, "Server libraries") == "Film miei (adopted)"), u.card_fact(stock, "Server libraries"))
     check(name + " shows the mode", u.card_fact(stock, u.MODE_LABEL) == "By type", u.card_fact(stock, u.MODE_LABEL))
     conflict = stock.locator(u.ALERT, has_text="together with other folders")
@@ -3503,6 +3590,216 @@ def adopted(s, width):
     check(name + " a library name renders no markup", stock.locator("b").count() == 0)
     healthy(page, name)
     u.shot(page, f"adopted-{width}")
+    stock.locator("summary").click()
+    page.wait_for_timeout(16000)
+    check(name + " a closed card stays closed while the conflict is the same", not stock.evaluate("node => node.open"))
+    u.close(page)
+
+
+SHARED_STATE = {"Enabled": True, "Busy": False, "Error": "None", "Released": [], "Conflicts": [], "Unblocked": [],
+                "Libraries": [{"Kind": "Movies", "Name": "Tutti i server - Film", "Adopted": True, "Disabled": False},
+                              {"Kind": "Series", "Name": "Tutti i server - Serie", "Adopted": False, "Disabled": False}]}
+
+
+def fulfill_json(context, path, answer, method="GET"):
+    """Answers an admin path to one method with what answer returns for the request, a status and a body."""
+    def reply(route):
+        if route.request.method != method:
+            route.fallback()
+            return
+        status, body = answer(route.request)
+        route.fulfill(status=status, json=body)
+
+    context.route("**/JellyMesh/Admin/" + path, reply)
+
+
+def shared_libraries(s, width):
+    """The libraries of all servers: their state, marks and errors as text, and the switch-off that resends the names (D48)."""
+    name = width + " shared libraries"
+    state = [dict(SHARED_STATE, Error="Unconfirmed", Unblocked=[HOSTILE], Released=["Vecchia"],
+                  Conflicts=[{"Library": HOSTILE, "Reason": "OtherPaths", "Kind": "Series", "RemoteLibraryId": "", "Paths": ["/federata/a/Serie"]}])]
+    first = {"ToDelete": ["Tutti i server - Serie", "Tutti i server 1a2b3c4d - Film"], "ToRelease": ["Tutti i server - Film"]}
+    second = {"ToDelete": first["ToDelete"] + [HOSTILE], "ToRelease": first["ToRelease"]}
+    sent = []
+
+    def post(request):
+        body = request.post_data_json
+        sent.append(body)
+        # Unconfirmed, the server names the libraries; confirmed with the first list, it finds one more (D48).
+        if not body["Enabled"] and body.get("ToDelete") != second["ToDelete"]:
+            names = second if body.get("Confirmed") else first
+            return 409, dict(names, Outcome="ConfirmationRequired", Message="Confirm to delete the shared libraries the plugin made and release the adopted ones.")
+        state[0] = dict(SHARED_STATE, Enabled=body["Enabled"], Libraries=[])
+        return 202, state[0]
+
+    def routes(context):
+        fake(context, "Status", lambda data: data.update(SharedLibraries=state[0]))
+        fulfill_json(context, "SharedLibraries", post, "POST")
+
+    page = s.open("fresh", width, tab="settings", route=routes)
+    box = page.locator(u.SHARED)
+    notes = page.locator(u.SHARED_NOTES)
+    check(name + " shows the option on", until(page, lambda: box.is_checked() and box.is_enabled()))
+    check(name + " marks the adopted library", "Tutti i server - Film (adopted)" in notes.inner_text(), notes.inner_text())
+    check(name + " explains the title in two libraries (D29)", "one watch state" in text(page, u.SHARED_GROUP), text(page, u.SHARED_GROUP))
+    check(name + " says the switch-off was not confirmed", notes.locator(u.ALERT, has_text="changed before the switch-off").count() == 1, notes.inner_text())
+    unblocked = notes.locator(u.ALERT, has_text="holds its library scans")
+    check(name + " names the libraries without their blocks as text", unblocked.count() == 1 and HOSTILE in unblocked.inner_text(), notes.inner_text())
+    conflict = notes.locator(u.ALERT, has_text="together with other folders")
+    check(name + " says what is in the way (D43)", conflict.count() == 1 and "set the library mode" not in conflict.inner_text(), notes.inner_text())
+    check(name + " lists the released libraries", "Vecchia" in notes.inner_text(), notes.inner_text())
+    check(name + " a library name renders no markup", page.locator(u.SHARED_GROUP + " b").count() == 0)
+    healthy(page, name)
+    u.shot(page, f"shared-{width}")
+
+    u.tick(box, False)
+    u.wait_confirm(page)
+    shown = text(page, u.CONFIRM_TEXT)
+    check(name + " lists the libraries to delete with the crash one (D55)", all(library in shown for library in first["ToDelete"]), shown)
+    check(name + " lists the libraries to release", "Tutti i server - Film" in shown and "no longer manages" in shown, shown)
+    u.answer_confirm(page, False)
+    check(name + " a cancel keeps the option on", until(page, lambda: box.is_checked() and box.is_enabled()) and len(sent) == 1, sent)
+
+    u.tick(box, False)
+    u.wait_confirm(page)
+    # The second confirmation can open before the first has gone, so the first is answered without waiting for it to go.
+    page.locator(u.CONFIRM_OK).click()
+    check(name + " resends the names shown (D48)", until(page, lambda: len(sent) == 3)
+          and sent[2] == {"Enabled": False, "Confirmed": True, "ToDelete": first["ToDelete"], "ToRelease": first["ToRelease"]}, sent)
+    asked = lambda: page.locator(u.CONFIRM_TEXT).count() == 1 and HOSTILE in page.locator(u.CONFIRM_TEXT).inner_text()
+    check(name + " asks again with the new list", until(page, asked) and page.locator(u.CONFIRM_MARKUP).count() == 0, page.locator(u.CONFIRM_TEXT).all_inner_texts())
+    u.answer_confirm(page, True)
+    check(name + " resends the new list", until(page, lambda: len(sent) == 4) and sent[3]["ToDelete"] == second["ToDelete"], sent)
+    check(name + " shows the option off", until(page, lambda: not box.is_checked() and box.is_enabled()))
+    healthy(page, name)
+    u.close(page)
+
+    page = s.open("fresh", width, tab="settings", route=routes, language="it")
+    check(width + " Italian shared libraries", until(page, lambda: "una sola libreria per tipo" in text(page, u.SHARED_GROUP).lower()), text(page, u.SHARED_GROUP))
+    u.close(page)
+
+
+def shared_errors(s, width):
+    """Each error of the libraries of all servers says what failed, and a busy state holds the option."""
+    name = width + " shared errors"
+    state = [dict(SHARED_STATE, Error="NameTaken")]
+
+    def routes(context):
+        fake(context, "Status", lambda data: data.update(SharedLibraries=state[0]))
+
+    for error, words in [("NameTaken", "name was taken"), ("Failed", "change failed"), ("RemoveFailed", "refused to delete")]:
+        state[0] = dict(SHARED_STATE, Error=error)
+        page = s.open("fresh", width, tab="settings", route=routes)
+        notes = page.locator(u.SHARED_NOTES)
+        check(name + " says " + words, until(page, lambda: notes.locator(u.ALERT, has_text=words).count() == 1), notes.inner_text())
+        u.close(page)
+
+    state[0] = dict(SHARED_STATE, Busy=True)
+    page = s.open("fresh", width, tab="settings", route=routes)
+    notes = page.locator(u.SHARED_NOTES)
+    check(name + " holds the option while busy", until(page, lambda: page.locator(u.SHARED).is_disabled() and "Being updated" in notes.inner_text()), notes.inner_text())
+    state[0] = dict(SHARED_STATE)
+    check(name + " reads again soon while busy", until(page, lambda: page.locator(u.SHARED).is_enabled() and "Being updated" not in notes.inner_text()), notes.inner_text())
+    healthy(page, name)
+    u.close(page)
+
+
+def server_notes(s, width):
+    """A server card says who lost titles, which remote libraries are gone, and which folders to add by hand."""
+    name = width + " server notes"
+    mode = ["ByType"]
+
+    def libraries(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(AutomaticLibraries={
+            "Enabled": mode[0] != "None", "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "Conflicts": [], "Missing": mode[0] != "None",
+            "Libraries": [] if mode[0] == "None" else [{"Kind": "Movies", "Name": "stock - Film", "Adopted": False, "Disabled": False}],
+            "Vanished": [HOSTILE], "LostAccess": [{"Library": "stock - Film", "Users": [HOSTILE_PEER, "friend"]}],
+            "ManualPaths": [{"Path": "/federata/x/a/Film", "LibraryType": "movies", "RemoteLibrary": "Film 4K"}]}))
+
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    lost = stock.locator(u.ALERT, has_text="lost titles")
+    check(name + " lists who lost titles", until(page, lambda: lost.count() == 1) and HOSTILE_PEER in lost.inner_text() and "friend" in lost.inner_text(), stock.inner_text())
+    gone = stock.locator(u.ALERT, has_text="no longer on this server")
+    check(name + " names the vanished library", gone.count() == 1 and HOSTILE in gone.inner_text(), stock.inner_text())
+    check(name + " offers to recreate a missing library", stock.get_by_role("button", name="Recreate missing libraries", exact=True).is_visible())
+    check(name + " lists no folder to add by hand", "/federata/x/a/Film" not in stock.inner_text())
+    check(name + " names render no markup", stock.locator("b, i").count() == 0)
+    healthy(page, name)
+    u.close(page)
+
+    mode[0] = "None"
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    check(name + " lists the folders to add by hand", until(page, lambda: "/federata/x/a/Film" in stock.inner_text()), stock.inner_text())
+    check(name + " gives each its type and library", "Films from Film 4K" in stock.inner_text(), stock.inner_text())
+    check(name + " offers nothing to recreate", stock.get_by_role("button", name="Recreate missing libraries", exact=True).count() == 0)
+    healthy(page, name)
+    u.shot(page, f"server-notes-{width}")
+    u.close(page)
+
+
+def store_notices(s, width):
+    """The database: why it is suspended with Retry (row 427), the restore banner (row 466) and the old files (row 469)."""
+    name = width + " store"
+    store = [{"State": "Unavailable", "Reason": "The database cannot be opened: disk full.", "Recovery": None, "MigratedKeptUntil": None}]
+    retried = []
+
+    def retry(request):
+        retried.append(True)
+        store[0] = {"State": "Healthy", "Reason": None, "Recovery": None, "MigratedKeptUntil": None}
+        return 200, store[0]
+
+    def routes(context):
+        fake(context, "Status", lambda data: data.update(Store=store[0]))
+        fulfill_json(context, "Store/Retry", retry, "POST")
+        fulfill_json(context, "Store/Recovery/Dismiss", lambda request: (204, None), "POST")
+
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " says the database cannot be used", until(page, lambda: notice.is_visible() and "disk full" in notice.inner_text()), notice.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-{width}")
+    notice.get_by_role("button", name="Try again", exact=True).click()
+    check(name + " retries", until(page, lambda: retried and notice.is_hidden()), notice.inner_text())
+    u.close(page)
+
+    store[0] = {"State": "Healthy", "Reason": None, "MigratedKeptUntil": "2026-12-18T03:00:00Z",
+                "Recovery": {"RecoveredAt": "2026-11-18T03:05:00Z", "DamagedFile": "jellymesh.db.damaged-20261118", "CopyDate": "2026-11-17T03:00:00Z"}}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " shows the restore", until(page, lambda: "from the nightly copy" in notice.inner_text()), notice.inner_text())
+    check(name + " asks to check the servers", "check the list of servers" in notice.inner_text(), notice.inner_text())
+    migrated = page.locator(u.MIGRATED)
+    check(name + " says until when the old files stay", migrated.is_visible() and "migrated-0.5" in migrated.inner_text(), migrated.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-restore-{width}")
+    store[0] = dict(store[0], Recovery=None)
+    notice.get_by_role("button", name="I checked the servers", exact=True).click()
+    check(name + " the restore goes once checked", until(page, lambda: notice.is_hidden()), notice.inner_text())
+    u.close(page)
+
+    store[0] = {"State": "Healthy", "Reason": "Until when the files of the older version are kept cannot be read: /config/data/migrated-0.5 is denied",
+                "Recovery": None, "MigratedKeptUntil": None}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " says why the old files cannot be read", until(page, lambda: notice.is_visible() and "migrated-0.5 is denied" in notice.inner_text()), notice.inner_text())
+    check(name + " a healthy database offers no retry", notice.get_by_role("button", name="Try again", exact=True).count() == 0)
+    healthy(page, name)
+    u.close(page)
+
+    # A database never loaded makes the status answer 503, so the page reads the database state on its own.
+    store[0] = {"State": "Damaged", "Reason": "The database is damaged and no copy could be restored.", "Recovery": None, "MigratedKeptUntil": None}
+
+    def suspended(context):
+        fulfill_json(context, "Status", lambda request: (503, {"Failure": "None", "Message": "The JellyMesh database cannot be used now, so JellyMesh is suspended until it can."}))
+        fulfill_json(context, "Store", lambda request: (200, store[0]))
+
+    page = s.open("fresh", width, route=suspended)
+    notice = page.locator(u.STORE)
+    check(name + " says why with no status", until(page, lambda: notice.is_visible() and "no copy could be restored" in notice.inner_text()), notice.inner_text())
     u.close(page)
 
 
@@ -3552,9 +3849,15 @@ SCENARIOS = {
     "cards-restart": (cards_restart, WIDTHS),
     "edit-form": (edit_form, WIDTHS),
     "edit-locks": (edit_locks, WIDTHS),
+    "edit-gone": (edit_gone, WIDTHS),
     "adopted": (adopted, WIDTHS),
     "mode-change": (mode_change, WIDTHS),
     "recreate": (recreate, ["1280"]),
+    "shared-libraries": (shared_libraries, WIDTHS),
+    "shared-errors": (shared_errors, ["1280"]),
+    "server-notes": (server_notes, WIDTHS),
+    "new-library-mode": (new_library_mode, WIDTHS),
+    "store": (store_notices, WIDTHS),
 }
 
 with u.Session() as session:
