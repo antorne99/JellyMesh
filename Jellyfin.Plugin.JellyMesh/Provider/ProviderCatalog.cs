@@ -85,16 +85,16 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
-    /// Lists the film and series libraries of this server, except those whose paths are all federated.
+    /// Lists the libraries of this server of a type peers can be given, except those whose paths are all federated.
     /// </summary>
     /// <returns>The libraries.</returns>
     public IReadOnlyList<ProviderLibrary> ReadLibraries()
     {
         var root = FederatedRoot();
         return _library.GetVirtualFolders()
-            .Where(folder => folder.CollectionType is CollectionTypeOptions.movies or CollectionTypeOptions.tvshows && Guid.TryParse(folder.ItemId, out _))
+            .Where(folder => ProviderLibraryTypes.NameOf(folder.CollectionType) is not null && Guid.TryParse(folder.ItemId, out _))
             .Where(folder => root is null || !IsOnlyFederated(folder, root))
-            .Select(folder => new ProviderLibrary(Guid.Parse(folder.ItemId).ToString("N"), folder.Name ?? string.Empty, folder.CollectionType!.Value == CollectionTypeOptions.movies ? "movies" : "tvshows"))
+            .Select(folder => new ProviderLibrary(Guid.Parse(folder.ItemId).ToString("N"), folder.Name ?? string.Empty, ProviderLibraryTypes.NameOf(folder.CollectionType)!))
             .ToList();
     }
 
@@ -126,6 +126,7 @@ public sealed class ProviderCatalog
 
         return _library.GetItemById<BaseItem>(itemId, caller.User) is { } item
             && !IsFederated(item)
+            && !ProviderLibraryTypes.IsWithheld(item.GetBaseItemKind())
             && SharedLibrariesOf(caller.Grant, item).Count > 0
                 ? item
                 : null;
@@ -145,12 +146,12 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
 
         // The exclusion is in the query so that the total stays true for the paging of the consumer.
-        if (ScopeOf(libraryId) is not { } scope)
+        if (!ProviderLibraryTypes.Reads(type) || ScopeOf(libraryId) is not { } scope)
         {
-            return new ProviderItemsResponse([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
+            return Empty();
         }
 
-        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, KindOf(type), startIndex, limit));
+        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, ProviderLibraryTypes.KindOf(type), startIndex, limit));
 
         // Should a stub get past the query, the page comes up short: the read fails and nothing leaks.
         return ToResponse(caller, page.Items.Where(item => !IsFederated(item)).ToList(), page.TotalRecordCount);
@@ -197,7 +198,12 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(itemIds);
 
-        var kind = KindOf(type);
+        if (!ProviderLibraryTypes.Reads(type))
+        {
+            return Empty();
+        }
+
+        var kind = ProviderLibraryTypes.KindOf(type);
         var items = itemIds
             .Select(id => FindVisible(caller, id))
             .OfType<BaseItem>()
@@ -213,21 +219,8 @@ public sealed class ProviderCatalog
     /// <returns>Whether it is a film, series, season or episode.</returns>
     public static bool IsCatalogItem(BaseItem item) => item is Movie or Series or Season or Episode;
 
-    /// <summary>
-    /// Tells whether peers may ask for items of a type.
-    /// </summary>
-    /// <param name="type">The item type.</param>
-    /// <returns>Whether it is a film, series, season or episode.</returns>
-    public static bool Shares(RemoteItemType type) => type is RemoteItemType.Movie or RemoteItemType.Series or RemoteItemType.Season or RemoteItemType.Episode;
-
-    private static BaseItemKind KindOf(RemoteItemType type) => type switch
-    {
-        RemoteItemType.Movie => BaseItemKind.Movie,
-        RemoteItemType.Series => BaseItemKind.Series,
-        RemoteItemType.Season => BaseItemKind.Season,
-        RemoteItemType.Episode => BaseItemKind.Episode,
-        _ => throw new ArgumentOutOfRangeException(nameof(type))
-    };
+    // A type no library gives reads as empty rather than refused, so that the read of the rest of the library goes on.
+    private static ProviderItemsResponse Empty() => new([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
 
     // A page of a library as the peer sees it, under the scope that leaves the federated folder out.
     private static InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, int startIndex, int limit) => new(caller.User)
