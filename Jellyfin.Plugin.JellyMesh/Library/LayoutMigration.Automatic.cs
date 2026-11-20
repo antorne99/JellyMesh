@@ -352,7 +352,7 @@ public sealed partial class LayoutMigration
 
         foreach (var library in libraries.OnOldPaths)
         {
-            foreach (var path in libraries.Adds[library.Name])
+            foreach (var path in library.PathsToAdd)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!IsDone(_paths.Add(root, library.Name, path)))
@@ -445,7 +445,7 @@ public sealed partial class LayoutMigration
         // Add, then remove: a library on an old path since the addition step gets the new folders first (§10 row 445).
         foreach (var library in libraries.OnOldPaths)
         {
-            if (!libraries.Adds[library.Name].All(path => IsDone(_paths.Add(root, library.Name, path))))
+            if (!library.PathsToAdd.All(path => IsDone(_paths.Add(root, library.Name, path))))
             {
                 Stop(AutomaticMigrationError.AddFailed, library.Name);
                 return null;

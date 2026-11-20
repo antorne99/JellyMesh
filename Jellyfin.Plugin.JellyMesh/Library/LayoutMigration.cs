@@ -539,20 +539,21 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
             .Where(path => !Linked(path))
             .ToList();
         var libraries = new List<LayoutMigrationLibrary>();
-        var adds = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (var folder in folders.Where(folder => !(skipped?.Contains(KeyOf(folder)) ?? false) && !IsOwn(folder, own)))
         {
             var old = (folder.Locations ?? []).Select(location => OldFolderOf(root, location)).OfType<OldFolder>().DistinctBy(found => found.Path).ToList();
             if (old.Count > 0)
             {
                 var missing = old.Where(found => needed.Contains(found.Type)).SelectMany(found => NewOf(found.Server, found.Type)).Distinct(StringComparer.Ordinal).Where(path => !Holds(folder, path)).ToList();
-                libraries.Add(new LayoutMigrationLibrary(folder.Name, old.Select(found => found.Path).ToList(), missing));
-                adds[folder.Name] = old.SelectMany(found => NewOf(found.Server, found.Type)).Distinct(StringComparer.Ordinal).Where(path => !Holds(folder, path)).ToList();
+                libraries.Add(new LayoutMigrationLibrary(folder.Name, old.Select(found => found.Path).ToList(), missing)
+                {
+                    PathsToAdd = old.SelectMany(found => NewOf(found.Server, found.Type)).Distinct(StringComparer.Ordinal).Where(path => !Holds(folder, path)).ToList()
+                });
             }
         }
 
         var listed = libraries.SelectMany(library => library.MissingPaths).ToHashSet(StringComparer.Ordinal);
-        return new Libraries(libraries, unlinked.Count == 0, unlinked.Where(path => !listed.Contains(path)).Distinct(StringComparer.Ordinal).ToList(), adds);
+        return new Libraries(libraries, unlinked.Count == 0, unlinked.Where(path => !listed.Contains(path)).Distinct(StringComparer.Ordinal).ToList());
     }
 
     // The new folders of a server for the old folders of one type: those holding its titles and those of its imported libraries.
@@ -590,9 +591,8 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         (record.ItemId.Length > 0 && string.Equals(folder.ItemId, record.ItemId, StringComparison.OrdinalIgnoreCase))
         || string.Equals(folder.Name, record.Name, StringComparison.Ordinal));
 
-    // Unlinked: the new folders in no library, less those listed as missing from a library on an old path. Adds: per
-    // library, the new folders of every old folder it holds, also of types with no old titles.
-    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked, List<string> Unlinked, Dictionary<string, List<string>> Adds);
+    // Unlinked: the new folders in no library, less those listed as missing from a library on an old path.
+    private sealed record Libraries(List<LayoutMigrationLibrary> OnOldPaths, bool ServerFoldersLinked, List<string> Unlinked);
 
     // An old folder: flat when it has no server.
     private sealed record OldFolder(Guid? Server, TypeFolder Type, string Path);
