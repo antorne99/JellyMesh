@@ -2395,6 +2395,30 @@ public class PlaybackFiltersTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
+    // A JellyMesh remote answers 403 on Lyrics to its peers until row 460, which means it has none to give.
+    [Fact]
+    public async Task Lyrics_a_jellymesh_remote_keeps_from_its_peers_are_not_found()
+    {
+        CanSeeItem();
+        _fixture.Registry.AddJellyMesh(_stub.Sources[0].ServerId);
+        _fixture.Client.Lyrics = _ => RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Forbidden);
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.IsType<NotFoundResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task Lyrics_a_stock_remote_refuses_are_refused_with_a_clear_error()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Forbidden);
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
     [Fact]
     public async Task Lyrics_of_a_track_stub_want_a_user()
     {

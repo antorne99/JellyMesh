@@ -290,6 +290,12 @@ public sealed class PlaybackCoordinator
                 return read;
             }
 
+            // A JellyMesh remote keeps Lyrics closed to its peers until row 460, so its 403 means no lyrics.
+            if (read.Failure == RemoteFailure.Forbidden && IsJellyMesh(source.ServerId))
+            {
+                return RemoteResult.Success(RemoteLyrics.None);
+            }
+
             failed = read;
         }
 
