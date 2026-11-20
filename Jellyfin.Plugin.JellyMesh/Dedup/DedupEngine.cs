@@ -196,9 +196,9 @@ public static class DedupEngine
             return [];
         }
 
-        if (item.Kind == ContentKind.Movie)
+        if (item.Kind != ContentKind.Episode)
         {
-            return [new ContentIdentity(work.Key, work.Key, ContentKind.Movie, work.Match)];
+            return [new ContentIdentity(work.Key, work.Key, item.Kind, work.Match)];
         }
 
         if (item.SeasonNumber is not { } season)
