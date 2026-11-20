@@ -3324,15 +3324,33 @@
                     var accessKey = null;
                     var reads = 0;
 
+                    // With the remote offline the login and the libraries stay; a new URL is checked on save (D28).
+                    function showOffline(current, offline) {
+                        fields.Username.disabled = offline;
+                        fields.Password.disabled = offline;
+                        accessNotes.textContent = '';
+                        if (offline) {
+                            addFormNote(accessNotes, t('{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.', { server: current.Name }), true);
+                        }
+                    }
+
                     // Asks for the login again while the saved one does not decrypt, or else reads the libraries with it; again
                     // when a status read changes either, or whether the server answers (920 Casi).
                     function showAccess(current) {
-                        var key = JSON.stringify([needsPassword(current), current.Connection === 'Offline']);
+                        var offline = current.Connection === 'Offline';
+                        var key = JSON.stringify([needsPassword(current), offline]);
                         if (key === accessKey) {
                             return null;
                         }
 
+                        var keep = accessKey !== null && !login && !needsPassword(current) && boxes !== null;
                         accessKey = key;
+                        if (keep) {
+                            // The libraries read stay with the admin's edit; the note and the login follow the server.
+                            showOffline(current, offline);
+                            return null;
+                        }
+
                         var read = ++reads;
                         login = needsPassword(current);
                         accessNotes.textContent = '';
@@ -3359,10 +3377,7 @@
 
                             libraries.textContent = '';
                             if (check.RemoteOffline) {
-                                // With the remote offline the login and the libraries stay; a new URL is checked on save (D28).
-                                fields.Username.disabled = true;
-                                fields.Password.disabled = true;
-                                addFormNote(accessNotes, t('{server} does not answer. Until it does, the login and the libraries stay as they are. A new URL is saved only if the server answers there.', { server: current.Name }), true);
+                                showOffline(current, true);
                                 return null;
                             }
 

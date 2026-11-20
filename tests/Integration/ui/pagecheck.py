@@ -3449,8 +3449,9 @@ def edit_locks(s, width):
     check(name + " a remote that answers again lists its libraries in the open form", until(page, answers, 25), form.inner_text())
     check(name + " a remote that answers again unlocks the login", form.get_by_label("User", exact=True).is_enabled())
     offline[0] = True
-    stops = lambda: "does not answer" in form.inner_text() and peer.locator(u.LIBRARY).count() == 0
+    stops = lambda: "does not answer" in form.inner_text() and form.get_by_label("User", exact=True).is_disabled()
     check(name + " a remote that stops answering says so in the open form", until(page, stops, 25), form.inner_text())
+    check(name + " a remote that stops answering keeps the libraries read", peer.locator(u.LIBRARY).count() > 0)
     u.close(page)
 
 
