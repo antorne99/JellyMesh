@@ -1,7 +1,7 @@
 namespace Jellyfin.Plugin.JellyMesh.Dedup;
 
 /// <summary>
-/// The kinds of content that are deduplicated (plan §1.1, §3.13).
+/// The kinds of content that are deduplicated (plan §1.1, row 453).
 /// </summary>
 public enum ContentKind
 {
