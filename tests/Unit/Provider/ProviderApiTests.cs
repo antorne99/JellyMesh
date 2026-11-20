@@ -96,6 +96,40 @@ public class ProviderCatalogTests
         Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, id));
     }
 
+    [Theory]
+    [InlineData("audio", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/Artista/Album/01 - Uno.strm", "/nuova")]
+    [InlineData("audio", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/Artista/Album/01 - Uno.strm", "")]
+    [InlineData("album", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/Artista/Album", "")]
+    [InlineData("folder", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Video domestici/Gita", "/nuova")]
+    [InlineData("book", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Libri/Autore/Libro.epub", "")]
+    [InlineData("audiobook", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Libri/Autore/Libro/01.strm", "/nuova")]
+    public void A_stub_left_by_a_moved_or_cleared_federated_folder_never_reaches_a_peer(string type, string path, string root)
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = root;
+        BaseItem stub = type switch
+        {
+            "audio" => new MediaBrowser.Controller.Entities.Audio.Audio { Path = path },
+            "album" => new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Path = path },
+            "folder" => new Folder { Path = path },
+            "book" => new Book { Path = path },
+            _ => new AudioBook { Path = path }
+        };
+        var id = Guid.NewGuid();
+        _fixture.AddItem(id, stub, ProviderFixture.SharedLibrary);
+
+        Assert.True(_fixture.Catalog.IsFederated(stub));
+        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, id));
+    }
+
+    [Fact]
+    public void A_server_folder_name_alone_does_not_make_an_item_federated()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+
+        Assert.False(_fixture.Catalog.IsFederated(new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Musica/Artista/01.flac" }));
+        Assert.False(_fixture.Catalog.IsFederated(new Book { Path = "/media/Libri/Autore/Libro.epub" }));
+    }
+
     [Fact]
     public void A_photo_stays_hidden_until_photos_are_shared()
     {

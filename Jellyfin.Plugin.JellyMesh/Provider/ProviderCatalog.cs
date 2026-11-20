@@ -69,6 +69,7 @@ public sealed class ProviderCatalog
     /// <summary>
     /// Tells whether an item is one this server federates itself. §4.4: such an item never leaves it. The URL covers
     /// video stubs wherever they are; the path, links resolved, covers all under the federated folder in every layout, placeholders included.
+    /// The layout of a server folder covers the stubs of every type a moved or cleared federated folder left behind.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>Whether it is a stub.</returns>
@@ -77,6 +78,11 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(item);
 
         if (item is Video video && PlaybackRoutes.IsPlaybackEndpoint(video.ShortcutPath))
+        {
+            return true;
+        }
+
+        if (HasServerFolderLayout(item.Path))
         {
             return true;
         }
@@ -332,6 +338,28 @@ public sealed class ProviderCatalog
         }
 
         return members;
+    }
+
+    // Looks for {server guid}/{library id}/{type folder} anywhere in the path, as the plugin writes the folder of a server.
+    private static bool HasServerFolderLayout(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return false;
+        }
+
+        var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i + 2 < parts.Length; i++)
+        {
+            if (Guid.TryParseExact(parts[i], "D", out _)
+                && FederatedPaths.IsLibraryId(parts[i + 1])
+                && TypeFolder.Written.Any(type => string.Equals(type.Name, parts[i + 2], StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsOnlyFederated(VirtualFolderInfo library, FolderPath root)

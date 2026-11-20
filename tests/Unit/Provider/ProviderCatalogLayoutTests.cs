@@ -84,9 +84,9 @@ public sealed class ProviderCatalogLayoutTests
     }
 
     [Theory]
-    [InlineData("Book", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/f137a2dd21bbc1b99aa5c0f6bf02a805/Libri/Title/Title.epub")]
-    [InlineData("Audio", "/federata-other/0f8fad5b-d9cb-469f-a165-70867728950e/f137a2dd21bbc1b99aa5c0f6bf02a805/Musica/Artist/Album/01 Track.strm")]
-    [InlineData("Movie", "/media/federata/0f8fad5b-d9cb-469f-a165-70867728950e/f137a2dd21bbc1b99aa5c0f6bf02a805/Film/Title (2001)/Title (2001).strm")]
+    [InlineData("Book", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Libri/Title/Title.epub")]
+    [InlineData("Audio", "/federata-other/f137a2dd21bbc1b99aa5c0f6bf02a805/Musica/Artist/Album/01 Track.strm")]
+    [InlineData("Movie", "/media/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film/Title (2001)/Title (2001).strm")]
     [InlineData("Photo", "/media/Video domestici/Trip/IMG_0001.jpg")]
     [InlineData("Book", "/media/Libri/Title/Title.pdf")]
     [InlineData("MusicVideo", "/media/Video musicali/Clip/Clip.mkv")]
