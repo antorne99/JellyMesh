@@ -13,7 +13,6 @@ using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -117,6 +116,30 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
+    /// Finds the libraries shared with a peer that give it an item: those whose type it reads that kind of item from.
+    /// </summary>
+    /// <param name="grant">The peer.</param>
+    /// <param name="item">The item.</param>
+    /// <returns>The libraries.</returns>
+    public IReadOnlyList<string> LibrariesGiving(PeerGrant grant, BaseItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        var shared = SharedLibrariesOf(grant, item);
+        if (shared.Count == 0)
+        {
+            return shared;
+        }
+
+        var kind = item.GetBaseItemKind();
+        var giving = _library.GetVirtualFolders()
+            .Where(folder => Guid.TryParse(folder.ItemId, out _) && ProviderLibraryTypes.Reads(folder.CollectionType, kind))
+            .Select(folder => Guid.Parse(folder.ItemId).ToString("N"))
+            .ToHashSet(StringComparer.Ordinal);
+        return shared.Where(giving.Contains).ToList();
+    }
+
+    /// <summary>
     /// Finds an item a peer may reach.
     /// </summary>
     /// <param name="caller">The peer.</param>
@@ -213,13 +236,6 @@ public sealed class ProviderCatalog
             .ToList();
         return ToResponse(caller, items, items.Count);
     }
-
-    /// <summary>
-    /// Tells whether an item is of a kind the catalog holds.
-    /// </summary>
-    /// <param name="item">The item.</param>
-    /// <returns>Whether it is a film, series, season or episode.</returns>
-    public static bool IsCatalogItem(BaseItem item) => item is Movie or Series or Season or Episode;
 
     // A type no library gives reads as empty rather than refused, so that the read of the rest of the library goes on.
     private static ProviderItemsResponse Empty() => new([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));

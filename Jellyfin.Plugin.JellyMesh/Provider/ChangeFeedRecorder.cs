@@ -48,7 +48,7 @@ public sealed class ChangeFeedRecorder : IHostedService
 
     private void OnItemChanged(object? sender, ItemChangeEventArgs e)
     {
-        if (ProviderCatalog.IsCatalogItem(e.Item) && !IsFederated(e.Item))
+        if (ProviderLibraryTypes.Reads(e.Item.GetBaseItemKind()) && !IsFederated(e.Item))
         {
             _journal.Record(e.Item.Id);
         }

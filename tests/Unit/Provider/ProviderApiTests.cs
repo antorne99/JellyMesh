@@ -691,6 +691,25 @@ public class ProviderControllerTests
         Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], change.LibraryIds);
     }
 
+    [Theory]
+    [InlineData(CollectionTypeOptions.movies, false)]
+    [InlineData(CollectionTypeOptions.mixed, false)]
+    [InlineData(CollectionTypeOptions.homevideos, true)]
+    public async Task The_feed_announces_an_item_only_from_a_library_that_gives_its_type(CollectionTypeOptions type, bool announced)
+    {
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+            [new VirtualFolderInfo { Name = "Shared", ItemId = ProviderFixture.SharedLibrary.ToString(), CollectionType = type, Locations = ["/media/film"] }]);
+        var folder = Guid.NewGuid();
+        _fixture.AddItem(folder, new Folder { Path = "/media/film/Extra" }, ProviderFixture.SharedLibrary);
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(folder);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal(announced ? [(folder.ToString("N"), "Folder")] : [], changes.Select(change => (change.Id, change.Type)));
+        Assert.All(changes, change => Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], change.LibraryIds));
+    }
+
     [Fact]
     public async Task A_change_of_the_share_resets_the_feed()
     {
@@ -1213,7 +1232,52 @@ public class ChangeFeedRecorderTests
     {
         var cursor = await StartAsync();
 
-        RaiseAdded(new Folder { Id = Guid.NewGuid(), Path = "/media" });
+        RaiseAdded(new CollectionFolder { Id = Guid.NewGuid(), Path = "/media" });
+        RaiseAdded(new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Id = Guid.NewGuid(), Path = "/media/musica/a" });
+        RaiseAdded(new BoxSet { Id = Guid.NewGuid() });
+
+        Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task Photos_stay_out_until_they_are_shared()
+    {
+        var cursor = await StartAsync();
+
+        RaiseAdded(new Photo { Id = Guid.NewGuid(), Path = "/media/casa/a.jpg" });
+
+        Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task Records_tracks_music_videos_home_videos_and_books()
+    {
+        var cursor = await StartAsync();
+        BaseItem[] items =
+        [
+            new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = "/media/musica/a/1.flac" },
+            new MusicVideo { Id = Guid.NewGuid(), Path = "/media/clip/a.mkv" },
+            new Video { Id = Guid.NewGuid(), Path = "/media/casa/gita.mkv" },
+            new Folder { Id = Guid.NewGuid(), Path = "/media/casa/Gita" },
+            new PhotoAlbum { Id = Guid.NewGuid(), Path = "/media/casa/Album" },
+            new Book { Id = Guid.NewGuid(), Path = "/media/libri/a.epub" },
+            new AudioBook { Id = Guid.NewGuid(), Path = "/media/libri/b.m4b" }
+        ];
+
+        foreach (var item in items)
+        {
+            RaiseAdded(item);
+        }
+
+        Assert.Equal(items.Select(item => item.Id), _journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task A_track_stub_never_enters_the_feed()
+    {
+        var cursor = await StartAsync();
+
+        RaiseAdded(new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/A/1.strm" });
 
         Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
     }

@@ -166,9 +166,10 @@ public class ProviderController : ControllerBase
         var changes = new List<ProviderChange>();
         foreach (var itemId in window.ItemIds)
         {
-            if (_catalog.FindVisible(caller, itemId) is { } item)
+            // A change no read of its libraries would return would only make the consumer index it.
+            if (_catalog.FindVisible(caller, itemId) is { } item && _catalog.LibrariesGiving(caller.Grant, item) is { Count: > 0 } libraries)
             {
-                changes.Add(new ProviderChange(item.Id.ToString("N"), item.GetBaseItemKind().ToString(), _catalog.SharedLibrariesOf(caller.Grant, item)));
+                changes.Add(new ProviderChange(item.Id.ToString("N"), item.GetBaseItemKind().ToString(), libraries));
             }
         }
 
