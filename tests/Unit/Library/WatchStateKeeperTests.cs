@@ -173,6 +173,33 @@ public sealed class WatchStateKeeperTests : IDisposable
         return item;
     }
 
+    private static RemoteItem Clip(string id, string? imdb, string artist = "Singer") => new()
+    {
+        Id = id,
+        Name = "Song",
+        ProductionYear = 2019,
+        Artists = [artist],
+        ProviderIds = imdb is null ? new Dictionary<string, string?>() : new Dictionary<string, string?> { ["Imdb"] = imdb },
+        MediaSources = [TestItems.Source(id, 1080, 5_000_000)]
+    };
+
+    // The library item a scan makes of a music video stub.
+    private MediaBrowser.Controller.Entities.MusicVideo ClipItem(RemoteServerInfo server, string? imdb = null)
+    {
+        var stub = _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && stub.Kind == StubKind.MusicVideo);
+        var item = new MediaBrowser.Controller.Entities.MusicVideo
+        {
+            Id = Guid.NewGuid(),
+            Path = FederatedPaths.Resolve(_fixture.Root, stub.RelativePath),
+            Name = "Song",
+            ProductionYear = 2019,
+            Artists = ["Singer"],
+            ProviderIds = imdb is null ? [] : new Dictionary<string, string> { ["Imdb"] = imdb }
+        };
+        Add(item);
+        return item;
+    }
+
     private void Add(BaseItem item)
     {
         _items[item.Id] = item;
@@ -235,6 +262,45 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Equal(9_000_000_000, Row(_bruno, fresh).PlaybackPositionTicks);
         Assert.True(Row(_bruno, fresh).IsFavorite);
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AMusicVideoWithoutIdsGetsItsStateBackByItsArtistsTitleAndYear()
+    {
+        _fixture.Sync.Client.Libraries.Add(new(TestLibraries.MusicVideos, "Clip", "musicvideos"));
+        _fixture.Sync.Client.Add(TestLibraries.MusicVideos, RemoteItemType.MusicVideo, Clip("mv", null));
+        var a = await AddAndMaterializeAsync("A", TestLibraries.MusicVideos);
+        Watch(_anna, ClipItem(a));
+
+        await RemoveAsync(a);
+
+        var kept = Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+        Assert.Equal(KeptTitleKind.MusicVideo, kept.Kind);
+        Assert.Equal(["Singer"], kept.Artists);
+
+        var fresh = ClipItem(await AddAndMaterializeAsync("A", TestLibraries.MusicVideos));
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, fresh).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AKeptMusicVideoGivesNothingToAFilmWithTheSameId()
+    {
+        _fixture.Sync.Client.Libraries.Add(new(TestLibraries.MusicVideos, "Clip", "musicvideos"));
+        _fixture.Sync.Client.Add(TestLibraries.MusicVideos, RemoteItemType.MusicVideo, Clip("mv", "tt1"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("film", "Song", 2019) with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } });
+        var a = await AddAndMaterializeAsync("A", TestLibraries.MusicVideos);
+        Watch(_anna, ClipItem(a, "tt1"));
+        await RemoveAsync(a);
+        Assert.Equal("tt1", Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Ids.Imdb);
+
+        var film = FilmItem(await AddAndMaterializeAsync("B", TestLibraries.Films));
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.False(Row(_anna, film).Played);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
     }
 
     [Fact]

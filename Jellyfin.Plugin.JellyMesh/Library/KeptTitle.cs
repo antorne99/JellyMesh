@@ -19,7 +19,7 @@ public sealed record KeptTitle
     /// <summary>Gets the kind of title.</summary>
     public required KeptTitleKind Kind { get; init; }
 
-    /// <summary>Gets the film's or series' name; an episode's series name.</summary>
+    /// <summary>Gets the film's, music video's or series' name; an episode's series name.</summary>
     public string? Title { get; init; }
 
     /// <summary>Gets the film's or series' year; an episode's series year.</summary>
@@ -45,6 +45,9 @@ public sealed record KeptTitle
 
     /// <summary>Gets the cast and crew of a film without IDs.</summary>
     public IReadOnlyList<string> People { get; init; } = [];
+
+    /// <summary>Gets the artists of a music video.</summary>
+    public IReadOnlyList<string> Artists { get; init; } = [];
 
     /// <summary>Gets the season of an episode.</summary>
     public int? SeasonNumber { get; init; }

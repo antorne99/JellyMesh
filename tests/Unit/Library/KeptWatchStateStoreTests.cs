@@ -39,11 +39,12 @@ public sealed class KeptWatchStateStoreTests : IDisposable
     // Every field, lists and users included, in a form records compare by value.
     private static string Describe(KeptTitle title) => string.Join(
         '\n',
-        (title with { Genres = [], Studios = [], People = [], Users = [], Copies = [] }).ToString(),
+        (title with { Genres = [], Studios = [], People = [], Artists = [], Users = [], Copies = [] }).ToString(),
         string.Join(',', title.Copies),
         string.Join(',', title.Genres),
         string.Join(',', title.Studios),
         string.Join(',', title.People),
+        string.Join(',', title.Artists),
         string.Join('\n', title.Users.OrderBy(user => user.UserId).Select(user => user + " " + user.LastPlayedUtc?.Ticks)));
 
     [Fact]
@@ -81,6 +82,28 @@ public sealed class KeptWatchStateStoreTests : IDisposable
         Assert.Equal(Describe(episode with { Id = read.Id }), Describe(read));
         Assert.All(read.Users.Select(user => user.LastPlayedUtc).OfType<DateTime>(), date => Assert.Equal(DateTimeKind.Utc, date.Kind));
         Assert.Equal(DateTimeKind.Utc, read.SavedUtc.Kind);
+    }
+
+    [Fact]
+    public async Task AMusicVideoComesBackWithItsArtists()
+    {
+        var clip = new KeptTitle
+        {
+            OldItemId = Guid.NewGuid(),
+            Kind = KeptTitleKind.MusicVideo,
+            Title = "Song",
+            Year = 2019,
+            Ids = new ContentIds(null, "tt1"),
+            Artists = ["Singer", "Guest"],
+            SavedUtc = _saved,
+            Users = [Watched(_anna)]
+        };
+
+        await Store().SaveAsync([clip], CancellationToken.None);
+        var read = Assert.Single(await Store().ReadAsync(CancellationToken.None));
+
+        Assert.Equal(KeptTitleKind.MusicVideo, read.Kind);
+        Assert.Equal(["Singer", "Guest"], read.Artists);
     }
 
     [Fact]

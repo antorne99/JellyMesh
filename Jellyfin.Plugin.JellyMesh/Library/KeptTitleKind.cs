@@ -12,5 +12,8 @@ public enum KeptTitleKind
     Episode,
 
     /// <summary>A series, which holds only favorite and rating.</summary>
-    Series
+    Series,
+
+    /// <summary>A music video, one title like a film (row 454).</summary>
+    MusicVideo
 }

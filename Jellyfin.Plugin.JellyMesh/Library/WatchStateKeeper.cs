@@ -236,13 +236,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     {
         ServerId = SavedServer,
         ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
-        Kind = title.Kind == KeptTitleKind.Movie ? ContentKind.Movie : ContentKind.Episode,
+        Kind = ContentKindOf(title.Kind),
 
         // Its own series, so that a merge names it like any copy.
-        SeriesId = title.Kind == KeptTitleKind.Movie ? null : title.Id.ToString(CultureInfo.InvariantCulture),
+        SeriesId = ContentKindOf(title.Kind) == ContentKind.Episode ? title.Id.ToString(CultureInfo.InvariantCulture) : null,
         Title = title.Title,
         Year = title.Year,
         Ids = title.Ids,
+        Artists = title.Artists,
         SeasonNumber = title.SeasonNumber,
         EpisodeNumber = title.EpisodeNumber,
         EpisodeNumberEnd = title.EpisodeNumberEnd,
@@ -259,6 +260,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             : ComparableMetadata.None
     };
 
+    // The dedup kind of a kept title; a series is read as its episodes.
+    private static ContentKind ContentKindOf(KeptTitleKind kind) => kind switch
+    {
+        KeptTitleKind.Movie => ContentKind.Movie,
+        KeptTitleKind.MusicVideo => ContentKind.MusicVideo,
+        _ => ContentKind.Episode
+    };
+
     // A kept title with the copies of its merges as one merge, so that each copy left finds it (D33).
     private static ManualMerge? MergeOf(KeptTitle title) => title.Copies.Count == 0 ? null : new ManualMerge
     {
@@ -270,7 +279,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             {
                 ServerId = SavedServer,
                 ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
-                Kind = title.Kind == KeptTitleKind.Movie ? ContentKind.Movie : ContentKind.Episode
+                Kind = ContentKindOf(title.Kind)
             },
             .. title.Copies
         ]
@@ -322,6 +331,17 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                     Title = item.Name,
                     Year = item.ProductionYear,
                     Ids = ContentIds.FromProviderIds(item.ProviderIds),
+                    SavedUtc = now
+                };
+            case MusicVideo video:
+                return new KeptTitle
+                {
+                    OldItemId = item.Id,
+                    Kind = KeptTitleKind.MusicVideo,
+                    Title = item.Name,
+                    Year = item.ProductionYear,
+                    Ids = ContentIds.FromProviderIds(item.ProviderIds),
+                    Artists = video.Artists ?? [],
                     SavedUtc = now
                 };
             default:

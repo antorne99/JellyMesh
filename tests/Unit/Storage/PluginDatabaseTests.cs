@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Data.Sqlite;
@@ -154,6 +155,27 @@ public sealed class PluginDatabaseTests : IDisposable
         var older = Open(migrations: SchemaMigrations.All.Where(step => step.Version < SchemaMigrations.NewItemKindsVersion).ToList());
 
         Assert.Equal(StoreState.NewerSchema, older.Health.State);
+    }
+
+    // A title kept before music videos gets an empty list of artists (F53).
+    [Fact]
+    public async Task ATitleKeptBeforeMusicVideosHasNoArtists()
+    {
+        using (var older = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All.Where(step => step.Version <= SchemaMigrations.NewItemKindsVersion).ToList(), 1))
+        {
+            await older.WriteAsync(
+                (connection, transaction) => Scalar(
+                    connection,
+                    "INSERT INTO kept_titles (old_item_id, kind, title, genres, studios, people, saved_utc) VALUES ('" + Guid.NewGuid().ToString("N") + "', 'Movie', 'Film', '[]', '[]', '[]', 0);"
+                        + "INSERT INTO kept_user_states (title_id, user_id, played, play_count, playback_position_ticks, is_favorite) VALUES (1, '" + Guid.NewGuid().ToString("N") + "', 1, 1, 0, 0);",
+                    transaction),
+                CancellationToken.None);
+        }
+
+        var title = Assert.Single(await new KeptWatchStateStore(Open()).ReadAsync(CancellationToken.None));
+
+        Assert.Equal("Film", title.Title);
+        Assert.Empty(title.Artists);
     }
 
     // The one file set aside as damaged, without its logs.

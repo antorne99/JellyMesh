@@ -153,6 +153,23 @@ public sealed class MusicVideoMergeTests : IDisposable
     }
 
     [Fact]
+    public async Task AMusicVideoMergeInEffectLeavesAFilmWithTheSameIdAlone()
+    {
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("f1", "Song", 2019) with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } });
+        _fixture.Client.Add(Library, RemoteItemType.MusicVideo, Clip("a", "tt1"), Clip("b", "tt2"), Clip("c", null));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films, Library);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        var service = Service();
+        var found = Assert.Single(service.GetList().MusicVideoCases);
+
+        Assert.Equal(ManualMergeOutcome.Merged, await service.MergeAsync([KeyOf(found, "a"), KeyOf(found, "c")], CancellationToken.None));
+
+        var film = Assert.Single(Resolver().Resolve().Contents, content => content.Identity.Kind == ContentKind.Movie);
+        Assert.NotEqual(MatchKind.Manual, film.Identity.Match);
+        Assert.Equal(["f1"], film.RemoteItems.Select(item => item.ItemId));
+    }
+
+    [Fact]
     public void ALocalMusicVideoAwaitingItsRefreshIsListedByItsOwnId()
     {
         var id = Guid.NewGuid();
