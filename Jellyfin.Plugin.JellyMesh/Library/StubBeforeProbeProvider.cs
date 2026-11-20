@@ -42,7 +42,7 @@ public sealed class StubBeforeProbeProvider : StubMetadataProvider
             return Registry.FindByPath(item.Path) switch
             {
                 { Kind: StubKind.Book } book => Technical.WriteBook(item, book, isProtected) ? ItemUpdateType.MetadataImport : ItemUpdateType.None,
-                { Kind: StubKind.Photo } photo => Technical.WritePhoto(item, photo, isProtected, Store.ReadOr(config => config.FederatedFolderPath, null)!),
+                { Kind: StubKind.Photo } photo when Store.ReadOr(config => config.FederatedFolderPath, null) is { } root => Technical.WritePhoto(item, photo, isProtected, root),
                 _ => ItemUpdateType.None
             };
         }

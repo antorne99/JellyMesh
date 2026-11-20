@@ -652,16 +652,15 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    // The thumbnails of the photos, read with the images: one missing, or of a photo that changed on the remote. A photo
-    // whose thumbnail cannot be read keeps the one it has, and is tried again at the next run.
+    // Reads the thumbnail of each photo that has none, or whose remote image changed since (its Primary tag, kept as the
+    // technical tag). One that cannot be read keeps the old file and its old tag, so the next run tries again.
     private async Task FetchThumbnailsAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
     {
         var wanted = plan.Stubs
             .Where(work => work.Entry.Kind == StubKind.Photo && work.Entry.Sources.Count > 0)
             .Select(work => (Work: work, Path: PhotoThumbnails.PathOf(run.Root, work.Entry.Id)))
             .Where(photo => photo.Path is not null
-                && (!File.Exists(photo.Path)
-                    || (!string.IsNullOrEmpty(photo.Work.Entry.ContentHash) && !string.Equals(photo.Work.Entry.ContentHash, photo.Work.ContentHash, StringComparison.Ordinal))))
+                && (!File.Exists(photo.Path) || !string.Equals(photo.Work.Entry.TechnicalTag, photo.Work.TechnicalTag, StringComparison.Ordinal)))
             .ToList();
         var failed = 0;
         var options = new ParallelOptions { MaxDegreeOfParallelism = ImageReadsAtOnce, CancellationToken = cancellationToken };
@@ -706,7 +705,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         // Row 470: no position ever reaches the disk, so a thumbnail that still has its EXIF is never written.
         if (!PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span))
         {
-            _logger.LogWarning("A photo thumbnail from a remote still had its EXIF segment and was not saved");
+            _logger.LogWarning("A photo thumbnail from a remote was not a whole JPEG without EXIF and was not saved");
             return false;
         }
 

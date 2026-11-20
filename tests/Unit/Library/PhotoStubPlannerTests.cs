@@ -242,15 +242,20 @@ public class PhotoStubPlannerTests
         Assert.NotEqual(same, changed);
     }
 
-    // A photo edited on the remote gets a new Primary tag there, so its thumbnail is read again.
+    // A photo edited on the remote gets a new Primary tag there, so its thumbnail is read again; its metadata stays.
     [Fact]
-    public void TheHashFollowsThePhotoImage()
+    public void TheThumbnailTagFollowsThePhotoImageAndNotTheMetadata()
     {
-        var first = Plan(items: [Album(), Photo("p1")]);
+        var plan = Plan(items: [Album(), Photo("p1")]);
+        var first = Assert.Single(plan.Stubs);
         var edited = Photo("p1") with { ImageTags = new Dictionary<string, string> { ["Primary"] = "edited" } };
+        var described = Photo("p1") with { Overview = "Another" };
 
-        var changed = Assert.Single(Plan(first.State, items: [Album(), edited]).Stubs).ContentHash;
+        var afterEdit = Assert.Single(Plan(plan.State, items: [Album(), edited]).Stubs);
+        var afterText = Assert.Single(Plan(plan.State, items: [Album(), described]).Stubs);
 
-        Assert.NotEqual(Assert.Single(first.Stubs).ContentHash, changed);
+        Assert.Equal((first.ContentHash, "edited"), (afterEdit.ContentHash, afterEdit.TechnicalTag));
+        Assert.Equal(first.TechnicalTag, afterText.TechnicalTag);
+        Assert.NotEqual(first.ContentHash, afterText.ContentHash);
     }
 }

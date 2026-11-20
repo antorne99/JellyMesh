@@ -43,6 +43,11 @@ public sealed partial class LibraryMaterializer
                 changed = applied = true;
             }
 
+            if (run.Thumbnails.ContainsKey(entry.Id))
+            {
+                entry = entry with { TechnicalTag = work.TechnicalTag };
+            }
+
             // A thumbnail read after the scan reaches the photo here; one read before it, through the providers.
             if (entry.Kind == StubKind.Photo
                 && (applied || run.VerifyEveryStub || run.Thumbnails.ContainsKey(entry.Id))

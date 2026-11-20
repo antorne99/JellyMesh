@@ -97,6 +97,12 @@ public sealed class PhotoMaterializerTests : IDisposable
     private string ThumbnailOfTheStub() => PhotoThumbnails.PathOf(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).Id)!;
 
     // A JPEG with an EXIF segment, as a remote that sent its original file would give.
+    private static byte[] WithComment()
+    {
+        var clean = PhotoPlaceholders.For("jpg");
+        return [0xFF, 0xD8, 0xFF, 0xFE, 0x00, 0x04, (byte)'h', (byte)'i', .. clean[2..]];
+    }
+
     private static byte[] WithExif()
     {
         var clean = PhotoPlaceholders.For("jpg");
@@ -182,6 +188,51 @@ public sealed class PhotoMaterializerTests : IDisposable
 
         Assert.Equal(2, _fixture.Sync.Client.ThumbnailReads.Count);
         Assert.Equal(ThumbnailOfTheStub(), photo.GetImageInfo(ImageType.Primary, 0)?.Path);
+    }
+
+    // A thumbnail that could not be read again keeps the old one on disk, and is read at the next run.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnEditedPhotoWhoseThumbnailFailsIsReadAgainAtTheNextRun(bool indexed)
+    {
+        var a = await AddPhotosAsync();
+        await _fixture.SyncAndMaterializeAsync();
+        var photo = new Photo { Id = Guid.NewGuid(), Path = AlbumPath(a, "IMG_0001.jpg"), Name = "IMG_0001" };
+        if (indexed)
+        {
+            _fixture.Library.Setup(library => library.FindByPath(photo.Path, false)).Returns(photo);
+            await _fixture.SyncAndMaterializeAsync();
+        }
+
+        var old = await File.ReadAllBytesAsync(ThumbnailOfTheStub());
+        _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo() with
+        {
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "edited" }
+        };
+        _fixture.Sync.Client.ThumbnailFailure = RemoteFailure.InvalidResponse;
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(old, await File.ReadAllBytesAsync(ThumbnailOfTheStub()));
+
+        _fixture.Sync.Client.ThumbnailFailure = RemoteFailure.None;
+        _fixture.Sync.Client.Thumbnail = WithComment();
+        await _fixture.SyncAndMaterializeAsync();
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(3, _fixture.Sync.Client.ThumbnailReads.Count);
+        Assert.Equal(WithComment(), await File.ReadAllBytesAsync(ThumbnailOfTheStub()));
+    }
+
+    [Fact]
+    public async Task APhotoWithNewTextKeepsItsThumbnail()
+    {
+        await AddPhotosAsync();
+        await _fixture.SyncAndMaterializeAsync();
+
+        _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo() with { Overview = "Another" };
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Single(_fixture.Sync.Client.ThumbnailReads);
     }
 
     [Fact]
