@@ -160,6 +160,62 @@ public class AudioBookStubPlannerTests
         Assert.Equal(first.State.Stubs.Select(stub => stub.Id), legacy.State.Stubs.Select(stub => stub.Id));
     }
 
+    private static IndexedItem Book(string id, string name) => new()
+    {
+        ItemId = id,
+        Kind = IndexedItemKind.Book,
+        LibraryId = Books,
+        LastSeenUtc = _now,
+        Name = name,
+        Extension = "epub"
+    };
+
+    private static string FolderOf(StubPlan plan, string itemId) => Path.GetRelativePath(BooksFolder, WorkOf(plan, itemId).Entry.RelativePath).Split(Path.DirectorySeparatorChar)[0];
+
+    // The folder of a book goes whole with it, so it is never the author folder of an audiobook, whichever comes first.
+    [Theory]
+    [InlineData("Narrator")]
+    [InlineData("NARRATOR")]
+    public void ABookAndAnAuthorNamedAlikeNeverShareAFolder(string title)
+    {
+        var together = Plan([Part("p1"), Book("b1", title)]);
+        var bookFirst = Plan([Part("p1"), Book("b1", title)], Plan([Book("b1", title)]).State);
+        var partFirst = Plan([Part("p1"), Book("b1", title)], Plan([Part("p1")]).State);
+
+        Assert.All([together, bookFirst, partFirst], plan =>
+        {
+            Assert.Equal(2, plan.Stubs.Count);
+            Assert.NotEqual(FolderOf(plan, "b1"), FolderOf(plan, "p1"), StringComparer.OrdinalIgnoreCase);
+        });
+        Assert.Equal(title, FolderOf(bookFirst, "b1"));
+        Assert.Equal("Narrator", FolderOf(partFirst, "p1"));
+    }
+
+    // A book that leaves in the same run is still on disk, so its name is not free yet.
+    [Fact]
+    public void AnAuthorNeverTakesTheFolderOfABookThatIsLeaving()
+    {
+        var plan = Plan([Part("p1")], Plan([Book("b1", "Narrator")]).State);
+
+        Assert.Equal("Narrator", Path.GetFileName(Path.GetDirectoryName(Assert.Single(plan.Removals).RelativePath)));
+        Assert.NotEqual("Narrator", FolderOf(plan, "p1"), StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TheAudiobooksOfAnAuthorShareOneFolderAlsoWhenItsNameIsThatOfABook()
+    {
+        IndexedItem[] first = [Book("b1", "Narrator"), Part("p1", "One", 1, "Story"), Part("p2", "One", 1, "Tale")];
+        var state = Plan(first).State;
+
+        var second = Plan([.. first, Part("p3", "One", 1, "Saga"), Part("p4", "One", 1, "Epic", "narrator")], state);
+        var withoutBook = Plan([.. first.Skip(1), Part("p3", "One", 1, "Saga")], state);
+
+        var folder = FolderOf(second, "p1");
+        Assert.StartsWith("Narrator [", folder, StringComparison.Ordinal);
+        Assert.All(["p2", "p3", "p4"], id => Assert.Equal(folder, FolderOf(second, id)));
+        Assert.Equal(folder, FolderOf(withoutBook, "p3"));
+    }
+
     [Fact]
     public void HostileNamesStayInsideTheBooksFolderOfTheServer()
     {
