@@ -64,6 +64,39 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         "MediaSegments"
     };
 
+    // The extensions a downloaded audio stub gets, by the media type of the remote file (row 532).
+    private static readonly Dictionary<string, string> _audioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["audio/mpeg"] = ".mp3",
+        ["audio/mp3"] = ".mp3",
+        ["audio/flac"] = ".flac",
+        ["audio/x-flac"] = ".flac",
+        ["audio/mp4"] = ".m4a",
+        ["audio/m4a"] = ".m4a",
+        ["audio/x-m4a"] = ".m4a",
+        ["audio/m4b"] = ".m4b",
+        ["audio/x-m4b"] = ".m4b",
+        ["audio/aac"] = ".aac",
+        ["audio/ogg"] = ".ogg",
+        ["audio/vorbis"] = ".ogg",
+        ["audio/opus"] = ".opus",
+        ["audio/wav"] = ".wav",
+        ["audio/wave"] = ".wav",
+        ["audio/x-wav"] = ".wav",
+        ["audio/vnd.wave"] = ".wav",
+        ["audio/webm"] = ".webm",
+        ["audio/x-matroska"] = ".mka",
+        ["audio/x-ms-wma"] = ".wma",
+        ["audio/aiff"] = ".aiff",
+        ["audio/x-aiff"] = ".aiff",
+        ["audio/ape"] = ".ape",
+        ["audio/x-ape"] = ".ape",
+        ["audio/wavpack"] = ".wv",
+        ["audio/x-wavpack"] = ".wv",
+        ["audio/ac3"] = ".ac3",
+        ["audio/vnd.dts"] = ".dts"
+    };
+
     // The stock routes that would stream the file of an item, the .strm text of an audio stub included.
     private static readonly HashSet<string> _streamControllers = new(StringComparer.Ordinal) { "Videos", "DynamicHls", "Audio", "UniversalAudio" };
 
@@ -322,21 +355,30 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 : Unavailable(itemId);
         }
 
-        // A book goes with the type of its format, never the remote's (D62), and as a file with its local name on Download.
+        // A book goes with the type of its format, never the remote's (D62). Books and audio go as a file on Download, with
+        // the name of their stub, which for audio takes the extension of the remote file (row 532).
         var mediaType = stub.Kind == StubKind.Book ? BookPlaceholders.MediaTypeOf(stub.RelativePath) : null;
-        if (stub.Kind == StubKind.Book)
+        if (stub.Kind is StubKind.Book or StubKind.Track or StubKind.AudioBook)
         {
             http.Response.Headers.XContentTypeOptions = "nosniff";
             if (action == DownloadAction)
             {
                 var disposition = new ContentDispositionHeaderValue("attachment");
-                disposition.SetHttpFileName(Path.GetFileName(stub.RelativePath));
+                disposition.SetHttpFileName(stub.Kind == StubKind.Book ? Path.GetFileName(stub.RelativePath) : DownloadName(stub.RelativePath, opened.Headers.ContentType));
                 http.Response.Headers.ContentDisposition = disposition.ToString();
             }
         }
 
         await StreamRelay.CopyAsync(opened, http, _coordinator.StallLimit, http.RequestAborted, mediaType: mediaType).ConfigureAwait(false);
         return new EmptyResult();
+    }
+
+    // The name a download of an audio stub gets: the local name of its stub with the extension of the remote file's type.
+    private static string DownloadName(string relativePath, string? contentType)
+    {
+        var type = contentType?.Split(';', 2)[0].Trim();
+        var extension = type is not null && _audioExtensions.TryGetValue(type, out var known) ? known : string.Empty;
+        return Path.GetFileNameWithoutExtension(relativePath) + extension;
     }
 
     // Serves a stock route on audio stubs: 401 without a user, 404 for one who cannot see them. Lyrics are read, never
