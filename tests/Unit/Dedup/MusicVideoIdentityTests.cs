@@ -6,8 +6,8 @@ using static Jellyfin.Plugin.JellyMesh.Tests.Dedup.Fixtures;
 namespace Jellyfin.Plugin.JellyMesh.Tests.Dedup;
 
 /// <summary>
-/// Row 454 and D64: a music video is one title by IMDb or TMDb ID, else by the same artists and normalized title, with the
-/// year when both copies have one. Its copies on several servers are versions, ranked by §4.3, like a film.
+/// Row 454 and D64: a music video is one title by IMDb or TMDb ID, else by the same artists and normalized title, without
+/// the artist before it (row 508), with the year when both copies have one. Its copies on several servers are versions, ranked by §4.3, like a film.
 /// </summary>
 public class MusicVideoIdentityTests
 {
@@ -167,6 +167,138 @@ public class MusicVideoIdentityTests
     }
 
     [Fact]
+    public void TheArtistBeforeTheTitle_IsNotPartOfIt()
+    {
+        // Row 508 (D67).
+        var result = Resolve(
+            MusicVideo(Standard, "Daft Punk - Around the World", 1997, null, _artists, _hd),
+            MusicVideo(RemoteJellyMesh, "Around the World", 1997, null, _artists, _fullHd),
+            MusicVideo(Third, "DAFT PUNK - Around The World (1997)", 1997, null, _artists, _sd));
+
+        var decision = Assert.Single(result.Decisions);
+        Assert.Equal(MatchKind.TitleYear, decision.Identity.Match);
+        Assert.Equal(3, decision.RemoteItems.Count);
+        Assert.Equal(1080, decision.Winner!.Quality.Height);
+        Assert.Empty(result.MergeCases);
+    }
+
+    [Theory]
+    [InlineData("Daft Punk - Get Lucky")]
+    [InlineData("Pharrell Williams - Get Lucky")]
+    public void AnyArtistOfTheVideoBeforeTheTitle_IsNotPartOfIt(string title)
+    {
+        var result = Resolve(
+            MusicVideo(Standard, title, 2013, null, ["Daft Punk", "Pharrell Williams"], _hd),
+            MusicVideo(RemoteJellyMesh, "Get Lucky", 2013, null, ["Pharrell Williams", "Daft Punk"], _sd));
+
+        Assert.Single(result.Decisions);
+    }
+
+    [Theory]
+    [InlineData("Justice - Around the World")]
+    [InlineData("Daft - Around the World")]
+    [InlineData("Daft Punk Live - Around the World")]
+    [InlineData("Around the World - Daft Punk")]
+    [InlineData("Daft Punk Around the World")]
+    public void AnythingElseAroundTheTitle_IsPartOfIt(string title)
+    {
+        var result = Resolve(
+            MusicVideo(Standard, title, 1997, null, _artists, _hd),
+            MusicVideo(RemoteJellyMesh, "Around the World", 1997, null, _artists, _sd));
+
+        Assert.Equal(2, result.Decisions.Count);
+        Assert.Empty(result.MergeCases);
+    }
+
+    [Theory]
+    [InlineData("Daft Punk - ")]
+    [InlineData("Daft Punk -")]
+    [InlineData("Daft Punk - (1997)")]
+    public void ATitleThatIsOnlyTheArtist_IsKept(string title)
+    {
+        var result = Resolve(
+            MusicVideo(Standard, title, 1997, null, _artists, _hd),
+            MusicVideo(RemoteJellyMesh, "Daft Punk", 1997, null, _artists, _sd),
+            MusicVideo(Third, "Around the World", 1997, null, _artists, _sd));
+
+        Assert.Equal([2, 1], result.Decisions.Select(decision => decision.RemoteItems.Count).OrderDescending());
+    }
+
+    [Fact]
+    public void ATitleNamedAfterItsArtist_LosesOnlyThePrefix()
+    {
+        var result = Resolve(
+            MusicVideo(Standard, "Iron Maiden - Iron Maiden", 1980, null, ["Iron Maiden"], _hd),
+            MusicVideo(RemoteJellyMesh, "Iron Maiden", 1980, null, ["Iron Maiden"], _sd));
+
+        Assert.Single(result.Decisions);
+    }
+
+    [Fact]
+    public void AnArtistWithADashInTheName_IsFoundBeforeTheTitle()
+    {
+        var result = Resolve(
+            MusicVideo(Standard, "Artist - Duo - Song - Live", 2001, null, ["Artist - Duo"], _hd),
+            MusicVideo(RemoteJellyMesh, "Song - Live", 2001, null, ["Artist - Duo"], _sd));
+
+        Assert.Single(result.Decisions);
+    }
+
+    [Fact]
+    public void ACopyWithTheArtistBeforeTheTitle_JoinsTheOnlyCopyWithIds()
+    {
+        var result = Resolve(
+            MusicVideo(Standard, "Harder Better", 2001, new ContentIds("55", "tt0002"), _artists, _hd),
+            MusicVideo(RemoteJellyMesh, "Daft Punk - Harder Better", null, null, _artists, _fullHd));
+
+        var decision = Assert.Single(result.Decisions);
+        Assert.Equal(MatchKind.ProviderId, decision.Identity.Match);
+    }
+
+    [Fact]
+    public void ACopyWithTheArtistBeforeTheTitle_BetweenTwoSetsOfIds_StaysAlone_AsACase()
+    {
+        var result = Resolve(
+            MusicVideo(Standard, "Harder Better", 2001, new ContentIds(null, "tt0002"), _artists, _hd),
+            MusicVideo(RemoteJellyMesh, "Daft Punk - Harder Better", 2001, new ContentIds(null, "tt0003"), _artists, _sd),
+            MusicVideo(Third, "Daft Punk - Harder Better", 2001, null, _artists, _fullHd));
+
+        Assert.Equal(3, result.Decisions.Count);
+        Assert.Equal(3, Assert.Single(result.MergeCases).Works.Count);
+    }
+
+    [Fact]
+    public void TwoCopiesWithDifferentIds_OneWithTheArtistBeforeTheTitle_AreACase()
+    {
+        var result = Resolve(
+            MusicVideo(Standard, "Harder Better", 2001, new ContentIds(null, "tt0002"), _artists, _hd),
+            MusicVideo(RemoteJellyMesh, "Daft Punk - Harder Better", 2001, new ContentIds(null, "tt0003"), _artists, _sd));
+
+        Assert.Equal(2, result.Decisions.Count);
+        Assert.Equal(2, Assert.Single(result.MergeCases).Works.Count);
+    }
+
+    [Fact]
+    public void ALocalCopy_WinsOverARemoteCopyWithTheArtistBeforeTheTitle()
+    {
+        var local = MusicVideo(Local, "Around the World", 1997, null, _artists, _sd);
+
+        var result = DedupEngine.Resolve([local], [MusicVideo(Standard, "Daft Punk - Around the World", 1997, null, _artists, _fullHd)]);
+
+        Assert.True(Assert.Single(result.Decisions).IsLocal);
+    }
+
+    [Fact]
+    public void AFilm_KeepsThePrefixOfItsTitle()
+    {
+        var result = Resolve(
+            Movie(Standard, "Queen - The Movie", 2003, null, _hd) with { Artists = ["Queen"] },
+            Movie(RemoteJellyMesh, "The Movie", 2003, null, _sd) with { Artists = ["Queen"] });
+
+        Assert.Equal(2, result.Decisions.Count);
+    }
+
+    [Fact]
     public void TheResult_DoesNotDependOnTheOrderOfTheItems()
     {
         CatalogItem[] items =
@@ -174,7 +306,8 @@ public class MusicVideoIdentityTests
             MusicVideo(Standard, "One More Time", 2000, null, _artists, _hd),
             MusicVideo(RemoteJellyMesh, "One More Time", 2005, null, _artists, _sd) with { ItemId = "b" },
             MusicVideo(Third, "One More Time", null, null, _artists, _fullHd) with { ItemId = "c" },
-            MusicVideo(Third, "One More Time", 2000, new ContentIds(null, "tt0005"), _artists, _sd) with { ItemId = "d" }
+            MusicVideo(Third, "One More Time", 2000, new ContentIds(null, "tt0005"), _artists, _sd) with { ItemId = "d" },
+            MusicVideo(Standard, "Daft Punk - One More Time", 2000, null, _artists, _hd) with { ItemId = "e" }
         ];
 
         var expected = Fingerprint(DedupEngine.Resolve([], items));

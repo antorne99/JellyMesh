@@ -77,7 +77,7 @@ internal sealed class WorkResolver
 
         var possibleDuplicates = items
             .Where(item => !string.IsNullOrWhiteSpace(item.Title))
-            .GroupBy(item => (item.Kind, Title: TitleNormalizer.Normalize(item.Title, item.Year), item.Year, Artists: ArtistsKey(item)))
+            .GroupBy(item => (item.Kind, Title: ComparedTitle(item), item.Year, Artists: ArtistsKey(item)))
             .Select(group => group.Select(item => resolver.Find(item)?.Key).OfType<string>().Distinct().Order(StringComparer.Ordinal).ToList())
             .Where(keys => keys.Count > 1)
             .Select(keys => new DedupIssue(DedupIssueKind.PossibleDuplicate, keys));
@@ -246,11 +246,16 @@ internal sealed class WorkResolver
     private static string? MusicVideoKey(CatalogItem item)
     {
         var artists = ArtistsKey(item);
-        var title = TitleNormalizer.Normalize(item.Title, item.Year);
+        var title = ComparedTitle(item);
         return artists.Length == 0 || title.Length == 0
             ? null
             : string.Create(CultureInfo.InvariantCulture, $"{MusicVideoPrefix}|title:{title}|artists:{artists}");
     }
+
+    // The normalized title, without the artist of a music video before it (row 508).
+    private static string ComparedTitle(CatalogItem item) => TitleNormalizer.Normalize(
+        item.Kind == ContentKind.MusicVideo && item.Title is { } title ? TitleNormalizer.WithoutArtist(title, item.Year, item.Artists) : item.Title,
+        item.Year);
 
     private static string ArtistsKey(CatalogItem item) => string.Join(
         ',',

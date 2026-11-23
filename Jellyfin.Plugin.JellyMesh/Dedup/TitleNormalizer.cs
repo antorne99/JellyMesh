@@ -12,6 +12,8 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// </summary>
 public static class TitleNormalizer
 {
+    private const string ArtistSeparator = " - ";
+
     // Italian and English. Elided forms (l', un') arrive here as "l" and "un", since an apostrophe separates words.
     private static readonly FrozenSet<string> _articles = FrozenSet.ToFrozenSet(
         ["il", "lo", "la", "i", "gli", "le", "l", "un", "uno", "una", "the", "a", "an"],
@@ -44,6 +46,29 @@ public static class TitleNormalizer
 
         var kept = words.Where(word => !_articles.Contains(word)).ToList();
         return string.Join(' ', kept.Count > 0 ? kept : words);
+    }
+
+    /// <summary>
+    /// Removes the artist written before the title of a music video, as in <c>Artist - Title</c> (row 508).
+    /// </summary>
+    /// <param name="title">The title.</param>
+    /// <param name="year">The production year, or <c>null</c> when unknown.</param>
+    /// <param name="artists">The artists of the video. Any other prefix is kept, and so is a title with nothing after it.</param>
+    /// <returns>The title without the artist.</returns>
+    public static string WithoutArtist(string title, int? year, IEnumerable<string> artists)
+    {
+        var names = artists.Select(artist => Normalize(artist, null)).Where(name => name.Length > 0).ToHashSet(StringComparer.Ordinal);
+        var trimmed = title.Trim();
+        for (var dash = trimmed.IndexOf(ArtistSeparator, StringComparison.Ordinal); dash >= 0; dash = trimmed.IndexOf(ArtistSeparator, dash + 1, StringComparison.Ordinal))
+        {
+            var rest = trimmed[(dash + ArtistSeparator.Length)..];
+            if (names.Contains(Normalize(trimmed[..dash], null)) && !string.IsNullOrWhiteSpace(RemoveTrailingYear(rest, year)))
+            {
+                return rest;
+            }
+        }
+
+        return title;
     }
 
     /// <summary>
