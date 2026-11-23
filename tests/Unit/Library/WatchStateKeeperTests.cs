@@ -585,7 +585,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.Equal(isPutBack, placed.Exists(item => Row(_anna, item).Played));
         Assert.Equal(isPutBack ? 0 : 1, (await _kept.ReadAsync(CancellationToken.None)).Count);
-        Assert.Equal(isPutBack ? 0 : 1, _logger.Lines.Count(line => line.Contains("more than 100 copies", StringComparison.Ordinal)));
+        Assert.Equal(isPutBack ? 0 : 1, _logger.Lines.Count(line => line.Contains("more than 100 current or kept copies", StringComparison.Ordinal)));
     }
 
     // A rule that fails leaves the titles of its type for a later run and stops no other.

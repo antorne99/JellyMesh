@@ -549,7 +549,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 
         if (left > 0)
         {
-            _logger.LogWarning("The kept watch state of {Count} titles stays kept: each matches more than {Max} copies", left, MaxCopies);
+            _logger.LogWarning("The kept watch state of {Count} titles stays kept: each matches more than {Max} current or kept copies", left, MaxCopies);
         }
 
         return done;
