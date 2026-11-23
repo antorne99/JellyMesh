@@ -230,7 +230,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
     // Deletes the image of a stem in another format, without listing the folder, which can hold many parts with their covers.
     private static void DeleteOtherExtensions(string stem, string keep)
     {
-        foreach (var file in ImageExtensions.Select(extension => stem + extension).Where(file => !string.Equals(file, keep, StringComparison.Ordinal)))
+        foreach (var file in ImageExtensions.Select(extension => stem + extension).Where(file => !string.Equals(file, keep, StringComparison.Ordinal) && File.Exists(file)))
         {
             File.Delete(file);
         }
