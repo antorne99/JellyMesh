@@ -487,15 +487,11 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
-    /// Narrows a page of a library to what is outside the federated folder, at any depth. Null when there is nothing to read.
+    /// Narrows a page of a library to what is outside the federated folder, at any depth, and outside the paths of the library
+    /// that hold a server folder left by a moved one. Null when there is nothing to read.
     /// </summary>
     private LibraryScope? ScopeOf(Guid libraryId)
     {
-        if (FederatedRoot() is not { } root)
-        {
-            return LibraryScope.Whole;
-        }
-
         var library = _library.GetVirtualFolders().Find(folder => Guid.TryParse(folder.ItemId, out var id) && id == libraryId);
         if (library is null)
         {
@@ -503,16 +499,18 @@ public sealed class ProviderCatalog
             return null;
         }
 
+        // A path that holds the layout of a server folder has only hidden items under it, whatever the root is now.
+        var root = FederatedRoot();
         var locations = Locations(library);
-        var federated = locations.Where(location => location.IsWithin(root)).ToList();
-        var above = locations.Where(location => root.IsWithin(location) && !location.IsWithin(root)).ToList();
+        var federated = locations.Where(location => (root is not null && location.IsWithin(root)) || HasServerFolderLayout(location)).ToList();
+        IReadOnlyList<FolderPath> hidden = root is not null && locations.Any(root.IsWithin) ? [root, .. federated] : federated;
+        var above = locations.Except(federated).Where(location => hidden.Any(folder => folder.IsWithin(location))).ToList();
         if (above.Count > 0)
         {
-            // Jellyfin names the federated folder after the path of the library, which may reach it by a link.
-            var folders = above.Select(location => location.Below(root))
+            // Jellyfin names a hidden folder after the path of the library, which may reach it by a link.
+            var folders = above.SelectMany(location => hidden.Select(location.Below))
                 .OfType<string>()
-                .Prepend(root.Indexed)
-                .Concat(federated.Select(location => location.Indexed))
+                .Concat(hidden.Select(folder => folder.Indexed))
                 .Distinct(StringComparer.Ordinal)
                 .Select(path => _library.FindByPath(path, true))
                 .OfType<BaseItem>()

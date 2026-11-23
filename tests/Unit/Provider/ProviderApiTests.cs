@@ -553,6 +553,7 @@ public class ProviderCatalogTests
     {
         _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
         _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, "/media/serie", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie");
+        _fixture.WithFolder("/media/serie");
         BaseItem left = new Series { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show" };
         BaseItem real = new Series { Id = Guid.NewGuid(), Path = "/media/serie/Show" };
         _fixture.Library.Setup(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()))
