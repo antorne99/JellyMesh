@@ -270,6 +270,30 @@ public sealed class SplitTitleTests : IDisposable
         Assert.True(File.Exists(PathOf(Stubs.Single(stub => stub.SeasonNumber == 1))));
     }
 
+    // Jellyfin caches an instance of each item with its rows: a save on another would leave them old, and a later save would undo it.
+    [Fact]
+    public async Task AHandoverSavesOnTheInstanceThatJellyfinCaches()
+    {
+        await AddFilmAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = Assert.Single(Stubs);
+        Give(_anna, PathOf(old), Full());
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        AddItems();
+        var added = _items[PathOf(Assert.Single(Stubs, stub => stub.Id != old.Id))];
+        var cached = new Movie { Id = added.Id, Path = added.Path };
+        _fixture.Library.Setup(library => library.GetItemById(added.Id)).Returns(cached);
+
+        await CleanAsync();
+
+        AssertFull(Row(_anna, added.Path));
+        _userData.Verify(data => data.SaveUserData(_anna, It.Is<BaseItem>(item => ReferenceEquals(item, cached)), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()), Times.Once);
+        _userData.Verify(data => data.SaveUserData(_anna, It.Is<BaseItem>(item => ReferenceEquals(item, added)), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // A file of two episodes is a backup of both, so it alone does not make two episodes one title.
     [Fact]
     public async Task AFileOfTwoEpisodesDoesNotMixTheirStates()

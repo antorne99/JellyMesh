@@ -337,11 +337,13 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
     private void HandOver(List<User> users, BaseItem source, BaseItem target, Func<UserItemData, UserItemData, bool> merge, CancellationToken cancellationToken)
     {
+        // FindByPath gives an instance of its own: saved there, the one Jellyfin caches would keep the old rows.
+        var item = _library.GetItemById(target.Id) ?? target;
         foreach (var user in users)
         {
-            if (_userData.GetUserData(user, source) is { } from && _userData.GetUserData(user, target) is { } data && merge(from, data))
+            if (_userData.GetUserData(user, source) is { } from && _userData.GetUserData(user, item) is { } data && merge(from, data))
             {
-                _userData.SaveUserData(user, target, data, UserDataSaveReason.Import, cancellationToken);
+                _userData.SaveUserData(user, item, data, UserDataSaveReason.Import, cancellationToken);
             }
         }
     }
